@@ -7,6 +7,7 @@ import type {
   InstallBatchReport,
   InstallResult,
   InvocationEditReport,
+  LibraryMoveReport,
   ProjectSyncReport,
   PropagationOutcome,
   RefreshReport,
@@ -15,7 +16,7 @@ import type {
 import { describeCommandError, toCommandError } from "../commandError";
 import type { DeclinedPair } from "./overwriteAsk";
 import type { TranslateFn } from "../hooks/useStatusReporter";
-import { ACQUISITION_SKIP_KEY, INVOCATION_LABEL_KEY, SKIPPED_REASON_KEY } from "./skillPresentation";
+import { ACQUISITION_SKIP_KEY, INVOCATION_LABEL_KEY, SKIPPED_REASON_KEY, toolLabel } from "./skillPresentation";
 
 /**
  * What one report entry is about: the skill (by id — resolved when the
@@ -213,6 +214,10 @@ export type HeadlineVerb =
   | "assigned"
   | "enabled"
   | "disabled"
+  /** Move Library folder: skills whose central copy moved. */
+  | "moved"
+  /** Move Library folder: Deployments re-pointed into the new folder. */
+  | "relinked"
   | "unassigned";
 export const HEADLINE_DONE_KEY: Record<HeadlineVerb, string> = {
   refreshed: "outcome.done.refreshed",
@@ -225,6 +230,8 @@ export const HEADLINE_DONE_KEY: Record<HeadlineVerb, string> = {
   assigned: "outcome.done.assigned",
   enabled: "outcome.done.enabled",
   disabled: "outcome.done.disabled",
+  moved: "outcome.done.moved",
+  relinked: "outcome.done.relinked",
   unassigned: "projectsSurface.done.unassigned",
 };
 /**
@@ -1663,4 +1670,153 @@ export function combineOutcomes<Entry>(
     },
     ...(tally ? { tally } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Move Library folder
+// ---------------------------------------------------------------------------
+
+/**
+ * The counts a Move Library folder report states, derived once here: skills
+ * `moved`; Deployments `relinked`, left `unchanged` (copies), `failed`;
+ * `skipped` broken down — `missing` (Unlocatable skills, not moved),
+ * `notOurs` (an owned link that points elsewhere), `folderMissing` (a project
+ * whose folder is gone), `disabled`; and `leftBehind` — what stays in the old
+ * place beyond the old folder itself (unrecorded entries, an old copy still
+ * reached or not removable).
+ */
+export function libraryMoveCounts(report: LibraryMoveReport) {
+  const counts = {
+    moved: 0,
+    missing: 0,
+    relinked: 0,
+    unchanged: 0,
+    failed: 0,
+    notOurs: 0,
+    folderMissing: 0,
+    disabled: 0,
+    leftBehind: 0,
+  };
+  for (const skill of report.skills) {
+    if (skill.status.status === "moved") counts.moved++;
+    else counts.missing++;
+  }
+  for (const deployment of report.deployments) {
+    const { status } = deployment;
+    if (status.status === "relinked") counts.relinked++;
+    else if (status.status === "unchanged") counts.unchanged++;
+    else if (status.status === "failed") counts.failed++;
+    else if (status.reason === "not_ours") counts.notOurs++;
+    else if (status.reason === "folder_missing") counts.folderMissing++;
+    else counts.disabled++;
+  }
+  counts.leftBehind = report.left_behind.filter((item) => item.reason !== "old_library").length;
+  return counts;
+}
+
+/**
+ * Move Library folder's report as one Outcome. The headline is the composite
+ * line "12 moved · 30 re-linked · 1 deployment failed · 2 skipped · 3 left
+ * behind" (zeros omitted), toned by D10's precedence: a failed re-point or an
+ * old copy that could not be removed is a failure; a skipped skill or
+ * Deployment, or an old copy kept because something still reaches it, is a
+ * skip. Entries: each failed re-point (an error, Retry re-syncs the pair from
+ * the new copy), each Unlocatable skill, link pointing elsewhere, missing
+ * project folder and kept old copy (warnings). Quiet notes name the old
+ * folder and every unrecorded entry left in it. The catalog is replaced from
+ * the command's own response, so nothing reloads, and Settings stays open.
+ */
+export function libraryMoveOutcome(report: LibraryMoveReport, ctx: ReportContext): Outcome<PlainEntry> {
+  const out = empty();
+  out.completion = { reload: false, closeModal: false, conflict: false };
+  const counts = libraryMoveCounts(report);
+  const tool = (key: string) => ctx.toolLabelById?.[key] ?? toolLabel(ctx.t, key);
+  const names = new Map(report.skills.map((skill) => [skill.skill_id, skill.name]));
+
+  for (const skill of report.skills) {
+    if (skill.status.status !== "skipped") continue;
+    out.warnings.push({
+      title: ctx.t("libraryMove.report.missingTitle", { name: skill.name }),
+      message: ctx.t("libraryMove.report.missingMessage"),
+      subject: { skillId: skill.skill_id, skillName: skill.name },
+    });
+  }
+  for (const deployment of report.deployments) {
+    const { status } = deployment;
+    const row = deployment.rows[0];
+    const subject: EntrySubject = {
+      skillId: deployment.skill_id,
+      skillName: deployment.name,
+      ...(row ? { tool: row.tool } : {}),
+      ...(row?.scope === "assignment" ? { projectId: row.project_id } : {}),
+    };
+    const where = row ? tool(row.tool) : deployment.path;
+    if (status.status === "failed") {
+      out.errors.push({
+        title: ctx.t("libraryMove.report.relinkFailedTitle", { name: deployment.name, tool: where }),
+        message: errorMessage(ctx, status.error),
+        subject,
+        error: status.error,
+        ...(row && row.scope === "global_target" ? { repair: { verb: "retry" as const, tool: row.tool } } : {}),
+      });
+    } else if (status.status === "skipped" && status.reason === "not_ours") {
+      out.warnings.push({
+        title: ctx.t("libraryMove.report.notOursTitle", { name: deployment.name, tool: where }),
+        message: ctx.t("libraryMove.report.notOursMessage", { path: deployment.path }),
+        subject,
+      });
+    } else if (status.status === "skipped" && status.reason === "folder_missing") {
+      out.warnings.push({
+        title: ctx.t("libraryMove.report.folderMissingTitle", { name: deployment.name, tool: where }),
+        message: ctx.t("libraryMove.report.folderMissingMessage", { path: deployment.path }),
+        subject,
+      });
+    }
+  }
+  for (const item of report.left_behind) {
+    const name = item.skill_id ? (names.get(item.skill_id) ?? item.skill_id) : "";
+    const subject = item.skill_id ? { skillId: item.skill_id, skillName: name } : undefined;
+    if (item.reason === "still_linked") {
+      out.warnings.push({
+        title: ctx.t("libraryMove.report.stillLinkedTitle", { name }),
+        message: ctx.t("libraryMove.report.stillLinkedMessage", { path: item.path }),
+        ...(subject ? { subject } : {}),
+      });
+    } else if (item.reason === "removal_failed") {
+      out.errors.push({
+        title: ctx.t("libraryMove.report.removalFailedTitle", { name }),
+        message: item.error ? errorMessage(ctx, item.error) : item.path,
+        ...(subject ? { subject } : {}),
+        ...(item.error ? { error: item.error } : {}),
+      });
+    } else if (item.reason === "old_library") {
+      out.notes.push(ctx.t("libraryMove.report.oldLibraryLine", { path: item.path }));
+    } else {
+      out.notes.push(ctx.t("libraryMove.report.unrecordedLine", { path: item.path }));
+    }
+  }
+  if (counts.unchanged > 0) out.notes.push(ctx.t("libraryMove.report.copiesLine", { count: counts.unchanged }));
+  if (counts.disabled > 0) out.notes.push(ctx.t("libraryMove.report.disabledLine", { count: counts.disabled }));
+
+  const removalFailed = report.left_behind.filter((item) => item.reason === "removal_failed").length;
+  const stillLinked = report.left_behind.filter((item) => item.reason === "still_linked").length;
+  const skipped = counts.missing + counts.notOurs + counts.folderMissing;
+  const parts: string[] = [];
+  const part = (key: string, count: number) => {
+    if (count > 0) parts.push(ctx.t(key, { count }));
+  };
+  part(HEADLINE_DONE_KEY.moved, counts.moved);
+  part(HEADLINE_DONE_KEY.relinked, counts.relinked);
+  part("outcome.targetsFailed", counts.failed);
+  part("outcome.skipped", skipped);
+  part("libraryMove.report.leftBehind", counts.leftBehind);
+  if (parts.length === 0) parts.push(ctx.t(HEADLINE_DONE_KEY.moved, { count: 0 }));
+  const tone: OutcomeTone =
+    counts.failed > 0 || removalFailed > 0
+      ? "failure"
+      : skipped > 0 || stillLinked > 0
+        ? "skipped"
+        : "success";
+  out.toast = toast(tone, parts.join(HEADLINE_SEPARATOR), detailOf(out.notes));
+  return out;
 }

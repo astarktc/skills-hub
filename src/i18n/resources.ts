@@ -243,6 +243,24 @@ export const resources = {
           "Refused to remove {{path}}: Skills Hub could not read the system's list of mounted folders (/proc/self/mountinfo), so it cannot rule out that a folder inside it is mounted from somewhere else — possibly your Skills Hub library. Check that /proc is mounted and readable for your account, then try again.",
         removalRefusedResolvesElsewhere:
           "Refused to remove {{path}}: it leads to {{resolved}}, outside the folder Skills Hub manages there. A folder on that path is probably a link — check where it points, then try again.",
+        libraryDestination: {
+          notAbsolute:
+            "Choose a full folder path for the Library — {{path}} is not one.",
+          overlapsLibrary:
+            "Can't move the Library to {{path}}: it is inside your current Library or contains it ({{conflict}}). Choose a folder outside it.",
+          insideHarnessDir:
+            "Can't move the Library to {{path}}: it is inside a harness's skills folder ({{conflict}}), where the harness would read it as skills. Choose another folder.",
+          insideProjectDir:
+            "Can't move the Library to {{path}}: it is inside a project's skills folder ({{conflict}}). Choose another folder.",
+          insideGitCache:
+            "Can't move the Library to {{path}}: it is inside Skills Hub's download cache ({{conflict}}), which is cleaned automatically. Choose another folder.",
+          notEmpty:
+            "Can't move the Library to {{path}}: the folder isn't empty. Choose an empty folder or create one.",
+          notWritable:
+            "Can't move the Library to {{path}}: Skills Hub can't write there. Check the folder's permissions, or choose another folder.",
+        },
+        libraryCopyFailed:
+          "Couldn't copy \"{{name}}\" to the new folder, so nothing moved — your Library is exactly as it was.",
         skillManifestIo: "Could not read or save the skill manifest at {{path}}.",
         sourcePathMissing:
           "The source folder does not exist. It may have been moved, renamed or mistyped:",
@@ -506,6 +524,10 @@ export const resources = {
           enabled_other: "{{count}} enabled",
           disabled_one: "{{count}} disabled",
           disabled_other: "{{count}} disabled",
+          moved_one: "{{count}} moved",
+          moved_other: "{{count}} moved",
+          relinked_one: "{{count}} re-linked",
+          relinked_other: "{{count}} re-linked",
         },
         failed_one: "{{count}} failed",
         failed_other: "{{count}} failed",
@@ -1662,6 +1684,47 @@ export const resources = {
           log: "App log",
           libraryFolderHint: "Change it in General.",
           tokenSaves: "The token saves only when you press Save token.",
+        },
+      },
+      // Move Library folder (round 20 #03): the confirmation, the progress
+      // words and the report's lines.
+      libraryMove: {
+        ask: {
+          title_one: "Move {{count}} skill to {{path}}?",
+          title_other: "Move {{count}} skills to {{path}}?",
+          body: "Skills Hub copies your Library there, re-points every harness link to the new copies, then removes the old copies. Your old folder and anything else in it stay where they are.",
+          missing_one: "{{count}} skill can't be found and stays where it is recorded.",
+          missing_other: "{{count}} skills can't be found and stay where they are recorded.",
+          cloud: "{{root}} is a cloud storage folder. If its files become online-only, harness links into the Library break until they download again.",
+          confirm: "Move Library",
+          cancel: "Cancel",
+        },
+        label: "Move Library folder",
+        activity: "Moving the Library",
+        phase: {
+          copying: "Copying {{name}}",
+          relinking: "Re-linking {{name}}",
+          cleaning: "Removing the old copy of {{name}}",
+        },
+        report: {
+          leftBehind_one: "{{count}} left behind",
+          leftBehind_other: "{{count}} left behind",
+          missingTitle: "{{name}} was not moved",
+          missingMessage: "Its copy is missing, so it stays where it is recorded. Restore or remove it from My Skills.",
+          relinkFailedTitle: "{{name}} on {{tool}} still points to the old folder",
+          notOursTitle: "{{name}} on {{tool}} was left alone",
+          notOursMessage: "{{path}} doesn't point to the Library copy any more, so Skills Hub didn't touch it.",
+          folderMissingTitle: "{{name}} on {{tool}}: project folder not found",
+          folderMissingMessage: "{{path}} will be re-linked the next time you deploy to the project once its folder is back.",
+          stillLinkedTitle: "The old copy of {{name}} was kept",
+          stillLinkedMessage: "A harness still reaches {{path}}, so it was not removed.",
+          removalFailedTitle: "The old copy of {{name}} could not be removed",
+          oldLibraryLine: "Your old Library folder stays at {{path}}.",
+          unrecordedLine: "Left in the old folder: {{path}}",
+          copiesLine_one: "{{count}} copied deployment left as it is.",
+          copiesLine_other: "{{count}} copied deployments left as they are.",
+          disabledLine_one: "{{count}} turned-off deployment left as it is.",
+          disabledLine_other: "{{count}} turned-off deployments left as they are.",
         },
       },
       // Keyboard shortcuts, in the Settings frame (D37).

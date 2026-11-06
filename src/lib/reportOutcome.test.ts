@@ -8,6 +8,7 @@ import type {
   ImportReport,
   InstallResult,
   InvocationEditReport,
+  LibraryMoveReport,
   ProjectSyncOutcome,
   ProjectSyncReport,
   RefreshReport,
@@ -27,6 +28,8 @@ import {
   importOutcome,
   installBatchSettlements,
   installOutcome,
+  libraryMoveCounts,
+  libraryMoveOutcome,
   projectRemovalOutcome,
   projectSyncOutcome,
   refreshOutcome,
@@ -2454,5 +2457,144 @@ describe("runItems", () => {
       ["error", "pair"],
       ["warning", "skill"],
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Move Library folder (round 20 #03)
+// ---------------------------------------------------------------------------
+
+describe("libraryMoveOutcome", () => {
+  const moved = (id: string): LibraryMoveReport["skills"][number] => ({
+    skill_id: id,
+    name: id,
+    status: { status: "moved", from: `/old/${id}`, to: `/new/${id}` },
+  });
+  const deployment = (
+    id: string,
+    status: LibraryMoveReport["deployments"][number]["status"],
+    tool = "claude",
+  ): LibraryMoveReport["deployments"][number] => ({
+    skill_id: id,
+    name: id,
+    path: `/home/.claude/skills/${id}`,
+    rows: [{ scope: "global_target", id: `${id}-row`, skill_id: id, tool }],
+    status,
+  });
+  const report = (parts: Partial<LibraryMoveReport>): LibraryMoveReport => ({
+    from: "/old",
+    to: "/new",
+    skills: [],
+    deployments: [],
+    left_behind: [{ path: "/old", reason: "old_library", skill_id: null, error: null }],
+    ...parts,
+  });
+
+  it("counts moved, re-linked, skipped (missing / not ours / folder missing), failed and left behind", () => {
+    const failure = { code: "REMOVAL_PERMISSION_DENIED", path: "/home/.claude/skills/b", detail: "EACCES" } as const;
+    const r = report({
+      skills: [moved("a"), moved("b"), moved("c"), { skill_id: "gone", name: "gone", status: { status: "skipped", reason: "missing" } }],
+      deployments: [
+        deployment("a", { status: "relinked", mode: "symlink" }),
+        deployment("a", { status: "relinked", mode: "symlink" }, "cursor"),
+        deployment("b", { status: "failed", error: failure }),
+        deployment("c", { status: "skipped", reason: "not_ours" }),
+        deployment("c", { status: "skipped", reason: "folder_missing" }),
+        deployment("c", { status: "unchanged", reason: "copy" }),
+        deployment("c", { status: "skipped", reason: "disabled" }),
+      ],
+      left_behind: [
+        { path: "/old", reason: "old_library", skill_id: null, error: null },
+        { path: "/old/notes", reason: "unrecorded", skill_id: null, error: null },
+        { path: "/old/b", reason: "still_linked", skill_id: "b", error: null },
+      ],
+    });
+
+    expect(libraryMoveCounts(r)).toEqual({
+      moved: 3,
+      missing: 1,
+      relinked: 2,
+      unchanged: 1,
+      failed: 1,
+      notOurs: 1,
+      folderMissing: 1,
+      disabled: 1,
+      leftBehind: 2,
+    });
+    const outcome = libraryMoveOutcome(r, ctx);
+    expect(outcome.toast).toMatchObject({
+      tone: "failure",
+      message: [
+        'outcome.done.moved {"count":3}',
+        'outcome.done.relinked {"count":2}',
+        'outcome.targetsFailed {"count":1}',
+        'outcome.skipped {"count":3}',
+        'libraryMove.report.leftBehind {"count":2}',
+      ].join(" · "),
+    });
+    // The failed re-point is an error offering Retry on its harness.
+    expect(outcome.errors).toHaveLength(1);
+    expect(outcome.errors[0]).toMatchObject({
+      title: 'libraryMove.report.relinkFailedTitle {"name":"b","tool":"CLAUDE"}',
+      error: failure,
+      repair: { verb: "retry", tool: "claude" },
+      subject: { skillId: "b", tool: "claude" },
+    });
+    // Unlocatable, not ours, folder missing and the kept copy are warnings.
+    expect(outcome.warnings.map((entry) => entry.title)).toEqual([
+      'libraryMove.report.missingTitle {"name":"gone"}',
+      'libraryMove.report.notOursTitle {"name":"c","tool":"CLAUDE"}',
+      'libraryMove.report.folderMissingTitle {"name":"c","tool":"CLAUDE"}',
+      'libraryMove.report.stillLinkedTitle {"name":"b"}',
+    ]);
+    // The old folder and what stays in it are quiet notes.
+    expect(outcome.notes).toEqual([
+      'libraryMove.report.oldLibraryLine {"path":"/old"}',
+      'libraryMove.report.unrecordedLine {"path":"/old/notes"}',
+      'libraryMove.report.copiesLine {"count":1}',
+      'libraryMove.report.disabledLine {"count":1}',
+    ]);
+    // The catalog came with the response; Settings stays open.
+    expect(outcome.completion).toEqual({ reload: false, closeModal: false, conflict: false });
+  });
+
+  it("a clean move is a success whose old folder is a note, not a skip", () => {
+    const outcome = libraryMoveOutcome(
+      report({ skills: [moved("a")], deployments: [deployment("a", { status: "relinked", mode: "symlink" })] }),
+      ctx,
+    );
+    expect(outcome.toast).toMatchObject({
+      tone: "success",
+      message: 'outcome.done.moved {"count":1} · outcome.done.relinked {"count":1}',
+    });
+    expect(outcome.errors).toEqual([]);
+    expect(outcome.warnings).toEqual([]);
+  });
+
+  it("an old copy that could not be removed is a failure", () => {
+    const refused = { code: "REMOVAL_REFUSED", path: "/old/a", resolved: "/x", reason: "resolvesElsewhere" } as const;
+    const outcome = libraryMoveOutcome(
+      report({
+        skills: [moved("a")],
+        left_behind: [{ path: "/old/a", reason: "removal_failed", skill_id: "a", error: refused }],
+      }),
+      ctx,
+    );
+    expect(outcome.toast?.tone).toBe("failure");
+    expect(outcome.errors[0]).toMatchObject({ title: 'libraryMove.report.removalFailedTitle {"name":"a"}', error: refused });
+  });
+
+  it("every copy key it uses exists in English", () => {
+    const en = i18next.createInstance();
+    void en.init({ lng: "en", resources });
+    const outcome = libraryMoveOutcome(
+      report({
+        skills: [moved("a"), { skill_id: "g", name: "g", status: { status: "skipped", reason: "missing" } }],
+        deployments: [deployment("a", { status: "skipped", reason: "not_ours" })],
+      }),
+      { t: en.t.bind(en) as unknown as typeof t },
+    );
+    expect(outcome.toast?.message).toBe("1 moved · 2 skipped");
+    expect(outcome.warnings[0].title).toBe("g was not moved");
   });
 });

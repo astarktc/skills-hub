@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AppSettings,
+  LibraryMoveProgress,
   SettingUpdate,
   SettingsBounds,
 } from "../components/skills/types";
-import { pickFolder, setZoom } from "../lib/platform";
+import { createProgressChannel, pickFolder, setZoom } from "../lib/platform";
+import { libraryMoveOutcome } from "../lib/reportOutcome";
 import { invokeTauri, isTauri } from "../lib/tauri";
+import type { SkillLibrary } from "./useSkillLibrary";
 import type { StatusReporter, TranslateFn } from "./useStatusReporter";
+import type { SurfaceState } from "./useSurfaceState";
 import { themePreference as storedThemePreference } from "../lib/preferences";
 
 const ZOOM_PRESETS = [0.75, 1, 1.1, 1.25, 1.5, 1.75, 2];
@@ -33,10 +37,24 @@ export type SettingsStateDeps = {
   t: TranslateFn;
   reporter: Pick<
     StatusReporter,
-    "notifyError" | "setSuccessToastMessage" | "notify"
+    | "notifyError"
+    | "setSuccessToastMessage"
+    | "notify"
+    | "runAction"
+    | "reportProgress"
+    | "applyOutcome"
   >;
-  /** Called after the central repo moves so the skill list reloads. */
-  onManagedSkillsChanged: () => Promise<void>;
+  /** The surface module: Move Library folder's confirmation. */
+  surface: Pick<SurfaceState, "ask">;
+  /** The skills world: the move answers the catalog it settled (`{ report, skills }`). */
+  library: Pick<SkillLibrary, "replaceCatalog">;
+};
+
+/** The header progress line of each Move Library folder phase. */
+const MOVE_PHASE_KEY: Record<LibraryMoveProgress["phase"], string> = {
+  copying: "libraryMove.phase.copying",
+  relinking: "libraryMove.phase.relinking",
+  cleaning: "libraryMove.phase.cleaning",
 };
 
 /** Clamp into an inclusive `{min,max}` bound; passes through when unknown. */
@@ -58,9 +76,13 @@ function clampTo(
 export function useSettingsState({
   t,
   reporter,
-  onManagedSkillsChanged,
+  surface,
+  library,
 }: SettingsStateDeps) {
-  const { notifyError, setSuccessToastMessage, notify } = reporter;
+  const { notifyError, setSuccessToastMessage, notify, runAction, reportProgress, applyOutcome } =
+    reporter;
+  const { ask } = surface;
+  const { replaceCatalog } = library;
   const [themePreference, setThemePreference] = useState<
     "system" | "light" | "dark"
   >(() => storedThemePreference.read());
@@ -125,9 +147,6 @@ export function useSettingsState({
       const next = await invokeTauri("updateSetting", update);
       setBounds(next.bounds);
       switch (update.key) {
-        case "central_repo_path":
-          setStoragePath(next.central_repo_path);
-          break;
         case "git_cache_cleanup_days":
           setGitCacheCleanupDays(next.git_cache_cleanup_days);
           break;
@@ -211,21 +230,51 @@ export function useSettingsState({
     return () => window.removeEventListener("keydown", handler);
   }, [writeSetting]);
 
+  /**
+   * Browse… → Move Library folder (round 20 #03). The folder pick stays
+   * outside the lifecycle (a pick changes nothing); the backend's preview is
+   * a read under it (it waits its turn, refuses a destination it would
+   * refuse, and states the confirmation's facts — counts and the cloud-sync
+   * warning; the frontend reads no paths). The confirmation asks; only a
+   * confirmed answer runs the move, a mutation under `runAction` (refused
+   * while another runs, header progress, no Cancel — the move is not
+   * cancellable). The skills world replaces its catalog and this world its
+   * displayed folder from the command's own response; the report is folded
+   * once, by `libraryMoveOutcome`.
+   */
   const handlePickStoragePath = useCallback(async () => {
+    let selected: string | undefined;
     try {
-      const [selected] = await pickFolder({ title: t("selectStoragePath") });
-      if (!selected) return;
-      await writeSetting({ key: "central_repo_path", value: selected });
-      await onManagedSkillsChanged();
+      [selected] = await pickFolder({ title: t("selectStoragePath") });
     } catch (err) {
       notifyError(err);
+      return;
     }
-  }, [
-    notifyError,
-    onManagedSkillsChanged,
-    t,
-    writeSetting,
-  ]);
+    if (!selected) return;
+    const destination = selected;
+    const preview = await runAction(
+      { read: true, label: t("libraryMove.label") },
+      () => invokeTauri("previewLibraryMove", destination),
+    );
+    if (!preview) return;
+    if ((await ask({ kind: "moveLibrary", preview })) !== "confirmed") return;
+    await runAction(
+      { label: t("libraryMove.label"), activity: t("libraryMove.activity") },
+      async () => {
+        const channel = await createProgressChannel<LibraryMoveProgress>((progress) =>
+          reportProgress({
+            done: progress.done,
+            total: progress.total,
+            message: t(MOVE_PHASE_KEY[progress.phase], { name: progress.name }),
+          }),
+        );
+        const response = await invokeTauri("moveLibrary", preview.destination, channel);
+        replaceCatalog(response.skills);
+        setStoragePath(response.report.to);
+        await applyOutcome(libraryMoveOutcome(response.report, { t }));
+      },
+    );
+  }, [applyOutcome, ask, notifyError, replaceCatalog, reportProgress, runAction, t]);
 
   const handleGitCacheCleanupDaysChange = useCallback(
     async (nextDays: number) => {
