@@ -19,15 +19,42 @@ export type FixtureTool = {
 
 /**
  * A reader-only harness (`READER_ONLY_HARNESSES` in the registry): detected
- * and listed under the `.agents/skills` entry, never a target. Fixture-only
- * rows until the real ones land (round 20 ticket 05); `detected` stands in
- * for its detect dirs.
+ * and listed under the `.agents/skills` entry, never a target. `detected`
+ * stands in for its detect dirs; `duplicates` snapshots its cross-read pairs
+ * as Rust resolves them with every harness installed (its deploy dir being
+ * the `.agents/skills` entry's), like `DUPLICATE_READS`.
  */
-export type FixtureReader = { key: string; label: string; detected: boolean };
+export type FixtureReader = {
+  key: string;
+  label: string;
+  detected: boolean;
+  duplicates?: { keys: readonly string[]; behaviour: DuplicateBehaviour };
+};
 
 export const READER_REGISTRY: readonly FixtureReader[] = [
+  // round 20 ticket 05 rows
+  {
+    key: "warp",
+    label: "Warp",
+    detected: false,
+    duplicates: {
+      keys: ["cursor", "claude_code", "codex", "gemini_cli", "github_copilot", "droid"],
+      behaviour: "shows_all",
+    },
+  },
   { key: "zed", label: "Zed", detected: true },
-  { key: "warp", label: "Warp", detected: false },
+  { key: "dexto", label: "Dexto", detected: false },
+  {
+    key: "fx",
+    label: "fx",
+    detected: true,
+    duplicates: { keys: ["claude_code", "codex", "opencode"], behaviour: "loads_none" },
+  },
+  { key: "sarvam_code", label: "Sarvam Code", detected: false },
+  { key: "vt_code", label: "VT Code", detected: false },
+  { key: "dimcode", label: "DimCode", detected: false },
+  { key: "crow_cli", label: "crow-cli", detected: false },
+  { key: "corust_agent", label: "Corust Agent", detected: false },
 ];
 
 /** Registry key of the one virtual group entry (project scope). */
@@ -79,8 +106,10 @@ export const TOOL_REGISTRY: readonly FixtureTool[] = [
   { key: "windsurf", label: "Devin (Windsurf)", globalDir: ".codeium/windsurf/skills", projectDir: ".windsurf/skills", grouped: false },
   { key: "moltbot", label: "MoltBot", globalDir: ".moltbot/skills", projectDir: ".moltbot/skills", grouped: false },
   { key: "hermes-agent", label: "Hermes Agent", globalDir: ".hermes/skills", projectDir: ".hermes/skills", grouped: false },
-  // Fixture-only stand-in for a harness with no project skills dir until the
-  // real WorkBuddy row lands (round 20 ticket 05).
+  // round 20 ticket 05 rows
+  { key: "deepseek_harness", label: "DeepSeek Harness", globalDir: ".dsh/skills", projectDir: ".dsh/skills", grouped: false },
+  { key: "zcode", label: "ZCode", globalDir: ".zcode/skills", projectDir: ".zcode/skills", grouped: false },
+  { key: "codewhale", label: "Codewhale", globalDir: ".codewhale/skills", projectDir: ".codewhale/skills", grouped: false },
   { key: "workbuddy", label: "WorkBuddy", globalDir: ".workbuddy/skills", projectDir: null, grouped: false },
   // round 20 ticket 07 rows
   { key: "letta_code", label: "Letta Code", globalDir: ".letta/skills", projectDir: ".agents/skills", grouped: true },
@@ -129,6 +158,10 @@ export const DUPLICATE_READS: Readonly<Record<string, { keys: readonly string[];
   github_copilot: { keys: ["agents_skills"], behaviour: "unknown" },
   droid: { keys: ["agents_skills"], behaviour: "shadows" },
   windsurf: { keys: ["agents_skills", "github_copilot"], behaviour: "unknown" },
+  // round 20 ticket 05 rows
+  deepseek_harness: { keys: ["agents_skills"], behaviour: "shadows" },
+  zcode: { keys: ["agents_skills"], behaviour: "shadows" },
+  codewhale: { keys: ["agents_skills", "claude_code"], behaviour: "shadows" },
   // round 20 ticket 07 rows
   muse_code: { keys: ["agents_skills", "claude_code", "codex"], behaviour: "unknown" },
   poolside: { keys: ["agents_skills"], behaviour: "unknown" },

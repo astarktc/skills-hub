@@ -78,6 +78,10 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 | `windsurf` | Devin (Windsurf) | `.codeium/windsurf/skills` | `.windsurf/skills` | `.codeium/windsurf` |
 | `moltbot` | MoltBot | `.moltbot/skills` | `.moltbot/skills` | `.moltbot` |
 | `hermes-agent` | Hermes Agent | `.hermes/skills` | `.hermes/skills` | `.hermes` |
+| `deepseek_harness` | DeepSeek Harness | `.dsh/skills` | `.dsh/skills` | `.dsh` |
+| `zcode` | ZCode | `.zcode/skills` | `.zcode/skills` | `.zcode` |
+| `codewhale` | Codewhale | `.codewhale/skills` | `.codewhale/skills` | `.codewhale` |
+| `workbuddy` | WorkBuddy | `.workbuddy/skills` | — | `.workbuddy` |
 | `letta_code` | Letta Code | `.letta/skills` | `.agents/skills` | `.letta` |
 | `muse_code` | Muse Code | `.config/muse/skills` | `.agents/skills` | `.config/muse` |
 | `poolside` | Poolside | `.config/poolside/skills` | `.agents/skills` | `.config/poolside` |
@@ -90,20 +94,38 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 | `astrbot` | AstrBot | `.astrbot/data/skills` | — | `.astrbot` |
 | `oh_my_pi` | oh-my-pi | `.omp/agent/skills` | `.omp/skills` | `.omp` |
 | `stakpak` | Stakpak | `.stakpak/skills` | `.stakpak/skills` | `.stakpak` |
+| `warp` | Warp | — | — | `.warp` or `.config/warp-terminal` |
+| `zed` | Zed | — | — | `.config/zed` |
+| `dexto` | Dexto | — | — | `.dexto` |
+| `fx` | fx | — | — | `.fx` |
+| `sarvam_code` | Sarvam Code | — | — | `.sarvam` |
+| `vt_code` | VT Code | — | — | `.config/vtcode` or `.vtcode` |
+| `dimcode` | DimCode | — | — | `.dimcode` |
+| `crow_cli` | crow-cli | — | — | `.agents/crow` |
+| `corust_agent` | Corust Agent | — | — | `.corust-agent` |
 
 `agents_skills` is scope-dependent. **Globally** it is a plain, independently selectable target: it
 manages `~/.agents/skills` and nothing else — Cursor still reads `~/.cursor/skills`, Codex still reads
 `~/.codex/skills`, so those harnesses keep their own rows in the global list. **In a project** it is an
 aggregate shown as `.agents/skills (N harnesses)`: one folder, `<project>/.agents/skills`, that every harness
-in the group reads (today: Cursor, Codex, OpenCode, Antigravity, Amp, Kimi Code CLI, Cline, Gemini CLI,
-GitHub Copilot, Letta Code, Muse Code, Poolside, Dirac), so those harnesses have no separate project row. N is counted from the registry.
+in the group reads (today Cursor, Codex, OpenCode, Antigravity, Amp, Kimi Code CLI, Cline, Gemini CLI,
+GitHub Copilot, Letta Code, Muse Code, Poolside and Dirac, plus the reader-only harnesses below), so those harnesses have no separate project row. N is counted
+from the registry.
 
 A **reader-only harness** has no skills folder of its own: it reads `~/.agents/skills` (and
 `<project>/.agents/skills`), so Skills Hub lists it under the `.agents/skills` entry with its detected state
-and never as a deployment target. Its row shows `—` for both skills dirs. A harness with no project skills dir
-shows `—` in that column and is absent from a project's harness choices.
+and never as a deployment target. Its row shows `—` for both skills dirs. Today they are Warp, Zed, Dexto, fx,
+Sarvam Code (low confidence: its `~/.agents/skills` read is unverified), VT Code, DimCode, crow-cli and Corust Agent.
+fx also reads `~/.claude/skills`, `~/.codex/skills` and OpenCode's folder, and a skill name it finds twice can't be
+invoked by `$name`: Settings → Harnesses warns when two selected harnesses would cause that. A harness with no project
+skills dir shows `—` in that column and is absent from a project's harness choices.
 
-Environment-variable homes (`KIMI_CODE_HOME` and the like) are not honoured: Skills Hub always uses the
+Some detect dirs move per OS; the table shows the default spelling. On Windows Zed is detected at `%APPDATA%\Zed`,
+Warp at `%LOCALAPPDATA%\warp\Warp` (and `~/.warp`), and VT Code at `%APPDATA%\vinhnx\vtcode`; on macOS VT Code's
+config dir is `~/Library/Application Support/com.vinhnx.vtcode`.
+
+Environment-variable homes (`KIMI_CODE_HOME`, `DSH_HOME`, `CODEWHALE_HOME`, `VTCODE_HOME`, `DIMCODE_HOME`,
+`CORUST_HOME` and the like) are not honoured: Skills Hub always uses the
 default folders above (an app launched from the Finder does not see your shell environment).
 
 ## Development

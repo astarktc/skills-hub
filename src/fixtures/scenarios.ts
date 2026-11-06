@@ -433,17 +433,19 @@ function rich(now: number): FixtureState {
 
 /**
  * The rich library on a machine that also has `~/.agents` (its folder read by
- * Zed, a detected reader-only member), OpenCode and WorkBuddy (no project
- * skills dir). Cursor, Claude Code and Codex are selected, so Cursor's
- * cross-read pairs warn; `.agents/skills` is detected but off, so turning it
- * on (auto-deploy on) asks with the warning; Goose is selected but not
- * detected, so the closed "Not detected" group says "1 selected".
+ * Zed and fx, detected reader-only members), OpenCode, WorkBuddy (no project
+ * skills dir) and Codewhale. Cursor, Claude Code, Codex and Codewhale are
+ * selected, so Cursor's and Codewhale's cross-read pairs warn;
+ * `.agents/skills` is detected but off, so turning it on (auto-deploy on)
+ * asks with the warning — fx reads Claude Code's and Codex's folders too, so
+ * invocation by name breaks there; Goose is selected but not detected, so the
+ * closed "Not detected" group says "1 selected".
  */
 function registry(now: number): FixtureState {
   const state: FixtureState = { ...rich(now), scenario: "registry" };
-  state.installedTools = [...DETECTED_TOOLS, "agents_skills", "opencode", "workbuddy"];
+  state.installedTools = [...DETECTED_TOOLS, "agents_skills", "opencode", "workbuddy", "codewhale"];
   state.seenTools = [...state.installedTools];
-  state.settings = defaultSettings([...ALL, "opencode", "workbuddy", "goose"]);
+  state.settings = defaultSettings([...ALL, "opencode", "workbuddy", "codewhale", "goose"]);
   return state;
 }
 

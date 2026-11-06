@@ -1277,7 +1277,8 @@ tokens; two variants were added (Dialog `size="settings"`, Tabs `variant="pane"`
   "N selected" Badge when it holds a selected harness; open, the same card of rows, then each undetected reader-only
   harness as a switchless row ("Reads .agents/skills", Badge **Not detected**). **Cross-read warning**: a row whose
   harness is in a cross-read pair with both harnesses selected (the backend's `ToolInfoDto.duplicate_readers`,
-  folded by `lib/harnessPresentation.ts`) carries one line under it — `xs`, `text-stale`, a `TriangleAlert` icon —
+  folded by `lib/harnessPresentation.ts`; a reader-only harness's pairs, `ReaderHarnessDto.duplicate_readers`, count
+  its group entry as its switch and warn on that entry's row) carries one line under it — `xs`, `text-stale`, a `TriangleAlert` icon —
   naming what it also reads and who reads its folder, with the consequence from the reader's duplicate behaviour
   (shows twice · can't be invoked by name · flagged as a conflict); the Switch is `aria-describedby` it. Nothing is
   deselected. Expanded (`xs`, a `8rem / 1fr`

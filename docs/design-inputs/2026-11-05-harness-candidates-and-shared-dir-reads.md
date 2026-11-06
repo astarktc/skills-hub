@@ -141,7 +141,7 @@ Stars and push dates come from `gh api repos/<repo>` on 2026-11-05 (T79). "AGENT
 | fx | Vercel · CLI | **Own** `~/.fx/skills` (where `/skills install` writes), plus `~/.config/opencode/skills`, `~/.codex/skills`, `~/.claude/skills`, `~/.agents/skills`, `~/.claw/skills`. T1 is wrong to call `~/.agents` its global dir | `.fx` | 3.8k★, Vercel | **AGENTS member**. Never also deploy to `~/.fx/skills`: duplicate names make `$name` load nothing | VERIFIED · T35 |
 | Loaf | veyzyn · CLI | `~/.loaf/skills`, `~/.agents/skills` | `.loaf` | 1★, last push 2026-02 | **Skip** | VERIFIED (project docs) · T36 |
 | Sarvam Code | Sarvam AI · CLI (Codex fork) | `~/.sarvam/skills/.system` (bundled). `~/.agents/skills` per T1 only (likely inherited from Codex) | `.sarvam` (holds `config.toml`) | Invite-gated | **AGENTS member** (low confidence; re-verify when public) | LIKELY · T1, T37 |
-| Warp | Warp · terminal + agent (and Oz CLI) | `~/.agents/skills` (recommended), `~/.warp/skills`, **and** `~/.claude`, `~/.codex`, `~/.cursor`, `~/.gemini`, `~/.copilot`, `~/.factory`, `~/.github`, `~/.opencode` `/skills` | `.warp` (macOS. **Flag**: Linux/Windows config roots differ, UNKNOWN) | 66k★ | **AGENTS member** | VERIFIED · T22 |
+| Warp | Warp · terminal + agent (and Oz CLI) | `~/.agents/skills` (recommended), `~/.warp/skills`, **and** `~/.claude`, `~/.codex`, `~/.cursor`, `~/.gemini`, `~/.copilot`, `~/.factory`, `~/.github`, `~/.opencode` `/skills` | `.warp` (macOS; `~/.warp` also holds MCP config and bundled skills on every OS). Linux `~/.config/warp-terminal`, Windows `%LOCALAPPDATA%\warp\Warp` (T80) | 66k★ | **AGENTS member** | VERIFIED · T22, T80 |
 | Zed | Zed Industries · editor | **Only** `~/.agents/skills` (+ project `.agents/skills`). Deliberately no tool-specific dirs, no extra paths | `.config/zed` (Windows `%APPDATA%\Zed`; Flatpak differs) | 93k★ | **AGENTS member** | VERIFIED · T23 |
 
 ### C. Probably not applicable (4)
@@ -323,7 +323,8 @@ Legend:
   - **MiniMax:** `.minimax` may be shared with other MiniMax products (UNKNOWN).
   - **Code Studio and CodeArts:** verify on a real install that `.codestudio` / `.codeartsdoer` hold more than skills,
     or they fail `is_installed_in`'s skills-only-footprint rule.
-  - **Warp:** `.warp` is the macOS root; Linux and Windows roots are UNKNOWN.
+  - **Warp:** `.warp` is the macOS root; Linux uses `~/.config/warp-terminal` and Windows `%LOCALAPPDATA%\warp\Warp`
+    (T80, added 2026-11-06).
   - **Deep Agents, Grok, Autohand, Reasonix, AiderDesk:** env-var homes (`DEEPAGENTS_HOME`, `GROK_HOME`,
     `AUTOHAND_HOME`, `REASONIX_HOME`, `AIDER_DESK_HOME_DIR`) are outside the registry's model. Note them, as B02 did
     for DSH.
@@ -474,4 +475,5 @@ blocked or JS-rendered.
 | T77 | https://ampcode.com/docs/customize/skills | P | Precedence list; disable switches |
 | T78 | https://www.codebuddy.ai/docs/cli/skills (via search) ; https://github.com/multica-ai/multica/pull/5224 (S) | P/S | Two dirs; `.claude` not read (S) |
 | T79 | `gh api repos/<owner>/<repo>` for each repo named above | P (metadata) | Stars / last push, 2026-11-05 |
+| T80 | https://docs.warp.dev/terminal/settings/file-locations/ (fetched 2026-11-06) | P | Config root per OS; `~/.warp` carve-out (MCP config, bundled skills) on every OS |
 | B02:Sn | `docs/design-inputs/2026-11-02-harness-global-skills-dirs.md` § Sources | — | Reused VERIFIED rows (S2, S4–S7, S9, S12, S14, S24, S42–S43, S47, S53, S57) |

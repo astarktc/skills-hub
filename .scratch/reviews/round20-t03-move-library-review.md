@@ -117,3 +117,69 @@ folder.** The parts:
 6. **Fidelity.** Extended to directory modes, directory and file xattrs, and hardlink groups (recreated inside the
    skill; a link outside the skill is unrelocatable).
 7. **Preview.** Classifies kept skills read-only.
+
+## Round 3 (Opus 5.5, high): PR #12 head `011f13d`
+
+All seven round-2 findings were fixed as the direction above set out. All 13 regressions failed on `5e8dd507`.
+
+Compared facets:
+
+- the tree, with links never followed;
+- bytes and link text;
+- mode bits on files and directories;
+- xattrs on files, directories and links (macOS excludes `com.apple.provenance` and `com.apple.rootless`);
+- hardlink structure.
+
+Residuals: ACLs, Windows ADS, sparse holes, BSD flags, ownership and creation times. CI is green, and rust-windows ran
+908 tests. Round-3 review: two independent reviewers (Astra and Sol) in parallel.
+
+## Round 3 reviews, 2026-11-06, `011f13d`: **fix-then-ship** from both
+
+Astra and Sol (GPT-6.1) reviewed in parallel and independently. Both say all seven round-2 findings are closed, and
+neither found a P1.
+
+- **A1 / S4 (P2, both found it): a set-aside old copy loses its skill identity on recovery.** Resume checks the new
+  copy's identity before looking in `.skills-hub-clean-*` (`library_move.rs:542–568`). The cases:
+  - new copy missing: the last copy is left hidden, reported only as an anonymous `unrecorded` entry, and the journal
+    is cleared;
+  - old path replaced: the same loss of identity.
+
+  Probes `review_aside_missing_destination_restores_last_copy` and `review_aside_replaced_old_is_reported_with_skill_identity`.
+- **S3 (P2): startup drops the resume report** (`lib.rs:162` matches `Ok(Some(_))`). `changed_since_copy`,
+  `still_linked` and failed re-links never reach the operator.
+- **S1 (P2): an error after Switch leaves the UI stale.** `useSettingsState.ts:271–275` adopts path and catalog only
+  on resolve. A failure after Switch (journal clear, catalog read) leaves Settings showing the old root, and the
+  inspector shows removed paths.
+- **S2 (P2): project views are never refreshed after a move.** A failed project re-link (`error` in the DB) still shows
+  as Deployed in the matrix, and `ProjectsPage.tsx:128` does not re-read an already-selected project.
+- **A2 (P3): the preservation limits need a user-facing contract.**
+  - Windows alternate data streams can hold unique bytes and are not verified.
+  - Linux non-`user.*` xattrs (ACLs, capabilities) are outside the compared set.
+
+  These should be named in the CHANGELOG, and a report warning raised when such content is actually detected.
+
+Accepted limit, from both: rename-aside is not isolation from writers. An already-open file descriptor can still write
+into the set-aside copy. This is a concurrent-writer case, not an ordinary workflow. Say "re-verified before removal",
+not "atomic".
+
+## Round 4 direction (orchestrator)
+
+1. **A1 / S4:** before deciding, resume locates the journaled old identity at both its original path and in any
+   `.skills-hub-clean-*` dir.
+   - If the old path is free, restore the copy there.
+   - Otherwise leave it where it is and report it with the skill's id and its actual path (`kept { set_aside }`).
+   - Never reduce an app-created recovery copy to anonymous `unrecorded`.
+2. **S3:** persist the resume report at startup, and add a command that hands it to the frontend once. The frontend
+   folds it through `reportOutcome` and records one Notifications run. It shows a toast only when the report has
+   warnings or failures.
+3. **S1:** on a thrown `move_library`, reconcile through the failure path: re-read settings (the storage path) and the
+   catalog (`loadManagedSkills`).
+4. **S2:** after the move settles, success or failure, App's project world re-reads the selected project's view and
+   the placements. The settings world gets this as an interface App passes in, never by import.
+5. **A2:** any source entry carrying content the comparison can't verify keeps its skill in place as
+   `kept { unrelocatable: unverifiable_metadata }`:
+   - Windows: a non-default ADS;
+   - Linux: `system.*` / `security.*` xattrs, e.g. a POSIX ACL or file capabilities;
+   - macOS: an extended ACL (if cheap to detect).
+
+   The CHANGELOG names the residuals.
