@@ -149,6 +149,11 @@ describe("styles:check", () => {
       assert.equal(html("<script type=\"module\" src='./App.css?x'></script>"), true);
       assert.equal(html('<script>const s = \'<link href="App.css">\';</script>'), false);
       assert.equal(html('<!-- <link href="App.css"> --><a href="/docs/App.css.md">x</a>'), false);
+      // Quote-aware: a `>` inside a quoted value does not end the tag, and a tag-like string in a value is not a tag.
+      assert.equal(html('<link data-label="a > b" rel="stylesheet" href="/src/App.css">'), true);
+      assert.equal(html('<div data-example=\'<link href="App.css">\'></div>'), false);
+      assert.equal(html('<style>a::after { content: "<link href=App.css>"; }</style>'), false);
+      assert.equal(html('<LINK REL=stylesheet HREF=/src/App.css>'), true);
     });
   });
 

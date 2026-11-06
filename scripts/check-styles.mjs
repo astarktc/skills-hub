@@ -152,15 +152,71 @@ export function cssImports(css) {
   return urls;
 }
 
-/** The `href` / `src` of every `<link>` and `<script>` tag, outside comments and script bodies. */
+/**
+ * The `href` / `src` of every `<link>` and `<script>` tag, from a quote-aware
+ * tag scan: comments and raw-text bodies (`<script>`, `<style>`) are skipped,
+ * and an attribute value is consumed whole, so a `>` or a tag-like string
+ * inside quotes neither ends a tag nor starts one.
+ */
 export function htmlReferences(html) {
-  const markup = html
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/(<script\b[^>]*>)[\s\S]*?(<\/script\s*>)/gi, "$1$2");
   const urls = [];
-  for (const tag of markup.matchAll(/<(?:link|script)\b[^>]*>/gi)) {
-    for (const attribute of tag[0].matchAll(/\s(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/gi)) {
-      urls.push(attribute[1] ?? attribute[2] ?? attribute[3]);
+  const lower = html.toLowerCase();
+  let i = 0;
+  while (i < html.length) {
+    if (html.startsWith("<!--", i)) {
+      const close = html.indexOf("-->", i + 4);
+      i = close < 0 ? html.length : close + 3;
+      continue;
+    }
+    if (html[i] !== "<" || !/[a-z]/i.test(html[i + 1] ?? "")) {
+      i++;
+      continue;
+    }
+    // Tag name.
+    let j = i + 1;
+    while (j < html.length && /[^\s/>]/.test(html[j])) j++;
+    const name = lower.slice(i + 1, j);
+    // Attributes, each value consumed whole (quoted or bare).
+    const attributes = [];
+    while (j < html.length && html[j] !== ">") {
+      if (/[\s/]/.test(html[j])) {
+        j++;
+        continue;
+      }
+      let k = j;
+      while (k < html.length && /[^\s/>=]/.test(html[k])) k++;
+      const attrName = lower.slice(j, k);
+      j = k;
+      while (j < html.length && /\s/.test(html[j])) j++;
+      let value = null;
+      if (html[j] === "=") {
+        j++;
+        while (j < html.length && /\s/.test(html[j])) j++;
+        const quote = html[j];
+        if (quote === '"' || quote === "'") {
+          const close = html.indexOf(quote, j + 1);
+          const end = close < 0 ? html.length : close;
+          value = html.slice(j + 1, end);
+          j = end + 1;
+        } else {
+          let end = j;
+          while (end < html.length && /[^\s>]/.test(html[end])) end++;
+          value = html.slice(j, end);
+          j = end;
+        }
+      }
+      if (attrName) attributes.push([attrName, value]);
+    }
+    i = j + 1;
+    if (name === "link" || name === "script") {
+      for (const [attrName, value] of attributes) {
+        if ((attrName === "href" || attrName === "src") && value !== null) urls.push(value);
+      }
+    }
+    // A raw-text element's body is not markup.
+    if (name === "script" || name === "style") {
+      const close = lower.indexOf(`</${name}`, i);
+      i = close < 0 ? html.length : close;
     }
   }
   return urls;
