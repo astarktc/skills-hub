@@ -2082,9 +2082,12 @@ fn give_unverifiable_metadata(path: &Path) -> bool {
     }
     #[cfg(windows)]
     {
+        // Every Windows volume these tests run on (NTFS) holds them: a write
+        // that fails is a broken probe, never a skipped case.
         let mut stream = path.as_os_str().to_os_string();
         stream.push(":skillshub-note");
-        fs::write(PathBuf::from(stream), "unique bytes").is_ok()
+        fs::write(PathBuf::from(stream), "unique bytes").expect("write a named data stream");
+        true
     }
 }
 
