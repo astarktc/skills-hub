@@ -180,3 +180,86 @@ more cautious, but it must never grant ownership. Fix pass 2 removes the inferen
 - **Enable** leaves independent rows as they are. The folder's enabled or disabled state is read from the driver and
   its byte-identical siblings only.
 - **Stored reports:** add the compatibility decoder from finding 8.
+
+---
+
+# Round 3 (Astra): review of fix pass 2 (`c52ff4d`)
+
+- **Reviewer:** GPT-6 Astra (high), 2026-11-06, briefed with the principle only.
+- **Verdict:** **BLOCK** under that principle.
+- **Origin of the findings:**
+  - Finding 9 is a regression this branch introduced.
+  - Findings 10 and 11 predate the PR: the same behaviour is on main at `07c4550`.
+
+## Findings
+
+### 9. P2: global Enable overwrites an independent legacy record that holds the folder key (regression on this branch)
+
+`admit_folders` correctly deletes only the disabled rows on the driver's path (`skill_disable.rs:439–455`). But the
+batch then receives folder keys, not the driver's row (`:527–537`). A successful sync always records under the folder
+key (`global_sync.rs:145–156`), and the upsert replaces whatever row holds that key (`skill_store.rs:1590–1595`).
+
+Reproduced:
+1. An owning `kimi_cli` row records `.config/agents/skills/alpha`.
+2. A disabled, never-synced `amp` Keep marker records `independent`, over a folder the app didn't create.
+3. Disable the shared folder, then Enable it.
+
+The `amp` row becomes `alpha / owned / synced`. Its old path and Keep answer are lost. The existing test only covers
+the reversed keys.
+
+**Fix:** carry the driver's row identity and recorded path through the global write and its settlement. If an
+independent record holds the folder key, keep recording under the driver's legacy key until the redeploy reconciles
+the two. Add the reversed-key test.
+
+### 10. P1: a successful Disable keeps the right to delete whatever later appears at the path (pre-existing)
+
+Ownership is `synced_at.is_some()` (`skill_store.rs:211–213`), and Disable keeps `synced_at` at both scopes
+(`:1651`, `:1685`, `:1721`, `:1742`). Removal therefore plans the path and deletes whatever is there
+(`artifact_removal.rs:593–597`, `:659–671`).
+
+Reproduced: deploy, Disable (the folder is removed), put a different folder at that path, Delete the skill. The
+different folder is deleted. The existing test `an_owned_disabled_target_is_still_removed_by_delete` pins this
+behaviour on main.
+
+**Fix:** clear ownership when Disable removes the artifact or confirms it is absent, and keep it when the removal
+fails. Existing disabled rows need conservative handling on upgrade. Replace the old test with tests that a different
+folder put there later is kept, at both scopes.
+
+### 11. P1: an owning row's old timestamp still authorises overwriting a folder that replaced its copy (pre-existing)
+
+Resync and Propagation grant overwrite whenever the driver `owns_artifact()` (`project_sync.rs:876–878`;
+`propagation.rs:255`, `:407–430`). That checks only the timestamp, not what is at the path now.
+
+Reproduced: assign to a project, delete the link, put a different folder there, resync. It is overwritten and the
+report says `synced=1 failed=0`.
+
+**Fix:** check what is at the path before replacing it. A link must still point at its expected Library copy; a copy
+needs evidence tied to the content that was deployed. Anything different or unverifiable stays put and goes to the
+overwrite ask. Check again at the point of replacement.
+
+## The implementer's residuals
+
+| # | Residual | Ruling |
+|---|---|---|
+| 1 | The folder-key upsert loses an independent record | Must fix in ticket 09 (finding 9). |
+| 2 | A disabled former owner keeps `synced_at`, so Delete removes a later occupant | Must fix under the principle (finding 10, pre-existing). |
+| 3 | An owning row replaces whatever is at its own path | Must fix under the principle (finding 11, pre-existing). |
+
+## Earlier findings
+
+| # | Status |
+|---|---|
+| 1 | The original reproductions stay closed; finding 9 is a separate problem. |
+| 2 | Closed. |
+| 3 | Closed for rows on the same path. |
+| 4 | Closed. |
+| 5 | Closed: `same_artifact` no longer grants anything, and the hard-link test passes. |
+| 6 | Closed as a sibling-lending finding; finding 11 is the separate timestamp rule. |
+| 7 | Closed at project scope; the global analogue is finding 9. |
+| 8 | Closed. |
+
+**Fixture check (registry scenario):** turning Kimi or Amp on or off moves both together, Pi stays selected, and the
+deploy offer still appears.
+
+**Gate:** `npm run version:check && npm run check` passed (1,399 frontend tests; 1,068 Rust tests, 1 ignored), and
+`cargo test --all` passed. Three throwaway probe tests reproduced findings 9–11.
