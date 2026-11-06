@@ -2147,7 +2147,10 @@ fn a_listing_says_whether_its_reconcile_pass_rewrote_a_status() {
 
     let settled = reconciled_listing(&store, &project.id);
     assert_eq!(settled.assignments[0].status, SyncStatus::Synced);
-    assert!(!settled.rewrote_statuses, "nothing on disk moved: no rewrite");
+    assert!(
+        !settled.rewrote_statuses,
+        "nothing on disk moved: no rewrite"
+    );
 
     fs::remove_dir_all(&skill_dir).expect("remove source");
     let rewritten = reconciled_listing(&store, &project.id);
