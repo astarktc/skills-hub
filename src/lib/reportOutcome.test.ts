@@ -2585,6 +2585,20 @@ describe("libraryMoveOutcome", () => {
     expect(outcome.warnings).toEqual([]);
   });
 
+  it("a resumed move's headline says it finished an interrupted move", () => {
+    const outcome = libraryMoveOutcome(
+      report({ skills: [moved("a")], deployments: [deployment("a", { status: "relinked", mode: "symlink" })] }),
+      ctx,
+      { resumed: true },
+    );
+    expect(outcome.toast).toMatchObject({
+      tone: "success",
+      message: `libraryMove.report.resumed ${JSON.stringify({
+        summary: 'outcome.done.moved {"count":1} · outcome.done.relinked {"count":1}',
+      })}`,
+    });
+  });
+
   it("an old copy that could not be removed is a failure", () => {
     const refused = { code: "REMOVAL_REFUSED", path: "/old/a", resolved: "/x", reason: "resolvesElsewhere" } as const;
     const outcome = libraryMoveOutcome(

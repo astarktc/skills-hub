@@ -1778,8 +1778,15 @@ function keptOldCopyKeys(reason: LeftBehindReason): { title: string; message: st
  * (warnings). Quiet notes name the old
  * folder and every unrecorded entry left in it. The catalog is replaced from
  * the command's own response, so nothing reloads, and Settings stays open.
+ *
+ * `resumed`: the report of a move a crash interrupted, finished by the
+ * startup resume (or first thing by the next move) — its headline says so.
  */
-export function libraryMoveOutcome(report: LibraryMoveReport, ctx: ReportContext): Outcome<PlainEntry> {
+export function libraryMoveOutcome(
+  report: LibraryMoveReport,
+  ctx: ReportContext,
+  opts: { resumed?: boolean } = {},
+): Outcome<PlainEntry> {
   const out = empty();
   out.completion = { reload: false, closeModal: false, conflict: false };
   const counts = libraryMoveCounts(report);
@@ -1885,6 +1892,11 @@ export function libraryMoveOutcome(report: LibraryMoveReport, ctx: ReportContext
       : skipped > 0 || stillKept > 0
         ? "skipped"
         : "success";
-  out.toast = toast(tone, parts.join(HEADLINE_SEPARATOR), detailOf(out.notes));
+  const summary = parts.join(HEADLINE_SEPARATOR);
+  out.toast = toast(
+    tone,
+    opts.resumed ? ctx.t("libraryMove.report.resumed", { summary }) : summary,
+    detailOf(out.notes),
+  );
   return out;
 }

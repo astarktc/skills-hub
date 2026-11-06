@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AppSettings,
   LibraryMoveProgress,
+  LibraryMoveResultDto,
   SettingUpdate,
   SettingsBounds,
 } from "../components/skills/types";
 import { createProgressChannel, pickFolder, setZoom } from "../lib/platform";
 import { libraryMoveOutcome } from "../lib/reportOutcome";
 import { invokeTauri, isTauri } from "../lib/tauri";
+import type { ProjectState } from "../components/projects/useProjectState";
 import type { SkillLibrary } from "./useSkillLibrary";
 import type { StatusReporter, TranslateFn } from "./useStatusReporter";
 import type { SurfaceState } from "./useSurfaceState";
@@ -46,8 +48,17 @@ export type SettingsStateDeps = {
   >;
   /** The surface module: Move Library folder's confirmation. */
   surface: Pick<SurfaceState, "ask">;
-  /** The skills world: the move answers the catalog it settled (`{ report, skills }`). */
-  library: Pick<SkillLibrary, "replaceCatalog">;
+  /**
+   * The skills world: the move answers the catalog it settled (`{ report,
+   * skills }`); a move that throws is reconciled by re-reading it.
+   */
+  library: Pick<SkillLibrary, "replaceCatalog" | "loadManagedSkills">;
+  /**
+   * The project world: the move re-points every project link and answers no
+   * project view, so once it settles — resolved or thrown — the world
+   * re-reads what it shows.
+   */
+  projects: Pick<ProjectState, "reloadViews">;
 };
 
 /** The header progress line of each Move Library folder phase. */
@@ -78,11 +89,13 @@ export function useSettingsState({
   reporter,
   surface,
   library,
+  projects,
 }: SettingsStateDeps) {
   const { notifyError, setSuccessToastMessage, notify, runAction, reportProgress, applyOutcome } =
     reporter;
   const { ask } = surface;
-  const { replaceCatalog } = library;
+  const { replaceCatalog, loadManagedSkills } = library;
+  const { reloadViews } = projects;
   const [themePreference, setThemePreference] = useState<
     "system" | "light" | "dark"
   >(() => storedThemePreference.read());
@@ -205,6 +218,28 @@ export function useSettingsState({
       });
   }, [adoptSettings, notifyError]);
 
+  /**
+   * A Library move a crash interrupted is finished by a resume (at startup,
+   * or first thing by the next move) that nobody watched: take its report —
+   * the backend hands it out once — and record it as one run, toasting only
+   * when it left something to act on.
+   */
+  const takeResumedMove = useCallback(async () => {
+    const report = await invokeTauri("takeResumedLibraryMove");
+    if (!report) return;
+    await applyOutcome(libraryMoveOutcome(report, { t }, { resumed: true }), {
+      background: { label: t("libraryMove.resumedLabel") },
+    });
+  }, [applyOutcome, t]);
+
+  // Once per app (a ref, so StrictMode's second effect run takes nothing).
+  const resumedTaken = useRef(false);
+  useEffect(() => {
+    if (!isTauri || resumedTaken.current) return;
+    resumedTaken.current = true;
+    takeResumedMove().catch(notifyError);
+  }, [notifyError, takeResumedMove]);
+
   useEffect(() => {
     if (!isTauri) return;
     const handler = (e: KeyboardEvent) => {
@@ -240,7 +275,11 @@ export function useSettingsState({
    * while another runs, header progress, no Cancel — the move is not
    * cancellable). The skills world replaces its catalog and this world its
    * displayed folder from the command's own response; the report is folded
-   * once, by `libraryMoveOutcome`.
+   * once, by `libraryMoveOutcome`. A move that throws may have failed after
+   * its switch, so both are re-read instead (`getSettings`,
+   * `loadManagedSkills`); resolved or thrown, the project world re-reads its
+   * views (a failed project re-link is `error` in the database), and a
+   * resume the move ran first is taken and recorded as its own run.
    */
   const handlePickStoragePath = useCallback(async () => {
     let selected: string | undefined;
@@ -268,13 +307,42 @@ export function useSettingsState({
             message: t(MOVE_PHASE_KEY[progress.phase], { name: progress.name }),
           }),
         );
-        const response = await invokeTauri("moveLibrary", preview.destination, channel);
+        let response: LibraryMoveResultDto;
+        try {
+          response = await invokeTauri("moveLibrary", preview.destination, channel);
+        } catch (err) {
+          // It may have failed after its switch: what is on screen is
+          // re-read, never assumed (the thrown error is the report).
+          await Promise.all([
+            invokeTauri("getSettings").then(
+              (next) => setStoragePath(next.central_repo_path),
+              () => {},
+            ),
+            loadManagedSkills(),
+          ]);
+          throw err;
+        } finally {
+          await reloadViews();
+          // A move that first finished an interrupted one: that one's report.
+          await takeResumedMove().catch(() => {});
+        }
         replaceCatalog(response.skills);
         setStoragePath(response.report.to);
         await applyOutcome(libraryMoveOutcome(response.report, { t }));
       },
     );
-  }, [applyOutcome, ask, notifyError, replaceCatalog, reportProgress, runAction, t]);
+  }, [
+    applyOutcome,
+    ask,
+    loadManagedSkills,
+    notifyError,
+    reloadViews,
+    replaceCatalog,
+    reportProgress,
+    runAction,
+    t,
+    takeResumedMove,
+  ]);
 
   const handleGitCacheCleanupDaysChange = useCallback(
     async (nextDays: number) => {

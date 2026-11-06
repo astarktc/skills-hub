@@ -124,7 +124,7 @@ function App() {
   });
   const exploreIsActive = useCallback(() => areaRef.current === "explore", []);
 
-  const settings = useSettingsState({ t, reporter, surface, library });
+  const settings = useSettingsState({ t, reporter, surface, library, projects });
   const explore = useExploreState({
     t,
     reporter,

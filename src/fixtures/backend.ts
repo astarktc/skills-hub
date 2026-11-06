@@ -1927,6 +1927,8 @@ export function createFixtureBackend(
       };
     },
     moveLibrary: async (destination, onProgress) => moveLibrary(destination, onProgress),
+    // The fixture's moves never crash, so no resume ever waits to be taken.
+    takeResumedLibraryMove: async () => null,
     getToolStatus: async () => {
       await pause(80);
       return toolStatus();

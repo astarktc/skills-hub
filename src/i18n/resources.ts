@@ -1730,12 +1730,14 @@ export const resources = {
         },
         label: "Move Library folder",
         activity: "Moving the Library",
+        resumedLabel: "Finish an interrupted Library move",
         phase: {
           copying: "Copying {{name}}",
           relinking: "Re-linking {{name}}",
           cleaning: "Removing the old copy of {{name}}",
         },
         report: {
+          resumed: "Finished an interrupted Library move: {{summary}}",
           leftBehind_one: "{{count}} left behind",
           leftBehind_other: "{{count}} left behind",
           missingTitle: "{{name}} was not moved",

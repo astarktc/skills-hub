@@ -975,6 +975,28 @@ describe("useStatusReporter applyOutcome", () => {
     expect(toast.info).not.toHaveBeenCalled();
   });
 
+  it("a background run is recorded under its label, toasting only when it carries an error or a warning", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    const background = { label: "Finish an interrupted move" };
+    await act(async () => {
+      await result.current.applyOutcome(
+        outcome({ toast: { kind: "success", tone: "success", message: "3 re-linked" }, errors: [], warnings: [] }),
+        { background },
+      );
+    });
+    expect(result.current.notifications.map((row) => [row.title, row.runLabel])).toEqual([
+      ["3 re-linked", "Finish an interrupted move"],
+    ]);
+    for (const show of [toast.success, toast.info, toast.warning, toast.error]) {
+      expect(vi.mocked(show)).not.toHaveBeenCalled();
+    }
+
+    await act(async () => {
+      await result.current.applyOutcome(outcome({ errors: [] }), { background });
+    });
+    expect(toast.warning).toHaveBeenCalledTimes(1);
+  });
+
   it("a clean success toasts its headline alone: nothing more to report", async () => {
     const { result } = renderHook(() => useStatusReporter(t));
     await act(async () => {

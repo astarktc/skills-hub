@@ -9,6 +9,7 @@ import type {
   AppSettings,
   LibraryMovePreview,
   LibraryMoveProgress,
+  LibraryMoveReport,
   LibraryMoveResultDto,
   SettingUpdate,
 } from "../components/skills/types";
@@ -142,7 +143,13 @@ const noSurface = (): Pick<SurfaceState, "ask"> => ({
 
 function renderSettings(reporter = makeReporter()) {
   return renderHook(() =>
-    useSettingsState({ t, reporter, surface: noSurface(), library: { replaceCatalog: vi.fn() } }),
+    useSettingsState({
+      t,
+      reporter,
+      surface: noSurface(),
+      library: { replaceCatalog: vi.fn(), loadManagedSkills: vi.fn(async () => {}) },
+      projects: { reloadViews: vi.fn(async () => {}) },
+    }),
   );
 }
 
@@ -611,17 +618,20 @@ function renderMove(answer: (preview: LibraryMovePreview) => Promise<AskAnswer>)
     answer(request.preview),
   );
   const replaceCatalog = vi.fn();
+  const loadManagedSkills = vi.fn(async () => {});
+  const reloadViews = vi.fn(async () => {});
   const rendered = renderHook(() => {
     const reporter = useStatusReporter(t);
     const settings = useSettingsState({
       t,
       reporter,
       surface: { ask: ask as unknown as SurfaceState["ask"] },
-      library: { replaceCatalog },
+      library: { replaceCatalog, loadManagedSkills },
+      projects: { reloadViews },
     });
     return { reporter, settings };
   });
-  return { ...rendered, ask, replaceCatalog };
+  return { ...rendered, ask, replaceCatalog, loadManagedSkills, reloadViews };
 }
 
 describe("useSettingsState Move Library folder", () => {
@@ -730,5 +740,197 @@ describe("useSettingsState Move Library folder", () => {
     expect(commandsCalled()).not.toContain("moveLibrary");
     const { toast } = await import("sonner");
     expect(vi.mocked(toast.error)).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round-4 regressions (the round-3 reviews' S1, S2, S3).
+// ---------------------------------------------------------------------------
+
+/** Confirm a move to Library2 and wait for it to settle. */
+async function moveToLibrary2(result: { current: { settings: ReturnType<typeof useSettingsState> } }) {
+  await waitFor(() => expect(result.current.settings.storagePath).toBe("/home/op/.skillshub"));
+  pickFolder.mockResolvedValueOnce(["/home/op/Library2"]);
+  await act(async () => {
+    await result.current.settings.handlePickStoragePath();
+  });
+}
+
+describe("useSettingsState after a Library move settles", () => {
+  // S1: a failure after the switch (dropping the journal, reading the
+  // catalog) used to leave Settings on the old folder and the inspector on
+  // removed paths.
+  it("a move that throws re-reads the Library folder and the catalog", async () => {
+    stubBackend();
+    const base = mockInvoke.getMockImplementation()!;
+    let settingsNow = appSettings();
+    mockInvoke.mockImplementation((command, ...args) => {
+      if (command === "getSettings") return Promise.resolve(settingsNow);
+      if (command === "previewLibraryMove") return Promise.resolve(PREVIEW);
+      if (command === "moveLibrary") {
+        // Switched, then failed reading the catalog.
+        settingsNow = appSettings({ central_repo_path: "/home/op/Library2" });
+        return Promise.reject({ code: "OTHER", message: "database is locked" });
+      }
+      return base(command, ...args);
+    });
+    const { result, replaceCatalog, loadManagedSkills } = renderMove(async () => "confirmed");
+
+    await moveToLibrary2(result);
+
+    expect(result.current.settings.storagePath).toBe("/home/op/Library2");
+    expect(loadManagedSkills).toHaveBeenCalledTimes(1);
+    expect(replaceCatalog).not.toHaveBeenCalled();
+    const { toast } = await import("sonner");
+    expect(vi.mocked(toast.error)).toHaveBeenCalled();
+  });
+
+  // S2: a failed project re-link is `error` in the database; the project
+  // world re-reads its views whether the move resolved or threw.
+  it("the project world re-reads its views after a move that resolved", async () => {
+    const backend = stubMoveBackend();
+    const { result, reloadViews } = renderMove(async () => "confirmed");
+    await waitFor(() => expect(result.current.settings.storagePath).toBe("/home/op/.skillshub"));
+    pickFolder.mockResolvedValueOnce(["/home/op/Library2"]);
+    let done: Promise<void> = Promise.resolve();
+    act(() => {
+      done = result.current.settings.handlePickStoragePath();
+    });
+    await waitFor(() => expect(commandsCalled()).toContain("moveLibrary"));
+    expect(reloadViews).not.toHaveBeenCalled();
+
+    await act(async () => {
+      backend.finish();
+      await done;
+    });
+
+    expect(reloadViews).toHaveBeenCalledTimes(1);
+  });
+
+  it("the project world re-reads its views after a move that threw", async () => {
+    stubBackend();
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) => {
+      if (command === "previewLibraryMove") return Promise.resolve(PREVIEW);
+      if (command === "moveLibrary") return Promise.reject({ code: "OTHER", message: "boom" });
+      return base(command, ...args);
+    });
+    const { result, reloadViews } = renderMove(async () => "confirmed");
+
+    await moveToLibrary2(result);
+
+    expect(reloadViews).toHaveBeenCalledTimes(1);
+  });
+});
+
+// S3: a move a crash interrupted is finished by the startup resume; its
+// report used to reach only the log.
+describe("useSettingsState a resumed Library move", () => {
+  const clean: LibraryMoveReport = {
+    from: "/home/op/.skillshub",
+    to: "/home/op/Library2",
+    skills: [
+      { skill_id: "a", name: "a", status: { status: "moved", from: "/home/op/.skillshub/a", to: "/home/op/Library2/a" } },
+    ],
+    deployments: [
+      {
+        skill_id: "a",
+        name: "a",
+        path: "/home/op/.claude/skills/a",
+        rows: [{ scope: "global_target", id: "a-row", skill_id: "a", tool: "claude_code" }],
+        status: { status: "relinked", mode: "symlink" },
+      },
+    ],
+    left_behind: [{ path: "/home/op/.skillshub", reason: "old_library", skill_id: null, error: null }],
+  };
+  const changed: LibraryMoveReport = {
+    ...clean,
+    left_behind: [
+      ...clean.left_behind,
+      { path: "/home/op/.skillshub/a", reason: "changed_since_copy", skill_id: "a", error: null },
+    ],
+  };
+
+  /** The backend holds one resumed report and hands it out once. */
+  function stubResumed(report: LibraryMoveReport) {
+    stubBackend();
+    const base = mockInvoke.getMockImplementation()!;
+    let waiting: LibraryMoveReport | null = report;
+    mockInvoke.mockImplementation((command, ...args) => {
+      if (command === "takeResumedLibraryMove") {
+        const taken = waiting;
+        waiting = null;
+        return Promise.resolve(taken);
+      }
+      return base(command, ...args);
+    });
+  }
+
+  it("is taken once at startup and recorded as one run, with no toast when nothing needs attention", async () => {
+    stubResumed(clean);
+    const { result } = renderMove(async () => "dismissed");
+
+    await waitFor(() => expect(result.current.reporter.notifications.length).toBeGreaterThan(0));
+
+    expect(commandsCalled().filter((command) => command === "takeResumedLibraryMove")).toHaveLength(1);
+    const runs = new Set(result.current.reporter.notifications.map((entry) => entry.runId));
+    expect(runs.size).toBe(1);
+    expect(result.current.reporter.notifications[0]).toMatchObject({
+      runLabel: "libraryMove.resumedLabel",
+      title: "libraryMove.report.resumed",
+    });
+    const { toast } = await import("sonner");
+    for (const show of [toast.success, toast.info, toast.warning, toast.error]) {
+      expect(vi.mocked(show)).not.toHaveBeenCalled();
+    }
+  });
+
+  it("toasts when the resumed move left a warning", async () => {
+    stubResumed(changed);
+    const { result } = renderMove(async () => "dismissed");
+
+    await waitFor(() => expect(result.current.reporter.notifications.length).toBeGreaterThan(0));
+
+    const { toast } = await import("sonner");
+    expect(vi.mocked(toast.warning)).toHaveBeenCalledTimes(1);
+    expect(
+      result.current.reporter.notifications.some(
+        (entry) => entry.title === "libraryMove.report.changedSinceCopyTitle",
+      ),
+    ).toBe(true);
+  });
+
+  it("a move that first finished an interrupted one hands its report out after it settles", async () => {
+    const backend = stubMoveBackend();
+    const base = mockInvoke.getMockImplementation()!;
+    let waiting: LibraryMoveReport | null = null;
+    mockInvoke.mockImplementation((command, ...args) => {
+      if (command === "takeResumedLibraryMove") {
+        const taken = waiting;
+        waiting = null;
+        return Promise.resolve(taken);
+      }
+      return base(command, ...args);
+    });
+    const { result } = renderMove(async () => "confirmed");
+    await waitFor(() => expect(commandsCalled()).toContain("takeResumedLibraryMove"));
+    await waitFor(() => expect(result.current.settings.storagePath).toBe("/home/op/.skillshub"));
+    pickFolder.mockResolvedValueOnce(["/home/op/Library2"]);
+    let done: Promise<void> = Promise.resolve();
+    act(() => {
+      done = result.current.settings.handlePickStoragePath();
+    });
+    await waitFor(() => expect(commandsCalled()).toContain("moveLibrary"));
+    waiting = changed;
+
+    await act(async () => {
+      backend.finish();
+      await done;
+    });
+
+    expect(commandsCalled().filter((command) => command === "takeResumedLibraryMove")).toHaveLength(2);
+    expect(
+      result.current.reporter.notifications.some((entry) => entry.runLabel === "libraryMove.resumedLabel"),
+    ).toBe(true);
   });
 });

@@ -117,6 +117,15 @@ export type ProjectState = {
   loadPlacementViews: () => Promise<void>;
   /** Where one skill is assigned, from `placementViews` (pure; no read). */
   placementOf: (skillId: string) => SkillPlacementValue;
+  /**
+   * Re-read what this world shows after another world's mutation moved its
+   * Deployments and answered no project view (Move Library folder re-points
+   * every project link and settles a failed one `error`): the selected
+   * project's matrix, and the placement views once a surface has read them
+   * (never read is never shown — the next surface reads fresh). Read
+   * failures keep what is shown; nothing throws.
+   */
+  reloadViews: () => Promise<void>;
   resyncProject: () => Promise<ProjectSyncReport>;
   updateProjectPath: (
     projectId: string,
@@ -608,6 +617,23 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
       return { status: "ready", loaded: true, views: next };
     });
   }, [converge]);
+  const reloadViews = useCallback(async (): Promise<void> => {
+    const reads: Promise<unknown>[] = [];
+    if (selectedProjectId) {
+      reads.push(
+        invokeTauri("getProjectView", selectedProjectId).then(
+          (view) => {
+            if (view.rewrote_statuses) converge();
+            applyView(view);
+          },
+          // What is shown stays; the mutation's own outcome is the report.
+          () => {},
+        ),
+      );
+    }
+    if (placementReadRef.current > 0) reads.push(loadPlacementViews());
+    await Promise.all(reads);
+  }, [applyView, converge, loadPlacementViews, selectedProjectId]);
   const placementOf = useCallback(
     (skillId: string) => skillPlacement(projects, placementViews, skillId),
     [placementViews, projects],
@@ -725,6 +751,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
       placementViews,
       loadPlacementViews,
       placementOf,
+      reloadViews,
       resyncProject,
       updateProjectPath,
       resyncAll,
@@ -754,6 +781,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
       placementViews,
       loadPlacementViews,
       placementOf,
+      reloadViews,
       resyncProject,
       updateProjectPath,
       resyncAll,
