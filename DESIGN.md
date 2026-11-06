@@ -1142,7 +1142,11 @@ Checkbox `focusableWhenDisabled`.
   and focus (`visibility`, so nothing moves). The checkbox's name carries all of it: "docx in Claude Code: copy
   missing — the deployed copy is gone — Deploy this to fix, also global". **Deploy this** (`ghost icon-sm`, "Deploy
   {skill} in {harness}") follows an out-of-date, copy-missing or failed cell; it pends while it runs and, once the cell is healthy, hands its focus to the
-  cell's checkbox. A cell in flight shows a spinner and holds focus (`focusableWhenDisabled`). With the folder
+  cell's checkbox. A cell its toggle just un-assigned offers **Undo** (`ghost accent sm`, "Undo — deploy {skill} in
+  {harness} again") in that place for 5 s (D21, the inspector's targets rule): Undo is the cell's toggle back on, and
+  focus goes to the cell's checkbox as Undo leaves (spent or expired). No Undo follows a removal that failed (the row
+  stays, ADR-0002) or a skill whose central copy is gone (nothing to re-deploy). A cell in flight shows a spinner and
+  holds focus (`focusableWhenDisabled`). With the folder
   missing, cells and row verbs are disabled with "Folder not found — update the path to change deployments".
 - **Row verbs** (the "All harnesses" column, `ghost sm`): **Deploy to all** (`accent`) — named "Deploy to all
   configured harnesses — {skill}" — and **Remove from all**, both the door's verbs (`assignToProject` /

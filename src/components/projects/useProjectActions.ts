@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { pickFolder } from "../../lib/platform";
 import {
   projectRemovalOutcome,
@@ -9,6 +9,7 @@ import {
   describeRefusal,
   pendingCellKeys,
   refusalFor,
+  UNDO_WINDOW_MS,
 } from "../../lib/actionLifecycle";
 import type { ProjectState } from "./useProjectState";
 import type { IgnoreUpdateOptions } from "./types";
@@ -167,11 +168,31 @@ export function useProjectActions({ t, state, catalog, reporter, surface }: Proj
     });
   }, [applyOutcome, label, reporter, runAction, state, t, toolLabelById]);
 
+  // The cell a toggle-off just un-assigned, for five seconds (D21, #75): one
+  // stray click on a cell removes the project's copy, so the cell offers its
+  // Undo in place, as the inspector's targets list does after a Disable.
+  const [unassigned, setUnassigned] = useState<{ projectId: string; skillId: string; tool: string } | null>(null);
+  useEffect(() => {
+    if (!unassigned) return;
+    const timer = window.setTimeout(() => setUnassigned(null), UNDO_WINDOW_MS);
+    return () => window.clearTimeout(timer);
+  }, [unassigned]);
+  // Offered only while that cell, in the project shown, is still unassigned:
+  // a removal that failed kept its row (ADR-0002), so there is nothing to undo.
+  const undoCell =
+    unassigned &&
+    unassigned.projectId === state.selectedProjectId &&
+    !state.assignments.some((row) => row.skill_id === unassigned.skillId && row.tool === unassigned.tool)
+      ? `${unassigned.skillId}:${unassigned.tool}`
+      : null;
+
   const handleToggleAssignment = useCallback(
     async (skillId: string, tool: string) => {
+      const projectId = state.selectedProjectId;
       await runAction({ subject: { kind: "cell", ids: [`${skillId}:${tool}`] }, label: cellLabel }, async () => {
         const result = await state.toggleAssignment(skillId, tool);
         if (!result) return;
+        if (result.kind === "unassigned" && projectId) setUnassigned({ projectId, skillId, tool });
         await applyOutcome(
           result.kind === "assigned"
             ? projectSyncOutcome(result.report, { t, toolLabelById, action: "toggleOn" })
@@ -180,6 +201,15 @@ export function useProjectActions({ t, state, catalog, reporter, surface }: Proj
       });
     },
     [applyOutcome, cellLabel, runAction, state, t, toolLabelById],
+  );
+
+  /** A cell's Undo: the toggle back on (re-assign), and the Undo is spent. */
+  const handleUndoUnassign = useCallback(
+    async (skillId: string, tool: string) => {
+      setUnassigned(null);
+      await handleToggleAssignment(skillId, tool);
+    },
+    [handleToggleAssignment],
   );
 
   // A cell's Sync this: one assignment re-synced, its cell pending alone.
@@ -242,6 +272,8 @@ export function useProjectActions({ t, state, catalog, reporter, surface }: Proj
     handleResyncProject,
     handleResyncAll,
     handleToggleAssignment,
+    undoCell,
+    handleUndoUnassign,
     handleSyncCell,
     handleRefreshView,
     handleConfigureToolsFromToolbar,

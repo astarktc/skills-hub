@@ -231,3 +231,92 @@ describe("useProjectActions: the matrix applies what a mutation returned", () =>
     expect(result.current.reporter.pending).toBeNull();
   });
 });
+
+describe("useProjectActions: a cell's toggle-off offers Undo for five seconds (#75, D21)", () => {
+  const ROW = VIEW.assignments[0]!;
+  const emptyRemoval = { targets: [], central_removed: false, record_deleted: false, cleared_markers: [] };
+
+  /** A stateful toggle: `s2` on Cursor starts assigned; `keepRow` fails the removal (ADR-0002). */
+  function toggleBackend({ keepRow = false } = {}) {
+    let assigned = true;
+    const view = (): ProjectViewDto => ({
+      ...VIEW,
+      assignments: assigned ? [keepRow ? { ...ROW, status: "error" } : ROW] : [],
+    });
+    mockInvoke.mockImplementation(async (command) => {
+      switch (command) {
+        case "listProjects":
+          return [PROJECT];
+        case "getProjectView":
+          return view();
+        case "toggleProjectSkillAssignment":
+          if (assigned && !keepRow) {
+            assigned = false;
+            return { kind: "unassigned", view: view(), report: emptyRemoval };
+          }
+          if (assigned) return { kind: "unassigned", view: view(), report: emptyRemoval };
+          assigned = true;
+          return { kind: "assigned", view: view(), report: { skipped_projects: [], items: [] } };
+        default:
+          return null;
+      }
+    });
+  }
+
+  async function selected() {
+    const rendered = renderActions();
+    await waitFor(() => expect(rendered.result.current.state.projectsLoading).toBe(false));
+    await act(async () => {
+      await rendered.result.current.state.selectProject("p1");
+    });
+    return rendered.result;
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("offers Undo on the cell it un-assigned, and withdraws it after five seconds", async () => {
+    toggleBackend();
+    const result = await selected();
+    expect(result.current.actions.undoCell).toBeNull();
+    vi.useFakeTimers();
+    await act(async () => {
+      await result.current.actions.handleToggleAssignment("s2", "cursor");
+    });
+    expect(result.current.actions.undoCell).toBe("s2:cursor");
+    act(() => {
+      vi.advanceTimersByTime(4999);
+    });
+    expect(result.current.actions.undoCell).toBe("s2:cursor");
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(result.current.actions.undoCell).toBeNull();
+  });
+
+  it("Undo re-assigns the cell and is spent", async () => {
+    toggleBackend();
+    const result = await selected();
+    await act(async () => {
+      await result.current.actions.handleToggleAssignment("s2", "cursor");
+    });
+    mockInvoke.mockClear();
+    await act(async () => {
+      await result.current.actions.handleUndoUnassign("s2", "cursor");
+    });
+    expect(mockInvoke.mock.calls).toEqual([["toggleProjectSkillAssignment", "p1", "s2", "cursor"]]);
+    expect(result.current.state.assignments.map((a) => `${a.skill_id}:${a.tool}`)).toEqual(["s2:cursor"]);
+    expect(result.current.actions.undoCell).toBeNull();
+  });
+
+  it("a removal that failed keeps the row (ADR-0002) and offers no Undo", async () => {
+    toggleBackend({ keepRow: true });
+    const result = await selected();
+    await act(async () => {
+      await result.current.actions.handleToggleAssignment("s2", "cursor");
+    });
+    expect(result.current.state.assignments).toHaveLength(1);
+    expect(result.current.actions.undoCell).toBeNull();
+  });
+});

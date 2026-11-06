@@ -6,6 +6,7 @@ import { Segmented, SegmentedItem } from "@/components/ui/segmented";
 import type { SkillActions } from "../../../hooks/useSkillActions";
 import { usePersistedPreference } from "../../../hooks/usePersistedPreference";
 import { inspectorTargetsViewPreference } from "../../../lib/preferences";
+import { UNDO_WINDOW_MS } from "../../../lib/actionLifecycle";
 import {
   stripMarkName,
   targetActions,
@@ -18,8 +19,6 @@ import StripMarkIcon from "../StripMarkIcon";
 import type { ManagedSkill } from "../types";
 import InspectorSection from "./InspectorSection";
 
-/** How long "Removed from {Tool} · Undo" stays after a pair-grain Disable. */
-export const UNDO_WINDOW_MS = 5000;
 
 type TargetsSectionProps = {
   skill: ManagedSkill;

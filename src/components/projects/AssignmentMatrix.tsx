@@ -41,6 +41,9 @@ export type AssignmentMatrixProps = {
   blockedReason: string | null;
   matrixLoading: boolean;
   onToggleAssignment: (skillId: string, tool: string) => void;
+  /** The cell (`skillId:tool`) a toggle-off just un-assigned: it offers Undo (D21). */
+  undoCell: string | null;
+  onUndoUnassign: (skillId: string, tool: string) => void;
   onSyncCell: (skillId: string, tool: string) => void;
   onAssignAll: (skill: ManagedSkill) => void;
   onUnassignAll: (skill: ManagedSkill) => void;
@@ -75,6 +78,8 @@ const AssignmentMatrix = ({
   blockedReason,
   matrixLoading,
   onToggleAssignment,
+  undoCell,
+  onUndoUnassign,
   onSyncCell,
   onAssignAll,
   onUnassignAll,
@@ -134,6 +139,8 @@ const AssignmentMatrix = ({
     pathMissing,
     blockedReason,
     onToggleAssignment,
+    undoCell,
+    onUndoUnassign,
     onSyncCell,
     onAssignAll,
     onUnassignAll,
@@ -275,6 +282,8 @@ type MatrixRowProps = {
   pathMissing: boolean;
   blockedReason: string | null;
   onToggleAssignment: (skillId: string, tool: string) => void;
+  undoCell: string | null;
+  onUndoUnassign: (skillId: string, tool: string) => void;
   onSyncCell: (skillId: string, tool: string) => void;
   onAssignAll: (skill: ManagedSkill) => void;
   onUnassignAll: (skill: ManagedSkill) => void;
@@ -291,6 +300,8 @@ const MatrixRow = memo(
     pathMissing,
     blockedReason,
     onToggleAssignment,
+    undoCell,
+    onUndoUnassign,
     onSyncCell,
     onAssignAll,
     onUnassignAll,
@@ -323,6 +334,9 @@ const MatrixRow = memo(
             pathMissing={pathMissing}
             blockedReason={blockedReason}
             onToggle={onToggleAssignment}
+            // Undo re-deploys from the central copy: none to deploy, no Undo.
+            undoable={undoCell === `${skill.id}:${column.key}` && skill.unlocatable !== "central_missing"}
+            onUndo={onUndoUnassign}
             onSync={onSyncCell}
             t={t}
           />
@@ -371,6 +385,9 @@ type MatrixCellViewProps = {
   pathMissing: boolean;
   blockedReason: string | null;
   onToggle: (skillId: string, tool: string) => void;
+  /** The cell was just un-assigned by its toggle: Undo shows (D21, five seconds). */
+  undoable: boolean;
+  onUndo: (skillId: string, tool: string) => void;
   onSync: (skillId: string, tool: string) => void;
   t: TFunction;
 };
@@ -379,24 +396,48 @@ type MatrixCellViewProps = {
  * One cell: a `<label>` spanning the cell is the checkbox's hit area (≥ the
  * 24 px floor: the cell is the 36 px row), then the mark, "also global" and
  * the state's word (shown on hover and focus; always in the checkbox's
- * name), then **Sync this** for a stale, missing or failed assignment.
+ * name), then **Sync this** for a stale, missing or failed assignment — or,
+ * for five seconds after the cell's toggle-off, **Undo** (D21).
  */
-function MatrixCellView({ skill, column, assignment, inFlight, pathMissing, blockedReason, onToggle, onSync, t }: MatrixCellViewProps) {
+function MatrixCellView({
+  skill,
+  column,
+  assignment,
+  inFlight,
+  pathMissing,
+  blockedReason,
+  onToggle,
+  undoable,
+  onUndo,
+  onSync,
+  t,
+}: MatrixCellViewProps) {
   const cell = matrixCell({ skill, tool: { key: column.key, label: column.label }, assignment, inFlight }, t);
   const blocked = blockedReason !== null;
   const reason = pathMissing ? t("projectsSurface.cell.folderMissing") : blockedReason;
   const toggle = useCallback(() => onToggle(skill.id, column.key), [column.key, onToggle, skill.id]);
   const hint = [cell.word, cell.detail].filter(Boolean).join(" \u2014 ");
-  // Sync this goes once the cell is healthy: if it held focus, the cell's
-  // checkbox takes it (D21 — never <body>).
+  // Sync this goes once the cell is healthy, and Undo once spent or expired:
+  // if the one leaving held focus, the cell's checkbox takes it (D21 — never
+  // <body>).
   const checkboxRef = useRef<HTMLButtonElement>(null);
-  const repairFocused = useRef(false);
+  const trailingFocused = useRef(false);
   const repairable = cell.repairs.includes("sync");
+  const trailing = undoable ? "undo" : repairable ? "sync" : null;
   useLayoutEffect(() => {
-    if (repairable || !repairFocused.current) return;
-    repairFocused.current = false;
+    if (trailing || !trailingFocused.current) return;
+    trailingFocused.current = false;
     checkboxRef.current?.focus();
-  }, [repairable]);
+  }, [trailing]);
+  const trailingFocus = {
+    onFocus: () => {
+      trailingFocused.current = true;
+    },
+    onBlur: (event: React.FocusEvent<HTMLButtonElement>) => {
+      // A blur from the button's own removal keeps the flag.
+      if (event.currentTarget.isConnected) trailingFocused.current = false;
+    },
+  };
   return (
     <td data-cell-state={cell.state} data-matrix-col={column.key} className="group/cell h-row border-b border-border p-0">
       <span className="flex h-full items-center">
@@ -431,7 +472,29 @@ function MatrixCellView({ skill, column, assignment, inFlight, pathMissing, bloc
             </span>
           ) : null}
         </label>
-        {repairable ? (
+        {trailing === "undo" ? (
+          <Button
+            variant="ghost"
+            tone="accent"
+            size="sm"
+            className="mr-1"
+            aria-label={t("projectsSurface.cell.undoNamed", { skill: skill.name, tool: column.label })}
+            title={reason ?? t("projectsSurface.cell.undoNamed", { skill: skill.name, tool: column.label })}
+            aria-description={reason ?? undefined}
+            disabled={pathMissing || blocked}
+            focusableWhenDisabled={!pathMissing}
+            {...trailingFocus}
+            onClick={() => {
+              // Undo is the cell's own toggle back on: focus stays on the
+              // cell, at its checkbox, as the Undo goes (D21).
+              trailingFocused.current = false;
+              checkboxRef.current?.focus();
+              onUndo(skill.id, column.key);
+            }}
+          >
+            {t("projectsSurface.cell.undo")}
+          </Button>
+        ) : trailing === "sync" ? (
           <Button
             variant="ghost"
             size="icon-sm"
@@ -442,13 +505,7 @@ function MatrixCellView({ skill, column, assignment, inFlight, pathMissing, bloc
             disabled={pathMissing || blocked}
             focusableWhenDisabled={!pathMissing}
             pending={inFlight}
-            onFocus={() => {
-              repairFocused.current = true;
-            }}
-            onBlur={(event) => {
-              // A blur from the button's own removal keeps the flag.
-              if (event.currentTarget.isConnected) repairFocused.current = false;
-            }}
+            {...trailingFocus}
             onClick={() => onSync(skill.id, column.key)}
           >
             <RefreshCw />

@@ -161,6 +161,13 @@ export function heldRefusalNotice(
 // Focus after a mutation (D21)
 // ---------------------------------------------------------------------------
 
+/**
+ * How long an inline Undo stays after a removal the operator can take back
+ * in place (D21): the inspector's "Removed from {Tool} · Undo" after a
+ * pair-grain Disable, and a matrix cell's Undo after its toggle-off.
+ */
+export const UNDO_WINDOW_MS = 5000;
+
 /** Where focus goes; resolved against the DOM by `resolveFocusTarget`. */
 export type FocusTarget =
   /** The control that started the action (Disable / Enable / Retry / …). */

@@ -1239,6 +1239,8 @@ export const resources = {
           alsoGlobal: "also global",
           syncing: "deploying\u2026",
           syncThisNamed: "Deploy {{skill}} in {{tool}}",
+          undo: "Undo",
+          undoNamed: "Undo \u2014 deploy {{skill}} in {{tool}} again",
           folderMissing: "Folder not found \u2014 update the path to change deployments",
         },
         legend: {

@@ -193,6 +193,8 @@ const ProjectsPage = ({
     handleResyncProject,
     handleResyncAll,
     handleToggleAssignment,
+    undoCell,
+    handleUndoUnassign,
     handleSyncCell,
     handleRefreshView,
     handleConfigureToolsFromToolbar,
@@ -333,6 +335,8 @@ const ProjectsPage = ({
                   blockedReason={blockedReason}
                   matrixLoading={state.matrixLoading}
                   onToggleAssignment={(skillId, tool) => void handleToggleAssignment(skillId, tool)}
+                  undoCell={undoCell}
+                  onUndoUnassign={(skillId, tool) => void handleUndoUnassign(skillId, tool)}
                   onSyncCell={(skillId, tool) => void handleSyncCell(skillId, tool)}
                   onAssignAll={handleAssignAll}
                   onUnassignAll={handleUnassignAll}
