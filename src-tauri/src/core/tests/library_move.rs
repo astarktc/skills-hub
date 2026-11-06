@@ -815,3 +815,120 @@ fn case_colliding_copy_names_preserve_both_skills() {
         "two folders, not one"
     );
 }
+
+/// Review #2: the move is a relocation, not a deploy — `.git` and dotfiles
+/// travel with the skill, byte for byte, before the original is removed.
+#[test]
+fn the_move_keeps_git_history_and_dotfiles() {
+    let mut f = fixture(&[]);
+    let alpha = f.install("alpha");
+    let old = f.central(&alpha);
+    fs::create_dir_all(old.join(".git/objects/ab")).unwrap();
+    fs::write(old.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    fs::write(old.join(".git/objects/ab/cdef"), [0u8, 1, 2, 255]).unwrap();
+    fs::write(old.join(".env.example"), "KEY=").unwrap();
+
+    f.run();
+
+    let new = f.central(&alpha);
+    assert!(!old.exists(), "the original was removed");
+    assert_eq!(
+        fs::read_to_string(new.join(".git/HEAD")).unwrap(),
+        "ref: refs/heads/main\n",
+        "the move must not delete the only git history"
+    );
+    assert_eq!(
+        fs::read(new.join(".git/objects/ab/cdef")).unwrap(),
+        vec![0u8, 1, 2, 255]
+    );
+    assert_eq!(fs::read_to_string(new.join(".env.example")).unwrap(), "KEY=");
+}
+
+/// Review #2: a link inside the skill is recreated as a link with its text
+/// verbatim — never followed, never dropped.
+#[cfg(unix)]
+#[test]
+fn the_move_keeps_internal_links_as_links() {
+    use std::os::unix::fs::symlink;
+    let mut f = fixture(&[]);
+    let alpha = f.install("alpha");
+    let old = f.central(&alpha);
+    symlink("refs/notes.md", old.join("notes-link.md")).unwrap();
+    symlink("refs", old.join("refs-alias")).unwrap();
+    symlink("/nonexistent/outside", old.join("dangling")).unwrap();
+
+    f.run();
+
+    let new = f.central(&alpha);
+    for (name, text) in [
+        ("notes-link.md", "refs/notes.md"),
+        ("refs-alias", "refs"),
+        ("dangling", "/nonexistent/outside"),
+    ] {
+        let link = new.join(name);
+        assert!(is_link(&link), "{name} is still a link");
+        assert_eq!(fs::read_link(&link).unwrap(), PathBuf::from(text));
+    }
+    assert_eq!(
+        fs::read_to_string(new.join("notes-link.md")).unwrap(),
+        "notes"
+    );
+    assert!(!old.exists());
+}
+
+/// What a skill the move kept in place says about it.
+fn kept_reason(report: &LibraryMoveReport, id: &str) -> crate::core::library_move::SkillKept {
+    match &report.skills.iter().find(|s| s.skill_id == id).unwrap().status {
+        SkillMoveStatus::Kept { reason } => reason.clone(),
+        other => panic!("expected {id} kept, got {other:?}"),
+    }
+}
+
+/// Review #2: a skill holding something the move cannot relocate faithfully
+/// stays where it is — record, bytes and Deployments untouched — and the
+/// report says what and why.
+#[cfg(unix)]
+#[test]
+fn a_skill_that_cannot_be_relocated_faithfully_stays_where_it_is() {
+    use crate::core::library_move::{SkillKept, UnrelocatableCause};
+    use std::os::unix::fs::symlink;
+    let mut f = fixture(&["claude_code"]);
+    let into_own = f.install("into-own");
+    let escapes = f.install("escapes");
+    let special = f.install("special");
+    let fine = f.install("fine");
+    f.sync(&into_own, &["claude_code"]);
+    let into_own_old = f.central(&into_own);
+    symlink(into_own_old.join("refs"), into_own_old.join("abs-refs")).unwrap();
+    let escapes_old = f.central(&escapes);
+    symlink("../fine/refs", escapes_old.join("sibling")).unwrap();
+    let special_old = f.central(&special);
+    let made = std::process::Command::new("mkfifo")
+        .arg(special_old.join("pipe"))
+        .status()
+        .expect("mkfifo");
+    assert!(made.success());
+
+    let report = f.run();
+
+    let cases = [
+        (&into_own, &into_own_old, UnrelocatableCause::LinkIntoOldLibrary, "abs-refs"),
+        (&escapes, &escapes_old, UnrelocatableCause::LinkEscapes, "sibling"),
+        (&special, &special_old, UnrelocatableCause::SpecialFile, "pipe"),
+    ];
+    for (id, old, expected, entry_name) in cases {
+        match kept_reason(&report, id) {
+            SkillKept::Unrelocatable { entry, cause } => {
+                assert_eq!(cause, expected, "{entry_name}");
+                assert_eq!(PathBuf::from(entry), old.join(entry_name));
+            }
+            other => panic!("expected unrelocatable, got {other:?}"),
+        }
+        assert_eq!(&f.central(id), old, "record keeps its path");
+        assert!(old.join("SKILL.md").is_file(), "original kept");
+    }
+    let link = f.home().join(".claude/skills/into-own");
+    assert!(resolves_to(&link, &into_own_old), "its Deployment untouched");
+    assert!(report.deployments.iter().all(|d| d.skill_id != into_own));
+    assert!(f.central(&fine).starts_with(f.dest()), "the rest moved");
+}

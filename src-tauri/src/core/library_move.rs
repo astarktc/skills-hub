@@ -45,27 +45,27 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Serialize;
 use specta::Type;
 
 use super::artifact_removal::{
     remove_former_central_copy_unlocked, remove_staged_library_copy_unlocked, RowRef,
 };
-use super::content_identity::{self, Comparison, Source};
+use super::content_identity::{self, Source};
 use super::errors::{CommandError, LibraryDestinationRefusal, SignalError};
 use super::git_cache;
 use super::installer::InstallerPaths;
 use super::mutation_guard;
 use super::project_ops;
 use super::project_sync::resolve_assignment_artifact;
-use super::removal_fence::ProtectedLibrary;
+use super::removal_fence::{Place, ProtectedLibrary};
 use super::settings;
 use super::skill_store::{
     AssignmentTransition, SkillRecord, SkillStore, SkillTargetRecord, TargetTransition,
 };
 use super::sync_engine::{
-    copy_dir_recursive, sync_dir_for_tool_with_overwrite, sync_dir_for_tool_within_root,
+    sync_dir_for_tool_with_overwrite, sync_dir_for_tool_within_root,
     SyncOutcome,
 };
 use super::sync_status::{SyncMode, SyncStatus};
@@ -160,6 +160,40 @@ pub struct SkillMoveOutcome {
 pub enum SkillMoveStatus {
     Moved { from: String, to: String },
     Skipped { reason: SkillMoveSkip },
+    /// Not moved: its copy stays where it is recorded, untouched, and so do
+    /// its Deployments.
+    Kept { reason: SkillKept },
+}
+
+/// Why a locatable skill was kept where it is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SkillKept {
+    /// Something in its copy cannot be relocated faithfully: `entry` (the
+    /// first one found, as it sits in the old copy) and why.
+    Unrelocatable {
+        entry: String,
+        cause: UnrelocatableCause,
+    },
+    /// Its recorded copy is physically the same folder as another skill's,
+    /// or holds or lies inside it (`with_skill_id`): the records alias one
+    /// set of bytes, so neither is moved.
+    SharedCopy { with_skill_id: String },
+}
+
+/// Why an entry cannot be relocated faithfully.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum UnrelocatableCause {
+    /// An absolute link into the old Library (its own copy included): after
+    /// the move it would still point at the old place.
+    LinkIntoOldLibrary,
+    /// A relative link that reaches outside the skill's own folder: from the
+    /// new place it would point somewhere else.
+    LinkEscapes,
+    /// Not a file, folder or link (a FIFO, socket or device): it cannot be
+    /// copied.
+    SpecialFile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
@@ -275,7 +309,7 @@ pub fn move_library(
 
         let (locatable, missing): (Vec<SkillRecord>, Vec<SkillRecord>) =
             skills.into_iter().partition(is_locatable);
-        let moved = copy_phase(store, paths, dest, locatable, &mut on_progress)?;
+        let Copied { moved, kept } = copy_phase(store, paths, dest, locatable, &mut on_progress)?;
 
         let switch: Vec<(String, String)> = moved
             .iter()
@@ -300,6 +334,11 @@ pub fn move_library(
                 },
             })
             .collect();
+        outcomes.extend(kept.into_iter().map(|(skill, reason)| SkillMoveOutcome {
+            skill_id: skill.id,
+            name: skill.name,
+            status: SkillMoveStatus::Kept { reason },
+        }));
         outcomes.extend(missing.into_iter().map(|skill| SkillMoveOutcome {
             skill_id: skill.id,
             name: skill.name,
@@ -508,8 +547,15 @@ fn is_locatable(skill: &SkillRecord) -> bool {
 struct Moved {
     skill: SkillRecord,
     old: PathBuf,
-    old_physical: PathBuf,
+    old_place: Place,
     new: PathBuf,
+}
+
+/// What the copy phase settled: the skills it copied and verified, and the
+/// locatable ones it keeps where they are.
+struct Copied {
+    moved: Vec<Moved>,
+    kept: Vec<(SkillRecord, SkillKept)>,
 }
 
 fn copy_phase(
@@ -518,10 +564,22 @@ fn copy_phase(
     dest: &Path,
     locatable: Vec<SkillRecord>,
     on_progress: &mut impl FnMut(LibraryMoveProgress),
-) -> Result<Vec<Moved>> {
+) -> Result<Copied> {
     let total = locatable.len() as u32;
-    let mut moved: Vec<Moved> = Vec::with_capacity(locatable.len());
-    for (done, skill) in locatable.into_iter().enumerate() {
+    // The old Library, physically: its root and every copy about to move.
+    // An absolute link into any of them would not follow the move.
+    let mut old_library = vec![Place::of(&paths.central_dir)?];
+    let mut places = Vec::with_capacity(locatable.len());
+    for skill in &locatable {
+        old_library.push(Place::of(Path::new(&skill.central_path))?);
+        places.push(Place::of(Path::new(&skill.central_path))?);
+    }
+
+    let mut copied = Copied {
+        moved: Vec::with_capacity(locatable.len()),
+        kept: Vec::new(),
+    };
+    for (done, (skill, old_place)) in locatable.into_iter().zip(places).enumerate() {
         on_progress(LibraryMoveProgress {
             phase: LibraryMovePhase::Copying,
             done: done as u32,
@@ -529,39 +587,50 @@ fn copy_phase(
             name: skill.name.clone(),
         });
         let old = PathBuf::from(&skill.central_path);
-        let reserved = reserve(dest, &old, &skill);
-        if let Err(err) = reserved
-            .as_ref()
-            .map_err(|err| anyhow::anyhow!("{err:#}"))
-            .and_then(|new| copy_verified(&old, new))
-        {
-            let staged = moved
-                .iter()
-                .map(|m| m.new.as_path())
-                .chain(reserved.as_deref().ok());
-            let cleanup = rollback(store, paths, dest, staged);
-            let detail = match cleanup {
-                Some(problem) => format!("{err:#}; {problem}"),
-                None => format!("{err:#}"),
-            };
-            anyhow::bail!(SignalError::LibraryCopyFailed {
-                name: skill.name.clone(),
-                path: skill.central_path.clone(),
-                detail,
-            });
+        // The folder this skill reserved, once it has one: staged, so a
+        // failure removes it with the copies before it.
+        let mut reserved: Option<PathBuf> = None;
+        let attempt = (|| -> Result<Option<SkillKept>> {
+            if let Some((entry, cause)) = unrelocatable(&old, &old_place, &paths.central_dir, &old_library)? {
+                return Ok(Some(SkillKept::Unrelocatable {
+                    entry: entry.to_string_lossy().into_owned(),
+                    cause,
+                }));
+            }
+            let new = reserved.insert(reserve(dest, &old, &skill)?);
+            copy_faithfully(&old, new)?;
+            verify_tree(&old, new)?;
+            Ok(None)
+        })();
+        match attempt {
+            Ok(Some(reason)) => copied.kept.push((skill, reason)),
+            Ok(None) => copied.moved.push(Moved {
+                skill,
+                old,
+                old_place,
+                new: reserved.expect("a copied skill reserved its folder"),
+            }),
+            Err(err) => {
+                let staged = copied
+                    .moved
+                    .iter()
+                    .map(|m| m.new.as_path())
+                    .chain(reserved.as_deref());
+                let cleanup = rollback(store, paths, dest, staged);
+                let detail = match cleanup {
+                    Some(problem) => format!("{err:#}; {problem}"),
+                    None => format!("{err:#}"),
+                };
+                anyhow::bail!(SignalError::LibraryCopyFailed {
+                    name: skill.name.clone(),
+                    path: skill.central_path.clone(),
+                    detail,
+                });
+            }
         }
-        let new = reserved?;
-        let old_physical = old.canonicalize().unwrap_or_else(|_| old.clone());
-        moved.push(Moved {
-            skill,
-            old,
-            old_physical,
-            new,
-        });
     }
-    Ok(moved)
+    Ok(copied)
 }
-
 /// Reserve the folder a copy takes in the new Library: its current name, or
 /// `<name>-2`, `<name>-3`, … when that is taken. Taken is the destination
 /// filesystem's answer — an exclusive `create_dir` that reports
@@ -590,17 +659,6 @@ fn reserve(dest: &Path, old: &Path, skill: &SkillRecord) -> Result<PathBuf> {
     unreachable!("a free folder name exists")
 }
 
-/// Copy `old` to `new` (never `.git`, never an internal link) and prove the
-/// bytes arrived: the two must have the same Content identity.
-fn copy_verified(old: &Path, new: &Path) -> Result<()> {
-    copy_dir_recursive(old, new)?;
-    match content_identity::compare(Source::Directory(old), new) {
-        Comparison::Same => Ok(()),
-        Comparison::Different => anyhow::bail!("the copy's content differs from {:?}", old),
-        Comparison::Unknown => anyhow::bail!("the copy's content could not be verified"),
-    }
-}
-
 /// Remove every staged copy (before the switch). Answers a description of
 /// what could not be removed, for the failure's detail.
 fn rollback<'p>(
@@ -623,6 +681,227 @@ fn rollback<'p>(
 }
 
 // ---------------------------------------------------------------------------
+// Relocation fidelity
+// ---------------------------------------------------------------------------
+//
+// The move relocates a skill's copy; it does not deploy it. The deploy copy
+// (`sync_engine::copy_dir_recursive`) leaves out `.git` and internal links,
+// and Content identity ignores them too — right for a harness, wrong for the
+// one copy of a skill the clean is about to remove. So the move copies every
+// entry, dotfiles and `.git` included, recreates each link as a link with
+// its text verbatim (never followed), and verifies the result as a whole
+// tree: the same entries, the same kinds, the same file bytes (and, on Unix,
+// modes) and the same link texts.
+
+/// The first entry of the skill's old copy `old` (physically `old_place`)
+/// that a verbatim copy elsewhere would not reproduce, and why — `None` when
+/// the whole tree relocates faithfully. `old_root` is the old Library folder
+/// as configured; `old_library` the old Library physically (its root and
+/// every copy that moves).
+///
+/// * An absolute link into the old Library would still point there after
+///   the move (and dangle once the clean removes its target).
+/// * A relative link that reaches outside the skill's folder — lexically, or
+///   as the filesystem resolves it — would point elsewhere from the new place.
+/// * A FIFO, socket or device cannot be copied.
+///
+/// Every other link (relative inside the skill, absolute elsewhere, dangling
+/// either way) reads the same from the new place.
+fn unrelocatable(
+    old: &Path,
+    old_place: &Place,
+    old_root: &Path,
+    old_library: &[Place],
+) -> Result<Option<(PathBuf, UnrelocatableCause)>> {
+    let mut pending: Vec<(PathBuf, Vec<std::ffi::OsString>)> = vec![(old.to_path_buf(), vec![])];
+    while let Some((dir, depth)) = pending.pop() {
+        let entries = std::fs::read_dir(&dir).with_context(|| format!("read {:?}", dir))?;
+        for entry in entries {
+            let entry = entry.with_context(|| format!("read {:?}", dir))?;
+            let path = entry.path();
+            let kind = entry
+                .file_type()
+                .with_context(|| format!("stat {:?}", path))?;
+            if kind.is_dir() {
+                let mut below = depth.clone();
+                below.push(entry.file_name());
+                pending.push((path, below));
+            } else if kind.is_symlink() {
+                let text = std::fs::read_link(&path).with_context(|| format!("read {:?}", path))?;
+                let resolved = path.canonicalize().ok().map(|p| Place::of(&p)).transpose()?;
+                let cause = if text.is_absolute() {
+                    let lexically_old = text.starts_with(old) || text.starts_with(old_root);
+                    let physically_old = resolved
+                        .as_ref()
+                        .is_some_and(|at| old_library.iter().any(|lib| at.within(lib)));
+                    (lexically_old || physically_old)
+                        .then_some(UnrelocatableCause::LinkIntoOldLibrary)
+                } else {
+                    let escapes_lexically = escapes(&depth, &text);
+                    let escapes_physically = resolved
+                        .as_ref()
+                        .is_some_and(|at| !at.within(old_place));
+                    (escapes_lexically || escapes_physically)
+                        .then_some(UnrelocatableCause::LinkEscapes)
+                };
+                if let Some(cause) = cause {
+                    return Ok(Some((path, cause)));
+                }
+            } else if !kind.is_file() {
+                return Ok(Some((path, UnrelocatableCause::SpecialFile)));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Whether the relative link text `text`, read from a folder `depth` levels
+/// (by name) below the skill's root, climbs out of the skill.
+fn escapes(depth: &[std::ffi::OsString], text: &Path) -> bool {
+    let mut level = depth.len();
+    for component in text.components() {
+        match component {
+            Component::ParentDir => match level.checked_sub(1) {
+                Some(up) => level = up,
+                None => return true,
+            },
+            Component::Normal(_) => level += 1,
+            Component::CurDir => {}
+            // A rooted or prefixed text is not relative.
+            Component::RootDir | Component::Prefix(_) => return true,
+        }
+    }
+    false
+}
+
+/// Copy every entry of `src` into the empty folder `dst`: folders, files
+/// (bytes and permissions), and links recreated with their text verbatim.
+fn copy_faithfully(src: &Path, dst: &Path) -> Result<()> {
+    for entry in std::fs::read_dir(src).with_context(|| format!("read {:?}", src))? {
+        let entry = entry.with_context(|| format!("read {:?}", src))?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        let kind = entry
+            .file_type()
+            .with_context(|| format!("stat {:?}", from))?;
+        if kind.is_symlink() {
+            let text = std::fs::read_link(&from).with_context(|| format!("read {:?}", from))?;
+            make_link(&kind, &text, &to).with_context(|| format!("link {:?} -> {:?}", to, text))?;
+        } else if kind.is_dir() {
+            std::fs::create_dir(&to).with_context(|| format!("create {:?}", to))?;
+            copy_faithfully(&from, &to)?;
+        } else if kind.is_file() {
+            std::fs::copy(&from, &to).with_context(|| format!("copy {:?} -> {:?}", from, to))?;
+        } else {
+            anyhow::bail!("{:?} is not a file, folder or link", from);
+        }
+    }
+    Ok(())
+}
+
+/// Recreate a link of type `kind` reading `text` at `at`.
+fn make_link(kind: &std::fs::FileType, text: &Path, at: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let _ = kind;
+        std::os::unix::fs::symlink(text, at)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileTypeExt;
+        if kind.is_symlink_dir() {
+            std::os::windows::fs::symlink_dir(text, at)
+        } else {
+            std::os::windows::fs::symlink_file(text, at)
+        }
+    }
+}
+
+/// Prove `dst` reproduces `src` as a whole tree: the same entry names, each
+/// of the same kind, files with the same bytes (and mode, on Unix), links
+/// with the same text.
+fn verify_tree(src: &Path, dst: &Path) -> Result<()> {
+    let listing = |dir: &Path| -> Result<Vec<(std::ffi::OsString, std::fs::FileType)>> {
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(dir).with_context(|| format!("read {:?}", dir))? {
+            let entry = entry.with_context(|| format!("read {:?}", dir))?;
+            let kind = entry
+                .file_type()
+                .with_context(|| format!("stat {:?}", entry.path()))?;
+            out.push((entry.file_name(), kind));
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(out)
+    };
+    let (want, got) = (listing(src)?, listing(dst)?);
+    let names = |list: &[(std::ffi::OsString, std::fs::FileType)]| -> Vec<std::ffi::OsString> {
+        list.iter().map(|(name, _)| name.clone()).collect()
+    };
+    if names(&want) != names(&got) {
+        anyhow::bail!("the copy of {:?} does not hold the same entries", src);
+    }
+    for ((name, want_kind), (_, got_kind)) in want.iter().zip(&got) {
+        let (from, to) = (src.join(name), dst.join(name));
+        let differs = || anyhow::anyhow!("the copy of {:?} differs", from);
+        if want_kind.is_symlink() {
+            if !got_kind.is_symlink() || std::fs::read_link(&from)? != std::fs::read_link(&to)? {
+                return Err(differs());
+            }
+        } else if want_kind.is_dir() {
+            if !got_kind.is_dir() {
+                return Err(differs());
+            }
+            verify_tree(&from, &to)?;
+        } else {
+            if !got_kind.is_file() || !same_file_bytes(&from, &to)? {
+                return Err(differs());
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = |p: &Path| std::fs::metadata(p).map(|m| m.permissions().mode());
+                if mode(&from)? != mode(&to)? {
+                    return Err(differs());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether two files hold the same bytes, read in chunks.
+fn same_file_bytes(a: &Path, b: &Path) -> Result<bool> {
+    use std::io::Read;
+    let open = |p: &Path| {
+        std::fs::File::open(p)
+            .map(std::io::BufReader::new)
+            .with_context(|| format!("open {:?}", p))
+    };
+    let (mut a, mut b) = (open(a)?, open(b)?);
+    let (mut x, mut y) = (vec![0u8; 64 * 1024], vec![0u8; 64 * 1024]);
+    loop {
+        let n = read_full(&mut a, &mut x)?;
+        let m = read_full(&mut b, &mut y)?;
+        if n != m || x[..n] != y[..m] {
+            return Ok(false);
+        }
+        if n == 0 {
+            return Ok(true);
+        }
+    }
+    fn read_full(r: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut filled = 0;
+        while filled < buf.len() {
+            match r.read(&mut buf[filled..])? {
+                0 => break,
+                n => filled += n,
+            }
+        }
+        Ok(filled)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Re-point
 // ---------------------------------------------------------------------------
 
@@ -637,15 +916,14 @@ enum Occupant {
     NotOurs,
 }
 
-fn occupant(path: &Path, old_physical: &Path) -> Result<Occupant> {
+fn occupant(path: &Path, old_place: &Place) -> Result<Occupant> {
     let meta = match std::fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Occupant::NotOurs),
         Err(err) => return Err(err.into()),
     };
-    let reaches_old = path
-        .canonicalize()
-        .is_ok_and(|resolved| resolved == old_physical);
+    // Physically, by identity: a link that dangles reaches nothing.
+    let reaches_old = Place::of(path)?.same(old_place);
     Ok(match (meta.file_type().is_symlink(), reaches_old) {
         (true, true) => Occupant::LinkToOld,
         (false, false) => Occupant::Copy,
@@ -811,7 +1089,7 @@ fn relink_one(
     now: i64,
 ) -> Result<RelinkStatus> {
     let attempt = (|| -> Result<Option<SyncOutcome>> {
-        match occupant(path, &m.old_physical)? {
+        match occupant(path, &m.old_place)? {
             Occupant::Copy => return Ok(None),
             Occupant::NotOurs => anyhow::bail!(NotOurs),
             Occupant::LinkToOld => {}
@@ -1015,7 +1293,7 @@ fn is_scratch(name: &str) -> bool {
 fn still_reached(store: &SkillStore, m: &Moved) -> Result<bool> {
     let reaches = |path: &Path| {
         path.canonicalize()
-            .is_ok_and(|resolved| resolved.starts_with(&m.old_physical))
+            .is_ok_and(|resolved| Place::of(&resolved).is_ok_and(|at| at.within(&m.old_place)))
     };
     for row in store.list_skill_targets(&m.skill.id)? {
         if reaches(Path::new(&row.target_path)) {

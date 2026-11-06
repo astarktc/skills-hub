@@ -832,6 +832,44 @@ impl Lineage {
     }
 }
 
+/// Where a path physically is, for a boundary decision that removes nothing
+/// itself (Move Library folder's admission, aliasing and retention checks):
+/// the identity of the path resolved through every alias (when it exists)
+/// and of every directory above it — the same [`Lineage`] removal admission
+/// compares. A path that does not exist is placed by its deepest existing
+/// ancestor. Comparisons are by identity (device + inode on Unix, the final
+/// path on Windows), never by spelling.
+#[derive(Debug)]
+pub(crate) struct Place(Lineage);
+
+impl Place {
+    /// Place `path`, following every link on the way and at its leaf.
+    pub(crate) fn of(path: &Path) -> Result<Self> {
+        Lineage::of(path).map(Self)
+    }
+
+    /// Whether the path itself exists.
+    pub(crate) fn exists(&self) -> bool {
+        self.0.head().is_some()
+    }
+
+    /// Whether this is `other` or lies inside it (for a path that does not
+    /// exist: would lie inside it). `other` must exist.
+    pub(crate) fn within(&self, other: &Place) -> bool {
+        other.0.head().is_some_and(|head| self.0.ids.contains(head))
+    }
+
+    /// Whether both exist and are one directory.
+    pub(crate) fn same(&self, other: &Place) -> bool {
+        matches!((self.0.head(), other.0.head()), (Some(a), Some(b)) if a == b)
+    }
+
+    /// Whether either is, holds or lies inside the other.
+    pub(crate) fn overlaps(&self, other: &Place) -> bool {
+        self.within(other) || other.within(self)
+    }
+}
+
 #[cfg(test)]
 #[path = "tests/removal_fence.rs"]
 mod tests;
