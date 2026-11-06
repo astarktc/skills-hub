@@ -7,7 +7,7 @@
 //! them: Propagation writes to a row's stored path and skips links outright,
 //! and global sync only re-records a pair the operator syncs again (leaving
 //! the old artifact behind). This pass closes that gap, driven entirely by
-//! the registry fact [`ToolAdapter::former_relative_skills_dirs`]; no tool
+//! the registry fact [`ToolAdapter::former_skills_dirs`]; no tool
 //! is named here.
 //!
 //! For each global row whose artifact sits directly in a former dir:
@@ -43,6 +43,7 @@ use anyhow::Result;
 
 use super::artifact_removal::remove_superseded_artifact_unlocked;
 use super::content_identity::{self, Source};
+use super::environment::HostRoots;
 use super::mutation_guard;
 use super::removal_fence::ProtectedLibrary;
 use super::skill_store::{SkillRecord, SkillStore, TargetTransition};
@@ -68,11 +69,11 @@ pub struct RelocationSummary {
 )]
 pub fn relocate_former_global_targets(
     store: &SkillStore,
-    home: &Path,
+    roots: &HostRoots,
     central_dir: &Path,
     now: i64,
 ) -> Result<RelocationSummary> {
-    mutation_guard::serialized(|| relocate_unlocked(store, home, central_dir, now))
+    mutation_guard::serialized(|| relocate_unlocked(store, roots, central_dir, now))
 }
 
 /// One former artifact of one skill, materialised (or not) once and shared
@@ -85,7 +86,7 @@ struct Move {
 
 pub(crate) fn relocate_unlocked(
     store: &SkillStore,
-    home: &Path,
+    roots: &HostRoots,
     central_dir: &Path,
     now: i64,
 ) -> Result<RelocationSummary> {
@@ -108,7 +109,7 @@ pub(crate) fn relocate_unlocked(
                 continue;
             };
             let old = PathBuf::from(&row.target_path);
-            let in_former_dir = former_skills_dirs_in(home, adapter)
+            let in_former_dir = former_skills_dirs_in(roots, adapter)
                 .iter()
                 .any(|dir| old.parent() == Some(dir.as_path()));
             if !in_former_dir {
@@ -128,7 +129,7 @@ pub(crate) fn relocate_unlocked(
             let index = match moves.iter().position(|m| m.old == old) {
                 Some(index) => index,
                 None => {
-                    let outcome = materialise(store, home, central_dir, adapter, &skill, &old);
+                    let outcome = materialise(store, roots, central_dir, adapter, &skill, &old);
                     moves.push(Move {
                         old: old.clone(),
                         adapter,
@@ -164,7 +165,7 @@ pub(crate) fn relocate_unlocked(
         for relocated in moves.iter().filter(|m| m.outcome.is_some()) {
             if let Err(err) = remove_superseded_artifact_unlocked(
                 store,
-                home,
+                roots,
                 central_dir,
                 relocated.adapter,
                 &relocated.old,
@@ -185,7 +186,7 @@ pub(crate) fn relocate_unlocked(
 /// artifact's name. `None` (logged) when the move must not happen now.
 fn materialise(
     store: &SkillStore,
-    home: &Path,
+    roots: &HostRoots,
     central_dir: &Path,
     adapter: &ToolAdapter,
     skill: &SkillRecord,
@@ -209,7 +210,7 @@ fn materialise(
         return None;
     }
     let name = old.file_name()?;
-    let target = skills_dir_in(home, adapter).join(name);
+    let target = skills_dir_in(roots, adapter).join(name);
     let overwrite = content_identity::same_content(
         Source::Managed {
             store,

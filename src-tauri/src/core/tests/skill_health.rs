@@ -5,6 +5,7 @@
 //! `disabled`, an unanswered `TARGET_EXISTS` records nothing, and a project
 //! collision is typed `TARGET_EXISTS`.
 
+use crate::core::environment::HostRoots;
 use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,11 +43,11 @@ struct Fixture {
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let paths = InstallerPaths {
-        home: dir.path().join("home"),
+        roots: HostRoots::under_home(&dir.path().join("home")),
         central_dir: dir.path().join("central"),
         cache_dir: dir.path().join("cache"),
     };
-    fs::create_dir_all(&paths.home).unwrap();
+    fs::create_dir_all(&paths.roots.home).unwrap();
     let source = dir.path().join("source");
     fs::create_dir_all(&source).unwrap();
     fs::write(source.join("SKILL.md"), "---\nname: alpha\n---\nBody\n").unwrap();
@@ -509,9 +510,9 @@ fn a_kept_delete_records_delete_incomplete_with_the_failed_targets_error() {
 #[test]
 fn a_failed_first_sync_records_an_error_row_that_owns_nothing() {
     let f = fixture();
-    crate::core::tool_adapters::mark_installed_in(&f.paths.home, claude());
+    crate::core::tool_adapters::mark_installed_in(&f.paths.roots, claude());
     // A file where the Tool's skills dir should be: the sync cannot land.
-    let root = crate::core::tool_adapters::skills_dir_in(&f.paths.home, claude());
+    let root = crate::core::tool_adapters::skills_dir_in(&f.paths.roots, claude());
     fs::write(&root, "not a directory").unwrap();
 
     let outcomes = sync_skills_to_planned_tools(
@@ -697,7 +698,7 @@ fn override_decisions_cross_the_wire_as_themselves() {
 fn an_enable_meeting_a_folder_in_the_way_keeps_the_pair_disabled() {
     use crate::core::skill_disable::{disable_targets, enable_targets, DisableScope};
     let f = fixture();
-    crate::core::tool_adapters::mark_installed_in(&f.paths.home, claude());
+    crate::core::tool_adapters::mark_installed_in(&f.paths.roots, claude());
     let scope = DisableScope::SkillTool {
         skill_id: f.id.clone(),
         tool: "claude_code".into(),
@@ -705,7 +706,7 @@ fn an_enable_meeting_a_folder_in_the_way_keeps_the_pair_disabled() {
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        &f.paths.home,
+        &f.paths.roots,
         &scope,
         1000,
     )
@@ -723,7 +724,7 @@ fn an_enable_meeting_a_folder_in_the_way_keeps_the_pair_disabled() {
     let report = enable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        &f.paths.home,
+        &f.paths.roots,
         &scope,
         2000,
     )
@@ -769,7 +770,8 @@ fn a_project_first_sync_collision_is_typed_target_exists() {
         })
         .unwrap();
     let target =
-        crate::core::project_sync::resolve_project_sync_target(&project_dir, claude(), "alpha");
+        crate::core::project_sync::resolve_project_sync_target(&project_dir, claude(), "alpha")
+            .expect("project dir");
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("SKILL.md"), "foreign").unwrap();
 

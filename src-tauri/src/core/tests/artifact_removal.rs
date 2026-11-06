@@ -3,6 +3,7 @@
 //! settlement rule (rows deleted on success, kept as `error` on failure —
 //! ADR-0002), shared-skills-dir dedupe, and typed per-target report failures.
 
+use crate::core::environment::HostRoots;
 use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -162,7 +163,7 @@ fn unsync_skill_from_tool(
     let scope = RemovalScope::SkillTool {
         skill_id: skill_id.to_string(),
         tool_key: tool_key.to_string(),
-        home: home.to_path_buf(),
+        roots: HostRoots::under_home(home),
     };
     execute_unlocked(store, &central_repo_of(store), plan(store, &scope)?)
 }
@@ -270,7 +271,8 @@ fn seed_assignment(
         .expect("add assignment");
     let adapter = adapter_by_key(tool).expect("adapter");
     let target =
-        project_sync::resolve_project_sync_target(Path::new(&project.path), adapter, &skill.name);
+        project_sync::resolve_project_sync_target(Path::new(&project.path), adapter, &skill.name)
+            .expect("project dir");
     fs::create_dir_all(&target).expect("create project target");
     fs::write(target.join("SKILL.md"), "# synced\n").unwrap();
     target
@@ -285,7 +287,7 @@ fn home_with(base: &Path, tools: &[&str]) -> PathBuf {
     let home = base.join("home");
     for tool in tools {
         let adapter = adapter_by_key(tool).expect("adapter");
-        mark_installed_in(&home, adapter);
+        mark_installed_in(&HostRoots::under_home(&home), adapter);
     }
     fs::create_dir_all(&home).expect("home");
     home
@@ -326,7 +328,7 @@ fn skill_scope_plans_global_and_project_targets_using_project_scope_mapping() {
     let project = seed_project(&store, tmp.path(), "proj");
     // pi's global and project mappings diverge — the plan must use the project one.
     let pi = adapter_by_key("pi").unwrap();
-    assert_ne!(pi.relative_skills_dir, pi.project_relative_skills_dir);
+    assert_ne!(Some(pi.skills_dir.rel), pi.project_skills_dir);
     let project_target = seed_assignment(&store, &project, &skill, "pi", SyncStatus::Synced);
 
     let planned = plan(
@@ -397,7 +399,7 @@ fn skill_tool_scope_expands_the_shared_dir_group_and_leaves_other_tools_alone() 
         &RemovalScope::SkillTool {
             skill_id: skill.id.clone(),
             tool_key: "amp".to_string(),
-            home: home.clone(),
+            roots: HostRoots::under_home(&home),
         },
     )
     .expect("plan");
@@ -433,7 +435,7 @@ fn skill_tool_scope_plans_the_row_by_its_stored_path_when_no_group_tool_is_insta
         &RemovalScope::SkillTool {
             skill_id: skill.id.clone(),
             tool_key: "cursor".to_string(),
-            home: home.clone(),
+            roots: HostRoots::under_home(&home),
         },
     )
     .expect("plan");
@@ -659,7 +661,7 @@ fn plan_for_a_skill_with_no_rows_is_empty() {
         RemovalScope::SkillTool {
             skill_id: "ghost".to_string(),
             tool_key: "claude_code".to_string(),
-            home: home.clone(),
+            roots: HostRoots::under_home(&home),
         },
         RemovalScope::Project {
             project_id: "ghost".to_string(),

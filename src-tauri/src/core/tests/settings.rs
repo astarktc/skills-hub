@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::core::credentials::{CredentialStore, MemoryStore};
+use crate::core::environment::HostRoots;
 use crate::core::errors::SignalError;
 use crate::core::settings::{
     apply_setting, effective_global_tool_targets, featured_skills_cache, git_cache_cleanup_days,
@@ -261,7 +262,7 @@ fn global_selected_tools_prunes_keys_the_registry_no_longer_knows() {
         Some(vec!["claude_code".to_string()])
     );
     assert_eq!(
-        effective_global_tool_targets(&store, &home).unwrap(),
+        effective_global_tool_targets(&store, &HostRoots::under_home(&home)).unwrap(),
         vec!["claude_code".to_string()]
     );
     // Pruning is a read-side view; the row is repaired by the next save, not here.
@@ -282,7 +283,7 @@ fn global_selected_tools_prunes_keys_the_registry_no_longer_knows() {
 fn install_tool(home: &std::path::Path, key: &str) {
     let adapter =
         crate::core::tool_adapters::adapter_by_key(key).unwrap_or_else(|| panic!("adapter {key}"));
-    crate::core::tool_adapters::mark_installed_in(home, adapter);
+    crate::core::tool_adapters::mark_installed_in(&HostRoots::under_home(home), adapter);
 }
 
 #[test]
@@ -294,7 +295,7 @@ fn effective_global_tool_targets_prefers_the_recorded_selection_over_detection()
 
     // Never configured: detection is the fallback.
     assert_eq!(
-        effective_global_tool_targets(&store, &home).unwrap(),
+        effective_global_tool_targets(&store, &HostRoots::under_home(&home)).unwrap(),
         vec!["claude_code".to_string(), "codex".to_string()]
     );
 
@@ -302,28 +303,30 @@ fn effective_global_tool_targets_prefers_the_recorded_selection_over_detection()
     // operator deselected.
     raw(&store, "global_selected_tools_v1", r#"["claude_code"]"#);
     assert_eq!(
-        effective_global_tool_targets(&store, &home).unwrap(),
+        effective_global_tool_targets(&store, &HostRoots::under_home(&home)).unwrap(),
         vec!["claude_code".to_string()]
     );
 
     // An empty selection means "sync nowhere" — never a fallback to detection.
     raw(&store, "global_selected_tools_v1", "[]");
-    assert!(effective_global_tool_targets(&store, &home)
-        .unwrap()
-        .is_empty());
+    assert!(
+        effective_global_tool_targets(&store, &HostRoots::under_home(&home))
+            .unwrap()
+            .is_empty()
+    );
 
     // A selected-but-uninstalled key survives: the set is never intersected
     // with detection, so downstream can report it as a stale-selection skip.
     raw(&store, "global_selected_tools_v1", r#"["cursor","codex"]"#);
     assert_eq!(
-        effective_global_tool_targets(&store, &home).unwrap(),
+        effective_global_tool_targets(&store, &HostRoots::under_home(&home)).unwrap(),
         vec!["cursor".to_string(), "codex".to_string()]
     );
 
     // A blank row is "never configured", hence detection again.
     raw(&store, "global_selected_tools_v1", "  ");
     assert_eq!(
-        effective_global_tool_targets(&store, &home).unwrap(),
+        effective_global_tool_targets(&store, &HostRoots::under_home(&home)).unwrap(),
         vec!["claude_code".to_string(), "codex".to_string()]
     );
 }
@@ -335,7 +338,7 @@ fn effective_global_tool_targets_refuses_a_corrupt_selection() {
     install_tool(&home, "claude_code");
     for stored in ["not json", "{\"a\":1}", "[1,2]"] {
         raw(&store, "global_selected_tools_v1", stored);
-        let err = effective_global_tool_targets(&store, &home)
+        let err = effective_global_tool_targets(&store, &HostRoots::under_home(&home))
             .expect_err("corrupt selection must not fall back to detection");
         match err.downcast_ref::<SignalError>() {
             Some(SignalError::SettingCorrupt { key, detail }) => {
@@ -1401,4 +1404,59 @@ fn setting_update_deserializes_adjacently_tagged() {
         }
         other => panic!("unexpected {other:?}"),
     }
+}
+
+/// A reader-only harness is never a selectable target: a saved selection
+/// naming one is refused like any key the registry cannot deploy to.
+#[test]
+fn apply_global_tool_config_refuses_a_reader_only_harness() {
+    let (dir, store) = make_store();
+    let reader = crate::core::tool_adapters::test_overrides::sample_reader();
+
+    let err = apply_setting(
+        &store,
+        &MemoryStore::new(),
+        dir.path(),
+        SettingUpdate::GlobalToolConfig {
+            selected_tools: vec![reader.key.to_string()],
+            scan_selected_only: false,
+        },
+    )
+    .expect_err("a reader-only harness is not a target");
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::UnknownTool {
+            tool: reader.key.to_string()
+        })
+    );
+    assert_eq!(store.get_setting("global_selected_tools_v1").unwrap(), None);
+}
+
+/// Round 20 relabels (Xum, Devin, QwenPaw, Zenflow) keep every stored key: a
+/// selection saved under the old keys still saves and reads back unchanged.
+#[test]
+fn a_selection_of_relabelled_harnesses_round_trips_under_their_stored_keys() {
+    let (dir, store) = make_store();
+    let keys: Vec<String> = ["mux", "windsurf", "copaw", "zencoder"]
+        .iter()
+        .map(|k| k.to_string())
+        .collect();
+
+    let saved = apply_setting(
+        &store,
+        &MemoryStore::new(),
+        dir.path(),
+        SettingUpdate::GlobalToolConfig {
+            selected_tools: keys.clone(),
+            scan_selected_only: false,
+        },
+    )
+    .expect("stored keys are still registry keys");
+    assert_eq!(saved.global_selected_tools, Some(keys.clone()));
+    assert_eq!(
+        load_settings(&store, &MemoryStore::new(), dir.path())
+            .unwrap()
+            .global_selected_tools,
+        Some(keys)
+    );
 }

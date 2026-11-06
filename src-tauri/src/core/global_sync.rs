@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::core::{
     content_identity::{self, Source},
+    environment::HostRoots,
     errors::CommandError,
     mutation_guard,
     removal_fence::ProtectedLibrary,
@@ -310,12 +311,12 @@ pub struct BatchProgress<'a> {
     pub tool_key: &'a str,
 }
 
-/// Probe the environment under `home` for each requested tool key: resolve
+/// Probe the environment under `roots` for each requested tool key: resolve
 /// the adapter, its skills root, installedness, and the installed shared-dir
 /// group. Unknown keys become planning entries via `Err`, which the batch
 /// turns into `Failed` outcomes.
 pub fn plan_batch_tool_targets(
-    home: &Path,
+    roots: &HostRoots,
     tool_keys: &[String],
 ) -> Vec<Result<PlannedToolTarget, (String, GlobalSyncError)>> {
     tool_keys
@@ -327,11 +328,11 @@ pub fn plan_batch_tool_targets(
                     GlobalSyncError::Other(anyhow::anyhow!("unknown tool: {}", key)),
                 )
             })?;
-            let installed = is_installed_in(home, adapter);
-            let root = skills_dir_in(home, adapter);
+            let installed = is_installed_in(roots, adapter);
+            let root = skills_dir_in(roots, adapter);
             let record_tools: Vec<&'static ToolAdapter> = adapters_sharing_skills_dir(adapter)
                 .into_iter()
-                .filter(|a| is_installed_in(home, a))
+                .filter(|a| is_installed_in(roots, a))
                 .collect();
             Ok(PlannedToolTarget {
                 adapter,
@@ -604,7 +605,7 @@ impl DisabledGate {
     }
 }
 
-/// Sync N skills to M tools in one call: environment probing under `home`
+/// Sync N skills to M tools in one call: environment probing under `roots`
 /// ([`plan_batch_tool_targets`]) composed with the deterministic engine
 /// ([`sync_skills_to_planned_tools`]). Planning failures surface as `Failed`
 /// outcomes per skill; the function itself never errors.
@@ -612,7 +613,7 @@ impl DisabledGate {
 /// Mutation entry point: serialised against every other Sync-target mutation.
 #[allow(clippy::too_many_arguments)]
 pub fn sync_skills_to_tools(
-    home: &Path,
+    roots: &HostRoots,
     store: &SkillStore,
     central_dir: &Path,
     skills: &[BatchSkill],
@@ -623,7 +624,7 @@ pub fn sync_skills_to_tools(
 ) -> Vec<BatchTargetOutcome> {
     mutation_guard::serialized(|| {
         sync_skills_to_tools_unlocked(
-            home,
+            roots,
             store,
             central_dir,
             skills,
@@ -637,7 +638,7 @@ pub fn sync_skills_to_tools(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sync_skills_to_tools_unlocked(
-    home: &Path,
+    roots: &HostRoots,
     store: &SkillStore,
     central_dir: &Path,
     skills: &[BatchSkill],
@@ -648,7 +649,7 @@ pub(crate) fn sync_skills_to_tools_unlocked(
 ) -> Vec<BatchTargetOutcome> {
     let mut targets: Vec<PlannedToolTarget> = Vec::new();
     let mut outcomes: Vec<BatchTargetOutcome> = Vec::new();
-    for plan in plan_batch_tool_targets(home, tool_keys) {
+    for plan in plan_batch_tool_targets(roots, tool_keys) {
         match plan {
             Ok(target) => targets.push(target),
             Err((tool_key, error)) => {

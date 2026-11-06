@@ -1,12 +1,15 @@
 use std::fs;
 
+use crate::core::environment::{HostOs, HostRoot, HostRoots};
 use crate::core::errors::SignalError;
 use crate::core::tool_adapters::{
     adapter_by_key, adapters_sharing_skills_dir, constituents_of, default_tool_adapters,
     detect_dirs_in, ensure_path_within_tool_dirs, former_skills_dirs_in, is_installed_in,
-    project_skills_dir_in, scan_tool_dir, skills_dir_in, tool_holding_path, ToolAdapter, ToolId,
+    mark_installed_in, project_adapter_by_key, project_skills_dir_in, reader_only_harnesses,
+    scan_tool_dir, skills_dir_in, test_overrides, tool_holding_path, ToolAdapter, ToolId,
     VirtualGroup,
 };
+use crate::core::tool_adapters::{OsOverride, RegistryPath};
 
 #[test]
 fn path_resolution_joins_adapter_dirs_onto_home() {
@@ -28,18 +31,244 @@ fn path_resolution_joins_adapter_dirs_onto_home() {
     for (key, skills, detect) in cases {
         let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {key}"));
         assert_eq!(
-            skills_dir_in(home.path(), adapter),
+            skills_dir_in(&HostRoots::under_home(home.path()), adapter),
             home.path().join(skills),
             "skills dir for {key}"
         );
         assert_eq!(
-            detect_dirs_in(home.path(), adapter),
+            detect_dirs_in(&HostRoots::under_home(home.path()), adapter),
             detect
                 .iter()
                 .map(|d| home.path().join(d))
                 .collect::<Vec<_>>(),
             "detect dirs for {key}"
         );
+    }
+}
+
+/// Every registry row's resolved global paths — skills dir, former dirs,
+/// detect dirs — as they stood before typed roots (round 20 ticket 01). Typed
+/// roots move no Deployment: each existing row still resolves under home to
+/// exactly these paths, on every OS (no production row carries an override).
+#[test]
+fn every_existing_row_resolves_to_the_paths_it_always_has() {
+    #[allow(clippy::type_complexity)]
+    let expected: &[(&str, &str, &[&str], &[&str])] = &[
+        ("agents_skills", ".agents/skills", &[], &[".agents"]),
+        ("cursor", ".cursor/skills", &[], &[".cursor"]),
+        ("claude_code", ".claude/skills", &[], &[".claude"]),
+        ("codex", ".codex/skills", &[], &[".codex"]),
+        (
+            "opencode",
+            ".config/opencode/skills",
+            &[],
+            &[".config/opencode"],
+        ),
+        (
+            "antigravity",
+            ".gemini/antigravity/global_skills",
+            &[],
+            &[".gemini/antigravity"],
+        ),
+        ("amp", ".config/agents/skills", &[], &[".config/amp"]),
+        (
+            "kimi_cli",
+            ".config/agents/skills",
+            &[],
+            &[".kimi-code", ".kimi"],
+        ),
+        (
+            "augment",
+            ".augment/skills",
+            &[".augment/rules"],
+            &[".augment"],
+        ),
+        ("openclaw", ".openclaw/skills", &[], &[".openclaw"]),
+        ("copaw", ".copaw/skill_pool", &[], &[".copaw"]),
+        ("cline", ".cline/skills", &[], &[".cline"]),
+        ("codebuddy", ".codebuddy/skills", &[], &[".codebuddy"]),
+        (
+            "command_code",
+            ".commandcode/skills",
+            &[],
+            &[".commandcode"],
+        ),
+        ("continue", ".continue/skills", &[], &[".continue"]),
+        ("crush", ".config/crush/skills", &[], &[".config/crush"]),
+        ("junie", ".junie/skills", &[], &[".junie"]),
+        ("iflow_cli", ".iflow/skills", &[], &[".iflow"]),
+        ("kiro_cli", ".kiro/skills", &[], &[".kiro"]),
+        ("kode", ".kode/skills", &[], &[".kode"]),
+        ("mcpjam", ".mcpjam/skills", &[], &[".mcpjam"]),
+        ("mistral_vibe", ".vibe/skills", &[], &[".vibe"]),
+        ("mux", ".mux/skills", &[], &[".mux"]),
+        ("openclaude", ".openclaude/skills", &[], &[".openclaude"]),
+        ("openhands", ".openhands/skills", &[], &[".openhands"]),
+        ("pi", ".pi/agent/skills", &[], &[".pi"]),
+        ("qoder", ".qoder/skills", &[], &[".qoder"]),
+        ("qoderwork", ".qoderwork/skills", &[], &[".qoderwork"]),
+        ("qwen_code", ".qwen/skills", &[], &[".qwen"]),
+        ("trae", ".trae/skills", &[], &[".trae"]),
+        ("trae_cn", ".trae-cn/skills", &[], &[".trae-cn"]),
+        ("zencoder", ".zencoder/skills", &[], &[".zencoder"]),
+        ("neovate", ".neovate/skills", &[], &[".neovate"]),
+        ("pochi", ".pochi/skills", &[], &[".pochi"]),
+        ("adal", ".adal/skills", &[], &[".adal"]),
+        ("kilo_code", ".kilocode/skills", &[], &[".kilocode"]),
+        ("roo_code", ".roo/skills", &[], &[".roo"]),
+        ("goose", ".config/goose/skills", &[], &[".config/goose"]),
+        ("gemini_cli", ".gemini/skills", &[], &[".gemini"]),
+        ("github_copilot", ".copilot/skills", &[], &[".copilot"]),
+        ("clawdbot", ".clawdbot/skills", &[], &[".clawdbot"]),
+        ("droid", ".factory/skills", &[], &[".factory"]),
+        (
+            "windsurf",
+            ".codeium/windsurf/skills",
+            &[],
+            &[".codeium/windsurf"],
+        ),
+        ("moltbot", ".moltbot/skills", &[], &[".moltbot"]),
+        ("hermes-agent", ".hermes/skills", &[], &[".hermes"]),
+    ];
+    assert_eq!(
+        expected.len(),
+        default_tool_adapters().len(),
+        "table must cover every registered tool"
+    );
+    let home = tempfile::tempdir().unwrap();
+    let under = |rel: &str| {
+        let mut path = home.path().to_path_buf();
+        path.extend(rel.split('/'));
+        path
+    };
+    for (key, skills, former, detect) in expected {
+        let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {key}"));
+        assert_eq!(
+            skills_dir_in(&HostRoots::under_home(home.path()), adapter),
+            under(skills),
+            "skills dir for {key}"
+        );
+        assert_eq!(
+            former_skills_dirs_in(&HostRoots::under_home(home.path()), adapter),
+            former.iter().map(|d| under(d)).collect::<Vec<_>>(),
+            "former dirs for {key}"
+        );
+        assert_eq!(
+            detect_dirs_in(&HostRoots::under_home(home.path()), adapter),
+            detect.iter().map(|d| under(d)).collect::<Vec<_>>(),
+            "detect dirs for {key}"
+        );
+    }
+}
+
+/// Substituted host roots: three distinct directories, so a path resolved
+/// under the wrong root cannot pass.
+fn distinct_roots(base: &std::path::Path) -> HostRoots {
+    HostRoots {
+        home: base.join("home"),
+        roaming: base.join("roaming"),
+        local: base.join("local"),
+    }
+}
+
+/// A per-OS override applies on its OS only: Reasonix-style rows keep their
+/// skills under `%APPDATA%` on Windows and under home elsewhere.
+#[test]
+fn a_windows_roaming_override_resolves_under_the_roaming_root() {
+    let base = tempfile::tempdir().unwrap();
+    let roots = distinct_roots(base.path());
+    let path = RegistryPath::home(".reasonix/skills").overridden(&[OsOverride {
+        os: HostOs::Windows,
+        root: HostRoot::RoamingAppData,
+        rel: "reasonix/skills",
+    }]);
+
+    assert_eq!(
+        path.resolve_for(HostOs::Windows, &roots),
+        base.path().join("roaming").join("reasonix").join("skills")
+    );
+    for elsewhere in [HostOs::MacOs, HostOs::Linux] {
+        assert_eq!(
+            path.resolve_for(elsewhere, &roots),
+            base.path().join("home").join(".reasonix").join("skills"),
+            "{elsewhere:?} keeps the default"
+        );
+    }
+}
+
+#[test]
+fn a_local_app_data_override_resolves_under_the_local_root() {
+    let base = tempfile::tempdir().unwrap();
+    let roots = distinct_roots(base.path());
+    let path = RegistryPath::home(".tool").overridden(&[
+        OsOverride {
+            os: HostOs::Windows,
+            root: HostRoot::LocalAppData,
+            rel: "Tool/Data",
+        },
+        OsOverride {
+            os: HostOs::MacOs,
+            root: HostRoot::RoamingAppData,
+            rel: "Tool",
+        },
+    ]);
+
+    assert_eq!(
+        path.resolve_for(HostOs::Windows, &roots),
+        base.path().join("local").join("Tool").join("Data")
+    );
+    assert_eq!(
+        path.resolve_for(HostOs::MacOs, &roots),
+        base.path().join("roaming").join("Tool")
+    );
+    assert_eq!(
+        path.resolve_for(HostOs::Linux, &roots),
+        base.path().join("home").join(".tool")
+    );
+}
+
+/// The Harnesses pane shows a path the way the operator locates it: `~/…`
+/// when it lies under home (always with `/`), the absolute path otherwise.
+#[test]
+fn a_registry_path_displays_under_tilde_only_when_it_lies_under_home() {
+    let base = tempfile::tempdir().unwrap();
+    let roaming = RegistryPath {
+        root: HostRoot::RoamingAppData,
+        rel: "Tool/skills",
+        overrides: &[],
+    };
+    assert_eq!(
+        RegistryPath::home(".claude/skills").display(&distinct_roots(base.path())),
+        "~/.claude/skills"
+    );
+    assert_eq!(
+        roaming.display(&HostRoots::under_home(base.path())),
+        "~/AppData/Roaming/Tool/skills"
+    );
+    let elsewhere = distinct_roots(base.path());
+    assert_eq!(
+        roaming.display(&elsewhere),
+        elsewhere
+            .roaming
+            .join("Tool")
+            .join("skills")
+            .to_string_lossy()
+    );
+}
+
+/// No production row uses an override yet (Reasonix, ticket 06, is the
+/// first), and every default root is home: a row moving off home is a
+/// deliberate registry edit that updates this pin.
+#[test]
+fn every_production_path_is_home_rooted_without_overrides() {
+    for adapter in default_tool_adapters() {
+        let mut paths = vec![adapter.skills_dir];
+        paths.extend(adapter.former_skills_dirs.iter().copied());
+        paths.extend(adapter.detect_dirs.iter().copied());
+        for path in paths {
+            assert_eq!(path.root, HostRoot::Home, "{}: {path:?}", adapter.key());
+            assert!(path.overrides.is_empty(), "{}: {path:?}", adapter.key());
+        }
     }
 }
 
@@ -53,12 +282,11 @@ fn registry_joins_spell_paths_with_the_platform_separator() {
     let root = root.path();
     let foreign = if cfg!(windows) { '/' } else { '\\' };
     for adapter in default_tool_adapters() {
-        let mut joined = vec![
-            skills_dir_in(root, adapter),
-            project_skills_dir_in(root, adapter),
-        ];
-        joined.extend(detect_dirs_in(root, adapter));
-        joined.extend(former_skills_dirs_in(root, adapter));
+        let roots = HostRoots::under_home(root);
+        let mut joined = vec![skills_dir_in(&roots, adapter)];
+        joined.extend(project_skills_dir_in(root, adapter));
+        joined.extend(detect_dirs_in(&roots, adapter));
+        joined.extend(former_skills_dirs_in(&roots, adapter));
         for path in joined {
             assert!(
                 !path.to_string_lossy().contains(foreign),
@@ -76,22 +304,25 @@ fn registry_joins_spell_paths_with_the_platform_separator() {
 #[test]
 fn a_mixed_separator_path_recorded_before_the_fix_still_matches_the_registry() {
     let home = std::path::Path::new(r"C:\Users\op");
+    let roots = HostRoots::under_home(home);
     let claude = adapter_by_key("claude_code").expect("claude adapter");
     assert_eq!(
-        skills_dir_in(home, claude).to_str(),
+        skills_dir_in(&roots, claude).to_str(),
         Some(r"C:\Users\op\.claude\skills")
     );
     assert_eq!(
-        project_skills_dir_in(std::path::Path::new(r"D:\work\app"), claude).to_str(),
+        project_skills_dir_in(std::path::Path::new(r"D:\work\app"), claude)
+            .expect("claude has a project dir")
+            .to_str(),
         Some(r"D:\work\app\.claude\skills")
     );
 
     let recorded = std::path::PathBuf::from(r"C:\Users\op\.claude/skills\grill-me");
-    assert_eq!(recorded, skills_dir_in(home, claude).join("grill-me"));
-    assert!(recorded.starts_with(skills_dir_in(home, claude)));
-    ensure_path_within_tool_dirs(home, &recorded).expect("a recorded target stays removable");
+    assert_eq!(recorded, skills_dir_in(&roots, claude).join("grill-me"));
+    assert!(recorded.starts_with(skills_dir_in(&roots, claude)));
+    ensure_path_within_tool_dirs(&roots, &recorded).expect("a recorded target stays removable");
     assert_eq!(
-        tool_holding_path(home, &recorded).map(|adapter| adapter.key()),
+        tool_holding_path(&roots, &recorded).map(|adapter| adapter.key()),
         Some("claude_code")
     );
 
@@ -101,7 +332,7 @@ fn a_mixed_separator_path_recorded_before_the_fix_still_matches_the_registry() {
     let former = std::path::PathBuf::from(r"C:\Users\op\.augment/rules\grill-me");
     assert_eq!(
         former.parent(),
-        Some(former_skills_dirs_in(home, augment)[0].as_path())
+        Some(former_skills_dirs_in(&roots, augment)[0].as_path())
     );
 }
 
@@ -109,12 +340,14 @@ fn a_mixed_separator_path_recorded_before_the_fix_still_matches_the_registry() {
 fn every_adapter_resolves_under_home() {
     let home = tempfile::tempdir().unwrap();
     for adapter in default_tool_adapters() {
-        assert!(skills_dir_in(home.path(), adapter).starts_with(home.path()));
-        for detect_dir in detect_dirs_in(home.path(), adapter) {
+        assert!(
+            skills_dir_in(&HostRoots::under_home(home.path()), adapter).starts_with(home.path())
+        );
+        for detect_dir in detect_dirs_in(&HostRoots::under_home(home.path()), adapter) {
             assert!(detect_dir.starts_with(home.path()));
         }
         assert!(
-            !is_installed_in(home.path(), adapter),
+            !is_installed_in(&HostRoots::under_home(home.path()), adapter),
             "{} must not be installed in an empty home",
             adapter.id.as_key()
         );
@@ -127,23 +360,26 @@ fn installedness_is_decided_by_detect_dir_not_skills_dir() {
     let codex = adapter_by_key("codex").unwrap();
     let claude = adapter_by_key("claude_code").unwrap();
 
-    assert!(!is_installed_in(home.path(), codex));
+    assert!(!is_installed_in(&HostRoots::under_home(home.path()), codex));
 
     // Detect dir present (even without a skills dir) => installed.
     fs::create_dir_all(home.path().join(".codex")).unwrap();
-    assert!(is_installed_in(home.path(), codex));
-    assert!(!is_installed_in(home.path(), claude));
+    assert!(is_installed_in(&HostRoots::under_home(home.path()), codex));
+    assert!(!is_installed_in(
+        &HostRoots::under_home(home.path()),
+        claude
+    ));
 
     // Only the adapter's own detect dir counts — a sibling under the same
     // parent does not.
     let amp = adapter_by_key("amp").unwrap();
     fs::create_dir_all(home.path().join(".config/other")).unwrap();
-    assert!(!is_installed_in(home.path(), amp));
+    assert!(!is_installed_in(&HostRoots::under_home(home.path()), amp));
     fs::create_dir_all(home.path().join(".config/amp")).unwrap();
-    assert!(is_installed_in(home.path(), amp));
+    assert!(is_installed_in(&HostRoots::under_home(home.path()), amp));
     // Shared-skills-dir tools are detected independently, by their own roots.
     let kimi = adapter_by_key("kimi_cli").unwrap();
-    assert!(!is_installed_in(home.path(), kimi));
+    assert!(!is_installed_in(&HostRoots::under_home(home.path()), kimi));
 }
 
 #[test]
@@ -155,21 +391,27 @@ fn a_tool_whose_skills_dir_is_a_shared_convention_is_detected_by_its_own_root() 
     let amp = adapter_by_key("amp").unwrap();
 
     fs::create_dir_all(home.path().join(".config/agents/skills/foo")).unwrap();
-    assert!(!is_installed_in(home.path(), kimi));
-    assert!(!is_installed_in(home.path(), amp));
+    assert!(!is_installed_in(&HostRoots::under_home(home.path()), kimi));
+    assert!(!is_installed_in(&HostRoots::under_home(home.path()), amp));
 
     fs::create_dir_all(home.path().join(".kimi")).unwrap();
     fs::write(home.path().join(".kimi/config.toml"), b"").unwrap();
-    assert!(is_installed_in(home.path(), kimi), "kimi-cli.com layout");
-    assert!(!is_installed_in(home.path(), amp));
+    assert!(
+        is_installed_in(&HostRoots::under_home(home.path()), kimi),
+        "kimi-cli.com layout"
+    );
+    assert!(!is_installed_in(&HostRoots::under_home(home.path()), amp));
 
     fs::remove_dir_all(home.path().join(".kimi")).unwrap();
     fs::create_dir_all(home.path().join(".kimi-code")).unwrap();
-    assert!(is_installed_in(home.path(), kimi), "kimi.com/code layout");
+    assert!(
+        is_installed_in(&HostRoots::under_home(home.path()), kimi),
+        "kimi.com/code layout"
+    );
 
     fs::create_dir_all(home.path().join(".config/amp")).unwrap();
     fs::write(home.path().join(".config/amp/settings.json"), b"{}").unwrap();
-    assert!(is_installed_in(home.path(), amp));
+    assert!(is_installed_in(&HostRoots::under_home(home.path()), amp));
 }
 
 #[test]
@@ -180,19 +422,19 @@ fn a_skills_only_footprint_is_not_an_installed_tool() {
     // What a skill deployer leaves behind: the skills path and nothing else.
     fs::create_dir_all(home.path().join(".kiro/skills/ego-browser")).unwrap();
     fs::write(home.path().join(".kiro/skills/ego-browser/SKILL.md"), b"x").unwrap();
-    assert!(!is_installed_in(home.path(), kiro));
+    assert!(!is_installed_in(&HostRoots::under_home(home.path()), kiro));
 
     // An empty skills dir is the same footprint.
     fs::remove_dir_all(home.path().join(".kiro/skills/ego-browser")).unwrap();
-    assert!(!is_installed_in(home.path(), kiro));
+    assert!(!is_installed_in(&HostRoots::under_home(home.path()), kiro));
 
     // Finder noise does not promote a footprint.
     fs::write(home.path().join(".kiro/.DS_Store"), b"").unwrap();
-    assert!(!is_installed_in(home.path(), kiro));
+    assert!(!is_installed_in(&HostRoots::under_home(home.path()), kiro));
 
     // Anything else beside the skills path is the tool.
     fs::write(home.path().join(".kiro/settings.json"), b"{}").unwrap();
-    assert!(is_installed_in(home.path(), kiro));
+    assert!(is_installed_in(&HostRoots::under_home(home.path()), kiro));
 }
 
 #[test]
@@ -202,11 +444,11 @@ fn footprint_rule_walks_every_level_down_to_the_skills_dir() {
 
     // `.pi/agent/skills/x` alone: `.pi` holds only `agent`, `agent` only `skills`.
     fs::create_dir_all(home.path().join(".pi/agent/skills/x")).unwrap();
-    assert!(!is_installed_in(home.path(), pi));
+    assert!(!is_installed_in(&HostRoots::under_home(home.path()), pi));
 
     // A sibling at an intermediate level is the tool.
     fs::write(home.path().join(".pi/agent/settings.json"), b"{}").unwrap();
-    assert!(is_installed_in(home.path(), pi));
+    assert!(is_installed_in(&HostRoots::under_home(home.path()), pi));
 }
 
 #[test]
@@ -217,7 +459,7 @@ fn a_virtual_group_is_installed_by_its_directory_alone() {
 
     // `~/.agents` legitimately holds only `skills/`: the convention is the dir.
     fs::create_dir_all(home.path().join(".agents/skills/x")).unwrap();
-    assert!(is_installed_in(home.path(), agents));
+    assert!(is_installed_in(&HostRoots::under_home(home.path()), agents));
 }
 
 #[test]
@@ -227,7 +469,7 @@ fn no_adapter_is_detected_by_a_shared_skills_convention_dir() {
     // the rule rejects. Only a virtual group entry may be detected by one.
     for adapter in default_tool_adapters() {
         assert!(
-            !adapter.relative_detect_dirs.is_empty(),
+            !adapter.detect_dirs.is_empty(),
             "{} has no detect dir",
             adapter.id.as_key()
         );
@@ -235,13 +477,17 @@ fn no_adapter_is_detected_by_a_shared_skills_convention_dir() {
             continue;
         }
         let shared = adapters_sharing_skills_dir(adapter).len() > 1;
-        let convention_root = std::path::Path::new(adapter.relative_skills_dir).parent();
-        for detect_dir in adapter.relative_detect_dirs {
+        let (skills_root, skills_rel) = adapter.skills_dir.effective(HostOs::CURRENT);
+        let convention_root = std::path::Path::new(skills_rel).parent();
+        for detect_dir in adapter.detect_dirs {
+            let (detect_root, detect_rel) = detect_dir.effective(HostOs::CURRENT);
             assert!(
-                !(shared && convention_root == Some(std::path::Path::new(detect_dir))),
+                !(shared
+                    && detect_root == skills_root
+                    && convention_root == Some(std::path::Path::new(detect_rel))),
                 "{}: detected by the shared convention dir {}",
                 adapter.id.as_key(),
-                detect_dir
+                detect_rel
             );
         }
     }
@@ -272,6 +518,9 @@ fn adapters_sharing_skills_dir_groups_amp_and_kimi() {
     assert!(keys.contains("kimi_cli"));
 }
 
+/// A placeholder detect dir for adapters only `scan_tool_dir` reads.
+const IGNORED_DIRS: &[RegistryPath] = &[RegistryPath::home("ignored")];
+
 /// A skill folder whose `SKILL.md` passes the gate.
 fn valid_skill(dir: &std::path::Path, name: &str) {
     fs::create_dir_all(dir.join(name)).unwrap();
@@ -286,11 +535,10 @@ fn plain_adapter(id: ToolId) -> ToolAdapter {
     ToolAdapter {
         id,
         display_name: "Test",
-        group_label: None,
-        relative_skills_dir: "ignored",
-        former_relative_skills_dirs: &[],
-        relative_detect_dirs: &["ignored"],
-        project_relative_skills_dir: "ignored",
+        skills_dir: RegistryPath::home("ignored"),
+        former_skills_dirs: &[],
+        detect_dirs: IGNORED_DIRS,
+        project_skills_dir: Some("ignored"),
         group: None,
         supports_symlink: true,
     }
@@ -312,11 +560,10 @@ fn scan_tool_dir_skips_codex_system_and_includes_symlink_dir() {
     let tool = ToolAdapter {
         id: ToolId::Codex,
         display_name: "Codex",
-        group_label: None,
-        relative_skills_dir: "ignored",
-        former_relative_skills_dirs: &[],
-        relative_detect_dirs: &["ignored"],
-        project_relative_skills_dir: "ignored",
+        skills_dir: RegistryPath::home("ignored"),
+        former_skills_dirs: &[],
+        detect_dirs: IGNORED_DIRS,
+        project_skills_dir: Some("ignored"),
         group: None,
         supports_symlink: true,
     };
@@ -348,11 +595,10 @@ fn scan_tool_dir_skips_app_support_path() {
     let tool = ToolAdapter {
         id: ToolId::Cursor,
         display_name: "Cursor",
-        group_label: None,
-        relative_skills_dir: "ignored",
-        former_relative_skills_dirs: &[],
-        relative_detect_dirs: &["ignored"],
-        project_relative_skills_dir: "ignored",
+        skills_dir: RegistryPath::home("ignored"),
+        former_skills_dirs: &[],
+        detect_dirs: IGNORED_DIRS,
+        project_skills_dir: Some("ignored"),
         group: None,
         supports_symlink: false,
     };
@@ -416,81 +662,108 @@ fn scan_tool_dir_admits_only_valid_manifests_and_reports_the_rest() {
     );
 }
 
-/// Every Tool's project-scope dir and project-scope label override, as a
-/// table: the registry is the only source, so this pins the mapping against
-/// accidental edits. Only the virtual-group entry may carry a `group_label`
-/// (a per-scope fact: globally it absorbs nothing).
+/// Every Tool's project-scope dir, as a table: the registry is the only
+/// source, so this pins the mapping against accidental edits. `None` means
+/// the harness reads no project skills dir (no shipped row yet; the shape is
+/// proven by `a_harness_without_a_project_dir_has_no_project_scope`).
 #[test]
 fn project_relative_skills_dir_for_every_tool() {
-    let expected: &[(&str, &str, Option<&str>)] = &[
-        (
-            "agents_skills",
-            ".agents/skills",
-            Some(".agents/skills (9 harnesses)"),
-        ),
-        ("cursor", ".agents/skills", None),
-        ("claude_code", ".claude/skills", None),
-        ("codex", ".agents/skills", None),
-        ("opencode", ".agents/skills", None),
-        ("antigravity", ".agents/skills", None),
-        ("amp", ".agents/skills", None),
-        ("kimi_cli", ".agents/skills", None),
-        ("augment", ".augment/skills", None),
-        ("openclaw", "skills", None),
-        ("copaw", ".copaw/skill_pool", None),
-        ("cline", ".agents/skills", None),
-        ("codebuddy", ".codebuddy/skills", None),
-        ("command_code", ".commandcode/skills", None),
-        ("continue", ".continue/skills", None),
-        ("crush", ".crush/skills", None),
-        ("junie", ".junie/skills", None),
-        ("iflow_cli", ".iflow/skills", None),
-        ("kiro_cli", ".kiro/skills", None),
-        ("kode", ".kode/skills", None),
-        ("mcpjam", ".mcpjam/skills", None),
-        ("mistral_vibe", ".vibe/skills", None),
-        ("mux", ".mux/skills", None),
-        ("openclaude", ".openclaude/skills", None),
-        ("openhands", ".openhands/skills", None),
-        ("pi", ".pi/skills", None),
-        ("qoder", ".qoder/skills", None),
-        ("qoderwork", ".qoderwork/skills", None),
-        ("qwen_code", ".qwen/skills", None),
-        ("trae", ".trae/skills", None),
-        ("trae_cn", ".trae/skills", None),
-        ("zencoder", ".zencoder/skills", None),
-        ("neovate", ".neovate/skills", None),
-        ("pochi", ".pochi/skills", None),
-        ("adal", ".adal/skills", None),
-        ("kilo_code", ".kilocode/skills", None),
-        ("roo_code", ".roo/skills", None),
-        ("goose", ".goose/skills", None),
-        ("gemini_cli", ".agents/skills", None),
-        ("github_copilot", ".agents/skills", None),
-        ("clawdbot", ".clawdbot/skills", None),
-        ("droid", ".factory/skills", None),
-        ("windsurf", ".windsurf/skills", None),
-        ("moltbot", ".moltbot/skills", None),
-        ("hermes-agent", ".hermes/skills", None),
+    let expected: &[(&str, Option<&str>)] = &[
+        ("agents_skills", Some(".agents/skills")),
+        ("cursor", Some(".agents/skills")),
+        ("claude_code", Some(".claude/skills")),
+        ("codex", Some(".agents/skills")),
+        ("opencode", Some(".agents/skills")),
+        ("antigravity", Some(".agents/skills")),
+        ("amp", Some(".agents/skills")),
+        ("kimi_cli", Some(".agents/skills")),
+        ("augment", Some(".augment/skills")),
+        ("openclaw", Some("skills")),
+        ("copaw", Some(".copaw/skill_pool")),
+        ("cline", Some(".agents/skills")),
+        ("codebuddy", Some(".codebuddy/skills")),
+        ("command_code", Some(".commandcode/skills")),
+        ("continue", Some(".continue/skills")),
+        ("crush", Some(".crush/skills")),
+        ("junie", Some(".junie/skills")),
+        ("iflow_cli", Some(".iflow/skills")),
+        ("kiro_cli", Some(".kiro/skills")),
+        ("kode", Some(".kode/skills")),
+        ("mcpjam", Some(".mcpjam/skills")),
+        ("mistral_vibe", Some(".vibe/skills")),
+        ("mux", Some(".mux/skills")),
+        ("openclaude", Some(".openclaude/skills")),
+        ("openhands", Some(".openhands/skills")),
+        ("pi", Some(".pi/skills")),
+        ("qoder", Some(".qoder/skills")),
+        ("qoderwork", Some(".qoderwork/skills")),
+        ("qwen_code", Some(".qwen/skills")),
+        ("trae", Some(".trae/skills")),
+        ("trae_cn", Some(".trae/skills")),
+        ("zencoder", Some(".zencoder/skills")),
+        ("neovate", Some(".neovate/skills")),
+        ("pochi", Some(".pochi/skills")),
+        ("adal", Some(".adal/skills")),
+        ("kilo_code", Some(".kilocode/skills")),
+        ("roo_code", Some(".roo/skills")),
+        ("goose", Some(".goose/skills")),
+        ("gemini_cli", Some(".agents/skills")),
+        ("github_copilot", Some(".agents/skills")),
+        ("clawdbot", Some(".clawdbot/skills")),
+        ("droid", Some(".factory/skills")),
+        ("windsurf", Some(".windsurf/skills")),
+        ("moltbot", Some(".moltbot/skills")),
+        ("hermes-agent", Some(".hermes/skills")),
     ];
     assert_eq!(
         expected.len(),
         default_tool_adapters().len(),
         "table must cover every registered tool"
     );
-    for (key, dir, group_label) in expected {
+    for (key, dir) in expected {
         let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {key}"));
+        assert_eq!(adapter.project_skills_dir, *dir, "project dir for {key}");
         assert_eq!(
-            adapter.project_relative_skills_dir, *dir,
-            "project dir for {key}"
-        );
-        assert_eq!(adapter.group_label, *group_label, "group label for {key}");
-        assert_eq!(
-            adapter.project_display_name(),
-            group_label.unwrap_or(adapter.display_name),
-            "project label for {key}"
+            project_adapter_by_key(key).is_some(),
+            dir.is_some(),
+            "project-scope admission for {key}"
         );
     }
+}
+
+/// A harness with no project skills dir has no project scope at all: no
+/// project path, no project-scope admission, no project catalog entry, and
+/// no ignore pattern.
+#[test]
+fn a_harness_without_a_project_dir_has_no_project_scope() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    let hermes = adapter_by_key("hermes-agent").unwrap();
+    let globally_only = test_overrides::shadow(ToolAdapter {
+        project_skills_dir: None,
+        ..hermes.clone()
+    });
+    mark_installed_in(&roots, globally_only);
+
+    assert_eq!(project_skills_dir_in(home.path(), globally_only), None);
+    assert!(project_adapter_by_key("hermes-agent").is_none());
+    assert!(
+        adapter_by_key("hermes-agent").is_some(),
+        "still a global target"
+    );
+    assert!(
+        crate::core::tool_adapters::project_tool_entries(&roots)
+            .iter()
+            .all(|entry| entry.key != "hermes-agent"),
+        "absent from the project catalog"
+    );
+    assert!(
+        crate::core::tool_adapters::global_tool_entries(&roots)
+            .iter()
+            .any(|entry| entry.key == "hermes-agent" && entry.installed),
+        "still listed and detected globally"
+    );
+    assert!(crate::core::gitignore::patterns_for_tools([globally_only]).is_empty());
 }
 
 #[test]
@@ -513,7 +786,7 @@ fn agents_standard_group_has_nine_constituents_and_one_entry() {
         ]
     );
     for a in constituents_of(VirtualGroup::AgentsStandard) {
-        assert_eq!(a.project_relative_skills_dir, ".agents/skills");
+        assert_eq!(a.project_skills_dir, Some(".agents/skills"));
         assert!(a.as_virtual_group().is_none());
     }
     let entries: Vec<&ToolAdapter> = default_tool_adapters()
@@ -522,13 +795,7 @@ fn agents_standard_group_has_nine_constituents_and_one_entry() {
         .collect();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].id, ToolId::AgentsStandard);
-    // The project-scope label advertises the roster it absorbs; the
-    // scope-independent name does not.
     assert_eq!(entries[0].display_name, ".agents/skills");
-    assert_eq!(
-        entries[0].project_display_name(),
-        format!(".agents/skills ({} harnesses)", members.len())
-    );
     assert_eq!(
         entries[0].group, None,
         "a group entry is not its own member"
@@ -548,9 +815,12 @@ fn every_adapter_supports_symlink() {
     assert!(no_symlink.is_empty(), "copy-only entries: {no_symlink:?}");
 }
 
+/// Keys are unique across both registry tables: a reader-only harness's key
+/// must never shadow (or be shadowed by) an adapter's.
 #[test]
 fn registry_keys_are_unique() {
     let mut keys: Vec<&str> = default_tool_adapters().iter().map(|a| a.key()).collect();
+    keys.extend(reader_only_harnesses().iter().map(|r| r.key));
     let n = keys.len();
     keys.sort_unstable();
     keys.dedup();
@@ -566,18 +836,18 @@ fn augment_global_skills_dir_is_augment_skills_and_rules_is_former() {
     let home = tempfile::tempdir().unwrap();
     let augment = adapter_by_key("augment").expect("augment adapter");
     assert_eq!(
-        skills_dir_in(home.path(), augment),
+        skills_dir_in(&HostRoots::under_home(home.path()), augment),
         home.path().join(".augment/skills")
     );
     assert_eq!(
-        former_skills_dirs_in(home.path(), augment),
+        former_skills_dirs_in(&HostRoots::under_home(home.path()), augment),
         vec![home.path().join(".augment/rules")]
     );
     assert_eq!(
-        detect_dirs_in(home.path(), augment),
+        detect_dirs_in(&HostRoots::under_home(home.path()), augment),
         vec![home.path().join(".augment")]
     );
-    assert_eq!(augment.project_relative_skills_dir, ".augment/skills");
+    assert_eq!(augment.project_skills_dir, Some(".augment/skills"));
 }
 
 /// A former dir is a registry fact about a *correction*: it must never be a
@@ -585,12 +855,12 @@ fn augment_global_skills_dir_is_augment_skills_and_rules_is_former() {
 #[test]
 fn no_former_skills_dir_is_a_current_skills_dir() {
     for adapter in default_tool_adapters() {
-        for former in adapter.former_relative_skills_dirs {
+        for former in adapter.former_skills_dirs {
             assert!(
                 default_tool_adapters()
                     .iter()
-                    .all(|a| a.relative_skills_dir != *former),
-                "{}'s former dir {former} is still some Tool's skills dir",
+                    .all(|a| !a.skills_dir.same_location(former)),
+                "{}'s former dir {former:?} is still some Tool's skills dir",
                 adapter.key()
             );
         }
@@ -605,7 +875,7 @@ fn no_former_skills_dir_is_a_current_skills_dir() {
 fn a_path_inside_a_former_tool_skills_dir_is_allowed() {
     let home = tempfile::tempdir().unwrap();
     let path = home.path().join(".augment/rules/some-skill");
-    ensure_path_within_tool_dirs(home.path(), &path)
+    ensure_path_within_tool_dirs(&HostRoots::under_home(home.path()), &path)
         .unwrap_or_else(|err| panic!("a former dir artifact is ours to remove: {err:#}"));
 }
 
@@ -614,8 +884,8 @@ fn a_path_inside_any_tool_skills_dir_is_allowed() {
     let home = tempfile::tempdir().unwrap();
     for key in ["claude_code", "pi", "amp"] {
         let adapter = adapter_by_key(key).unwrap();
-        let path = skills_dir_in(home.path(), adapter).join("some-skill");
-        ensure_path_within_tool_dirs(home.path(), &path)
+        let path = skills_dir_in(&HostRoots::under_home(home.path()), adapter).join("some-skill");
+        ensure_path_within_tool_dirs(&HostRoots::under_home(home.path()), &path)
             .unwrap_or_else(|err| panic!("{key} should be allowed: {err:#}"));
     }
 }
@@ -628,7 +898,7 @@ fn a_path_outside_every_tool_skills_dir_is_refused_with_the_typed_condition() {
         home.path().join(".claude"), // the tool root, not its skills dir
         std::path::PathBuf::from("/"),
     ] {
-        let err = ensure_path_within_tool_dirs(home.path(), &outside)
+        let err = ensure_path_within_tool_dirs(&HostRoots::under_home(home.path()), &outside)
             .expect_err("must refuse a path outside every tool skills dir");
         match err.downcast_ref::<SignalError>() {
             Some(SignalError::PathOutsideToolDirs { path }) => {
@@ -648,8 +918,8 @@ fn a_path_inside_a_tool_skills_dir_names_that_tool() {
     let home = tempfile::tempdir().unwrap();
     for key in ["claude_code", "pi", "cursor"] {
         let adapter = adapter_by_key(key).unwrap();
-        let path = skills_dir_in(home.path(), adapter).join("some-skill");
-        let holder = tool_holding_path(home.path(), &path)
+        let path = skills_dir_in(&HostRoots::under_home(home.path()), adapter).join("some-skill");
+        let holder = tool_holding_path(&HostRoots::under_home(home.path()), &path)
             .unwrap_or_else(|| panic!("{key} should hold {path:?}"));
         assert_eq!(holder.key(), key);
     }
@@ -664,7 +934,7 @@ fn a_path_outside_every_tool_skills_dir_has_no_holder() {
         std::path::PathBuf::from("/"),
     ] {
         assert_eq!(
-            tool_holding_path(home.path(), &outside).map(|a| a.key()),
+            tool_holding_path(&HostRoots::under_home(home.path()), &outside).map(|a| a.key()),
             None,
             "{outside:?} is outside every tool skills dir"
         );
@@ -679,7 +949,7 @@ fn a_path_outside_every_tool_skills_dir_has_no_holder() {
 fn a_path_resolving_into_a_tool_skills_dir_names_that_tool() {
     let home = tempfile::tempdir().unwrap();
     let claude = adapter_by_key("claude_code").unwrap();
-    let real = skills_dir_in(home.path(), claude).join("some-skill");
+    let real = skills_dir_in(&HostRoots::under_home(home.path()), claude).join("some-skill");
     fs::create_dir_all(&real).unwrap();
     let elsewhere = home.path().join("Documents");
     fs::create_dir_all(&elsewhere).unwrap();
@@ -687,7 +957,145 @@ fn a_path_resolving_into_a_tool_skills_dir_names_that_tool() {
     std::os::unix::fs::symlink(&real, &link).unwrap();
 
     assert_eq!(
-        tool_holding_path(home.path(), &link).map(|a| a.key()),
+        tool_holding_path(&HostRoots::under_home(home.path()), &link).map(|a| a.key()),
         Some("claude_code")
     );
+}
+
+/// Round 20 relabels move nothing: each product's new name is a label only,
+/// and the key every stored row (targets, selections, assignments) carries
+/// is unchanged and still resolves to the same folders.
+#[test]
+fn relabelled_harnesses_keep_their_stored_keys_and_folders() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    let cases = [
+        ("mux", "Xum", ".mux/skills"),
+        ("windsurf", "Devin (Windsurf)", ".codeium/windsurf/skills"),
+        ("copaw", "QwenPaw", ".copaw/skill_pool"),
+        ("zencoder", "Zencoder / Zenflow", ".zencoder/skills"),
+    ];
+    for (stored_key, label, skills) in cases {
+        let adapter = adapter_by_key(stored_key).unwrap_or_else(|| panic!("{stored_key}"));
+        assert_eq!(adapter.key(), stored_key, "the stored key round-trips");
+        assert_eq!(adapter.display_name, label);
+        let mut expected = home.path().to_path_buf();
+        expected.extend(skills.split('/'));
+        assert_eq!(
+            skills_dir_in(&roots, adapter),
+            expected,
+            "{stored_key} moved nothing"
+        );
+    }
+}
+
+/// #108: these detect dirs land only with their folder corrections. Adding
+/// one now would detect a harness into a folder it does not read (QwenPaw's
+/// root is `~/.qwenpaw` but its row deploys under `~/.copaw`; Antigravity
+/// CLI and Devin read other folders than their rows target). Remove this pin
+/// deliberately, in #108, with the folder move.
+#[test]
+fn deferred_detect_dirs_wait_for_108() {
+    let deferred = [
+        ("copaw", ".qwenpaw"),
+        ("antigravity", ".gemini/antigravity-cli"),
+        ("windsurf", ".config/devin"),
+    ];
+    for (key, rel) in deferred {
+        for adapter in default_tool_adapters() {
+            assert!(
+                adapter.detect_dirs.iter().all(|dir| dir.rel != rel),
+                "{}: `{rel}` (deferred for {key}) waits for #108",
+                adapter.key()
+            );
+        }
+    }
+}
+
+/// One parsed row of the README's supported-harnesses table.
+#[derive(Debug, PartialEq, Eq)]
+struct ReadmeRow {
+    key: String,
+    label: String,
+    skills_dir: Option<String>,
+    project_dir: Option<String>,
+    detect_dirs: Vec<String>,
+}
+
+/// The backticked tokens of a README cell; a cell opening with `—` is none.
+fn readme_cell_paths(cell: &str) -> Vec<String> {
+    if cell.trim_start().starts_with('—') {
+        return vec![];
+    }
+    cell.split('`')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_string)
+        .collect()
+}
+
+fn readme_rows() -> Vec<ReadmeRow> {
+    let readme = include_str!("../../../../README.md");
+    let section = readme
+        .split("## Supported AI Coding Harnesses")
+        .nth(1)
+        .expect("README has the supported-harnesses section");
+    let section = section.split("\n## ").next().unwrap_or(section);
+    section
+        .lines()
+        .filter(|line| line.starts_with("| `"))
+        .map(|line| {
+            let cells: Vec<&str> = line.trim_matches('|').split('|').map(str::trim).collect();
+            assert_eq!(cells.len(), 5, "README row has five columns: {line}");
+            ReadmeRow {
+                key: cells[0].trim_matches('`').to_string(),
+                label: cells[1].to_string(),
+                skills_dir: readme_cell_paths(cells[2]).into_iter().next(),
+                project_dir: readme_cell_paths(cells[3]).into_iter().next(),
+                detect_dirs: readme_cell_paths(cells[4]),
+            }
+        })
+        .collect()
+}
+
+/// The README's supported-harnesses table is the registry, row for row —
+/// adapters and reader-only harnesses alike, in registry order, with each
+/// row's label and (default-root) dirs. Adding, relabelling or moving a
+/// harness without its README row fails here.
+#[test]
+fn the_readme_table_lists_every_registry_row() {
+    let expected: Vec<ReadmeRow> = default_tool_adapters()
+        .iter()
+        .map(|adapter| ReadmeRow {
+            key: adapter.key().to_string(),
+            label: adapter.display_name.to_string(),
+            skills_dir: Some(adapter.skills_dir.rel.to_string()),
+            project_dir: adapter.project_skills_dir.map(str::to_string),
+            detect_dirs: adapter
+                .detect_dirs
+                .iter()
+                .map(|dir| dir.rel.to_string())
+                .collect(),
+        })
+        .chain(reader_only_harnesses().iter().map(|reader| {
+            ReadmeRow {
+                key: reader.key.to_string(),
+                label: reader.display_name.to_string(),
+                skills_dir: None,
+                project_dir: None,
+                detect_dirs: reader
+                    .detect_dirs
+                    .iter()
+                    .map(|d| d.rel.to_string())
+                    .collect(),
+            }
+        }))
+        .collect();
+    let rows = readme_rows();
+    assert_eq!(
+        rows.len(),
+        expected.len(),
+        "README table rows vs registry rows (adapters + reader-only)"
+    );
+    assert_eq!(rows, expected);
 }

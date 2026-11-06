@@ -369,3 +369,12 @@ The operator keeps one skill Library and deploys it to many harnesses. Three thi
   more than one adversarial round for it.
 - Wave B's grill starts from this spec's registry facts as merged: #108 → #109 + #84 (study T3 Code's project
   defaults/overrides) → #70, #85/#86, #93, #87.
+
+## Status
+
+- 2026-11-06: lanes A (01) and B (03) dispatched (Opus 5.5, high).
+- 01 merged as `8401dfa` (PR #13). Astra review: fix-then-ship, one P2 fixed by the orchestrator
+  (`reviews/round20-t01-registry-review.md`).
+- 03 is blocked in round-1 review (3 P1, 2 P2; `reviews/round20-t03-move-library-review.md`). The round-2 fix is
+  dispatched.
+- 02 dispatched after 01's merge.

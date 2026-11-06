@@ -106,14 +106,24 @@ than re-tagging.
   review the `src/bindings/index.ts` diff for shape changes, then `npm run build`.
 - **New AI tool adapter**: add the `ToolId` variant (+ its `as_key` arm) and one `ToolAdapter` literal in
   the `TOOL_ADAPTERS` registry (`core/tool_adapters/mod.rs`) — every per-tool fact lives in that literal
-  (global/detect/project dirs, `former_relative_skills_dirs` — usually `&[]`; a corrected global dir goes there so
-  Target relocation moves existing targets — `group` for virtual-group membership, `supports_symlink`), **and** add a row
-  to the README supported-tools table, **and** extend the `project_relative_skills_dir_for_every_tool`
-  table test (`core/tests/tool_adapters.rs`). Only `as_key`'s exhaustive match is compiler-enforced; registry
-  completeness is test-enforced and the README table is not enforced at all — check it matches the `ToolId` variant
-  count whenever adapters change. Tool lists shown to the UI come
+  (`skills_dir` / `detect_dirs` / `former_skills_dirs` — usually `&[]`; a corrected global dir goes there so
+  Target relocation moves existing targets — `project_skills_dir`, `group` for virtual-group membership,
+  `supports_symlink`), **and** add its row to the README supported-tools table, **and** extend the
+  `project_relative_skills_dir_for_every_tool` and `every_existing_row_resolves_to_the_paths_it_always_has` table
+  tests (`core/tests/tool_adapters.rs`). Every registry path is a **typed root** — a `RegistryPath { root, rel,
+  overrides }`, written `home(".x/skills")`; root is home, roaming or local app data, and a per-OS `OsOverride` is
+  used only where the vendor documents one (`%APPDATA%`) — resolved only against the `HostRoots` the command seam
+  builds. Env-var homes (`KIMI_CODE_HOME`, …) are not honoured: name them in the row comment. The **project dir is
+  optional**: `None` keeps the harness out of `project_tool_entries` and every project-scope admission
+  (`project_adapter_by_key`) and its README cell reads `—`. A harness that reads `~/.agents/skills` and has no
+  folder of its own is a **reader-only harness**: one `ReaderOnlyHarness` literal in `READER_ONLY_HARNESSES` (key,
+  label, detect dirs, the group it reads) — never a `ToolId`, never a target; the catalogs list it under its group's
+  entry (`ToolInfoDto.readers`) and absorb it into the project group's roster, whose "(N harnesses)" count the
+  frontend derives (`projectToolLabel`). Only `as_key`'s exhaustive match is compiler-enforced; registry
+  completeness is test-enforced, and so is the README table: `the_readme_table_lists_every_registry_row` parses it
+  and fails on any row, label or dir drift (reader-only rows included). Tool lists shown to the UI come
   from `tool_adapters::global_tool_entries` / `project_tool_entries` — commands only map them to DTOs.
-  Installedness is one rule, `tool_adapters::is_installed_in`: some `relative_detect_dirs` entry exists and is
+  Installedness is one rule, `tool_adapters::is_installed_in`: some `detect_dirs` entry exists and is
   not a skills-only footprint (virtual groups exempt; a shared skills convention dir such as `.config/agents` is
   never a detect dir — `no_adapter_is_detected_by_a_shared_skills_convention_dir` enforces it). Test fixtures
   install a tool through `tool_adapters::mark_installed_in`, never a bare `create_dir_all(detect_dir)` — that is
@@ -286,8 +296,10 @@ than re-tagging.
   themselves; DESIGN.md documents the contract per primitive.
 - Path handling must support `~` expansion (`core/environment.rs::expand_home_path_in(home, input)`).
 - **Core never resolves filesystem roots from the environment.** `core/environment.rs` is the only core caller
-  of `dirs::home_dir()`; every other core function takes explicit roots (`home: &Path`, `InstallerPaths { home,
-  central_dir, cache_dir }`) so tests substitute a temp dir. Commands resolve roots once at the seam
+  of `dirs::*` (`home_dir()`, and `HostRoots::resolve()` for the registry's home / roaming / local roots); every
+  other core function takes explicit roots (`roots: &HostRoots` wherever a registry path is resolved,
+  `home: &Path` for `~` expansion, `InstallerPaths { roots, central_dir, cache_dir }`) so tests substitute temp dirs
+  (`HostRoots::under_home(home)`). Commands resolve roots once at the seam
   (`installer_paths`, `resolve_central_repo_path_for_app` in `commands/mod.rs`) — never thread
   `tauri::AppHandle` into `core/`. Sanctioned exceptions: `cache_cleanup.rs`/`temp_cleanup.rs`/
   `skill_store::default_db_path` take an `AppHandle` solely to call `app.path().app_cache_dir()`/`app_data_dir()`;

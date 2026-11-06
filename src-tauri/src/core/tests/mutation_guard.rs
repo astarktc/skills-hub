@@ -1,3 +1,4 @@
+use crate::core::environment::HostRoots;
 use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::Path;
@@ -348,7 +349,7 @@ fn global_sync_batch_is_serialized() {
     }];
     assert_serialized("sync_skills_to_tools", move || {
         let _ = global_sync::sync_skills_to_tools(
-            &home,
+            &HostRoots::under_home(&home),
             &store,
             &central_repo_of(&store),
             &skills,
@@ -371,11 +372,11 @@ fn refresh_finalize_and_propagation_is_serialized() {
 
     let roots = tempfile::tempdir().expect("tempdir");
     let paths = InstallerPaths {
-        home: roots.path().join("home"),
+        roots: HostRoots::under_home(&roots.path().join("home")),
         central_dir: roots.path().join("central"),
         cache_dir: roots.path().join("cache"),
     };
-    fs::create_dir_all(&paths.home).expect("create home");
+    fs::create_dir_all(&paths.roots.home).expect("create home");
 
     let source = tempfile::tempdir().expect("tempdir");
     fs::write(source.path().join("SKILL.md"), b"---\nname: x\n---\n").expect("write SKILL.md");
@@ -433,7 +434,7 @@ fn disable_enable_entry_points_are_serialized() {
             disable_targets(
                 &store,
                 &central_repo_of(&store),
-                &run_home,
+                &HostRoots::under_home(&run_home),
                 &run_scope,
                 5000,
             )
@@ -454,7 +455,7 @@ fn disable_enable_entry_points_are_serialized() {
             enable_targets(
                 &store,
                 &central_repo_of(&store),
-                &run_home,
+                &HostRoots::under_home(&run_home),
                 &run_scope,
                 6000,
             )

@@ -1,3 +1,4 @@
+use crate::core::environment::HostRoots;
 use std::fs;
 use std::path::Path;
 
@@ -15,7 +16,7 @@ fn plan_in(
     exclude_managed_targets: Option<&HashSet<String>>,
 ) -> anyhow::Result<OnboardingPlan> {
     build_onboarding_plan_in_home(
-        home,
+        &HostRoots::under_home(home),
         scope,
         exclude_root,
         exclude_managed_targets,
@@ -26,8 +27,8 @@ fn plan_in(
 /// An installed Tool holding one unmanaged skill whose file body is `body`.
 fn installed_with_skill(home: &Path, key: &str, name: &str, body: &[u8]) {
     let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {key}"));
-    mark_installed_in(home, adapter);
-    let dir = home.join(adapter.relative_skills_dir).join(name);
+    mark_installed_in(&HostRoots::under_home(home), adapter);
+    let dir = home.join(adapter.skills_dir.rel).join(name);
     fs::create_dir_all(&dir).unwrap();
     let mut manifest = format!("---\nname: {name}\n---\n").into_bytes();
     manifest.extend_from_slice(body);
@@ -121,7 +122,7 @@ fn excludes_central_repo_path() {
     let home = tempfile::tempdir().unwrap();
 
     let cursor = adapter_by_key("cursor").unwrap();
-    mark_installed_in(home.path(), cursor);
+    mark_installed_in(&HostRoots::under_home(home.path()), cursor);
     std::fs::create_dir_all(home.path().join(".cursor/skills")).unwrap();
 
     let central = home.path().join("central");
@@ -221,7 +222,7 @@ fn a_group_whose_name_is_managed_carries_the_flag_and_the_skill_id() {
     let managed = HashMap::from([("tdd".to_string(), "skill-1".to_string())]);
 
     let plan = build_onboarding_plan_in_home(
-        home.path(),
+        &HostRoots::under_home(home.path()),
         &OnboardingScanScope::Installed,
         None,
         None,
@@ -253,7 +254,7 @@ fn the_store_backed_plan_marks_managed_names_from_the_library() {
     fs::write(source.join("SKILL.md"), "---\nname: tdd\n---\nmine\n").unwrap();
     let installed = crate::core::installer::install_imported_skill(
         &crate::core::installer::InstallerPaths {
-            home: home.clone(),
+            roots: HostRoots::under_home(&home),
             central_dir: central.clone(),
             cache_dir: dir.path().join("cache"),
         },
@@ -264,9 +265,13 @@ fn the_store_backed_plan_marks_managed_names_from_the_library() {
     )
     .unwrap();
 
-    let plan =
-        super::build_onboarding_plan(&home, &central, &store, &OnboardingScanScope::Installed)
-            .unwrap();
+    let plan = super::build_onboarding_plan(
+        &HostRoots::under_home(&home),
+        &central,
+        &store,
+        &OnboardingScanScope::Installed,
+    )
+    .unwrap();
 
     let tdd = plan.groups.iter().find(|g| g.name == "tdd").unwrap();
     assert!(tdd.name_is_managed);
@@ -293,7 +298,7 @@ fn each_copy_carries_its_description_modified_time_and_managed_comparison() {
     fs::write(source.join("SKILL.md"), body).unwrap();
     crate::core::installer::install_imported_skill(
         &crate::core::installer::InstallerPaths {
-            home: home.clone(),
+            roots: HostRoots::under_home(&home),
             central_dir: central.clone(),
             cache_dir: dir.path().join("cache"),
         },
@@ -312,16 +317,20 @@ fn each_copy_carries_its_description_modified_time_and_managed_comparison() {
         ),
     ] {
         let adapter = adapter_by_key(key).unwrap();
-        mark_installed_in(&home, adapter);
-        let skill = home.join(adapter.relative_skills_dir).join("tdd");
+        mark_installed_in(&HostRoots::under_home(&home), adapter);
+        let skill = home.join(adapter.skills_dir.rel).join("tdd");
         fs::create_dir_all(&skill).unwrap();
         fs::write(skill.join("SKILL.md"), text).unwrap();
     }
     installed_with_skill(&home, "codex", "solo", b"solo");
 
-    let plan =
-        super::build_onboarding_plan(&home, &central, &store, &OnboardingScanScope::Installed)
-            .unwrap();
+    let plan = super::build_onboarding_plan(
+        &HostRoots::under_home(&home),
+        &central,
+        &store,
+        &OnboardingScanScope::Installed,
+    )
+    .unwrap();
 
     let tdd = plan.groups.iter().find(|g| g.name == "tdd").unwrap();
     let cursor = tdd.variants.iter().find(|v| v.tool == "cursor").unwrap();

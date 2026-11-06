@@ -2,6 +2,7 @@
 //! collisions collected (never asked, never written through), retry through
 //! the global sync batch with per-pair decisions, cancel between candidates.
 
+use crate::core::environment::HostRoots;
 use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::Path;
@@ -39,12 +40,12 @@ fn claude() -> &'static ToolAdapter {
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let paths = InstallerPaths {
-        home: dir.path().join("home"),
+        roots: HostRoots::under_home(&dir.path().join("home")),
         central_dir: dir.path().join("central"),
         cache_dir: dir.path().join("cache"),
     };
-    fs::create_dir_all(&paths.home).unwrap();
-    mark_installed_in(&paths.home, claude());
+    fs::create_dir_all(&paths.roots.home).unwrap();
+    mark_installed_in(&paths.roots, claude());
     let store = SkillStore::new(dir.path().join("test.db"));
     store.ensure_schema().unwrap();
     let source = dir.path().join("source");
@@ -86,7 +87,7 @@ fn request(f: &Fixture, names: &[&str]) -> InstallRequest {
 
 /// A foreign folder at Claude Code's `beta` target, with other content.
 fn occupy_beta(f: &Fixture) -> std::path::PathBuf {
-    let target = skills_dir_in(&f.paths.home, claude()).join("beta");
+    let target = skills_dir_in(&f.paths.roots, claude()).join("beta");
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("SKILL.md"), "---\nname: beta\n---\nmine\n").unwrap();
     target
@@ -175,7 +176,7 @@ fn a_batch_of_three_with_one_collision_answers_one_report_and_writes_nothing_thr
 /// overrides over the collided pairs only.
 fn retry(f: &Fixture, skill_id: &str, name: &str, decision: OverrideDecision) -> BatchTargetStatus {
     let mut rows = sync_skills_to_tools(
-        &f.paths.home,
+        &f.paths.roots,
         &f.store,
         &central_repo_of(&f.store),
         &[BatchSkill {
@@ -384,7 +385,7 @@ fn cancel_while_waiting_for_the_guard_finalizes_nothing() {
         .collect();
     assert!(leftovers.is_empty(), "staging dropped: {leftovers:?}");
     assert!(
-        !skills_dir_in(&f.paths.home, claude())
+        !skills_dir_in(&f.paths.roots, claude())
             .join("alpha")
             .exists(),
         "no target"
@@ -526,7 +527,7 @@ fn a_git_source_installs_through_the_listing_resolution() {
 
 /// A folder at Claude Code's `alpha` target with exactly `alpha`'s bytes.
 fn occupy_alpha_with_its_own_bytes(f: &Fixture) -> std::path::PathBuf {
-    let target = skills_dir_in(&f.paths.home, claude()).join("alpha");
+    let target = skills_dir_in(&f.paths.roots, claude()).join("alpha");
     fs::create_dir_all(&target).unwrap();
     fs::copy(
         f.source.join("alpha").join("SKILL.md"),
@@ -663,7 +664,7 @@ fn an_occupant_whose_mtime_cannot_be_read_is_reported_unknown() {
     use crate::core::sync_engine::Occupant;
 
     let f = fixture();
-    let vanished = skills_dir_in(&f.paths.home, claude()).join("vanished");
+    let vanished = skills_dir_in(&f.paths.roots, claude()).join("vanished");
     let occupant = Occupant::observe(Source::Directory(&f.source.join("alpha")), &vanished);
     assert_eq!(
         occupant,

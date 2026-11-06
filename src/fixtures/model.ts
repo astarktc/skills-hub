@@ -24,7 +24,7 @@ import type {
   SyncStatus,
   UpdateSkip,
 } from "../bindings";
-import { TOOL_REGISTRY, VIRTUAL_GROUP_KEY, type FixtureTool } from "./registry";
+import { READER_REGISTRY, TOOL_REGISTRY, VIRTUAL_GROUP_KEY, type FixtureTool } from "./registry";
 
 export const HOME = "/Users/alex";
 export const CENTRAL_DIR = `${HOME}/.skillshub`;
@@ -190,7 +190,8 @@ export function isProjectToolInstalled(state: FixtureState, key: string): boolea
       state.installedTools.includes(key) ||
       TOOL_REGISTRY.some(
         (tool) => tool.grouped && state.installedTools.includes(tool.key),
-      )
+      ) ||
+      READER_REGISTRY.some((reader) => reader.detected)
     );
   }
   return state.installedTools.includes(key);

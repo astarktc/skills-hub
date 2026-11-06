@@ -69,7 +69,8 @@ function toolInfo(key: string, shared_with: string[] = [key]): ToolInfoDto {
     installed: true,
     shared_with,
     constituents: [],
-    placement: { skills_dir: `.${key}/skills`, detect_dirs: [`.${key}`], supports_symlink: true },
+    readers: [],
+    placement: { skills_dir: `~/.${key}/skills`, detect_dirs: [`~/.${key}`], supports_symlink: true },
   };
 }
 

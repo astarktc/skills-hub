@@ -6,6 +6,7 @@
 //! the environment-probing entry points take an explicit `home`, so no test
 //! touches the operator's real home directory or installed tools.
 
+use crate::core::environment::HostRoots;
 use crate::core::removal_fence::central_repo_of;
 use crate::core::sync_status::{SyncMode, SyncStatus};
 use std::fs;
@@ -618,7 +619,7 @@ fn batch_override_applies_to_named_tool_and_its_shared_dir_group() {
     let amp = adapter_by_key("amp").expect("amp adapter");
     if let Some(kimi) = kimi {
         assert_eq!(
-            kimi.relative_skills_dir, amp.relative_skills_dir,
+            kimi.skills_dir, amp.skills_dir,
             "test premise: amp and kimi share a skills dir"
         );
         let root_b = dir.path().join("root-b");
@@ -773,7 +774,7 @@ fn classification_leaves_unrelated_errors_as_other_even_with_suspicious_prose() 
 
 fn install_tool(home: &Path, key: &str) {
     let adapter = adapter_by_key(key).expect("adapter");
-    mark_installed_in(home, adapter);
+    mark_installed_in(&HostRoots::under_home(home), adapter);
 }
 
 #[test]
@@ -789,7 +790,7 @@ fn plan_resolves_root_installedness_and_installed_shared_group_from_home() {
         .iter()
         .map(|k| k.to_string())
         .collect::<Vec<_>>();
-    let plans = plan_batch_tool_targets(home.path(), &keys);
+    let plans = plan_batch_tool_targets(&HostRoots::under_home(home.path()), &keys);
     assert_eq!(plans.len(), 4);
 
     let claude = plans[0].as_ref().expect("claude plan");
@@ -835,7 +836,7 @@ fn sync_skills_to_tools_writes_under_temp_home_and_reports_unknown_tools() {
         .map(|k| k.to_string())
         .collect::<Vec<_>>();
     let outcomes = sync_skills_to_tools(
-        &home,
+        &HostRoots::under_home(&home),
         &store,
         &central_repo_of(&store),
         &[batch_skill("skill-1", "skill-1", &source)],
@@ -1057,4 +1058,87 @@ fn nix_is_root() -> bool {
         .output()
         .map(|out| String::from_utf8_lossy(&out.stdout).trim() == "0")
         .unwrap_or(false)
+}
+
+/// A reader-only harness mints no target row: even a detected one is not a
+/// key the batch can deploy to.
+#[test]
+fn a_reader_only_harness_mints_no_target_row() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let home = dir.path().join("home");
+    let roots = HostRoots::under_home(&home);
+    let reader = crate::core::tool_adapters::test_overrides::sample_reader();
+    crate::core::tool_adapters::mark_reader_installed_in(&roots, reader);
+    let store = make_store(dir.path());
+    seed_skill(&store, "skill-1");
+    let source = make_skill_dir(dir.path(), "central-a", "# A");
+
+    let outcomes = sync_skills_to_tools(
+        &roots,
+        &store,
+        &central_repo_of(&store),
+        &[batch_skill("skill-1", "skill-1", &source)],
+        &[reader.key.to_string()],
+        &BatchPolicy {
+            overwrite: false,
+            overwrite_if_same_content: false,
+            overrides: vec![],
+        },
+        42,
+        |_| {},
+    );
+
+    assert!(matches!(
+        outcomes.as_slice(),
+        [o] if o.tool_key == reader.key && matches!(o.status, BatchTargetStatus::Failed { .. })
+    ));
+    assert!(store.list_skill_targets("skill-1").unwrap().is_empty());
+}
+
+/// A detected reader-only harness is reached only through its group, so the
+/// group's first deployment must not wait for `~/.agents` to exist: the
+/// reader makes the group installed, and the batch creates the folder. The
+/// record is the group's alone — the reader never gets a row.
+#[test]
+fn a_detected_reader_makes_its_group_deployable_before_the_group_folder_exists() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let home = dir.path().join("home");
+    let roots = HostRoots::under_home(&home);
+    let reader = crate::core::tool_adapters::test_overrides::sample_reader();
+    crate::core::tool_adapters::mark_reader_installed_in(&roots, reader);
+    assert!(!home.join(".agents").exists(), "no group folder yet");
+    let store = make_store(dir.path());
+    seed_skill(&store, "skill-1");
+    let source = make_skill_dir(dir.path(), "central-a", "# A");
+    let agents_key = crate::core::tool_adapters::ToolId::AgentsStandard.as_key();
+
+    let outcomes = sync_skills_to_tools(
+        &roots,
+        &store,
+        &central_repo_of(&store),
+        &[batch_skill("skill-1", "skill-1", &source)],
+        &[agents_key.to_string()],
+        &BatchPolicy {
+            overwrite: false,
+            overwrite_if_same_content: false,
+            overrides: vec![],
+        },
+        42,
+        |_| {},
+    );
+
+    assert!(
+        matches!(
+            outcomes.as_slice(),
+            [o] if o.tool_key == agents_key && matches!(o.status, BatchTargetStatus::Synced { .. })
+        ),
+        "{outcomes:?}"
+    );
+    assert!(home.join(".agents/skills/skill-1").exists());
+    let targets = store.list_skill_targets("skill-1").unwrap();
+    assert!(
+        targets.iter().all(|t| t.tool != reader.key),
+        "no reader row"
+    );
+    assert!(targets.iter().any(|t| t.tool == agents_key));
 }
