@@ -256,6 +256,23 @@ fn refuses_a_destination_inside_a_harness_skills_dir() {
     assert_untouched(&f, &id, &before);
 }
 
+/// Final release review (P2): a reader-only harness's own skills folder (fx's
+/// `~/.fx/skills`) is a harness skills dir too, never a Library — preview and
+/// move both refuse it, even empty and with the harness absent.
+#[test]
+fn refuses_a_reader_only_harness_skills_dir() {
+    let mut f = fixture(&["claude_code"]);
+    let id = f.install("alpha");
+    let before = f.central(&id);
+    let fx_dir = f.home().join(".fx/skills");
+    std::fs::create_dir_all(&fx_dir).unwrap();
+    let (reason, _) = f.refusal(&fx_dir);
+    assert_eq!(reason, LibraryDestinationRefusal::InsideHarnessDir);
+    let preview = preview_library_move(&f.store, &f.paths, &fx_dir);
+    assert!(preview.is_err(), "the preview refuses it too");
+    assert_untouched(&f, &id, &before);
+}
+
 #[test]
 fn refuses_a_destination_inside_a_project_skills_dir() {
     let mut f = fixture(&["claude_code"]);

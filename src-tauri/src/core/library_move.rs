@@ -756,6 +756,25 @@ pub(crate) mod test_seams {
 // Admission
 // ---------------------------------------------------------------------------
 
+/// Every harness skills folder a Library may never live in: each adapter's
+/// global dir and former dirs, and each reader-only harness's own skills
+/// folders (fx's `~/.fx/skills`) — Skills Hub never deploys there, but the
+/// harness reads them, so a Library there would show it every skill twice.
+fn harness_skills_dirs(roots: &crate::core::environment::HostRoots) -> Vec<PathBuf> {
+    default_tool_adapters()
+        .iter()
+        .flat_map(|adapter| {
+            std::iter::once(skills_dir_in(roots, adapter))
+                .chain(former_skills_dirs_in(roots, adapter))
+        })
+        .chain(
+            crate::core::tool_adapters::reader_only_harnesses()
+                .into_iter()
+                .flat_map(|reader| reader.skills_dirs.iter().map(|dir| dir.resolve(roots))),
+        )
+        .collect()
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Probe {
     /// Decide on reads alone (the preview).
@@ -814,9 +833,7 @@ fn admit(
         ));
     }
 
-    for adapter in default_tool_adapters() {
-        for dir in std::iter::once(skills_dir_in(&paths.roots, adapter))
-            .chain(former_skills_dirs_in(&paths.roots, adapter))
+    for dir in harness_skills_dirs(&paths.roots) {
         {
             if physical_dest.starts_with(physical(&dir)) {
                 return Err(refuse(
@@ -952,9 +969,7 @@ fn admit_physically(
             Some(&cache_root),
         ));
     }
-    for adapter in default_tool_adapters() {
-        for dir in std::iter::once(skills_dir_in(&paths.roots, adapter))
-            .chain(former_skills_dirs_in(&paths.roots, adapter))
+    for dir in harness_skills_dirs(&paths.roots) {
         {
             if at.within(&Place::of(&dir)?) {
                 return Err(refuse(

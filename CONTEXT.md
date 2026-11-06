@@ -19,7 +19,7 @@ A Harness one of whose detect dirs — its own configuration root(s), several wh
 _Avoid_: detected tool, harness present, harness exists (a footprint exists too)
 
 **Harness capability**:
-A per-harness fact that changes how deploying behaves for that harness, recorded on its registry record rather than tested by name in deploy code (today: `supports_symlink` — `false` forces copy mode for that entry; Cursor carried it until Cursor 2.5 fixed symlink discovery, and no current entry is copy-only). A capability describes one registry entry: a virtual group carries its own capability and does not inherit its constituents'.
+A per-harness fact that changes how deploying behaves for that harness, recorded on its registry record rather than tested by name in deploy code (today: `supports_symlink` — `false` forces copy mode for that entry; Cursor carried it until Cursor 2.5 fixed symlink discovery; today only Deep Agents Code is copy-only, since it rejects a link resolving outside its skill roots). A capability describes one registry entry: a virtual group carries its own capability and does not inherit its constituents'.
 **Code name**: a field of `ToolAdapter` (tool capability), read by `sync_engine::sync_dir_for_tool_with_overwrite`.
 _Avoid_: tool capability, special case, harness quirk, Cursor mode
 
@@ -34,7 +34,7 @@ The harnesses absorbed into a virtual group entry. The group counts as installed
 _Avoid_: constituent tools, member harnesses, sub-harnesses
 
 **Reader-only harness**:
-A Harness that reads a virtual group's shared folder (`~/.agents/skills`, `<project>/.agents/skills`) and has no skills folder of its own (Zed, Warp, …). Skills Hub detects it and lists it as a reader of that folder's entry ("Read by …", detected or not) but never deploys to it: it has no switch, is never in the saved selection or the new-harness ask, and owns no Deployment. At project scope it is absorbed into the group like a constituent harness and counts in the group's "(N harnesses)". The first, minimal form of "a Deployment is a folder; harnesses are its readers" (#109).
+A Harness that reads a virtual group's shared folder (`~/.agents/skills`, `<project>/.agents/skills`) and that Skills Hub serves only through that folder, with no deployment target of its own (Zed, Warp, fx, …) — some have their own skills folder (fx's `~/.fx/skills`), which Skills Hub never deploys to and never accepts as a Library folder. Skills Hub detects it and lists it as a reader of that folder's entry ("Read by …", detected or not) but never deploys to it: it has no switch, is never in the saved selection or the new-harness ask, and owns no Deployment. At project scope it is absorbed into the group like a constituent harness and counts in the group's "(N harnesses)". The first, minimal form of "a Deployment is a folder; harnesses are its readers" (#109).
 **Code name**: `ReaderOnlyHarness`, `READER_ONLY_HARNESSES` (`core/tool_adapters/mod.rs`), `ToolCatalogEntry::readers`, `ToolInfoDto.readers`.
 _Avoid_: passive harness, virtual harness, follower
 
