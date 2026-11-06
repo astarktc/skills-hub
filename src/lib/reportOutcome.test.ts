@@ -543,7 +543,7 @@ describe("invocationEditOutcome", () => {
 const removal = (fail: boolean): RemovalReport => ({
   targets: [
     {
-      rows: [{ scope: "global_target", id: "t1", skill_id: "s1", tool: "unknown" }],
+      rows: [{ scope: "global_target", id: "t1", skill_id: "s1", tool: "unknown", folder_key: "unknown" }],
       path: "/target",
       status: fail
         ? { status: "failed", error: { code: "OTHER", message: "busy" } }
@@ -560,22 +560,22 @@ describe("removalOutcome", () => {
         {
           path: "/removed",
           rows: [
-            { scope: "global_target", id: "r1", skill_id: "s1", tool: "claude" },
-            { scope: "global_target", id: "r2", skill_id: "s1", tool: "pi" },
+            { scope: "global_target", id: "r1", skill_id: "s1", tool: "claude", folder_key: "claude" },
+            { scope: "global_target", id: "r2", skill_id: "s1", tool: "pi", folder_key: "pi" },
           ],
           status: { status: "removed" },
         },
         {
           path: "/kept",
           rows: [
-            { scope: "global_target", id: "t1", skill_id: "s1", tool: "claude" },
-            { scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "unknown" },
+            { scope: "global_target", id: "t1", skill_id: "s1", tool: "claude", folder_key: "claude" },
+            { scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "unknown", folder_key: "unknown" },
           ],
           status: { status: "failed", error: { code: "PATH_OUTSIDE_TOOL_DIRS", path: "/kept" } },
         },
         {
           path: "/also-kept",
-          rows: [{ scope: "assignment", id: "a2", project_id: "p2", skill_id: "s1", tool: "pi" }],
+          rows: [{ scope: "assignment", id: "a2", project_id: "p2", skill_id: "s1", tool: "pi", folder_key: "pi" }],
           status: { status: "failed", error: { code: "OTHER", message: "busy" } },
         },
       ],
@@ -601,18 +601,21 @@ describe("removalOutcome", () => {
       // A project removal closes either way: the kept row shows in the matrix.
       expect(out.completion.closeModal).toBe(out === project);
     }
+    // Counted per Deployment: the global (s1, claude) Deployment has one row
+    // removed and one kept, so it counts once, as failed — only (s1, pi)
+    // globally was removed.
     expect(unsync.toast).toEqual({
       kind: "warning",
       tone: "failure",
-      message: [t("outcome.done.disabled", { count: 2 }), t("outcome.failed", { count: 3 })].join(" · "),
+      message: [t("outcome.done.disabled", { count: 1 }), t("outcome.failed", { count: 3 })].join(" · "),
     });
     expect(project.toast).toEqual({
       kind: "warning", tone: "failure",
-      message: [t("projectsSurface.removeKept"), t("outcome.done.removed", { count: 2 }), t("outcome.failed", { count: 3 })].join(" · "),
+      message: [t("projectsSurface.removeKept"), t("outcome.done.removed", { count: 1 }), t("outcome.failed", { count: 3 })].join(" · "),
     });
     expect(configure.toast).toEqual({
       kind: "warning", tone: "failure",
-      message: [t("outcome.done.removed", { count: 2 }), t("outcome.failed", { count: 3 })].join(" · "),
+      message: [t("outcome.done.removed", { count: 1 }), t("outcome.failed", { count: 3 })].join(" · "),
     });
     expect(deleted.toast).toEqual({ kind: "warning", tone: "failure", message: t("status.skillDeleteKept", { failed: 3 }) });
     expect(deleted.completion).toEqual({ reload: true, closeModal: false, conflict: false });
@@ -679,12 +682,12 @@ describe("removalOutcome", () => {
     const report: RemovalReport = {
       targets: [
         {
-          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude" }],
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude", folder_key: "claude" }],
           path: "/work/p1/.claude/skills/s1",
           status: { status: "removed" },
         },
         {
-          rows: [{ scope: "assignment", id: "a2", project_id: "p1", skill_id: "s1", tool: "pi" }],
+          rows: [{ scope: "assignment", id: "a2", project_id: "p1", skill_id: "s1", tool: "pi", folder_key: "pi" }],
           path: "/work/p1/.pi/skills/s1",
           status: { status: "removed" },
         },
@@ -724,12 +727,12 @@ describe("removalOutcome", () => {
     const report: RemovalReport = {
       targets: [
         {
-          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude" }],
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude", folder_key: "claude" }],
           path: "/work/p1/.claude/skills/a",
           status: { status: "removed" },
         },
         {
-          rows: [{ scope: "assignment", id: "a2", project_id: "p1", skill_id: "s1", tool: "pi" }],
+          rows: [{ scope: "assignment", id: "a2", project_id: "p1", skill_id: "s1", tool: "pi", folder_key: "pi" }],
           path: "/work/p1/.pi/skills/a",
           status: { status: "failed", error: { code: "OTHER", message: "denied" } },
         },
@@ -757,8 +760,12 @@ describe("removalOutcome", () => {
       notes: [],
       completion: { reload: false, closeModal: false, conflict: false },
     });
-    // The tool label map applies to the failed target's title.
-    const relabelled = { ...report, targets: [{ ...report.targets[1], rows: [{ ...report.targets[1].rows[0], tool: "claude" }] }] };
+    // The tool label map applies to the failed target's title, named by the
+    // Deployment folder the row describes.
+    const relabelled = {
+      ...report,
+      targets: [{ ...report.targets[1], rows: [{ ...report.targets[1].rows[0], tool: "claude", folder_key: "claude" }] }],
+    };
     expect(
       projectRemovalOutcome(relabelled, { ...ctx, action: "removeProject" }).errors[0].title,
     ).toBe(t("errors.projectRemovalFailedTitle", { tool: "CLAUDE" }));
@@ -770,7 +777,7 @@ describe("removalOutcome", () => {
     const report: RemovalReport = {
       targets: [
         {
-          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude" }],
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude", folder_key: "claude" }],
           path: "/work/p1/.claude/skills/a",
           status: { status: "failed", error: { code: "OTHER", message: "denied" } },
         },
@@ -795,7 +802,7 @@ describe("removalOutcome", () => {
     const clean: RemovalReport = {
       targets: [
         {
-          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "pi" }],
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "pi", folder_key: "pi" }],
           path: "/work/p1/.pi/skills/a",
           status: { status: "removed" },
         },
@@ -1862,7 +1869,7 @@ describe("removalOutcome of a Disable that only records intent", () => {
     central_removed: false,
     record_deleted: false,
     cleared_markers: [],
-    disabled_markers: tools.map((tool) => ({ scope: "global_target", id: `m-${tool}`, skill_id: "s1", tool })),
+    disabled_markers: tools.map((tool) => ({ scope: "global_target", id: `m-${tool}`, skill_id: "s1", tool, folder_key: tool })),
   });
   it("a pair's flipped marker reads as '{skill} stays off {harness}'", () => {
     const out = removalOutcome(intent("claude"), { ...ctx, action: "toggle", skillNames: { s1: "alpha" } });
@@ -1904,7 +1911,7 @@ describe("removalOutcome with cleared markers", () => {
       targets: [],
       central_removed: false,
       record_deleted: false,
-      cleared_markers: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude" }],
+      cleared_markers: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude", folder_key: "claude" }],
       disabled_markers: [],
     };
     const out = removalOutcome(report, { ...ctx, action: "toggle" });
@@ -1915,7 +1922,7 @@ describe("removalOutcome with cleared markers", () => {
   // N1: a cleared marker is an unassignment, so bulk unassign counts it (the
   // copy says "removed from N tools", not that an artifact was removed).
   const marker = (tool: string) =>
-    ({ scope: "assignment", id: `m-${tool}`, project_id: "p1", skill_id: "s1", tool }) as const;
+    ({ scope: "assignment", id: `m-${tool}`, project_id: "p1", skill_id: "s1", tool, folder_key: tool }) as const;
   it("a markers-only bulk unassign counts every cleared assignment", () => {
     const report: RemovalReport = {
       targets: [],
@@ -1936,7 +1943,7 @@ describe("removalOutcome with cleared markers", () => {
     const report: RemovalReport = {
       targets: [
         {
-          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "codex" }],
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "codex", folder_key: "codex" }],
           path: "/work/p1/.codex/skills/s1",
           status: { status: "removed" },
         },
@@ -2157,17 +2164,17 @@ describe("Delete over several skills (ticket 13, D16)", () => {
     targets: [
       {
         path: "/tools/codex/release-train",
-        rows: [{ scope: "global_target", id: "t1", skill_id: "rt", tool: "codex" }],
+        rows: [{ scope: "global_target", id: "t1", skill_id: "rt", tool: "codex", folder_key: "codex" }],
         status: { status: "removed" },
       },
       {
         path: "/tools/claude/release-train",
-        rows: [{ scope: "global_target", id: "t2", skill_id: "rt", tool: "claude" }],
+        rows: [{ scope: "global_target", id: "t2", skill_id: "rt", tool: "claude", folder_key: "claude" }],
         status: { status: "failed", error: { code: "OTHER", message: "Permission denied" } },
       },
       {
         path: "/work/mono/.agents/skills/release-train",
-        rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "rt", tool: "claude" }],
+        rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "rt", tool: "claude", folder_key: "claude" }],
         status: { status: "removed" },
       },
     ],
@@ -2492,7 +2499,7 @@ describe("libraryMoveOutcome", () => {
     skill_id: id,
     name: id,
     path: `/home/.claude/skills/${id}`,
-    rows: [{ scope: "global_target", id: `${id}-row`, skill_id: id, tool }],
+    rows: [{ scope: "global_target", id: `${id}-row`, skill_id: id, tool, folder_key: tool }],
     status,
   });
   const report = (parts: Partial<LibraryMoveReport>): LibraryMoveReport => ({
@@ -2777,5 +2784,77 @@ describe("gitCacheCleanOutcome (Clean Now)", () => {
     expect(gitCacheCleanOutcome({ cleared: 0, in_use: 1 }, { t: en }).toast?.message).toBe(
       "Cleared 0 cached repos; 1 in use, skipped",
     );
+  });
+});
+
+// Round 20 t09 review finding 4: rows a pre-1.4.0 app wrote once per
+// shared-dir sibling keep their own keys for settlement, but each names the
+// Deployment folder it describes (`folder_key`, the backend's answer). The
+// fold counts — and names failures by — one Deployment per (skill, folder),
+// per project for an assignment; it never reads a path.
+describe("removal reports count one Deployment per folder", () => {
+  const amp = { scope: "global_target", id: "t-amp", skill_id: "s1", tool: "amp", folder_key: "amp" } as const;
+  const kimi = { scope: "global_target", id: "t-kimi", skill_id: "s1", tool: "kimi_cli", folder_key: "amp" } as const;
+  const trae = (project: string) =>
+    ({ scope: "assignment", id: `a-trae-${project}`, project_id: project, skill_id: "s1", tool: "trae", folder_key: "trae" }) as const;
+  const traeCn = (project: string) =>
+    ({ scope: "assignment", id: `a-trae_cn-${project}`, project_id: project, skill_id: "s1", tool: "trae_cn", folder_key: "trae" }) as const;
+  const report = (parts: Partial<RemovalReport>): RemovalReport => ({
+    targets: [],
+    central_removed: false,
+    record_deleted: false,
+    cleared_markers: [],
+    disabled_markers: [],
+    ...parts,
+  });
+
+  it("a removed artifact with two sibling rows is one Deployment disabled", () => {
+    const out = removalOutcome(report({ targets: [{ path: "/shared/alpha", rows: [amp, kimi], status: { status: "removed" } }] }), {
+      ...ctx,
+      action: "all",
+    });
+    expect(out.toast?.message).toBe(t("outcome.done.disabled", { count: 1 }));
+  });
+
+  it("a kept artifact with two sibling rows is one failure, named by its folder", () => {
+    const kept = report({
+      targets: [{ path: "/shared/alpha", rows: [amp, kimi], status: { status: "failed", error: { code: "OTHER", message: "busy" } } }],
+    });
+    const out = removalOutcome(kept, { ...ctx, action: "all" });
+    expect(words(out.errors)).toEqual([{ title: t("errors.unsyncFailedTitle", { tool: "amp" }), message: "busy" }]);
+    expect(out.errors[0].subject).toEqual({ skillId: "s1", skillName: "", tool: "amp" });
+    expect(out.toast?.message).toBe(t("outcome.failed", { count: 1 }));
+    const deleted = deleteOutcome([{ skillId: "s1", name: "alpha", report: kept }], ctx);
+    expect(deleted.toast?.message).toBe(t("status.skillDeleteKept", { failed: 1 }));
+  });
+
+  it("never-synced sibling markers are one Deployment cleared, per project", () => {
+    const out = removalOutcome(report({ cleared_markers: [trae("p1"), traeCn("p1"), trae("p2")] }), {
+      ...ctx,
+      action: "bulkUnassign",
+    });
+    expect(out.toast?.message).toBe(t("projectsSurface.done.unassigned", { count: 2 }));
+  });
+
+  it("a kept row beside its sibling's cleared marker counts once, as failed", () => {
+    const out = projectRemovalOutcome(
+      report({
+        targets: [
+          { path: "/p1/.trae/skills/alpha", rows: [trae("p1")], status: { status: "failed", error: { code: "OTHER", message: "busy" } } },
+        ],
+        cleared_markers: [traeCn("p1")],
+      }),
+      { ...ctx, action: "configureTools" },
+    );
+    expect(words(out.errors)).toEqual([{ title: t("errors.projectRemovalFailedTitle", { tool: "trae" }), message: "busy" }]);
+    expect(out.toast?.message).toBe(t("outcome.failed", { count: 1 }));
+  });
+
+  it("the Delete report names a shared folder once", () => {
+    const rows = deleteReportRows(
+      [{ skillId: "s1", name: "alpha", report: report({ record_deleted: true, targets: [{ path: "/shared/alpha", rows: [amp, kimi], status: { status: "removed" } }] }) }],
+      ctx,
+    );
+    expect(rows[0].removedFrom).toEqual(["amp"]);
   });
 });

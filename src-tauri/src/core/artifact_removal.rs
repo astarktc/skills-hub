@@ -137,6 +137,13 @@ pub enum RemovalScope {
 }
 
 /// Where a row lives — the two tables that record Sync targets.
+///
+/// `id` / `tool` are the raw row reference settlement acts on (a pre-1.4.0
+/// row written once per shared-dir sibling keeps its own key). `folder_key`
+/// is the Deployment folder the row describes (`placement::row_folder`): the
+/// backend's answer to "which Deployment is this", so a report reader counts
+/// one Deployment per (skill, folder) — and per project for an assignment —
+/// however many legacy rows describe it, and never derives a folder itself.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(tag = "scope", rename_all = "snake_case")]
 pub enum RowRef {
@@ -145,6 +152,7 @@ pub enum RowRef {
         id: String,
         skill_id: String,
         tool: String,
+        folder_key: String,
     },
     /// A `project_skill_assignments` row (project scope).
     Assignment {
@@ -152,6 +160,7 @@ pub enum RowRef {
         project_id: String,
         skill_id: String,
         tool: String,
+        folder_key: String,
     },
 }
 
@@ -159,6 +168,27 @@ impl RowRef {
     pub fn tool(&self) -> &str {
         match self {
             RowRef::GlobalTarget { tool, .. } | RowRef::Assignment { tool, .. } => tool,
+        }
+    }
+
+    /// The reference to a global target row.
+    pub fn global(id: &str, skill_id: &str, tool: &str) -> Self {
+        RowRef::GlobalTarget {
+            id: id.to_string(),
+            skill_id: skill_id.to_string(),
+            tool: tool.to_string(),
+            folder_key: row_folder(ScopeKind::Global, tool),
+        }
+    }
+
+    /// The reference to a project assignment row.
+    pub fn assignment(id: &str, project_id: &str, skill_id: &str, tool: &str) -> Self {
+        RowRef::Assignment {
+            id: id.to_string(),
+            project_id: project_id.to_string(),
+            skill_id: skill_id.to_string(),
+            tool: tool.to_string(),
+            folder_key: row_folder(ScopeKind::Project, tool),
         }
     }
 }
@@ -476,12 +506,12 @@ fn push_assignments(
     let mut projects: HashMap<String, Option<ProjectRecord>> = HashMap::new();
     for assignment in assignments {
         if !assignment.owns_artifact() {
-            builder.markers.push(RowRef::Assignment {
-                id: assignment.id,
-                project_id: assignment.project_id,
-                skill_id: assignment.skill_id,
-                tool: assignment.tool,
-            });
+            builder.markers.push(RowRef::assignment(
+                &assignment.id,
+                &assignment.project_id,
+                &assignment.skill_id,
+                &assignment.tool,
+            ));
             continue;
         }
         let project = match projects.get(&assignment.project_id) {
@@ -526,12 +556,12 @@ fn push_assignments(
         };
         builder.push(
             path,
-            RowRef::Assignment {
-                id: assignment.id,
-                project_id: assignment.project_id,
-                skill_id: assignment.skill_id,
-                tool: assignment.tool,
-            },
+            RowRef::assignment(
+                &assignment.id,
+                &assignment.project_id,
+                &assignment.skill_id,
+                &assignment.tool,
+            ),
         );
     }
     Ok(())
@@ -559,11 +589,7 @@ impl TargetBuilder {
     }
 
     fn push_global(&mut self, row: &crate::core::skill_store::SkillTargetRecord) {
-        let row_ref = RowRef::GlobalTarget {
-            id: row.id.clone(),
-            skill_id: row.skill_id.clone(),
-            tool: row.tool.clone(),
-        };
+        let row_ref = RowRef::global(&row.id, &row.skill_id, &row.tool);
         if !row.owns_artifact() {
             self.markers.push(row_ref);
         } else {

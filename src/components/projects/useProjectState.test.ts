@@ -233,6 +233,7 @@ function stubBackend(options: { reconciled?: boolean } = {}) {
                   project_id: projectId,
                   skill_id: skillId,
                   tool: a.tool,
+                  folder_key: a.tool,
                 },
               ],
               status: { status: "removed" },
@@ -575,7 +576,7 @@ describe("useProjectState applies the view a mutation returns", () => {
     const kept: RemovalReport = {
       targets: [
         {
-          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "pi" }],
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "pi", folder_key: "pi" }],
           path: "/work/p1/.pi/skills/s1",
           status: { status: "failed", error: { code: "OTHER", message: "busy" } },
         },
@@ -668,7 +669,7 @@ describe("useProjectState applies the view a mutation returns", () => {
     const kept: RemovalReport = {
       targets: [{
         path: "/project/.pi/skills/s1",
-        rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "pi" }],
+        rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "pi", folder_key: "pi" }],
         status: { status: "failed", error: { code: "OTHER", message: "busy" } },
       }],
       central_removed: false,
@@ -1027,7 +1028,7 @@ describe("useProjectState applies the view a mutation returns", () => {
     const kept: RemovalReport = {
       targets: [
         {
-          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "pi" }],
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "pi", folder_key: "pi" }],
           path: "/work/p1/.pi/skills/s1",
           status: {
             status: "failed",

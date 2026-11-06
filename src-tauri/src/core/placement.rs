@@ -426,6 +426,75 @@ pub trait FolderRow {
 /// keyed by the folder key, in the order its group first appeared. Rows of a
 /// folder of their own pass through unchanged.
 pub fn one_row_per_folder<R: FolderRow>(scope: ScopeKind, rows: Vec<R>) -> Vec<R> {
+    group_by_folder(scope, rows)
+        .into_iter()
+        .map(|(folder, mut members)| {
+            let mut row = members.swap_remove(representative(&members, &folder));
+            row.set_tool(folder);
+            row
+        })
+        .collect()
+}
+
+/// One (owner, folder)'s stored rows as the write paths act on them. Folder
+/// grouping is **logical** (which folder a row describes, which row stands for
+/// it); artifact ownership is **physical**: only rows proven to name the
+/// driver's artifact share its ownership and settlement.
+#[derive(Debug)]
+pub struct FolderRows<R> {
+    /// The folder key every row here describes.
+    pub folder: String,
+    /// The row standing for the folder, by [`one_row_per_folder`]'s rule (a
+    /// `disabled` row when any is, else the row keyed by the folder, else the
+    /// first) — the folder's state, and the artifact a write acts on.
+    pub driver: R,
+    /// Other rows proven to name the driver's physical artifact: an owner
+    /// among them authorises replacing it, and they settle with the driver.
+    pub same_artifact: Vec<R>,
+    /// Rows of the folder naming another artifact (a pre-1.4.0 sibling written
+    /// under another skill name): each owns only its own artifact, and no
+    /// write of the folder's artifact touches or settles it — the redeploy
+    /// (ticket 10) reconciles it. Removal still plans it by its own row.
+    pub independent: Vec<R>,
+}
+
+impl<R> FolderRows<R> {
+    /// The driver and every row naming its artifact.
+    pub fn artifact_rows(&self) -> impl Iterator<Item = &R> {
+        std::iter::once(&self.driver).chain(self.same_artifact.iter())
+    }
+}
+
+/// Group `rows` by (owner, folder) and split each group by artifact:
+/// `same_artifact(driver, row)` decides, per row, whether it names the
+/// driver's physical artifact (the caller supplies the physical test — this
+/// module reads no filesystem). Groups come out in the order they first
+/// appeared; rows keep their order within a group.
+pub fn folder_rows<R: FolderRow>(
+    scope: ScopeKind,
+    rows: Vec<R>,
+    same_artifact: impl Fn(&R, &R) -> bool,
+) -> Vec<FolderRows<R>> {
+    group_by_folder(scope, rows)
+        .into_iter()
+        .map(|(folder, mut members)| {
+            let driver = members.remove(representative(&members, &folder));
+            let (same, independent) = members
+                .into_iter()
+                .partition(|row| same_artifact(&driver, row));
+            FolderRows {
+                folder,
+                driver,
+                same_artifact: same,
+                independent,
+            }
+        })
+        .collect()
+}
+
+/// Rows grouped by (owner, folder), each group keyed by its folder, in order
+/// of first appearance.
+fn group_by_folder<R: FolderRow>(scope: ScopeKind, rows: Vec<R>) -> Vec<(String, Vec<R>)> {
     let mut groups: Vec<(String, String, Vec<R>)> = Vec::new();
     for row in rows {
         let owner = row.owner();
@@ -440,17 +509,22 @@ pub fn one_row_per_folder<R: FolderRow>(scope: ScopeKind, rows: Vec<R>) -> Vec<R
     }
     groups
         .into_iter()
-        .map(|(_, folder, mut members)| {
-            let pick = members
-                .iter()
-                .position(|r| r.status() == SyncStatus::Disabled)
-                .or_else(|| members.iter().position(|r| r.tool() == folder))
-                .unwrap_or(0);
-            let mut row = members.swap_remove(pick);
-            row.set_tool(folder);
-            row
-        })
+        .map(|(_, folder, members)| (folder, members))
         .collect()
+}
+
+/// The index of the row standing for `folder` among `members` (non-empty): a
+/// `disabled` row when any is (one disabled row keeps the folder off), else
+/// the row keyed by the folder, else the first. Among several candidates the
+/// row keyed by the folder comes first.
+fn representative<R: FolderRow>(members: &[R], folder: &str) -> usize {
+    let disabled = |r: &R| r.status() == SyncStatus::Disabled;
+    members
+        .iter()
+        .position(|r| disabled(r) && r.tool() == folder)
+        .or_else(|| members.iter().position(disabled))
+        .or_else(|| members.iter().position(|r| r.tool() == folder))
+        .unwrap_or(0)
 }
 
 impl FolderRow for SkillTargetRecord {

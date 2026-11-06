@@ -249,11 +249,9 @@ fn disable_pair(
                     target_path: &target_path.to_string_lossy(),
                 },
             )?;
-            report.disabled_markers.push(RowRef::GlobalTarget {
-                id,
-                skill_id: skill.id.clone(),
-                tool: folder.clone(),
-            });
+            report
+                .disabled_markers
+                .push(RowRef::global(&id, &skill.id, &folder));
         }
     }
     Ok(report)

@@ -1706,12 +1706,21 @@ export type RevealPathFailure =
 /**  The file manager could not show it. */
 "opener";
 
-/**  Where a row lives — the two tables that record Sync targets. */
+/**
+ *  Where a row lives — the two tables that record Sync targets.
+ *
+ *  `id` / `tool` are the raw row reference settlement acts on (a pre-1.4.0
+ *  row written once per shared-dir sibling keeps its own key). `folder_key`
+ *  is the Deployment folder the row describes (`placement::row_folder`): the
+ *  backend's answer to "which Deployment is this", so a report reader counts
+ *  one Deployment per (skill, folder) — and per project for an assignment —
+ *  however many legacy rows describe it, and never derives a folder itself.
+ */
 export type RowRef =
 /**  A `skill_targets` row (global scope). */
-{ scope: "global_target"; id: string; skill_id: string; tool: string } |
+{ scope: "global_target"; id: string; skill_id: string; tool: string; folder_key: string } |
 /**  A `project_skill_assignments` row (project scope). */
-{ scope: "assignment"; id: string; project_id: string; skill_id: string; tool: string };
+{ scope: "assignment"; id: string; project_id: string; skill_id: string; tool: string; folder_key: string };
 
 /**  One setting write, as sent by the frontend: `{ key, value }`. */
 export type SettingUpdate =

@@ -2002,22 +2002,15 @@ fn relink_phase(
             let (row_refs, adapter_key, disabled) = match &rows {
                 Rows::Global(rows) => (
                     rows.iter()
-                        .map(|row| RowRef::GlobalTarget {
-                            id: row.id.clone(),
-                            skill_id: row.skill_id.clone(),
-                            tool: row.tool.clone(),
-                        })
+                        .map(|row| RowRef::global(&row.id, &row.skill_id, &row.tool))
                         .collect::<Vec<_>>(),
                     rows[0].tool.clone(),
                     rows.iter().any(|row| row.status == SyncStatus::Disabled),
                 ),
                 Rows::Assignment { rows, .. } => (
                     rows.iter()
-                        .map(|row| RowRef::Assignment {
-                            id: row.id.clone(),
-                            project_id: row.project_id.clone(),
-                            skill_id: row.skill_id.clone(),
-                            tool: row.tool.clone(),
+                        .map(|row| {
+                            RowRef::assignment(&row.id, &row.project_id, &row.skill_id, &row.tool)
                         })
                         .collect(),
                     rows[0].tool.clone(),

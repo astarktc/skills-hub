@@ -756,17 +756,30 @@ export function useSyncOrchestration({
   /**
    * Turn one harness on or off in the saved selection (the first change
    * turns "never configured — every detected harness" into an explicit
-   * list). Registry order is kept; a saved key the catalog no longer lists
-   * stays at the end.
+   * list). The selection is stored as Deployment folders and read back as
+   * every harness each selected folder serves (`settings::harnesses_served_by`),
+   * so the change applies to the harness's whole folder — every catalog
+   * harness sharing its `folder_key` (the backend's answer, never derived
+   * from a path): switching one harness of a shared folder off turns the
+   * folder off, which a lone key removal could not (its sibling would bring
+   * the folder back). Registry order is kept; a saved key the catalog no
+   * longer lists stays at the end.
    */
   const setHarnessSelected = useCallback(
     (toolId: string, selected: boolean): Promise<HarnessSaveResult> => {
       const known = toolInfos.map((info) => info.key);
+      const folder = toolInfos.find((info) => info.key === toolId)?.folder_key;
+      const members =
+        folder === undefined
+          ? [toolId]
+          : toolInfos.filter((info) => info.folder_key === folder).map((info) => info.key);
       return saveToolConfig({
         selected: (current) => {
           const wanted = new Set(current);
-          if (selected) wanted.add(toolId);
-          else wanted.delete(toolId);
+          for (const key of members) {
+            if (selected) wanted.add(key);
+            else wanted.delete(key);
+          }
           return [
             ...known.filter((key) => wanted.has(key)),
             ...current.filter((key) => wanted.has(key) && !known.includes(key)),

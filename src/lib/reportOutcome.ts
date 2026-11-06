@@ -14,6 +14,7 @@ import type {
   PropagationOutcome,
   RefreshReport,
   RemovalReport,
+  RowRef,
 } from "../bindings";
 import { describeCommandError, toCommandError } from "../commandError";
 import type { DeclinedPair } from "./overwriteAsk";
@@ -388,22 +389,42 @@ function refreshCounts(report: RefreshReport) {
 }
 
 /**
- * `removed` / `failed` count the rows of removed / kept targets; `cleared`
- * counts rows settled without touching any path (`cleared_markers`: rows that
- * owned no artifact), so an unassignment that only cleared such a row still
- * counts as one without claiming an artifact was removed. `flipped` counts the
- * markers a Disable recorded `disabled` (`disabled_markers`, #95): intent
- * recorded, nothing removed.
+ * The Deployment a removal row describes: its folder (`folder_key`, the
+ * backend's answer — never derived from a path) for its skill, and for an
+ * assignment its project. Rows a pre-1.4.0 app wrote once per shared-dir
+ * sibling keep their own keys for settlement but describe one Deployment.
+ */
+function deploymentOf(row: RowRef): string {
+  return [row.scope, row.scope === "assignment" ? row.project_id : "", row.skill_id, row.folder_key].join("\n");
+}
+
+/** Which way a Deployment settled when its rows settled differently: a kept row wins. */
+const REMOVAL_RANK = { failed: 3, removed: 2, cleared: 1, flipped: 0 } as const;
+type RemovalKind = keyof typeof REMOVAL_RANK;
+
+/**
+ * Counts **Deployments**, one per (skill, folder) — per project for an
+ * assignment — however many rows describe it (`deploymentOf`), each counted
+ * once by its strongest settlement (failed › removed › cleared › flipped).
+ * `removed` / `failed` count the Deployments of removed / kept targets;
+ * `cleared` counts those settled without touching any path (`cleared_markers`:
+ * rows that owned no artifact), so an unassignment that only cleared such a
+ * row still counts as one without claiming an artifact was removed. `flipped`
+ * counts the markers a Disable recorded `disabled` (`disabled_markers`, #95):
+ * intent recorded, nothing removed.
  */
 function removalCounts(report: RemovalReport) {
-  const counts = {
-    removed: 0,
-    failed: 0,
-    cleared: report.cleared_markers.length,
-    flipped: report.disabled_markers.length,
+  const settled = new Map<string, RemovalKind>();
+  const note = (row: RowRef, kind: RemovalKind) => {
+    const key = deploymentOf(row);
+    const before = settled.get(key);
+    if (before === undefined || REMOVAL_RANK[kind] > REMOVAL_RANK[before]) settled.set(key, kind);
   };
-  for (const target of report.targets)
-    counts[target.status.status] += target.rows.length;
+  for (const target of report.targets) for (const row of target.rows) note(row, target.status.status);
+  for (const row of report.cleared_markers) note(row, "cleared");
+  for (const row of report.disabled_markers) note(row, "flipped");
+  const counts = { removed: 0, failed: 0, cleared: 0, flipped: 0 };
+  for (const kind of settled.values()) counts[kind]++;
   return counts;
 }
 
@@ -666,9 +687,11 @@ export function invocationEditOutcome(
 }
 
 /**
- * One error entry per kept row of a removal report (ADR-0002: shared
- * artifacts may describe several tools' rows). Shared by every removal-shaped fold; the title key
- * is the only thing that differs per action. Returns whether anything failed.
+ * One error entry per kept Deployment of a removal report (ADR-0002: a kept
+ * artifact keeps every row describing it; rows of one Deployment — `deploymentOf`
+ * — are one entry, named by its folder). Shared by every removal-shaped fold;
+ * the title key is the only thing that differs per action. Returns whether
+ * anything failed.
  */
 function collectRemovalFailures(
   out: Outcome<PlainEntry>,
@@ -678,16 +701,20 @@ function collectRemovalFailures(
   /** Skill names by id, when the fold knows them (a Delete names its skill). */
   skillNames?: Readonly<Record<string, string>>,
 ): boolean {
+  const named = new Set<string>();
   for (const target of report.targets) {
     if (target.status.status !== "failed") continue;
     for (const row of target.rows) {
+      const deployment = deploymentOf(row);
+      if (named.has(deployment)) continue;
+      named.add(deployment);
       out.errors.push({
-        title: ctx.t(titleKey, { tool: label(ctx, row.tool) }),
+        title: ctx.t(titleKey, { tool: label(ctx, row.folder_key) }),
         message: errorMessage(ctx, target.status.error),
         subject: {
           skillId: row.skill_id,
           skillName: skillNames?.[row.skill_id] ?? "",
-          tool: row.tool,
+          tool: row.folder_key,
           ...(row.scope === "assignment" ? { projectId: row.project_id } : {}),
         },
         error: target.status.error,
@@ -757,7 +784,7 @@ export function removalOutcome(
             "success",
             ctx.t("status.pairStaysOff", {
               name: ctx.skillNames?.[flipped.skill_id] ?? flipped.skill_id,
-              tool: label(ctx, flipped.tool),
+              tool: label(ctx, flipped.folder_key),
             }),
           )
         : toast("success", ctx.t("status.syncDisabled"));
@@ -1544,10 +1571,12 @@ export function deleteReportRows(
   settled: readonly DeleteSettlement[],
   ctx: ReportContext & { projectLabelById?: Readonly<Record<string, string>> },
 ): DeleteReportRow[] {
-  const rowLabel = (row: RemovalReport["targets"][number]["rows"][number]) =>
+  // Named by the Deployment folder each row describes (`folder_key`): rows a
+  // pre-1.4.0 app wrote once per shared-dir sibling read as their one folder.
+  const rowLabel = (row: RowRef) =>
     row.scope === "assignment"
-      ? `${label(ctx, row.tool)} · ${ctx.projectLabelById?.[row.project_id] ?? row.project_id}`
-      : label(ctx, row.tool);
+      ? `${label(ctx, row.folder_key)} · ${ctx.projectLabelById?.[row.project_id] ?? row.project_id}`
+      : label(ctx, row.folder_key);
   const unique = (values: string[]) => [...new Set(values)];
   const rows = settled.map((settlement): DeleteReportRow => {
     if (!("report" in settlement))

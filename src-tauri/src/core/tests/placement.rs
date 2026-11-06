@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::{
-    capability_entry, folder_mode, one_row_per_folder, own_folder, place, row_folder,
+    capability_entry, folder_mode, folder_rows, one_row_per_folder, own_folder, place, row_folder,
     serving_folder, DeployMode, InstalledSet, PlacementScope, PlacementSettings, ScopeKind,
 };
 use crate::core::environment::HostRoots;
@@ -335,4 +335,66 @@ fn one_disabled_sibling_keeps_the_folder_disabled() {
     assert_eq!(folded[0].id, "2");
     assert_eq!(folded[0].tool, "amp");
     assert_eq!(folded[0].status, SyncStatus::Disabled);
+}
+
+/// The write paths' split: the folder's driver (by the same representative
+/// rule), the rows the caller's physical test proves name its artifact, and
+/// the rest — independent rows that share nothing with it.
+#[test]
+fn folder_rows_split_a_folder_by_the_artifact_its_rows_name() {
+    let mut renamed = row("3", "alpha", "kimi_cli", SyncStatus::Synced);
+    renamed.target_path = "/elsewhere/old-name".to_string();
+    let rows = vec![
+        row("1", "alpha", "kimi_cli", SyncStatus::Error),
+        row("2", "alpha", "amp", SyncStatus::Synced),
+        renamed,
+        row("4", "alpha", "claude_code", SyncStatus::Synced),
+    ];
+    let groups = folder_rows(ScopeKind::Global, rows, |driver, row| {
+        driver.target_path == row.target_path
+    });
+    let seen: Vec<(String, &str, Vec<&str>, Vec<&str>)> = groups
+        .iter()
+        .map(|g| {
+            (
+                g.folder.clone(),
+                g.driver.id.as_str(),
+                g.same_artifact.iter().map(|r| r.id.as_str()).collect(),
+                g.independent.iter().map(|r| r.id.as_str()).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        vec![
+            // The row keyed by the folder drives it; the sibling on its path
+            // shares its artifact; the old-name sibling is independent.
+            ("amp".to_string(), "2", vec!["1"], vec!["3"]),
+            ("claude_code".to_string(), "4", vec![], vec![]),
+        ]
+    );
+    // Rows keep their own keys: settlement acts on the raw rows.
+    assert_eq!(groups[0].same_artifact[0].tool, "kimi_cli");
+    let artifact: Vec<&str> = groups[0].artifact_rows().map(|r| r.id.as_str()).collect();
+    assert_eq!(artifact, vec!["2", "1"]);
+}
+
+/// A disabled row still stands for its folder (the folder is off), and among
+/// disabled rows the one keyed by the folder does.
+#[test]
+fn a_disabled_row_keyed_by_the_folder_drives_it() {
+    let rows = vec![
+        row("1", "alpha", "kimi_cli", SyncStatus::Disabled),
+        row("2", "alpha", "amp", SyncStatus::Disabled),
+    ];
+    let groups = folder_rows(ScopeKind::Global, rows, |_, _| true);
+    assert_eq!(groups[0].driver.id, "2");
+    let folded = one_row_per_folder(
+        ScopeKind::Global,
+        vec![
+            row("1", "alpha", "kimi_cli", SyncStatus::Disabled),
+            row("2", "alpha", "amp", SyncStatus::Disabled),
+        ],
+    );
+    assert_eq!(folded[0].id, "2");
 }

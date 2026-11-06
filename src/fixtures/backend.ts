@@ -501,6 +501,23 @@ export function createFixtureBackend(
 
   const ownsArtifact = (row: { synced_at: number | null }) => row.synced_at !== null;
 
+  /** Rust `RowRef::global` / `RowRef::assignment`: the raw row plus the folder it describes. */
+  const globalRowRef = (skillId: string, tool: string): RowRef => ({
+    scope: "global_target",
+    id: `tgt-${skillId}-${tool}`,
+    skill_id: skillId,
+    tool,
+    folder_key: globalFolderOf(tool),
+  });
+  const assignmentRowRef = (a: ProjectSkillAssignmentDto, projectId: string): RowRef => ({
+    scope: "assignment",
+    id: a.id,
+    project_id: projectId,
+    skill_id: a.skill_id,
+    tool: a.tool,
+    folder_key: projectFolderOf(a.tool),
+  });
+
   /** Rust `Settlement::Disable` on markers: the row flips, no path is touched. */
   const disableMarkers = (settle: Settle, removal: Removal): Removal => {
     if (settle !== "disable") return removal;
@@ -522,7 +539,7 @@ export function createFixtureBackend(
     for (const row of inScope) {
       if (!ownsArtifact(row)) {
         markers.push({
-          row: { scope: "global_target", id: `tgt-${skill.dto.id}-${row.tool}`, skill_id: skill.dto.id, tool: row.tool },
+          row: globalRowRef(skill.dto.id, row.tool),
           clear: () => {
             skill.dto.targets = skill.dto.targets.filter((t) => t !== row);
           },
@@ -536,7 +553,7 @@ export function createFixtureBackend(
     }
     const targets: RemovalTargetOutcome[] = [];
     for (const [path, rowTools] of byPath) {
-      const rows = rowTools.map((tool) => ({ scope: "global_target" as const, id: `tgt-${skill.dto.id}-${tool}`, skill_id: skill.dto.id, tool }));
+      const rows = rowTools.map((tool) => globalRowRef(skill.dto.id, tool));
       const described = skill.dto.targets.filter((t) => rowTools.includes(t.tool));
       const present = presentAt(path, described.some((t) => t.status !== "disabled"));
       const stuck = state.lockedPaths.includes(path) || rowTools.some((tool) => state.unwritableTools.includes(tool));
@@ -573,7 +590,7 @@ export function createFixtureBackend(
         remaining.push(a);
         continue;
       }
-      const rows = [{ scope: "assignment" as const, id: a.id, project_id: project.id, skill_id: a.skill_id, tool: a.tool }];
+      const rows = [assignmentRowRef(a, project.id)];
       if (!ownsArtifact(a)) {
         remaining.push(a);
         markers.push({
@@ -873,7 +890,7 @@ export function createFixtureBackend(
         target_path: `${globalRoot(folder)}/${skill.dto.name}`,
         synced_at: null,
       });
-      const marker = { scope: "global_target" as const, id: `tgt-${skill.dto.id}-${folder}`, skill_id: skill.dto.id, tool: folder };
+      const marker = globalRowRef(skill.dto.id, folder);
       return { ...out, disabled: [...(out.disabled ?? []), marker] };
     }
     return out;
@@ -1694,7 +1711,7 @@ export function createFixtureBackend(
           skill_id: skill.dto.id,
           name: skill.dto.name,
           path: target.target_path,
-          rows: [{ scope: "global_target", id: `${skill.dto.id}:${target.tool}`, skill_id: skill.dto.id, tool: target.tool }],
+          rows: [{ ...globalRowRef(skill.dto.id, target.tool), id: `${skill.dto.id}:${target.tool}` }],
           status,
         });
       }
@@ -1713,7 +1730,7 @@ export function createFixtureBackend(
             skill_id: skill.dto.id,
             name: skill.dto.name,
             path: assignmentPath(project, a),
-            rows: [{ scope: "assignment", id: a.id, project_id: project.id, skill_id: skill.dto.id, tool: a.tool }],
+            rows: [assignmentRowRef(a, project.id)],
             status,
           });
         }

@@ -285,7 +285,7 @@ describe("the door, verb by verb", () => {
     mockInvoke.mockImplementation((command) =>
       Promise.resolve(
         command === "disableSkillTargets"
-          ? { ...EMPTY_REMOVAL, disabled_markers: [{ scope: "global_target", id: "m", skill_id: "s2", tool: "cursor" }] }
+          ? { ...EMPTY_REMOVAL, disabled_markers: [{ scope: "global_target", id: "m", skill_id: "s2", tool: "cursor", folder_key: "cursor" }] }
           : command === "getManagedSkills"
             ? s.skills
             : null,
@@ -636,7 +636,7 @@ describe("where confirmation happens", () => {
       targets: [
         {
           path: "/tools/claude/beta",
-          rows: [{ scope: "global_target", id: "t", skill_id: "s2", tool: "claude" }],
+          rows: [{ scope: "global_target", id: "t", skill_id: "s2", tool: "claude", folder_key: "claude" }],
           status: { status: "failed", error: { code: "OTHER", message: "Permission denied" } },
         },
       ],

@@ -1167,3 +1167,107 @@ describe("the one overwrite ask across producers (ticket 04)", () => {
     expect(report.projects.items.map((item) => item.status.status)).toEqual(["synced"]);
   });
 });
+
+// Round 20 t09 review finding 2: the saved selection is stored as Deployment
+// folders and read back as every harness each folder serves, so a change to
+// one harness of a shared folder must apply to the whole folder — or the
+// sibling still named in the selection brings the folder back on save.
+describe("useSyncOrchestration selection of a shared Deployment folder", () => {
+  // Amp and Kimi Code share `~/.config/agents/skills` (folder key `amp`);
+  // Cursor has a folder of its own.
+  const FOLDER_STATUS: ToolStatusDto = {
+    tools: [toolInfo("amp", ["amp", "kimi_cli"]), toolInfo("cursor"), toolInfo("kimi_cli", ["amp", "kimi_cli"])],
+    installed: ["amp", "cursor", "kimi_cli"],
+    newly_installed: [],
+  };
+  const folderOf = (key: string) => FOLDER_STATUS.tools.find((info) => info.key === key)?.folder_key;
+  // Rust `settings::folders_serving`: first-seen order, unknown keys dropped.
+  const foldersServing = (harnesses: readonly string[]) => [
+    ...new Set(harnesses.map(folderOf).filter((folder): folder is string => folder !== undefined)),
+  ];
+  // Rust `settings::harnesses_served_by`: folder by folder, registry order within.
+  const harnessesServedBy = (folders: readonly string[]) =>
+    folders.flatMap((folder) => FOLDER_STATUS.tools.filter((info) => info.folder_key === folder).map((info) => info.key));
+
+  /**
+   * The settings store as Rust keeps it: `global_selected_folders_v2`, and the
+   * pre-1.4.0 `global_selected_tools_v1` translated on read until the first
+   * save writes v2 (a folder is on when any harness it serves was selected).
+   */
+  function stubFolderBackend(stored: { v1?: string[]; v2?: string[] }) {
+    const store = { ...stored };
+    const snapshot = () => {
+      const folders = store.v2 ?? (store.v1 ? foldersServing(store.v1) : null);
+      return appSettings({ global_selected_tools: folders === null ? null : harnessesServedBy(folders) });
+    };
+    mockInvoke.mockImplementation((command, ...args) => {
+      switch (command) {
+        case "getSettings":
+          return Promise.resolve(snapshot());
+        case "getToolStatus":
+          return Promise.resolve(FOLDER_STATUS);
+        case "updateSetting": {
+          const update = args[0] as { key: string; value: { selected_tools: string[] } };
+          if (update.key === "global_tool_config") store.v2 = foldersServing(update.value.selected_tools);
+          return Promise.resolve(snapshot());
+        }
+        default:
+          return Promise.resolve(undefined);
+      }
+    });
+    return store;
+  }
+
+  const starts = [
+    { when: "before the v1→v2 migration", stored: { v1: ["kimi_cli", "cursor"] } },
+    { when: "after the v1→v2 migration", stored: { v2: ["amp", "cursor"] } },
+  ];
+  for (const { when, stored } of starts) {
+    for (const member of ["amp", "kimi_cli"]) {
+      it(`switching ${member} off and on ${when} turns the whole folder off and on`, async () => {
+        const store = stubFolderBackend(stored);
+        const { result } = renderSync();
+        await waitFor(() => expect(result.current.globalSelectedTools).toEqual(["amp", "kimi_cli", "cursor"]));
+
+        await act(async () => {
+          expect(await result.current.setHarnessSelected(member, false)).toBe("saved");
+        });
+        expect(store.v2).toEqual(["cursor"]);
+        expect(result.current.globalSelectedTools).toEqual(["cursor"]);
+        expect(result.current.syncTargets).toEqual({ amp: false, cursor: true, kimi_cli: false });
+
+        await act(async () => {
+          expect(await result.current.setHarnessSelected(member, true)).toBe("saved");
+        });
+        expect(store.v2).toEqual(["amp", "cursor"]);
+        expect(result.current.globalSelectedTools).toEqual(["amp", "kimi_cli", "cursor"]);
+        expect(result.current.syncTargets).toEqual({ amp: true, cursor: true, kimi_cli: true });
+      });
+    }
+  }
+
+  it("switching one member off from the never-configured default turns its folder off", async () => {
+    const store = stubFolderBackend({});
+    const { result } = renderSync();
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+    expect(result.current.globalSelectedTools).toBeNull();
+
+    await act(async () => {
+      await result.current.setHarnessSelected("kimi_cli", false);
+    });
+    expect(store.v2).toEqual(["cursor"]);
+    expect(result.current.globalSelectedTools).toEqual(["cursor"]);
+  });
+
+  it("a harness of a folder of its own changes alone", async () => {
+    const store = stubFolderBackend({ v2: ["amp", "cursor"] });
+    const { result } = renderSync();
+    await waitFor(() => expect(result.current.globalSelectedTools).toEqual(["amp", "kimi_cli", "cursor"]));
+
+    await act(async () => {
+      await result.current.setHarnessSelected("cursor", false);
+    });
+    expect(store.v2).toEqual(["amp"]);
+    expect(result.current.globalSelectedTools).toEqual(["amp", "kimi_cli"]);
+  });
+});

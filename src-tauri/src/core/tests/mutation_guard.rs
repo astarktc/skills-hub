@@ -477,11 +477,10 @@ fn disable_enable_entry_points_are_serialized() {
 /// A copy-mode row whose source drifted: the reconcile pass would rewrite it
 /// to `stale`. Returns `(tool_key, assignment_id)`.
 fn make_drifted_copy_assignment(f: &Fixture) -> (&'static str, String) {
-    let mut adapter = crate::core::tool_adapters::adapter_by_key("cursor")
-        .expect("cursor adapter")
-        .clone();
-    adapter.supports_symlink = false;
-    let tool = crate::core::tool_adapters::test_overrides::shadow(adapter).key();
+    // The shipped copy-only harness, with a project folder of its own (a
+    // folder's capability is placement's: a copy-only shadow of a group
+    // constituent deploys as the group's link).
+    let tool = "deep_agents_code";
 
     let record = project_sync::assign_and_sync(
         &f.store,
