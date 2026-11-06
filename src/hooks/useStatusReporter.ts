@@ -13,7 +13,7 @@ import {
   type PendingProgress,
   type PendingSubject,
 } from "../lib/actionLifecycle";
-import type { Outcome, OutcomeEntry } from "../lib/reportOutcome";
+import { runItems, type Outcome, type OutcomeEntry } from "../lib/reportOutcome";
 import type { DialogKind, SurfaceState } from "./useSurfaceState";
 import {
   useNotificationHistory,
@@ -548,11 +548,11 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
       const errors = outcome.errors.filter((entry) => entry.message);
       const warnings = outcome.warnings.filter((entry) => entry.message);
       const { toast: headline } = outcome;
-      // One history block per run: the headline over its entries; quiet
+      // One history block per run: the headline over its entries (in
+      // `runItems`' order: under a headline, skill-level items first); quiet
       // notes are their own rows only when no headline carries them.
       const rows: RunRow[] = [
-        ...errors.map((entry) => ({ kind: "error" as const, ...entry })),
-        ...warnings.map((entry) => ({ kind: "warning" as const, ...entry })),
+        ...runItems(errors, warnings, { headline: headline !== null }),
         ...(headline ? [] : outcome.notes.map((note) => ({ kind: "info" as const, title: note }))),
       ];
       if (headline || rows.length > 0) {

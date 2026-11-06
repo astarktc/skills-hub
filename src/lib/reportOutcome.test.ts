@@ -31,6 +31,7 @@ import {
   projectSyncOutcome,
   refreshOutcome,
   removalOutcome,
+  runItems,
   syncOutcome,
   type InstallDeployment,
   type InstallSettlement,
@@ -2415,5 +2416,43 @@ describe("importGroupKind / import headline by settled targets", () => {
       tone: "conflict",
       message: line(["outcome.done.imported", 1], ["outcome.review.originals", 1]),
     });
+  });
+});
+
+// BACKLOG #72: "1 Edit to review" sat last in its run, under every failed
+// target. A run with a headline lists its skill-level items first.
+describe("runItems", () => {
+  const withTarget = (id: string): SkillRefreshOutcome => {
+    const row = changed("target");
+    return { ...row, skill_id: id, skill_name: id };
+  };
+  const withConflict = (id: string): SkillRefreshOutcome => {
+    const row = changed("conflict");
+    return { ...row, skill_id: id, skill_name: id };
+  };
+
+  it("under a headline: skill-level items first (errors, then warnings), then target-level", () => {
+    const outcome = refreshOutcome(
+      refreshReport([withTarget("a"), failed, withTarget("b"), skipped, withConflict("c")]),
+      ctx,
+    );
+    expect(outcome.toast).not.toBeNull();
+    const items = runItems(outcome.errors, outcome.warnings, { headline: true });
+    expect(items.map((item) => [item.kind, item.subject?.skillName, item.subject?.tool ?? null])).toEqual([
+      ["error", "git", null],
+      ["warning", "local", null],
+      ["warning", "c", null],
+      ["error", "a", "claude"],
+      ["error", "b", "claude"],
+    ]);
+  });
+
+  it("without a headline the first item heads the run: errors first, as reported", () => {
+    const errors = [{ title: "pair", message: "m", subject: { skillName: "a", tool: "claude" } }];
+    const warnings = [{ title: "skill", message: "m", subject: { skillName: "b" } }];
+    expect(runItems(errors, warnings, { headline: false }).map((item) => [item.kind, item.title])).toEqual([
+      ["error", "pair"],
+      ["warning", "skill"],
+    ]);
   });
 });

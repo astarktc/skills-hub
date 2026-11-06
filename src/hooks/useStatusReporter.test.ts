@@ -839,6 +839,24 @@ describe("useStatusReporter applyOutcome", () => {
     expect(rows[1]).toMatchObject({ subject: { skillId: "s1" }, error: { code: "GITHUB_SKILL_NOT_FOUND" }, repair: { verb: "update" } });
   });
 
+  // BACKLOG #72: under a headline the run lists its skill-level items first.
+  it("records a headlined run's skill-level items before its deployment items", async () => {
+    const { result } = renderHook(() => useStatusReporter(t));
+    await act(async () => {
+      await result.current.applyOutcome(
+        outcome({
+          errors: [{ title: "alpha on Cursor failed", message: "m", subject: { skillName: "alpha", tool: "cursor" } }],
+          warnings: [{ title: "beta: Edit to review", message: "m", subject: { skillName: "beta" } }],
+        }),
+      );
+    });
+    expect(result.current.notifications.map((row) => [row.role, row.title])).toEqual([
+      ["headline", "1 refreshed · 1 failed"],
+      ["entry", "beta: Edit to review"],
+      ["entry", "alpha on Cursor failed"],
+    ]);
+  });
+
   it("a run toast's lifetime follows its fold's tone: failure persists, skipped / conflict 5 s, declined 2 s", async () => {
     const { result } = renderHook(() => useStatusReporter(t));
     // Real folds, so the tone the reporter reads is the one a report settles to.

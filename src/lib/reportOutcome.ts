@@ -150,6 +150,32 @@ export type ReportContext = {
   t: TranslateFn;
   toolLabelById?: Readonly<Record<string, string>>;
 };
+
+/** An entry as a run records it: its kind beside it. */
+export type RunItem<Entry extends OutcomeEntry = OutcomeEntry> = Entry & { kind: "error" | "warning" };
+
+/**
+ * The order a run's items are recorded and listed in (the reporter's
+ * `applyOutcome`). Under a headline the items are free to be read in order
+ * of reach (BACKLOG #72): the items about a whole skill — a failed or skipped
+ * Update, an Edit to review — first, then the items about one deployment (an
+ * entry whose subject names a harness); errors before warnings within each,
+ * report order kept. Without a headline the first item heads the run and its
+ * toast, so the kinds keep their order: every error, then every warning.
+ */
+export function runItems<Entry extends OutcomeEntry>(
+  errors: readonly Entry[],
+  warnings: readonly Entry[],
+  options: { headline: boolean },
+): RunItem<Entry>[] {
+  const items: RunItem<Entry>[] = [
+    ...errors.map((entry) => ({ ...entry, kind: "error" as const })),
+    ...warnings.map((entry) => ({ ...entry, kind: "warning" as const })),
+  ];
+  if (!options.headline) return items;
+  const aboutDeployment = (item: RunItem<Entry>) => item.subject?.tool !== undefined;
+  return [...items.filter((item) => !aboutDeployment(item)), ...items.filter(aboutDeployment)];
+}
 const empty = (): Outcome<PlainEntry> => ({
   toast: null,
   errors: [],
