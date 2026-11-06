@@ -958,3 +958,141 @@ fn a_path_resolving_into_a_tool_skills_dir_names_that_tool() {
         Some("claude_code")
     );
 }
+
+/// Round 20 relabels move nothing: each product's new name is a label only,
+/// and the key every stored row (targets, selections, assignments) carries
+/// is unchanged and still resolves to the same folders.
+#[test]
+fn relabelled_harnesses_keep_their_stored_keys_and_folders() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    let cases = [
+        ("mux", "Xum", ".mux/skills"),
+        ("windsurf", "Devin (Windsurf)", ".codeium/windsurf/skills"),
+        ("copaw", "QwenPaw", ".copaw/skill_pool"),
+        ("zencoder", "Zencoder / Zenflow", ".zencoder/skills"),
+    ];
+    for (stored_key, label, skills) in cases {
+        let adapter = adapter_by_key(stored_key).unwrap_or_else(|| panic!("{stored_key}"));
+        assert_eq!(adapter.key(), stored_key, "the stored key round-trips");
+        assert_eq!(adapter.display_name, label);
+        let mut expected = home.path().to_path_buf();
+        expected.extend(skills.split('/'));
+        assert_eq!(
+            skills_dir_in(&roots, adapter),
+            expected,
+            "{stored_key} moved nothing"
+        );
+    }
+}
+
+/// #108: these detect dirs land only with their folder corrections. Adding
+/// one now would detect a harness into a folder it does not read (QwenPaw's
+/// root is `~/.qwenpaw` but its row deploys under `~/.copaw`; Antigravity
+/// CLI and Devin read other folders than their rows target). Remove this pin
+/// deliberately, in #108, with the folder move.
+#[test]
+fn deferred_detect_dirs_wait_for_108() {
+    let deferred = [
+        ("copaw", ".qwenpaw"),
+        ("antigravity", ".gemini/antigravity-cli"),
+        ("windsurf", ".config/devin"),
+    ];
+    for (key, rel) in deferred {
+        for adapter in default_tool_adapters() {
+            assert!(
+                adapter.detect_dirs.iter().all(|dir| dir.rel != rel),
+                "{}: `{rel}` (deferred for {key}) waits for #108",
+                adapter.key()
+            );
+        }
+    }
+}
+
+/// One parsed row of the README's supported-harnesses table.
+#[derive(Debug, PartialEq, Eq)]
+struct ReadmeRow {
+    key: String,
+    label: String,
+    skills_dir: Option<String>,
+    project_dir: Option<String>,
+    detect_dirs: Vec<String>,
+}
+
+/// The backticked tokens of a README cell; a cell opening with `—` is none.
+fn readme_cell_paths(cell: &str) -> Vec<String> {
+    if cell.trim_start().starts_with('—') {
+        return vec![];
+    }
+    cell.split('`')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_string)
+        .collect()
+}
+
+fn readme_rows() -> Vec<ReadmeRow> {
+    let readme = include_str!("../../../../README.md");
+    let section = readme
+        .split("## Supported AI Coding Harnesses")
+        .nth(1)
+        .expect("README has the supported-harnesses section");
+    let section = section.split("\n## ").next().unwrap_or(section);
+    section
+        .lines()
+        .filter(|line| line.starts_with("| `"))
+        .map(|line| {
+            let cells: Vec<&str> = line.trim_matches('|').split('|').map(str::trim).collect();
+            assert_eq!(cells.len(), 5, "README row has five columns: {line}");
+            ReadmeRow {
+                key: cells[0].trim_matches('`').to_string(),
+                label: cells[1].to_string(),
+                skills_dir: readme_cell_paths(cells[2]).into_iter().next(),
+                project_dir: readme_cell_paths(cells[3]).into_iter().next(),
+                detect_dirs: readme_cell_paths(cells[4]),
+            }
+        })
+        .collect()
+}
+
+/// The README's supported-harnesses table is the registry, row for row —
+/// adapters and reader-only harnesses alike, in registry order, with each
+/// row's label and (default-root) dirs. Adding, relabelling or moving a
+/// harness without its README row fails here.
+#[test]
+fn the_readme_table_lists_every_registry_row() {
+    let expected: Vec<ReadmeRow> = default_tool_adapters()
+        .iter()
+        .map(|adapter| ReadmeRow {
+            key: adapter.key().to_string(),
+            label: adapter.display_name.to_string(),
+            skills_dir: Some(adapter.skills_dir.rel.to_string()),
+            project_dir: adapter.project_skills_dir.map(str::to_string),
+            detect_dirs: adapter
+                .detect_dirs
+                .iter()
+                .map(|dir| dir.rel.to_string())
+                .collect(),
+        })
+        .chain(reader_only_harnesses().iter().map(|reader| {
+            ReadmeRow {
+                key: reader.key.to_string(),
+                label: reader.display_name.to_string(),
+                skills_dir: None,
+                project_dir: None,
+                detect_dirs: reader
+                    .detect_dirs
+                    .iter()
+                    .map(|d| d.rel.to_string())
+                    .collect(),
+            }
+        }))
+        .collect();
+    let rows = readme_rows();
+    assert_eq!(
+        rows.len(),
+        expected.len(),
+        "README table rows vs registry rows (adapters + reader-only)"
+    );
+    assert_eq!(rows, expected);
+}

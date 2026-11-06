@@ -364,6 +364,8 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         // add-skill global path: ~/.config/agents/skills/ (shared with Amp).
         // The tool's config root is ~/.kimi-code (kimi.com/code docs) or
         // ~/.kimi on earlier releases (kimi-cli.com docs); either counts.
+        // `KIMI_CODE_HOME` relocates the root; env-var homes are not honoured
+        // (a Finder-launched app does not see shell env).
         skills_dir: home(".config/agents/skills"),
         former_skills_dirs: &[],
         detect_dirs: &[home(".kimi-code"), home(".kimi")],
@@ -397,7 +399,10 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
     },
     ToolAdapter {
         id: ToolId::Copaw,
-        display_name: "Copaw",
+        // Copaw was renamed QwenPaw (relabel only; the key stays `copaw`).
+        // Its root is now `~/.qwenpaw` unless a legacy `~/.copaw` exists;
+        // that detect dir waits for its folder correction in #108.
+        display_name: "QwenPaw",
         // add-skill global path: ~/.copaw/skill_pool/
         skills_dir: home(".copaw/skill_pool"),
         former_skills_dirs: &[],
@@ -529,7 +534,8 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
     },
     ToolAdapter {
         id: ToolId::Mux,
-        display_name: "Mux",
+        // Mux is now Xum (relabel only; the key stays `mux`, round 19).
+        display_name: "Xum",
         // add-skill global path: ~/.mux/skills/
         skills_dir: home(".mux/skills"),
         former_skills_dirs: &[],
@@ -628,7 +634,9 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
     },
     ToolAdapter {
         id: ToolId::Zencoder,
-        display_name: "Zencoder",
+        // Zenflow is Zencoder's desktop orchestrator and shares its skills
+        // (an alias, not a row).
+        display_name: "Zencoder / Zenflow",
         // add-skill global path: ~/.zencoder/skills/
         skills_dir: home(".zencoder/skills"),
         former_skills_dirs: &[],
@@ -749,7 +757,9 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
     },
     ToolAdapter {
         id: ToolId::Windsurf,
-        display_name: "Windsurf",
+        // Windsurf is now Devin (relabel only; the key stays `windsurf`).
+        // Devin's `.config/devin` detect dir waits for #108.
+        display_name: "Devin (Windsurf)",
         // add-skill global path: ~/.codeium/windsurf/skills/
         skills_dir: home(".codeium/windsurf/skills"),
         former_skills_dirs: &[],

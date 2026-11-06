@@ -1434,3 +1434,32 @@ fn apply_global_tool_config_refuses_a_reader_only_harness() {
     );
     assert_eq!(store.get_setting("global_selected_tools_v1").unwrap(), None);
 }
+
+/// Round 20 relabels (Xum, Devin, QwenPaw, Zenflow) keep every stored key: a
+/// selection saved under the old keys still saves and reads back unchanged.
+#[test]
+fn a_selection_of_relabelled_harnesses_round_trips_under_their_stored_keys() {
+    let (dir, store) = make_store();
+    let keys: Vec<String> = ["mux", "windsurf", "copaw", "zencoder"]
+        .iter()
+        .map(|k| k.to_string())
+        .collect();
+
+    let saved = apply_setting(
+        &store,
+        &MemoryStore::new(),
+        dir.path(),
+        SettingUpdate::GlobalToolConfig {
+            selected_tools: keys.clone(),
+            scan_selected_only: false,
+        },
+    )
+    .expect("stored keys are still registry keys");
+    assert_eq!(saved.global_selected_tools, Some(keys.clone()));
+    assert_eq!(
+        load_settings(&store, &MemoryStore::new(), dir.path())
+            .unwrap()
+            .global_selected_tools,
+        Some(keys)
+    );
+}
