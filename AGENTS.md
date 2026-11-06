@@ -110,7 +110,14 @@ than re-tagging.
   Target relocation moves existing targets — `project_skills_dir`, `group` for virtual-group membership,
   `supports_symlink`), **and** add its row to the README supported-tools table, **and** extend the
   `project_relative_skills_dir_for_every_tool` and `every_existing_row_resolves_to_the_paths_it_always_has` table
-  tests (`core/tests/tool_adapters.rs`). Every registry path is a **typed root** — a `RegistryPath { root, rel,
+  tests (`core/tests/tool_adapters.rs`). Its `reads` literal (`core/tool_adapters/reads.rs`) records the shared-folder
+  read facts — per scope `~/.agents/skills` / `~/.claude/skills` as `Yes | Conditional | OptIn | No | Unknown`,
+  precedence, duplicate behaviour, `also_reads` with each folder's mode — from its brief row
+  (`docs/design-inputs/2026-11-05-harness-candidates-and-shared-dir-reads.md`; LIKELY/UNKNOWN → `Unknown`; a comment
+  cites the row; a fact changes with its brief row in the same commit), restated in
+  `every_row_restates_its_brief_read_facts`; an AGENTS-group member never has project `.agents` = `No`. The
+  cross-read warning's pairs (`ToolInfoDto.duplicate_readers`) are resolved from those facts in
+  `catalog::duplicate_reads` — the frontend never re-derives a read from a dir. Every registry path is a **typed root** — a `RegistryPath { root, rel,
   overrides }`, written `home(".x/skills")`; root is home, roaming or local app data, and a per-OS `OsOverride` is
   used only where the vendor documents one (`%APPDATA%`) — resolved only against the `HostRoots` the command seam
   builds. Env-var homes (`KIMI_CODE_HOME`, …) are not honoured: name them in the row comment. The **project dir is
