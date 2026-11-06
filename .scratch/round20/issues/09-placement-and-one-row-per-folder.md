@@ -1,6 +1,6 @@
 # 09: Placement and one Deployment row per folder
 
-Status: claimed
+Status: done — 01bac316
 
 **Blocked by:** None (can start immediately).
 
@@ -80,3 +80,7 @@ instead of two.
     - the same-path project removal case → ticket 10;
     - folder wording and feedback, Sol NB1–NB3 → ticket 13.
   - The children's per-pass Comments entries stayed uncommitted in their worktrees; this entry stands in for them.
+- 2026-11-06 (orchestrator): **done — merged as `01bac316` (PR #21).** Before the merge, CI's `rust-windows` job failed
+  on test-only path-separator assertions and on an unused test parameter. Both were fixed in `4696eb2` and `83a09f8`,
+  and CI went green on all three jobs. The full gate on the merged `main` passed: `npm run version:check && npm run
+  check` exit 0, with 1,421 frontend tests and 1,085 Rust tests (1 ignored).
