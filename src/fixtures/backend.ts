@@ -663,6 +663,9 @@ export function createFixtureBackend(
       tools: project.tools.map((tool) => ({ id: `${project.id}-tool-${tool}`, project_id: project.id, tool })),
       assignments: clone(project.assignments),
       reconciled: !unreconciled,
+      // The fixture keeps statuses as its scenario wrote them: its views
+      // reconcile nothing, so none rewrites a status.
+      rewrote_statuses: false,
     };
   };
 

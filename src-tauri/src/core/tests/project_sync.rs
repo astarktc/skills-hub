@@ -2114,3 +2114,47 @@ fn a_project_root_that_vanishes_at_parent_creation_is_not_recreated() {
         assert!(row.synced_at.is_none(), "{tool}: the row owns nothing");
     }
 }
+
+/// A listing whose reconcile pass ran, with its rewrite flag (BACKLOG #96):
+/// the frontend converges the library only when the pass rewrote a status.
+fn reconciled_listing(store: &SkillStore, project_id: &str) -> project_sync::AssignmentListing {
+    for _ in 0..100 {
+        let listing = project_sync::list_assignments_with_staleness(store, project_id)
+            .expect("list should succeed");
+        if listing.reconciled {
+            return listing;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    panic!("reconcile pass never got the guard");
+}
+
+#[test]
+fn a_listing_says_whether_its_reconcile_pass_rewrote_a_status() {
+    let (_db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().expect("tmpdir");
+    let skill_dir = make_skill_dir(tmpdir.path(), "rewrite-skill");
+    let project_dir = tmpdir.path().join("rewrite-project");
+    fs::create_dir_all(&project_dir).expect("create project dir");
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "rewrite-skill",
+        &skill_dir.to_string_lossy(),
+    );
+    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000)
+        .expect("assign should succeed");
+
+    let settled = reconciled_listing(&store, &project.id);
+    assert_eq!(settled.assignments[0].status, SyncStatus::Synced);
+    assert!(!settled.rewrote_statuses, "nothing on disk moved: no rewrite");
+
+    fs::remove_dir_all(&skill_dir).expect("remove source");
+    let rewritten = reconciled_listing(&store, &project.id);
+    assert_eq!(rewritten.assignments[0].status, SyncStatus::Missing);
+    assert!(rewritten.rewrote_statuses, "the pass wrote `missing`");
+
+    let again = reconciled_listing(&store, &project.id);
+    assert_eq!(again.assignments[0].status, SyncStatus::Missing);
+    assert!(!again.rewrote_statuses, "the stored status already matches");
+}

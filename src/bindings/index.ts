@@ -1092,6 +1092,12 @@ export type ProjectViewDto = {
 	 *  not re-derived from disk. Never read it as healthy.
 	 */
 	reconciled: boolean,
+	/**
+	 *  The reconcile pass rewrote at least one assignment's stored status, so
+	 *  the library's per-skill project deployments may be stale: a reader
+	 *  converges it (BACKLOG #96). `false` when the pass was skipped.
+	 */
+	rewrote_statuses: boolean,
 };
 
 export type PropagationOutcome = {

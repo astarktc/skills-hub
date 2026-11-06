@@ -95,6 +95,8 @@ function syncItem(
  */
 function stubBackend(options: { reconciled?: boolean } = {}) {
   const reconciled = options.reconciled ?? true;
+  // Projects whose next read's reconcile pass rewrites a status (once).
+  const rewriteOnRead = new Set<string>();
   const order: string[] = [];
   const projectIds: string[] = [];
   const toolsByProject = new Map<string, string[]>();
@@ -122,6 +124,7 @@ function stubBackend(options: { reconciled?: boolean } = {}) {
     tools: toolRecords(id, toolsByProject.get(id) ?? []),
     assignments: assignmentsByProject.get(id) ?? [],
     reconciled,
+    rewrote_statuses: false,
   });
 
   mockInvoke.mockImplementation((command, ...args) => {
@@ -144,7 +147,8 @@ function stubBackend(options: { reconciled?: boolean } = {}) {
       }
       case "getProjectView": {
         const [projectId] = args as Parameters<Commands["getProjectView"]>;
-        return Promise.resolve(view(projectId));
+        const rewrote = rewriteOnRead.delete(projectId);
+        return Promise.resolve({ ...view(projectId), rewrote_statuses: rewrote });
       }
       case "configureProjectTools": {
         const [projectId, tools] = args as Parameters<
@@ -278,7 +282,7 @@ function stubBackend(options: { reconciled?: boolean } = {}) {
         return Promise.resolve(undefined);
     }
   });
-  return { order };
+  return { order, rewriteOnRead };
 }
 
 /** Positional args of every call to `command`, typed from the bindings. */
@@ -1314,6 +1318,37 @@ describe("useProjectState project-assignment verbs (the door's entry points)", (
       await result.current.toggleAssignment("s1", "pi");
     });
     expect(onDeploymentsChanged).toHaveBeenCalled();
+  });
+
+  it("tells the library after a read whose reconcile pass rewrote a status (BACKLOG #96)", async () => {
+    const backend = stubBackend();
+    const onDeploymentsChanged = vi.fn(async () => {});
+    const { result } = await renderReady({ onDeploymentsChanged });
+    await withSelectedProject(result, ["pi"]);
+    onDeploymentsChanged.mockClear();
+
+    // Selecting the project: its reconcile pass found a copy missing.
+    backend.rewriteOnRead.add("p1");
+    await act(async () => {
+      await result.current.selectProject("p1");
+    });
+    expect(onDeploymentsChanged).toHaveBeenCalledTimes(1);
+
+    // The explicit read of every project's view converges the same way.
+    onDeploymentsChanged.mockClear();
+    backend.rewriteOnRead.add("p1");
+    await act(async () => {
+      await result.current.loadPlacementViews();
+    });
+    expect(onDeploymentsChanged).toHaveBeenCalledTimes(1);
+
+    // A read that rewrote nothing stays a plain read.
+    onDeploymentsChanged.mockClear();
+    await act(async () => {
+      await result.current.selectProject("p1");
+      await result.current.loadPlacementViews();
+    });
+    expect(onDeploymentsChanged).not.toHaveBeenCalled();
   });
 
   it("assigns several skills, then asks about all their collisions once", async () => {

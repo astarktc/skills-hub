@@ -234,7 +234,9 @@ export type ProjectStateDeps = {
    * re-read): the library's rows carry each skill's project deployments
    * (`ManagedSkillDto.projects`, D41), so App hands in the library's reload
    * and the two worlds converge without importing each other (ticket 31
-   * audit F1). Never called for a plain read (selecting a project).
+   * audit F1). A read (selecting a project, the placement read) calls it
+   * only when its reconcile pass rewrote a stored status (`rewrote_statuses`,
+   * BACKLOG #96).
    */
   onDeploymentsChanged?: () => void | Promise<void>;
 };
@@ -383,6 +385,10 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
       const version = ++selectVersionRef.current;
       try {
         const view = await invokeTauri("getProjectView", id);
+        // The read's reconcile pass rewrote a stored status: the library's
+        // rows carry it too, so it converges like after a mutation (#96) —
+        // whether or not this view is still the one to show.
+        if (view.rewrote_statuses) converge();
         // `applyView` ignores a view for a project no longer selected; the
         // version guard covers the loading flag and the failure path.
         if (selectVersionRef.current !== version) return;
@@ -397,7 +403,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
         }
       }
     },
-    [applyView],
+    [applyView, converge],
   );
 
   const registerProject = useCallback(
@@ -583,6 +589,8 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
       const views = await Promise.all(
         projectsRef.current.map((project) => invokeTauri("getProjectView", project.id)),
       );
+      // A reconcile pass that rewrote a status moved the library's rows (#96).
+      if (views.some((view) => view.rewrote_statuses)) converge();
       if (placementReadRef.current !== read) return;
       const stamps = viewStampRef.current.byProject;
       setPlacementViews((current) => {
@@ -597,7 +605,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
       // Last-good views (and any a mutation applied meanwhile) stay.
       setPlacementViews((current) => ({ ...current, status: "failed" }));
     }
-  }, []);
+  }, [converge]);
   const placementOf = useCallback(
     (skillId: string) => skillPlacement(projects, placementViews, skillId),
     [placementViews, projects],

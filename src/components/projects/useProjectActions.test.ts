@@ -65,6 +65,7 @@ const VIEW: ProjectViewDto = {
     },
   ],
   reconciled: true,
+  rewrote_statuses: false,
 };
 
 let release: () => void = () => {};

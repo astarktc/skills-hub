@@ -1077,12 +1077,13 @@ fn observe_assignment(
 }
 
 /// Execute step: apply `next_status` to one assignment, writing only when the
-/// status changes. Returns the record as it now stands.
+/// status changes. Returns the record as it now stands and whether its
+/// status was rewritten.
 fn reconcile_assignment(
     store: &SkillStore,
     mut assignment: ProjectSkillAssignmentRecord,
     observed: &Observed,
-) -> ProjectSkillAssignmentRecord {
+) -> (ProjectSkillAssignmentRecord, bool) {
     let decided = next_status(&Observation {
         source_present: observed.source_present,
         target_present: observed.target_present,
@@ -1092,7 +1093,7 @@ fn reconcile_assignment(
         recorded_hash: assignment.content_hash.as_deref(),
     });
     if decided == assignment.status {
-        return assignment;
+        return (assignment, false);
     }
     let confirmed_hash = if decided == SyncStatus::Synced && assignment.mode.can_drift() {
         observed.source_hash.as_deref()
@@ -1109,7 +1110,7 @@ fn reconcile_assignment(
     assignment.status = decided;
     assignment.last_error = None;
     assignment.content_hash = confirmed_hash.map(str::to_string);
-    assignment
+    (assignment, true)
 }
 
 /// A project's assignment rows plus whether the reconcile pass ran.
@@ -1121,6 +1122,12 @@ fn reconcile_assignment(
 pub struct AssignmentListing {
     pub assignments: Vec<ProjectSkillAssignmentRecord>,
     pub reconciled: bool,
+    /// Whether the reconcile pass rewrote at least one row's stored status
+    /// (a copy found missing or stale, or back in line). Every skill row's
+    /// project deployments are read from these rows, so a listing that
+    /// rewrote one leaves a reader of the library stale (BACKLOG #96).
+    /// Always `false` when the pass was skipped.
+    pub rewrote_statuses: bool,
 }
 
 /// List a project's assignments with their status reconciled against the
@@ -1137,23 +1144,24 @@ pub fn list_assignments_with_staleness(
 ) -> Result<AssignmentListing> {
     let mut assignments = store.list_project_skill_assignments(project_id)?;
     // Rows are reconciled in place, so the skipped path needs no fallback copy.
-    let reconciled = mutation_guard::try_serialized(|| {
+    let pass = mutation_guard::try_serialized(|| {
         reconcile_listing_unlocked(store, project_id, &mut assignments)
-    })
-    .is_some();
+    });
     Ok(AssignmentListing {
         assignments,
-        reconciled,
+        reconciled: pass.is_some(),
+        rewrote_statuses: pass.unwrap_or(false),
     })
 }
 
 /// The reconcile pass itself: observe every row and write the ones whose
-/// status changed. Unlocked internal seam — the caller holds the guard.
+/// status changed; answers whether any was written. Unlocked internal seam —
+/// the caller holds the guard.
 pub(crate) fn reconcile_listing_unlocked(
     store: &SkillStore,
     project_id: &str,
     assignments: &mut Vec<ProjectSkillAssignmentRecord>,
-) {
+) -> bool {
     // Pre-fetch skill records with deduplication (one DB query per unique skill_id)
     let mut skill_cache: HashMap<String, Option<SkillRecord>> = HashMap::new();
     for a in assignments.iter() {
@@ -1165,6 +1173,7 @@ pub(crate) fn reconcile_listing_unlocked(
     // Pre-fetch project record once (not per iteration)
     let project_record = store.get_project_by_id(project_id).ok().flatten();
 
+    let mut rewrote = false;
     *assignments = std::mem::take(assignments)
         .into_iter()
         .map(|assignment| {
@@ -1172,9 +1181,12 @@ pub(crate) fn reconcile_listing_unlocked(
                 .get(&assignment.skill_id)
                 .and_then(|s| s.as_ref());
             let observed = observe_assignment(store, project_record.as_ref(), skill, &assignment);
-            reconcile_assignment(store, assignment, &observed)
+            let (assignment, changed) = reconcile_assignment(store, assignment, &observed);
+            rewrote |= changed;
+            assignment
         })
         .collect();
+    rewrote
 }
 
 /// Which way a toggle went. The decision is the backend's: it reads its own

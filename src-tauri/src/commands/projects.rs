@@ -30,6 +30,10 @@ pub struct ProjectViewDto {
     /// pass was skipped rather than queued: the rows are the stored ones,
     /// not re-derived from disk. Never read it as healthy.
     pub reconciled: bool,
+    /// The reconcile pass rewrote at least one assignment's stored status, so
+    /// the library's per-skill project deployments may be stale: a reader
+    /// converges it (BACKLOG #96). `false` when the pass was skipped.
+    pub rewrote_statuses: bool,
 }
 
 fn to_project_view_dto(view: ProjectView) -> ProjectViewDto {
@@ -43,6 +47,7 @@ fn to_project_view_dto(view: ProjectView) -> ProjectViewDto {
             .map(to_assignment_dto)
             .collect(),
         reconciled: view.assignments.reconciled,
+        rewrote_statuses: view.assignments.rewrote_statuses,
     }
 }
 
