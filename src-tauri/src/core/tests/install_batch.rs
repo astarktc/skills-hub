@@ -11,6 +11,7 @@ use super::{
 };
 use crate::core::cancel_token::CancelToken;
 use crate::core::errors::CommandError;
+use crate::core::git_acquisition::{GitSourceResolution, GithubApi, GithubCoords, GithubRepo};
 use crate::core::global_sync::{
     sync_skills_to_tools, BatchOverride, BatchPolicy, BatchSkill, BatchTargetStatus,
     OverrideDecision,
@@ -423,13 +424,64 @@ fn deploy_off_installs_without_targets() {
     assert!(f.store.list_skill_targets(&alpha).unwrap().is_empty());
 }
 
+/// The GitHub adapter as acquisition calls it, recorded: the stub's bytes,
+/// plus every call in order (`refs:` / `sha:` / `dl:`).
+struct RecordingApi {
+    inner: StubApi,
+    calls: std::cell::RefCell<Vec<String>>,
+}
+
+impl RecordingApi {
+    fn new() -> Self {
+        Self {
+            inner: StubApi::serving(&"a".repeat(40)),
+            calls: Default::default(),
+        }
+    }
+}
+
+impl GithubApi for RecordingApi {
+    fn matching_refs(&self, repo: &GithubRepo, prefix: &str) -> anyhow::Result<Vec<String>> {
+        self.calls
+            .borrow_mut()
+            .push(format!("refs:{}/{}:{prefix}", repo.owner, repo.repo));
+        self.inner.matching_refs(repo, prefix)
+    }
+
+    fn branch_sha(&self, coords: &GithubCoords) -> anyhow::Result<String> {
+        self.calls.borrow_mut().push(format!(
+            "sha:{}/{}@{}",
+            coords.owner, coords.repo, coords.branch
+        ));
+        self.inner.branch_sha(coords)
+    }
+
+    fn download_directory(
+        &self,
+        coords: &GithubCoords,
+        dest: &Path,
+        cancel: Option<&CancelToken>,
+    ) -> anyhow::Result<()> {
+        self.calls
+            .borrow_mut()
+            .push(format!("dl:{}:{}", coords.branch, coords.subpath));
+        self.inner.download_directory(coords, dest, cancel)
+    }
+}
+
+/// #99: the listing's resolution is the install's source decision. The URL's
+/// tree split (`feature/x/skills`) is ambiguous; the listing resolved it, so
+/// the install reuses that branch and makes no second refs lookup.
 #[test]
 fn a_git_source_installs_through_the_listing_resolution() {
     let f = fixture();
     let req = InstallRequest {
         source: InstallSource::Git {
-            url: "https://github.com/owner/repo".into(),
-            resolution: None,
+            url: "https://github.com/owner/repo/tree/feature/x/skills".into(),
+            resolution: Some(GitSourceResolution {
+                branch: Some("feature/x".into()),
+                subpath: Some("skills".into()),
+            }),
         },
         candidates: vec![InstallCandidate {
             subpath: "skills/fast-path-skill".into(),
@@ -440,7 +492,8 @@ fn a_git_source_installs_through_the_listing_resolution() {
         overrides: Vec::new(),
         deploy: true,
     };
-    let report = run(&f, &req, None);
+    let api = RecordingApi::new();
+    let report = install_selection_with(&f.paths, &f.store, &req, &api, None, 1000, |_| {});
     assert!(
         matches!(
             target_status(&report, "fast-path-skill"),
@@ -448,12 +501,186 @@ fn a_git_source_installs_through_the_listing_resolution() {
         ),
         "{report:?}"
     );
+    assert_eq!(
+        api.calls.borrow().as_slice(),
+        [
+            "sha:owner/repo@feature/x",
+            "dl:feature/x:skills/fast-path-skill"
+        ],
+        "the resolved branch, no refs lookup"
+    );
     let skill = f
         .store
         .get_skill_by_id(&skill_id(&report, "fast-path-skill"))
         .unwrap()
         .unwrap();
     assert_eq!(skill.source_type, "git");
+    assert_eq!(
+        skill.source_subpath.as_deref(),
+        Some("skills/fast-path-skill")
+    );
+    assert_eq!(skill.source_revision, Some("a".repeat(40)));
+}
+
+/// A folder at Claude Code's `alpha` target with exactly `alpha`'s bytes.
+fn occupy_alpha_with_its_own_bytes(f: &Fixture) -> std::path::PathBuf {
+    let target = skills_dir_in(&f.paths.home, claude()).join("alpha");
+    fs::create_dir_all(&target).unwrap();
+    fs::copy(
+        f.source.join("alpha").join("SKILL.md"),
+        target.join("SKILL.md"),
+    )
+    .unwrap();
+    target
+}
+
+/// #99: identical content in the way is replaced silently in the first pass
+/// when the request says so (every Add call site does): no ask, the pair
+/// synced and owned.
+#[test]
+fn same_content_in_the_way_is_replaced_in_the_first_pass() {
+    let f = fixture();
+    let occupied = occupy_alpha_with_its_own_bytes(&f);
+    let report = run(&f, &request(&f, &["alpha"]), None);
+
+    assert!(
+        matches!(
+            target_status(&report, "alpha"),
+            BatchTargetStatus::Synced { .. }
+        ),
+        "{report:?}"
+    );
+    let row = f
+        .store
+        .get_skill_target(&skill_id(&report, "alpha"), "claude_code")
+        .unwrap()
+        .expect("the pair is recorded");
+    assert_eq!(row.status, SyncStatus::Synced);
+    assert!(row.owns_artifact());
+    assert!(fs::read_to_string(occupied.join("SKILL.md"))
+        .unwrap()
+        .contains("body alpha"));
+}
+
+/// The same folder without the same-content policy is the askable
+/// collision, and its row says the content is the same.
+#[test]
+fn same_content_in_the_way_without_the_policy_is_collected_as_same_content() {
+    let f = fixture();
+    let occupied = occupy_alpha_with_its_own_bytes(&f);
+    let mut req = request(&f, &["alpha"]);
+    req.overwrite_if_same_content = false;
+    let report = run(&f, &req, None);
+
+    match target_status(&report, "alpha") {
+        BatchTargetStatus::Failed {
+            error: CommandError::TargetExists {
+                path, same_content, ..
+            },
+        } => {
+            assert_eq!(Path::new(path), occupied);
+            assert!(same_content);
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(
+        fs::symlink_metadata(&occupied).unwrap().is_dir(),
+        "untouched"
+    );
+    assert!(f
+        .store
+        .get_skill_target(&skill_id(&report, "alpha"), "claude_code")
+        .unwrap()
+        .is_none());
+}
+
+/// #99: request overrides that match no collided pair of this pass settle
+/// nothing — one for another Tool (not sharing Claude Code's dir) does not
+/// overwrite Claude Code's collision, one for a skill outside the batch
+/// records nothing, and one for a pair with nothing in the way changes
+/// nothing about its first sync.
+#[test]
+fn extraneous_request_overrides_settle_nothing() {
+    let f = fixture();
+    let occupied = occupy_beta(&f);
+    let mut req = request(&f, &["alpha", "beta"]);
+    req.overrides = vec![
+        InstallOverride {
+            skill_name: "beta".into(),
+            tool: "cursor".into(),
+            decision: OverrideDecision::Overwrite,
+        },
+        InstallOverride {
+            skill_name: "gamma".into(),
+            tool: "claude_code".into(),
+            decision: OverrideDecision::Keep,
+        },
+        InstallOverride {
+            skill_name: "alpha".into(),
+            tool: "claude_code".into(),
+            decision: OverrideDecision::Overwrite,
+        },
+    ];
+    let report = run(&f, &req, None);
+
+    assert!(matches!(
+        target_status(&report, "alpha"),
+        BatchTargetStatus::Synced { .. }
+    ));
+    assert!(
+        matches!(
+            target_status(&report, "beta"),
+            BatchTargetStatus::Failed {
+                error: CommandError::TargetExists { .. }
+            }
+        ),
+        "{report:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(occupied.join("SKILL.md")).unwrap(),
+        "---\nname: beta\n---\nmine\n"
+    );
+    let beta = skill_id(&report, "beta");
+    assert!(f.store.list_skill_targets(&beta).unwrap().is_empty());
+    let names: Vec<String> = f
+        .store
+        .list_skills()
+        .unwrap()
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+    assert!(!names.contains(&"gamma".to_string()), "{names:?}");
+}
+
+/// #99: a folder that is gone (or unreadable) by the time the collision is
+/// observed has no known modification time and is not the same content;
+/// the row says so on the wire as `modifiedAt: null`, never a made-up time.
+#[test]
+fn an_occupant_whose_mtime_cannot_be_read_is_reported_unknown() {
+    use crate::core::content_identity::Source;
+    use crate::core::sync_engine::Occupant;
+
+    let f = fixture();
+    let vanished = skills_dir_in(&f.paths.home, claude()).join("vanished");
+    let occupant = Occupant::observe(Source::Directory(&f.source.join("alpha")), &vanished);
+    assert_eq!(
+        occupant,
+        Occupant {
+            modified_at: None,
+            same_content: false,
+        }
+    );
+
+    let row = CommandError::TargetExists {
+        path: vanished.to_string_lossy().into_owned(),
+        modified_at: occupant.modified_at,
+        same_content: occupant.same_content,
+    };
+    let json = serde_json::to_value(&row).unwrap();
+    assert_eq!(json["code"], "TARGET_EXISTS");
+    assert_eq!(json["modifiedAt"], serde_json::Value::Null);
+    assert!(json.as_object().unwrap().contains_key("modifiedAt"));
+    assert_eq!(json["sameContent"], false);
 }
 
 #[test]

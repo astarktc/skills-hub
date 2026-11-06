@@ -1938,6 +1938,176 @@ fn collision_answers_into_a_missing_project_folder_skip_the_project() {
     }
 }
 
+/// One answer for one (project, skill, claude_code) pair.
+fn answer(
+    store: &SkillStore,
+    project: &ProjectRecord,
+    skill_id: &str,
+    decision: crate::core::global_sync::OverrideDecision,
+) -> project_sync::ProjectSyncReport {
+    project_sync::resolve_collisions(
+        store,
+        &[project_sync::AssignmentDecision {
+            project_id: project.id.clone(),
+            skill_id: skill_id.to_string(),
+            tool: "claude_code".into(),
+            decision,
+        }],
+        3000,
+    )
+    .expect("answers are report data")
+}
+
+/// #99: a row that already owns its artifact is not a collision any more —
+/// neither answer touches it. Overwrite must not re-sync over it; Keep must
+/// not disable (and so disown) what the app materialised.
+#[test]
+fn a_collision_answer_for_an_owned_row_is_already_assigned_and_changes_nothing() {
+    use crate::core::global_sync::OverrideDecision;
+
+    for decision in [OverrideDecision::Overwrite, OverrideDecision::Keep] {
+        let (_db_dir, store) = make_store();
+        let tmpdir = tempfile::tempdir().unwrap();
+        let (project, skill, project_dir) = missing_folder_fixture(tmpdir.path(), &store, "owned");
+        project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000).unwrap();
+        let artifact = project_dir.join(".claude/skills").join(&skill.name);
+        let before = row_snapshot(&store, &project.id);
+        assert_eq!(before[0].1, SyncStatus::Synced);
+        assert_eq!(
+            before[0].3,
+            Some(2000),
+            "precondition: the row owns its artifact"
+        );
+
+        let report = answer(&store, &project, &skill.id, decision);
+
+        let [item] = report.items.as_slice() else {
+            panic!("{decision:?}: {report}")
+        };
+        assert!(
+            matches!(item.status, ProjectSyncOutcomeStatus::AlreadyAssigned),
+            "{decision:?}: {item:?}"
+        );
+        assert!(item.assignment_id.is_some(), "{decision:?}");
+        assert_eq!(item.skill_name, skill.name, "{decision:?}");
+        assert_eq!(
+            row_snapshot(&store, &project.id),
+            before,
+            "{decision:?}: row untouched"
+        );
+        assert!(
+            fs::symlink_metadata(&artifact).is_ok(),
+            "{decision:?}: the owned artifact stays"
+        );
+    }
+}
+
+/// #99: an answer whose row is gone (unassigned since the ask, or never
+/// there) fails that item as `NotFound`, carrying no row id, and writes
+/// nothing — the rest of the call still answers.
+#[test]
+fn a_collision_answer_for_a_gone_row_fails_not_found_and_writes_nothing() {
+    use crate::core::global_sync::OverrideDecision;
+
+    for decision in [OverrideDecision::Overwrite, OverrideDecision::Keep] {
+        let (_db_dir, store) = make_store();
+        let tmpdir = tempfile::tempdir().unwrap();
+        let (project, skill, project_dir) = missing_folder_fixture(tmpdir.path(), &store, "gone");
+        let occupant = project_dir.join(".claude/skills").join(&skill.name);
+        fs::create_dir_all(&occupant).unwrap();
+        fs::write(occupant.join("SKILL.md"), "someone else's").unwrap();
+
+        let report = answer(&store, &project, &skill.id, decision);
+
+        let [item] = report.items.as_slice() else {
+            panic!("{decision:?}: {report}")
+        };
+        assert_eq!(item.assignment_id, None, "{decision:?}");
+        match &item.status {
+            ProjectSyncOutcomeStatus::Failed {
+                error: CommandError::NotFound { kind, id },
+            } => {
+                assert_eq!(kind, "assignment");
+                assert_eq!(id, &format!("{}/{}/claude_code", project.id, skill.id));
+            }
+            other => panic!("{decision:?}: {other:?}"),
+        }
+        assert!(report.skipped_projects.is_empty(), "{decision:?}");
+        assert!(
+            row_snapshot(&store, &project.id).is_empty(),
+            "{decision:?}: no row admitted"
+        );
+        assert_eq!(
+            fs::read_to_string(occupant.join("SKILL.md")).unwrap(),
+            "someone else's",
+            "{decision:?}: the folder in the way is untouched"
+        );
+    }
+}
+
+/// #99: a collided row that is `disabled` since the ask, or whose skill is
+/// disabled at skill grain, is a Disabled skip for either answer: Overwrite
+/// must not materialise a disabled pair, and the row and the folder in the
+/// way stay as they are.
+#[test]
+fn a_collision_answer_for_a_disabled_row_or_skill_is_a_disabled_skip() {
+    use crate::core::global_sync::OverrideDecision;
+    use crate::core::skill_store::AssignmentTransition;
+
+    for grain in ["row", "skill"] {
+        for decision in [OverrideDecision::Overwrite, OverrideDecision::Keep] {
+            let (_db_dir, store) = make_store();
+            let tmpdir = tempfile::tempdir().unwrap();
+            let (project, skill, project_dir) =
+                missing_folder_fixture(tmpdir.path(), &store, "disabled");
+            colliding_row(&store, &project, &skill, &project_dir);
+            let row = store
+                .get_project_skill_assignment(&project.id, &skill.id, "claude_code")
+                .unwrap()
+                .unwrap();
+            match grain {
+                "row" => store
+                    .transition_assignment(&row.id, AssignmentTransition::Disabled)
+                    .unwrap(),
+                _ => store.set_skill_disabled_at(&skill.id, Some(2500)).unwrap(),
+            }
+            let before = row_snapshot(&store, &project.id);
+
+            let report = answer(&store, &project, &skill.id, decision);
+
+            let [item] = report.items.as_slice() else {
+                panic!("{grain}/{decision:?}: {report}")
+            };
+            assert!(
+                matches!(
+                    item.status,
+                    ProjectSyncOutcomeStatus::Skipped {
+                        reason: project_sync::ProjectSyncSkip::Disabled
+                    }
+                ),
+                "{grain}/{decision:?}: {item:?}"
+            );
+            assert_eq!(item.assignment_id.as_deref(), Some(row.id.as_str()));
+            assert_eq!(
+                row_snapshot(&store, &project.id),
+                before,
+                "{grain}/{decision:?}: row untouched"
+            );
+            assert_eq!(
+                fs::read_to_string(
+                    project_dir
+                        .join(".claude/skills")
+                        .join(&skill.name)
+                        .join("SKILL.md")
+                )
+                .unwrap(),
+                "someone else's",
+                "{grain}/{decision:?}: the folder in the way is untouched"
+            );
+        }
+    }
+}
+
 /// Enable's project half, called through its seam with rows of two projects:
 /// the live one is synced, the gone one is skipped once — its rows neither
 /// admitted (ownership cleared) nor settled `error`.
