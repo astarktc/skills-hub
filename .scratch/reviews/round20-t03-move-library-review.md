@@ -183,3 +183,21 @@ not "atomic".
    - macOS: an extended ACL (if cheap to detect).
 
    The CHANGELOG names the residuals.
+
+## Round 4 (Opus 5.5, high): PR #12 head `1577061`
+
+Every finding below was fixed as the round-4 direction set out, with a regression test that failed on `011f13d`.
+
+- **A1/S4:** resume finds set-aside copies before it decides anything. A copy goes back to its old path when that
+  path is free; otherwise it is reported `set_aside` with the skill id.
+- **S3:** the resume report is persisted in the transaction that drops the journal, and `take_resumed_library_move`
+  hands it out once. One Notifications run is recorded; `applyOutcome { background }` shows a toast only on a warning
+  or error.
+- **S1:** after a throw, settings and the catalog are re-read.
+- **S2:** `useProjectState.reloadViews` reaches Settings as a `Pick<>`, and runs after every move.
+- **A2:** content the move cannot verify keeps the skill in place as `unverifiable_metadata`:
+  - Windows named alternate data streams;
+  - Linux non-`user.*` xattrs (SELinux and SMACK labels excepted);
+  - macOS extended ACLs.
+
+Gate green (Rust 1,000, vitest 1,367); CI green (rust-windows: 926 tests). Round-4 re-check dispatched (Astra).
