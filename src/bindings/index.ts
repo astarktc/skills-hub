@@ -1977,7 +1977,13 @@ export type UnrelocatableCause =
  *  A file with another name (a hard link) outside the skill's folder:
  *  the copy would split one file in two.
  */
-"hardlink_outside";
+"hardlink_outside" |
+/**
+ *  An entry carrying content the copy cannot reproduce and verify (see
+ *  § What the copy cannot verify): an access-control list or file
+ *  capabilities, or — on Windows — a named data stream.
+ */
+"unverifiable_metadata";
 
 export type UpdateSkip = "skill_gone" | "stale_acquisition";
 

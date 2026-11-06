@@ -2672,7 +2672,13 @@ describe("libraryMoveOutcome", () => {
   it("every kept reason has English copy", () => {
     const en = i18next.createInstance();
     void en.init({ lng: "en", resources });
-    const causes = ["link_into_old_library", "link_escapes", "special_file", "hardlink_outside"] as const;
+    const causes = [
+      "link_into_old_library",
+      "link_escapes",
+      "special_file",
+      "hardlink_outside",
+      "unverifiable_metadata",
+    ] as const;
     const outcome = libraryMoveOutcome(
       report({
         skills: [

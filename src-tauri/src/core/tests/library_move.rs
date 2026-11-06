@@ -2047,3 +2047,133 @@ fn a_move_that_resumes_another_hands_out_the_resumed_report() {
     assert_eq!(PathBuf::from(&resumed.to), f.dest());
     assert!(!resumed.deployments.is_empty());
 }
+
+/// Give the entry at `path` content the move's comparison cannot verify:
+/// an extended ACL (macOS), a POSIX ACL (Linux — the `system.*` xattr the
+/// kernel keeps it in), a named data stream (Windows). `false` when this
+/// volume cannot hold one (a test then has nothing to prove).
+fn give_unverifiable_metadata(path: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("chmod")
+            .args(["+a", "everyone allow read"])
+            .arg(path)
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // A POSIX ACL in its xattr form: version 2, then (tag, perm, id)
+        // entries sorted by tag — owner rw, user 65534 r, group r, mask r,
+        // other r.
+        let mut acl = 2u32.to_le_bytes().to_vec();
+        for (tag, perm, id) in [
+            (0x01u16, 6u16, u32::MAX),
+            (0x02, 4, 65534),
+            (0x04, 4, u32::MAX),
+            (0x10, 4, u32::MAX),
+            (0x20, 4, u32::MAX),
+        ] {
+            acl.extend(tag.to_le_bytes());
+            acl.extend(perm.to_le_bytes());
+            acl.extend(id.to_le_bytes());
+        }
+        xattr::set(path, "system.posix_acl_access", &acl).is_ok()
+    }
+    #[cfg(windows)]
+    {
+        let mut stream = path.as_os_str().to_os_string();
+        stream.push(":skillshub-note");
+        fs::write(PathBuf::from(stream), "unique bytes").is_ok()
+    }
+}
+
+/// A2 (round-3 reviews): content the comparison cannot verify — an ACL,
+/// file capabilities, a Windows alternate data stream — would be lost by a
+/// copy that still verifies "the same", then removed with the old copy.
+/// A skill carrying any keeps its place, and the report names the entry.
+#[test]
+fn a_skill_carrying_metadata_the_move_cannot_verify_stays_where_it_is() {
+    for (case, entry) in [
+        ("a file", "refs/notes.md"),
+        ("a folder", "refs"),
+        ("the skill's own folder", ""),
+    ] {
+        let mut f = fixture(&[]);
+        let alpha = f.install("alpha");
+        let beta = f.install("beta");
+        let old = f.central(&alpha);
+        let marked = if entry.is_empty() {
+            old.clone()
+        } else {
+            old.join(entry)
+        };
+        if !give_unverifiable_metadata(&marked) {
+            return; // this volume holds none
+        }
+
+        let preview = preview_library_move(&f.store, &f.paths, &f.dest()).expect("preview");
+        let report = f.run();
+
+        assert_eq!(
+            (preview.skills, preview.kept),
+            (1, 1),
+            "{case}: only beta moves"
+        );
+        assert_eq!(f.central(&alpha), old, "{case}: alpha stays where it is");
+        assert!(old.join("refs/notes.md").is_file(), "{case}");
+        assert!(f.central(&beta).starts_with(f.dest()), "{case}: beta moved");
+        match kept_reason(&report, &alpha) {
+            crate::core::library_move::SkillKept::Unrelocatable { entry, cause } => {
+                assert_eq!(
+                    cause,
+                    crate::core::library_move::UnrelocatableCause::UnverifiableMetadata,
+                    "{case}"
+                );
+                assert_eq!(PathBuf::from(entry), marked, "{case}");
+            }
+            other => panic!("{case}: expected unrelocatable, got {other:?}"),
+        }
+    }
+}
+
+/// A2: which extended attributes hold content the comparison cannot verify.
+/// On Linux every name outside `user.*` — a POSIX ACL (`system.*`), file
+/// capabilities and integrity data (`security.*`), `trusted.*` — but the
+/// policy-assigned security label (`security.selinux`, SMACK): a copy gets
+/// its own from policy, so a label is never a reason to keep a skill. On
+/// macOS every name is compared or the system's own; nothing is
+/// unverifiable through xattrs (an ACL is read through its own API).
+#[cfg(unix)]
+#[test]
+fn the_unverifiable_extended_attributes() {
+    use super::unverifiable_xattr;
+    use std::ffi::OsStr;
+    assert!(!unverifiable_xattr(OsStr::new("user.note")));
+    if cfg!(target_os = "linux") {
+        for name in [
+            "system.posix_acl_access",
+            "system.posix_acl_default",
+            "security.capability",
+            "security.ima",
+            "trusted.overlay.opaque",
+        ] {
+            assert!(unverifiable_xattr(OsStr::new(name)), "{name}");
+        }
+        for label in [
+            "security.selinux",
+            "security.SMACK64",
+            "security.SMACK64EXEC",
+        ] {
+            assert!(!unverifiable_xattr(OsStr::new(label)), "{label}");
+        }
+    } else {
+        for name in [
+            "com.apple.provenance",
+            "com.apple.FinderInfo",
+            "com.apple.quarantine",
+        ] {
+            assert!(!unverifiable_xattr(OsStr::new(name)), "{name}");
+        }
+    }
+}

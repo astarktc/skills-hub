@@ -1751,6 +1751,8 @@ export const resources = {
             special_file: "{{entry}} is a special file that can't be copied. The skill stays where it is.",
             hardlink_outside:
               "{{entry}} is a hard link to a file outside the skill, and the copy would split it in two. The skill stays where it is.",
+            unverifiable_metadata:
+              "{{entry}} carries an access-control list, file capabilities or an alternate data stream that Skills Hub can't copy and check, so the skill stays where it is. Remove that from it, then move again.",
             shared_copy:
               "It shares its folder with {{other}}, so neither was moved. Remove one of them from My Skills, then move again.",
           },

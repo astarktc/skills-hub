@@ -227,6 +227,10 @@ pub enum UnrelocatableCause {
     /// A file with another name (a hard link) outside the skill's folder:
     /// the copy would split one file in two.
     HardlinkOutside,
+    /// An entry carrying content the copy cannot reproduce and verify (see
+    /// § What the copy cannot verify): an access-control list or file
+    /// capabilities, or — on Windows — a named data stream.
+    UnverifiableMetadata,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -1274,10 +1278,26 @@ fn rollback<'p>(
 //   the copy, with the same link count. A file with another name outside the
 //   skill cannot be relocated as one file (`hardlink_outside`).
 //
-// Preserved best-effort, never compared: modification times. Not preserved
-// (the residuals): ACLs, BSD file flags, Windows alternate data streams,
-// sparse allocation (a sparse file's holes are written out), ownership and
-// creation times.
+// Preserved best-effort, never compared: modification times.
+//
+// **What the copy cannot verify.** Some content is neither copied nor
+// compared, so a copy without it would still verify "the same" and the
+// clean would remove the only place it lived. A skill whose copy carries
+// any — on its own folder or on any entry — is not moved
+// (`unverifiable_metadata`, naming the first such entry):
+//
+// * Windows: a named (alternate) data stream on a file or folder — it can
+//   hold bytes of its own (`Zone.Identifier` included);
+// * Linux: an extended attribute outside `user.*` — a POSIX ACL
+//   (`system.posix_acl_*`), file capabilities or integrity data
+//   (`security.*`), `trusted.*` — except the policy-assigned security
+//   label (`security.selinux`, `security.SMACK64*`), which a copy receives
+//   from policy anew;
+// * macOS: an extended ACL.
+//
+// Not preserved and not detected (the residuals): BSD file flags (macOS
+// `chflags`), Windows ACLs, sparse allocation (a sparse file's holes are
+// written out), ownership and creation times.
 
 /// The first entry of the skill's old copy `old` (physically `old_place`)
 /// that a verbatim copy elsewhere would not reproduce, and why — `None` when
@@ -1292,6 +1312,8 @@ fn rollback<'p>(
 /// * A FIFO, socket or device cannot be copied.
 /// * A file with a name outside the skill (its link count exceeds the names
 ///   it has inside) would become two files.
+/// * An entry (the skill's own folder included) carrying content the copy
+///   cannot verify (§ What the copy cannot verify) would lose it.
 ///
 /// Every other link (relative inside the skill, absolute elsewhere, dangling
 /// either way) reads the same from the new place.
@@ -1304,6 +1326,12 @@ fn unrelocatable(
     // Every multiply-linked file: its link count, the names found inside the
     // skill, and the first of them.
     let mut linked: HashMap<EntryId, (u64, u64, PathBuf)> = HashMap::new();
+    if unverifiable_metadata(old, false)? {
+        return Ok(Some((
+            old.to_path_buf(),
+            UnrelocatableCause::UnverifiableMetadata,
+        )));
+    }
     let mut pending: Vec<(PathBuf, Vec<OsString>)> = vec![(old.to_path_buf(), vec![])];
     while let Some((dir, depth)) = pending.pop() {
         let entries = std::fs::read_dir(&dir).with_context(|| format!("read {:?}", dir))?;
@@ -1313,6 +1341,9 @@ fn unrelocatable(
             let kind = entry
                 .file_type()
                 .with_context(|| format!("stat {:?}", path))?;
+            if unverifiable_metadata(&path, kind.is_symlink())? {
+                return Ok(Some((path, UnrelocatableCause::UnverifiableMetadata)));
+            }
             if kind.is_dir() {
                 let mut below = depth.clone();
                 below.push(entry.file_name());
@@ -1505,20 +1536,173 @@ fn compared_xattr(name: &std::ffi::OsStr) -> bool {
     }
 }
 
+/// Whether an extended attribute holds content the copy cannot verify (see
+/// § What the copy cannot verify): on Linux every name outside `user.*`
+/// but the policy-assigned security label; on macOS none — every name is
+/// compared or the system's own.
+#[cfg(unix)]
+fn unverifiable_xattr(name: &std::ffi::OsStr) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let name = name.as_bytes();
+        !name.starts_with(b"user.")
+            && name != b"security.selinux"
+            && !name.starts_with(b"security.SMACK64")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = name;
+        false
+    }
+}
+
+/// Every extended attribute name of the entry at `path` (a link is read as
+/// itself). A volume that supports none has none.
+#[cfg(unix)]
+fn xattr_names(path: &Path) -> Result<Vec<OsString>> {
+    let unsupported = |err: &std::io::Error| matches!(err.raw_os_error(), Some(code) if code == libc::ENOTSUP || code == libc::EOPNOTSUPP);
+    match xattr::list(path) {
+        Ok(names) => Ok(names.collect()),
+        Err(err) if unsupported(&err) => Ok(Vec::new()),
+        Err(err) => Err(err).with_context(|| format!("list the extended attributes of {:?}", path)),
+    }
+}
+
+/// Whether the entry at `path` (`link`: a link, read as itself) carries
+/// content the copy cannot verify (§ What the copy cannot verify).
+fn unverifiable_metadata(path: &Path, link: bool) -> Result<bool> {
+    #[cfg(unix)]
+    {
+        if xattr_names(path)?
+            .iter()
+            .any(|name| unverifiable_xattr(name))
+        {
+            return Ok(true);
+        }
+        #[cfg(target_os = "macos")]
+        if has_extended_acl(path)? {
+            return Ok(true);
+        }
+        let _ = link;
+        Ok(false)
+    }
+    #[cfg(windows)]
+    {
+        // A link is recreated from its text; its target is not the skill's.
+        if link {
+            return Ok(false);
+        }
+        has_named_stream(path)
+    }
+}
+
+/// Whether the entry at `path` (a link as itself) has an extended ACL.
+#[cfg(target_os = "macos")]
+fn has_extended_acl(path: &Path) -> Result<bool> {
+    use std::ffi::{c_char, c_int, c_void, CString};
+    use std::os::unix::ffi::OsStrExt;
+    // <sys/acl.h>: libSystem's POSIX.1e ACL interface.
+    extern "C" {
+        fn acl_get_link_np(path: *const c_char, kind: c_int) -> *mut c_void;
+        fn acl_get_entry(acl: *mut c_void, entry_id: c_int, entry: *mut *mut c_void) -> c_int;
+        fn acl_free(obj: *mut c_void) -> c_int;
+    }
+    const ACL_TYPE_EXTENDED: c_int = 0x0000_0100;
+    const ACL_FIRST_ENTRY: c_int = 0;
+    let c_path = CString::new(path.as_os_str().as_bytes())
+        .with_context(|| format!("{:?} holds a NUL", path))?;
+    // SAFETY: a NUL-terminated path; the ACL returned is freed below.
+    let acl = unsafe { acl_get_link_np(c_path.as_ptr(), ACL_TYPE_EXTENDED) };
+    if acl.is_null() {
+        let err = std::io::Error::last_os_error();
+        // No extended ACL (ENOENT), or a volume without ACLs.
+        return match err.raw_os_error() {
+            Some(code)
+                if code == libc::ENOENT || code == libc::ENOTSUP || code == libc::EOPNOTSUPP =>
+            {
+                Ok(false)
+            }
+            _ => Err(err).with_context(|| format!("read the ACL of {:?}", path)),
+        };
+    }
+    let mut entry = std::ptr::null_mut();
+    // SAFETY: `acl` is a live ACL from `acl_get_link_np`; `entry` is a
+    // descriptor into it, unused after the ACL is freed.
+    let has_entry = unsafe { acl_get_entry(acl, ACL_FIRST_ENTRY, &mut entry) } == 0;
+    // SAFETY: freed once, never used after.
+    unsafe { acl_free(acl) };
+    Ok(has_entry)
+}
+
+/// Whether the file or folder at `path` has a named (alternate) data stream
+/// — any stream but a file's unnamed `::$DATA`.
+#[cfg(windows)]
+fn has_named_stream(path: &Path) -> Result<bool> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{
+        GetLastError, ERROR_HANDLE_EOF, ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER,
+        ERROR_NOT_SUPPORTED, INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        FindClose, FindFirstStreamW, FindNextStreamW, FindStreamInfoStandard,
+        WIN32_FIND_STREAM_DATA,
+    };
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut data = WIN32_FIND_STREAM_DATA::default();
+    let named = |data: &WIN32_FIND_STREAM_DATA| {
+        let len = data
+            .cStreamName
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(data.cStreamName.len());
+        String::from_utf16_lossy(&data.cStreamName[..len]) != "::$DATA"
+    };
+    // SAFETY: a NUL-terminated wide path and a stream record to fill; the
+    // search handle is closed below.
+    let handle = unsafe {
+        FindFirstStreamW(
+            wide.as_ptr(),
+            FindStreamInfoStandard,
+            (&mut data as *mut WIN32_FIND_STREAM_DATA).cast(),
+            0,
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        // SAFETY: reads this thread's last error.
+        return match unsafe { GetLastError() } {
+            // No stream at all (a folder without any), or a volume
+            // without streams (FAT, exFAT).
+            ERROR_HANDLE_EOF
+            | ERROR_INVALID_FUNCTION
+            | ERROR_INVALID_PARAMETER
+            | ERROR_NOT_SUPPORTED => Ok(false),
+            code => Err(std::io::Error::from_raw_os_error(code as i32))
+                .with_context(|| format!("list the data streams of {:?}", path)),
+        };
+    }
+    let mut found = named(&data);
+    // SAFETY: `handle` is a live search handle; `data` is a stream record.
+    while !found
+        && unsafe { FindNextStreamW(handle, (&mut data as *mut WIN32_FIND_STREAM_DATA).cast()) }
+            != 0
+    {
+        found = named(&data);
+    }
+    // SAFETY: closed once, never used after.
+    unsafe { FindClose(handle) };
+    Ok(found)
+}
+
 /// The compared extended attributes of the entry at `path` (a link is read
 /// as itself), sorted by name. A volume that supports none has none.
 #[cfg(unix)]
 fn xattrs(path: &Path) -> Result<Vec<(OsString, Vec<u8>)>> {
-    let unsupported = |err: &std::io::Error| matches!(err.raw_os_error(), Some(code) if code == libc::ENOTSUP || code == libc::EOPNOTSUPP);
-    let names = match xattr::list(path) {
-        Ok(names) => names,
-        Err(err) if unsupported(&err) => return Ok(Vec::new()),
-        Err(err) => {
-            return Err(err).with_context(|| format!("list the extended attributes of {:?}", path))
-        }
-    };
     let mut out = Vec::new();
-    for name in names.filter(|name| compared_xattr(name)) {
+    for name in xattr_names(path)?
+        .into_iter()
+        .filter(|name| compared_xattr(name))
+    {
         let value = xattr::get(path, &name)
             .with_context(|| format!("read the extended attribute {:?} of {:?}", name, path))?;
         if let Some(value) = value {
