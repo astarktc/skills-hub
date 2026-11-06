@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 
 use super::content_identity::{self, Source};
 use super::errors::SignalError;
+use super::removal_fence::{self, Entry, Fence, ProtectedLibrary};
 use super::tool_adapters::ToolAdapter;
 
 /// Typed condition: the sync target already exists and overwrite was not
@@ -166,6 +167,7 @@ pub fn sync_dir_hybrid_with_overwrite(
         target,
         overwrite,
         TargetParents::CreateMissing,
+        &ProtectedLibrary::unrecorded(),
     )
 }
 
@@ -175,6 +177,7 @@ fn hybrid_with_overwrite(
     target: &Path,
     overwrite: bool,
     parents: TargetParents<'_>,
+    library: &ProtectedLibrary<'_>,
 ) -> Result<SyncOutcome> {
     // A missing source must fail like it does in copy mode; without this a
     // dangling symlink would be created and recorded as a successful sync.
@@ -195,8 +198,7 @@ fn hybrid_with_overwrite(
         }
 
         if overwrite {
-            remove_path_any(target)
-                .with_context(|| format!("remove existing target {:?}", target))?;
+            replace_occupant(source, target, library)?;
             did_replace = true;
         } else {
             anyhow::bail!(TargetExistsError::at(identity, target));
@@ -224,6 +226,7 @@ pub fn sync_dir_copy_with_overwrite(
         target,
         overwrite,
         TargetParents::CreateMissing,
+        &ProtectedLibrary::unrecorded(),
     )
 }
 
@@ -233,12 +236,12 @@ fn copy_with_overwrite(
     target: &Path,
     overwrite: bool,
     parents: TargetParents<'_>,
+    library: &ProtectedLibrary<'_>,
 ) -> Result<SyncOutcome> {
     let mut did_replace = false;
     if std::fs::symlink_metadata(target).is_ok() {
         if overwrite {
-            remove_path_any(target)
-                .with_context(|| format!("remove existing target {:?}", target))?;
+            replace_occupant(source, target, library)?;
             did_replace = true;
         } else {
             anyhow::bail!(TargetExistsError::at(identity, target));
@@ -255,18 +258,29 @@ fn copy_with_overwrite(
     })
 }
 
+/// Remove the folder in an overwrite's way — admitted physically, so the
+/// occupant is never the source itself, inside it or around it, and never in
+/// the central `library` (a Tool's skills dir linked onto the central repo
+/// makes the "occupant" a central copy).
+fn replace_occupant(source: &Path, target: &Path, library: &ProtectedLibrary<'_>) -> Result<()> {
+    remove_path_any(target, &Fence::new(library).sparing(source))
+        .with_context(|| format!("remove existing target {:?}", target))
+}
+
 /// The tool-aware sync entry point: tools that cannot consume a symlinked
 /// skills dir (`ToolAdapter::supports_symlink == false`) are always copied so
 /// the skills stay usable after sync; every other tool gets the hybrid
 /// symlink -> junction -> copy fallback. `identity` is the skill's content
 /// identity (`Source::Managed` for a Managed skill), read only to describe
-/// a folder in the way (`TargetExistsError::occupant`).
-pub fn sync_dir_for_tool_with_overwrite(
+/// a folder in the way (`TargetExistsError::occupant`). An overwrite's
+/// replacement never reaches `library` or `source` ([`removal_fence`]).
+pub(crate) fn sync_dir_for_tool_with_overwrite(
     adapter: &ToolAdapter,
     source: &Path,
     identity: Source<'_>,
     target: &Path,
     overwrite: bool,
+    library: &ProtectedLibrary<'_>,
 ) -> Result<SyncOutcome> {
     sync_dir_for_tool(
         adapter,
@@ -275,6 +289,7 @@ pub fn sync_dir_for_tool_with_overwrite(
         target,
         overwrite,
         TargetParents::CreateMissing,
+        library,
     )
 }
 
@@ -291,6 +306,7 @@ pub(crate) fn sync_dir_for_tool_within_root(
     target: &Path,
     overwrite: bool,
     root: &Path,
+    library: &ProtectedLibrary<'_>,
 ) -> Result<SyncOutcome> {
     sync_dir_for_tool(
         adapter,
@@ -299,6 +315,7 @@ pub(crate) fn sync_dir_for_tool_within_root(
         target,
         overwrite,
         TargetParents::WithinRoot(root),
+        library,
     )
 }
 
@@ -309,11 +326,12 @@ fn sync_dir_for_tool(
     target: &Path,
     overwrite: bool,
     parents: TargetParents<'_>,
+    library: &ProtectedLibrary<'_>,
 ) -> Result<SyncOutcome> {
     if !adapter.supports_symlink {
-        return copy_with_overwrite(source, identity, target, overwrite, parents);
+        return copy_with_overwrite(source, identity, target, overwrite, parents, library);
     }
-    hybrid_with_overwrite(source, identity, target, overwrite, parents)
+    hybrid_with_overwrite(source, identity, target, overwrite, parents, library)
 }
 
 fn ensure_parent_dir(path: &Path, parents: TargetParents<'_>) -> Result<()> {
@@ -418,13 +436,18 @@ pub(crate) mod test_hooks {
     }
 }
 
-pub(crate) fn remove_path_any(path: &Path) -> Result<()> {
-    let meta = match std::fs::symlink_metadata(path) {
-        Ok(meta) => meta,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(err) => return Err(err).with_context(|| format!("stat {:?}", path)),
+/// The one removal primitive: remove the entry `path` names, admitted by
+/// physical identity against `fence` ([`removal_fence::admit`]) and removed
+/// at that physical location. An absent entry is a successful removal.
+pub(crate) fn remove_path_any(path: &Path, fence: &Fence<'_>) -> Result<()> {
+    let (path, ft) = match removal_fence::admit(path, fence)? {
+        Entry::Absent => return Ok(()),
+        Entry::Present {
+            physical,
+            file_type,
+        } => (physical, file_type),
     };
-    let ft = meta.file_type();
+    let path = path.as_path();
 
     // A link is removed as itself, never through it. On Windows a directory
     // link — a directory symlink or a junction, which std reports as a

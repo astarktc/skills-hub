@@ -75,10 +75,11 @@ use super::mutation_guard;
 use super::onboarding::{
     build_onboarding_plan, OnboardingGroup, OnboardingScanScope, OnboardingVariant,
 };
+use super::removal_fence::{Claim, Fence, ProtectedLibrary};
 use super::skill_discovery::require_skill_md;
 use super::skill_store::SkillStore;
 use super::sync_engine::remove_path_any;
-use super::tool_adapters::ensure_path_within_tool_dirs;
+use super::tool_adapters::{deletable_skills_dirs_in, ensure_path_within_tool_dirs};
 
 /// One name-group the operator chose to import, as the frontend states it.
 #[derive(Clone, Debug)]
@@ -686,8 +687,9 @@ fn remove_divergent_copies(
 ///   `IDENTITY_UNKNOWN`: an inaccessible copy is neither absent nor different.
 ///
 /// A link is removed as a link (`remove_path_any`), never followed. The
-/// registry fence runs immediately before the removal. Refusals and removal
-/// failures are reported, never thrown.
+/// registry fence runs immediately before the removal, which is then
+/// admitted physically ([`remove_original`]). Refusals and removal failures
+/// are reported, never thrown.
 fn remove_divergent_copy(
     home: &Path,
     store: &SkillStore,
@@ -717,7 +719,9 @@ fn remove_divergent_copy(
             unknown("the copy's or the managed skill's content could not be read".to_string())
         }
         Comparison::Different => Some(
-            match ensure_path_within_tool_dirs(home, path).and_then(|()| remove_path_any(path)) {
+            match ensure_path_within_tool_dirs(home, path)
+                .and_then(|()| remove_original(home, store, path))
+            {
                 Ok(()) => OriginalStatus::Removed,
                 Err(error) => OriginalStatus::Failed {
                     error: CommandError::from_anyhow(error),
@@ -725,6 +729,16 @@ fn remove_divergent_copy(
             },
         ),
     }
+}
+
+/// Remove one original Tool copy, admitted by physical identity: never inside
+/// the central library, and physically inside a Tool's skills dir — the
+/// lexical registry fence alone would admit a folder reached through a Tool
+/// dir linked onto the library.
+fn remove_original(home: &Path, store: &SkillStore, path: &Path) -> Result<()> {
+    let library = ProtectedLibrary::recorded(store);
+    let dirs = deletable_skills_dirs_in(home);
+    remove_path_any(path, &Fence::new(&library).claiming(Claim::Within(&dirs)))
 }
 
 /// Auto-sync off: remove one original, but only when it is byte-identical to
@@ -745,7 +759,7 @@ fn settle_original(
         Ok(()) if !content_identity::same_content(Source::Managed { store, skill_id }, path) => {
             OriginalStatus::KeptDivergent
         }
-        Ok(()) => match remove_path_any(path) {
+        Ok(()) => match remove_original(home, store, path) {
             Ok(()) => OriginalStatus::Removed,
             Err(error) => OriginalStatus::Failed {
                 error: CommandError::from_anyhow(error),

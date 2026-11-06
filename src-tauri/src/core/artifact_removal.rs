@@ -15,6 +15,10 @@
 //!   and **one settlement rule**:
 //!   - presence: `symlink_metadata` decides, so a broken symlink counts as
 //!     present and is removed; an absent path is a successful removal.
+//!   - admission: every removal is admitted by the entry's physical identity
+//!     (`core::removal_fence`) — never inside the central library, however a
+//!     folder on the way is aliased — and a refusal is a failure like any
+//!     other (the row is kept `error`).
 //!   - settlement: on success every attached row is deleted — or, under
 //!     [`Settlement::Disable`] (`core::skill_disable`, the only caller), kept
 //!     with Sync status `disabled` as the operator's durable "not on this
@@ -62,6 +66,7 @@ use crate::core::{
     errors::{CommandError, SignalError},
     mutation_guard,
     project_sync::resolve_assignment_artifact,
+    removal_fence::{Claim, Fence, ProtectedLibrary},
     skill_health::{self, SkillOutcomeKind},
     skill_store::{AssignmentTransition, ProjectRecord, SkillRecord, SkillStore, TargetTransition},
     sync_engine::remove_path_any,
@@ -601,10 +606,12 @@ pub(crate) fn execute_settling_unlocked(
     settlement: Settlement,
 ) -> Result<RemovalReport> {
     let mut targets: Vec<RemovalTargetOutcome> = Vec::with_capacity(plan.targets.len());
+    let library = ProtectedLibrary::recorded(store);
+    let fence = Fence::new(&library);
 
     for target in plan.targets {
         let result = if is_present(&target.path) {
-            remove_path_any(&target.path)
+            remove_path_any(&target.path, &fence)
         } else {
             Ok(())
         };
@@ -747,8 +754,9 @@ fn settle_row_as_error(store: &SkillStore, row: &RowRef, error: &str) -> Result<
 ///
 /// Fenced to `adapter`'s **former** skills dirs, the only place a relocation
 /// leaves an artifact behind; anything else is refused as
-/// `PathOutsideToolDirs`. Presence follows the module rule. Unlocked
-/// internal seam.
+/// `PathOutsideToolDirs`, and the removal is admitted physically against
+/// the central library and those dirs. Presence follows the module rule.
+/// Unlocked internal seam.
 ///
 /// Only Target relocation calls it, and relocation is not run at launch
 /// since 1.3.2 (BACKLOG #89); its tests still drive it until #108 rewires it.
@@ -757,11 +765,13 @@ fn settle_row_as_error(store: &SkillStore, row: &RowRef, error: &str) -> Result<
     allow(dead_code, reason = "relocation is unwired until BACKLOG #108")
 )]
 pub(crate) fn remove_superseded_artifact_unlocked(
+    store: &SkillStore,
     home: &Path,
     adapter: &ToolAdapter,
     path: &Path,
 ) -> Result<()> {
-    let fenced = former_skills_dirs_in(home, adapter)
+    let former = former_skills_dirs_in(home, adapter);
+    let fenced = former
         .iter()
         .any(|dir| path.parent() == Some(dir.as_path()));
     if !fenced {
@@ -770,7 +780,8 @@ pub(crate) fn remove_superseded_artifact_unlocked(
         });
     }
     if is_present(path) {
-        remove_path_any(path)?;
+        let library = ProtectedLibrary::recorded(store);
+        remove_path_any(path, &Fence::new(&library).claiming(Claim::Within(&former)))?;
     }
     Ok(())
 }

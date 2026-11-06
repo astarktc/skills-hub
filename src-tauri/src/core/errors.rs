@@ -121,6 +121,20 @@ pub enum SignalError {
     /// conflict's other copies — left it in place. `detail` is diagnostic
     /// text, not user copy. Owned by `core::onboarding_import`.
     IdentityUnknown { path: String, detail: String },
+    /// A removal (Delete, Disable, unassign, an overwrite's replacement,
+    /// Import's original removal, the git cache's clean retry) was refused at
+    /// physical admission: the entry `path` physically names — its parent
+    /// resolved through every link or junction, its leaf never — is
+    /// `resolved`, which lies in the central library or outside the directory
+    /// the removal claims (`reason`). Nothing was touched. The operator causes
+    /// it by aliasing a folder on the way (a Tool's skills dir linked onto the
+    /// library) and repairs it by replacing that link. Owned by
+    /// `core::removal_fence`.
+    RemovalRefused {
+        path: String,
+        resolved: String,
+        reason: RemovalRefusal,
+    },
 }
 
 impl fmt::Display for SignalError {
@@ -225,6 +239,16 @@ impl fmt::Display for SignalError {
             SignalError::IdentityUnknown { path, detail } => {
                 write!(f, "content could not be compared: {path}: {detail}")
             }
+            SignalError::RemovalRefused {
+                path,
+                resolved,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "removal of {path} refused ({reason:?}): it resolves to {resolved}"
+                )
+            }
         }
     }
 }
@@ -265,6 +289,20 @@ pub enum RevealPathFailure {
     Gone,
     /// The file manager could not show it.
     Opener,
+}
+
+/// Why physical admission refused a removal (the backend classifies; the
+/// frontend owns the copy). Owned by `core::removal_fence`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum RemovalRefusal {
+    /// The entry physically is, lies inside, or contains the central library
+    /// (a Managed skill's central copy or the folder holding them) — reached
+    /// through an aliased folder on the way.
+    CentralLibrary,
+    /// The entry physically lies outside the directory the removal claims to
+    /// act in (an aliased folder on the way leads elsewhere).
+    ResolvesElsewhere,
 }
 
 /// Structured command failure crossing the IPC seam. `Deserialize` because a
@@ -420,6 +458,17 @@ pub enum CommandError {
         path: String,
         /// Which read failed, diagnostics only.
         detail: String,
+    },
+    /// A removal was refused at physical admission: `path` physically names
+    /// `resolved`, which is in the central library or outside the directory
+    /// the removal claims. Nothing was touched.
+    RemovalRefused {
+        /// The path the removal was asked to act on.
+        path: String,
+        /// Where that path physically leads (parent resolved, leaf not).
+        resolved: String,
+        /// In the central library, or outside the claimed directory.
+        reason: RemovalRefusal,
     },
     /// An Update replayed the operator's invocation Edit onto new upstream
     /// bytes whose own invocation mode disagrees with both the Edit's base
@@ -612,6 +661,15 @@ impl From<SignalError> for CommandError {
             SignalError::IdentityUnknown { path, detail } => {
                 CommandError::IdentityUnknown { path, detail }
             }
+            SignalError::RemovalRefused {
+                path,
+                resolved,
+                reason,
+            } => CommandError::RemovalRefused {
+                path,
+                resolved,
+                reason,
+            },
         }
     }
 }

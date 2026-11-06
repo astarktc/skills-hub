@@ -41,6 +41,7 @@ use uuid::Uuid;
 use super::errors::{CommandError, SignalError};
 use super::installer::InstallerPaths;
 use super::project_sync::AssignmentSyncContext;
+use super::removal_fence::ProtectedLibrary;
 use super::skill_store::{
     AssignmentTransition, ProjectSkillAssignmentRecord, SkillRecord, SkillStore, SkillTargetRecord,
     TargetTransition,
@@ -334,6 +335,7 @@ fn propagate_global_rows(
                 super::content_identity::Source::Managed { store, skill_id },
                 Path::new(&driver.target_path),
                 overwrite,
+                &ProtectedLibrary::recorded(store),
             )
         };
 

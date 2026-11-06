@@ -878,20 +878,31 @@ pub fn tool_holding_path(home: &Path, path: &Path) -> Option<&'static ToolAdapte
     })
 }
 
+/// Every directory the deletion rule below admits under `home`: each Tool's
+/// global skills directory and its former ones (an artifact Skills Hub
+/// created in a former dir is still its own to remove). Also the claim a
+/// physically admitted removal of such a path is checked against
+/// (`core::removal_fence::Claim::Within`).
+pub fn deletable_skills_dirs_in(home: &Path) -> Vec<PathBuf> {
+    TOOL_ADAPTERS
+        .iter()
+        .flat_map(|adapter| {
+            std::iter::once(skills_dir_in(home, adapter))
+                .chain(former_skills_dirs_in(home, adapter))
+        })
+        .collect()
+}
+
 /// The registry's deletion safety rule: Skills Hub only removes paths inside
 /// a Tool's global skills directory. Which directories those are is a
 /// registry fact, so the refusal lives here rather than in a command body,
 /// and it is raised as the typed `SignalError::PathOutsideToolDirs` (never
-/// as prose the frontend would have to parse).
+/// as prose the frontend would have to parse). The rule is lexical; the
+/// removal itself is admitted physically (`core::removal_fence`).
 pub fn ensure_path_within_tool_dirs(home: &Path, path: &Path) -> Result<()> {
-    // A former skills dir counts: an artifact Skills Hub created there is
-    // still its own to remove.
-    let inside = TOOL_ADAPTERS.iter().any(|adapter| {
-        path.starts_with(skills_dir_in(home, adapter))
-            || former_skills_dirs_in(home, adapter)
-                .iter()
-                .any(|dir| path.starts_with(dir))
-    });
+    let inside = deletable_skills_dirs_in(home)
+        .iter()
+        .any(|dir| path.starts_with(dir));
     if inside {
         return Ok(());
     }
