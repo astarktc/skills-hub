@@ -161,6 +161,19 @@ describe("describeCommandError", () => {
     );
   });
 
+  it("names the path and what to check for REMOVAL_PERMISSION_DENIED, keeping the I/O chain out of the copy", () => {
+    expect(
+      describeCommandError(
+        {
+          code: "REMOVAL_PERMISSION_DENIED",
+          path: "/home/u/.claude/skills/alpha",
+          detail: "remove dir: Permission denied (os error 13)",
+        },
+        t,
+      ),
+    ).toBe('errors.removalPermissionDenied {"path":"/home/u/.claude/skills/alpha"}');
+  });
+
   it("shows the missing path as a detail line for SOURCE_PATH_MISSING", () => {
     expect(
       describeCommandError(

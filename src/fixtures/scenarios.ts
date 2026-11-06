@@ -555,7 +555,7 @@ function failures(now: number): FixtureState {
     // model-only as the base — card and report read the same upstream.
     { name: "design-tokens", description: "Keep design tokens in sync across platforms", source: git("some-org/design-tokens"), synced: without("amp", "kimi_cli"), override: { mode: "user-only" }, acquisition: { upstreamChanged: true, upstreamInvocation: "model-only" } },
     { name: "flaky-upstream", description: "Upstream force-pushes during every update", source: git("some-org/flaky"), synced: ["claude_code", "codex"], acquisition: { skip: "stale_acquisition" } },
-    { name: "release-train", description: "Cut and ship a release train", source: git("acme/release-train"), synced: ["claude_code", "codex", "pi"], mode: "copy", health: { kind: "delete_incomplete", error: { code: "OTHER", message: `Permission denied (os error 13): ${globalRoot("claude_code")}/release-train` }, hoursAgo: 1 } },
+    { name: "release-train", description: "Cut and ship a release train", source: git("acme/release-train"), synced: ["claude_code", "codex", "pi"], mode: "copy", health: { kind: "delete_incomplete", error: { code: "REMOVAL_PERMISSION_DENIED", path: `${globalRoot("claude_code")}/release-train`, detail: `Permission denied (os error 13): ${globalRoot("claude_code")}/release-train` }, hoursAgo: 1 } },
     { name: "legacy-lint", description: "Imported from Cursor during onboarding", source: { kind: "imported", fromTool: "cursor" }, synced: ["cursor", "claude_code"] },
     { name: "mystery-skill", description: "Imported; the harness it came from was not recorded", source: { kind: "imported", fromTool: null }, synced: ["claude_code"] },
     { name: "windsurf-rules", description: "Deployed to Windsurf before it was uninstalled", source: git("some-org/windsurf-rules"), synced: ["windsurf", "claude_code"] },
@@ -572,7 +572,7 @@ function failures(now: number): FixtureState {
     // original sat in the unwritable shared dir; a first sync into that dir
     // failed and recorded `error` rows that own nothing (D9).
     { name: "api-style", description: "House style for REST and RPC endpoints", source: git("some-org/api-style"), synced: ["claude_code", "codex"], invocation: "model-only", override: { mode: "user-only", conflict: true }, health: { kind: "edit_conflict", error: { code: "EDIT_CONFLICT", baseMode: "user-and-model", upstreamMode: "model-only", overrideMode: "user-only" }, hoursAgo: 20 } },
-    { name: "shell-aliases", description: "Imported from Amp; the original could not be removed", source: { kind: "imported", fromTool: "amp" }, synced: ["claude_code"], health: { kind: "import_failed", error: { code: "OTHER", message: `Permission denied (os error 13): ${globalRoot("amp")}/shell-aliases` }, hoursAgo: 48 } },
+    { name: "shell-aliases", description: "Imported from Amp; the original could not be removed", source: { kind: "imported", fromTool: "amp" }, synced: ["claude_code"], health: { kind: "import_failed", error: { code: "REMOVAL_PERMISSION_DENIED", path: `${globalRoot("amp")}/shell-aliases`, detail: `Permission denied (os error 13): ${globalRoot("amp")}/shell-aliases` }, hoursAgo: 48 } },
     { name: "json-canvas", description: "Read and write JSON Canvas files", source: git("some-org/json-canvas"), synced: ["claude_code", "pi"], failedFirstSync: ["amp", "kimi_cli"] },
   ];
   state.skills = specs.map((spec, i) => makeSkill(spec, now, i));

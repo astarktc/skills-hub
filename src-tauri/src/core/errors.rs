@@ -135,6 +135,13 @@ pub enum SignalError {
         resolved: String,
         reason: RemovalRefusal,
     },
+    /// The OS refused to remove (or even inspect) `path`: the operator's
+    /// account lacks the permission — a folder owned by another user,
+    /// read-only, or held open by another process. A retry fails the same way
+    /// until that changes. `detail` is the I/O diagnostic chain, not user
+    /// copy. Raised by the removal primitive (`sync_engine::remove_path_any`)
+    /// as context over the I/O error, which stays in the chain.
+    RemovalPermissionDenied { path: String, detail: String },
 }
 
 impl fmt::Display for SignalError {
@@ -248,6 +255,9 @@ impl fmt::Display for SignalError {
                     f,
                     "removal of {path} refused ({reason:?}): it resolves to {resolved}"
                 )
+            }
+            SignalError::RemovalPermissionDenied { path, .. } => {
+                write!(f, "not permitted to remove {path}")
             }
         }
     }
@@ -470,6 +480,15 @@ pub enum CommandError {
         /// In the central library, or outside the claimed directory.
         reason: RemovalRefusal,
     },
+    /// The OS refused to remove `path` for lack of permission (ownership,
+    /// read-only, a process holding it); a retry fails the same way until
+    /// that is fixed.
+    RemovalPermissionDenied {
+        /// The path that could not be removed.
+        path: String,
+        /// The I/O diagnostic chain, diagnostics only.
+        detail: String,
+    },
     /// An Update replayed the operator's invocation Edit onto new upstream
     /// bytes whose own invocation mode disagrees with both the Edit's base
     /// and its override: the Edit was kept and needs review. Settled by
@@ -670,6 +689,9 @@ impl From<SignalError> for CommandError {
                 resolved,
                 reason,
             },
+            SignalError::RemovalPermissionDenied { path, detail } => {
+                CommandError::RemovalPermissionDenied { path, detail }
+            }
         }
     }
 }
