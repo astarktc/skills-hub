@@ -37,4 +37,8 @@ back with evidence, not forced.
   before admission; one failed project-view read hid another's rewrite). For later: the 1.3.0 whole-cell hit area makes
   matrix misclicks likelier (Undo mitigates); deleting a divergent Import original before the deploy could become
   move-aside → deploy → delete-or-restore.
-- L1: rebased, draft PR #7 for Windows CI; Sol (high) review running.
+- L2 merged: Sol (high) review fix-then-merge, two P2s fixed by the orchestrator — WAL now runs `synchronous = FULL`
+  (the store is authoritative), and the legacy-migration backup copies the file set whole before removing it.
+- L1: Sol (high) review FAIL — three P1s (case-insensitive leaf alias deletes a recorded central copy; cache ancestor
+  alias; no configured-library boundary, cache cleanup unprotected) + #76 gap; round-2 implementer dispatched on
+  `t3/removal-fence-round2`. PR #7 (draft, round 1) passed Windows CI.
