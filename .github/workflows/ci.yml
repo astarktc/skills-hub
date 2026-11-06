@@ -88,13 +88,8 @@ jobs:
       - run: cargo clippy --all-targets --all-features -- -D warnings
       # Git for Windows' system config sets core.autocrlf=true; the app pins
       # its own checkouts (core.autocrlf=false, core.eol=lf), so the byte-exact
-      # acquisition tests run here as everywhere. Excluded: skill_store's
-      # contention test (8 writers × 50 rounds, rollback-journal SQLite) — on
-      # the hosted runner's disk the writers starve past the 5 s busy timeout
-      # even when it runs alone (it passes on a Windows 11 PC). That is a known
-      # Windows limitation of the database under write contention on a slow
-      # disk, not a test-portability problem (BACKLOG #104). Everything else
-      # runs.
-      - run: >-
-          cargo test --all --
-          --skip concurrent_readers_and_writers_all_succeed
+      # acquisition tests run here as everywhere. Nothing is excluded: the
+      # SQLite contention tests (4 and 8 workers) starved past the busy timeout
+      # on this runner's disk under the rollback journal and run since the
+      # store moved to WAL (BACKLOG #104, `skill_store::enable_wal`).
+      - run: cargo test --all

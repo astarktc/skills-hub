@@ -1985,21 +1985,17 @@ fn a_call_landing_in_a_write_window_waits_instead_of_failing_busy() {
     holder.join().expect("holder thread");
 }
 
-/// The pool's real shape: several workers doing the read + upsert pair against
-/// one database at once, every call `Ok`.
-#[test]
-fn concurrent_readers_and_writers_all_succeed() {
+/// The Refresh acquire pool's shape: `workers` threads each doing the read +
+/// upsert pair `rounds` times against one database, every call `Ok`.
+fn read_and_upsert_concurrently(workers: usize, rounds: usize) {
     let (_dir, store) = make_store();
-    const WORKERS: usize = 8;
-    const ROUNDS: usize = 50;
-
     std::thread::scope(|scope| {
-        for worker in 0..WORKERS {
+        for worker in 0..workers {
             let store = store.clone();
             scope.spawn(move || {
                 let id = format!("skill-{worker}");
                 let central = format!("/tmp/central/{id}");
-                for round in 0..ROUNDS {
+                for round in 0..rounds {
                     let skill = make_skill(&id, &id, &central, round as i64);
                     store
                         .upsert_skill(&skill)
@@ -2012,4 +2008,238 @@ fn concurrent_readers_and_writers_all_succeed() {
             });
         }
     });
+}
+
+/// #104's representative probe: the Refresh acquire pool is four workers
+/// (`refresh::ACQUIRE_POOL_SIZE`). Under the 1.3.2 policy (rollback journal)
+/// its slowest call took 3-5.4 s against the 5 s busy timeout on GitHub's
+/// hosted Windows runner.
+#[test]
+fn four_refresh_workers_reading_and_writing_all_succeed() {
+    read_and_upsert_concurrently(4, 50);
+}
+
+/// Twice the pool: the headroom check. Under the rollback journal it failed
+/// "database is locked" on the hosted Windows runner on every run (BACKLOG
+/// #104); under WAL its slowest call there stayed near 1 s.
+#[test]
+fn concurrent_readers_and_writers_all_succeed() {
+    read_and_upsert_concurrently(8, 50);
+}
+
+/// #104's policy, pinned on its own: in WAL mode a reader holding a snapshot
+/// never holds up a write (and keeps its snapshot). Under the rollback
+/// journal the write's commit waits for the reader's lock until the busy
+/// timeout and fails "database is locked" — the reader/writer ping-pong
+/// behind #104's starvation.
+#[test]
+fn a_reader_holding_a_snapshot_does_not_hold_up_a_write() {
+    let (_dir, store) = make_store();
+    store
+        .upsert_skill(&make_skill("held", "held", "/tmp/central/held", 1))
+        .expect("seed");
+
+    let reader = rusqlite::Connection::open(&store.db_path).expect("open reader");
+    reader.execute_batch("BEGIN;").expect("begin");
+    let before: i64 = reader
+        .query_row(
+            "SELECT updated_at FROM skills WHERE id = 'held'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read inside the snapshot");
+    assert_eq!(before, 1);
+
+    store
+        .upsert_skill(&make_skill("held", "held", "/tmp/central/held", 2))
+        .expect("the write does not wait for the reader");
+
+    let inside: i64 = reader
+        .query_row(
+            "SELECT updated_at FROM skills WHERE id = 'held'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read again inside the snapshot");
+    assert_eq!(inside, 1, "the reader keeps its snapshot");
+    reader.execute_batch("COMMIT;").expect("end the snapshot");
+    assert_eq!(
+        store.get_skill_by_id("held").unwrap().unwrap().updated_at,
+        2
+    );
+}
+
+fn journal_mode(db: &std::path::Path) -> String {
+    rusqlite::Connection::open(db)
+        .expect("open")
+        .query_row("PRAGMA journal_mode;", [], |row| row.get(0))
+        .expect("journal_mode")
+}
+
+/// #104: `ensure_schema` puts the database in WAL mode — a new one, and an
+/// existing one as 1.3.2 and earlier left it (rollback journal), data intact.
+/// The mode persists in the file; every store connection then uses
+/// `synchronous = NORMAL`, WAL's documented pairing.
+#[test]
+fn ensure_schema_puts_new_and_existing_databases_in_wal_mode() {
+    let (dir, store) = make_store();
+    assert_eq!(journal_mode(&dir.path().join("test.db")), "wal", "new");
+    let synchronous: i64 = store
+        .with_conn(|conn| Ok(conn.query_row("PRAGMA synchronous;", [], |row| row.get(0))?))
+        .unwrap();
+    assert_eq!(synchronous, 1, "NORMAL");
+
+    let existing = dir.path().join("existing.db");
+    open_v8_database(&existing);
+    rusqlite::Connection::open(&existing)
+        .unwrap()
+        .execute(
+            "INSERT INTO skills (id, name, source_type, central_path, created_at,
+               updated_at, last_seen_at, status)
+             VALUES ('old', 'old', 'local', '/tmp/central/old', 1, 1, 1, 'ok')",
+            [],
+        )
+        .unwrap();
+    assert_eq!(journal_mode(&existing), "delete", "precondition: rollback");
+
+    let store = SkillStore::new(existing.clone());
+    store.ensure_schema().expect("upgrade");
+    assert_eq!(journal_mode(&existing), "wal", "existing");
+    assert_eq!(store.get_skill_by_id("old").unwrap().unwrap().name, "old");
+    // Closed cleanly, nothing is left beside the file.
+    assert!(!dir.path().join("existing.db-wal").exists());
+}
+
+/// A WAL database that crashed: its last commit (`only_in_the_wal`) lives
+/// only in `<target>-wal`, never checkpointed — the files copied while the
+/// writing connection was still open. No `-shm`; SQLite rebuilds it.
+fn crash_snapshot(root: &std::path::Path, target: &std::path::Path) {
+    let scratch = root.join("scratch");
+    std::fs::create_dir_all(&scratch).unwrap();
+    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+    let live = scratch.join("skills_hub.db");
+    SkillStore::new(live.clone()).ensure_schema().unwrap();
+    let conn = rusqlite::Connection::open(&live).unwrap();
+    conn.execute_batch("PRAGMA wal_autocheckpoint = 0;")
+        .unwrap();
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES ('only_in_the_wal', 'yes')",
+        [],
+    )
+    .unwrap();
+    std::fs::copy(&live, target).unwrap();
+    std::fs::copy(scratch.join("skills_hub.db-wal"), sidecar(target, "-wal")).unwrap();
+    drop(conn);
+}
+
+fn sidecar(db: &std::path::Path, suffix: &str) -> std::path::PathBuf {
+    let mut name = db.as_os_str().to_owned();
+    name.push(suffix);
+    std::path::PathBuf::from(name)
+}
+
+/// The one `*.bak-<secs>` database migration left in `dir`.
+fn only_backup(dir: &std::path::Path) -> std::path::PathBuf {
+    let backups: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension().is_some_and(|ext| {
+                ext.to_string_lossy()
+                    .strip_prefix("bak-")
+                    .is_some_and(|secs| secs.chars().all(|c| c.is_ascii_digit()))
+            })
+        })
+        .collect();
+    let [backup] = backups.as_slice() else {
+        panic!("one backup: {backups:?}")
+    };
+    backup.clone()
+}
+
+/// #104 x legacy adoption: a target that crashed in WAL mode (its last
+/// commits only in `-wal`, never checkpointed) and holds no skills is backed
+/// up *with* those commits, and the adopted legacy copy is never read through
+/// the crashed target's WAL. `db_has_any_skills`' connection recovers and
+/// checkpoints the WAL into the file before it is renamed.
+#[test]
+fn a_crashed_wal_target_is_backed_up_whole_and_its_wal_never_reaches_the_legacy_copy() {
+    let root = tempfile::tempdir().unwrap();
+    let data_root = root.path().join("data");
+    seeded_db(
+        &data_root
+            .join("com.qufei1993.skillshub")
+            .join("skills_hub.db"),
+        "from-legacy",
+    );
+
+    let target_dir = root.path().join("current");
+    let target = target_dir.join("skills_hub.db");
+    crash_snapshot(root.path(), &target);
+
+    super::migrate_legacy_db_if_needed(&data_root, &target).unwrap();
+
+    assert_eq!(skill_names(&target), vec!["from-legacy".to_string()]);
+    let adopted = SkillStore::new(target.clone());
+    assert_eq!(adopted.get_setting("only_in_the_wal").unwrap(), None);
+    let integrity: String = rusqlite::Connection::open(&target)
+        .unwrap()
+        .query_row("PRAGMA integrity_check;", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(integrity, "ok");
+
+    let backup = only_backup(&target_dir);
+    assert_eq!(
+        SkillStore::new(backup)
+            .get_setting("only_in_the_wal")
+            .unwrap()
+            .as_deref(),
+        Some("yes"),
+        "the backup kept the crashed target's last commit"
+    );
+}
+
+/// A target migration cannot read (here: its file is damaged, so
+/// `db_has_any_skills` fails and nothing checkpointed its WAL) is backed up
+/// *with* its sidecars: a `-wal` or hot `-journal` left beside the adopted
+/// legacy copy could be replayed onto it (SQLite does not tie either to its
+/// database file).
+#[test]
+fn an_unreadable_target_is_backed_up_with_its_sidecars() {
+    let root = tempfile::tempdir().unwrap();
+    let data_root = root.path().join("data");
+    seeded_db(
+        &data_root.join("com.tauri.dev").join("skills_hub.db"),
+        "from-legacy",
+    );
+    let target_dir = root.path().join("current");
+    let target = target_dir.join("skills_hub.db");
+    crash_snapshot(root.path(), &target);
+    std::fs::write(&target, b"not a database, not even a header").unwrap();
+    std::fs::write(sidecar(&target, "-journal"), b"a stale journal").unwrap();
+    assert!(super::db_has_any_skills(&target).is_err(), "precondition");
+
+    super::migrate_legacy_db_if_needed(&data_root, &target).unwrap();
+
+    // Before anything opens the adopted copy: no old sidecar beside it.
+    for suffix in ["-wal", "-shm", "-journal"] {
+        assert!(
+            !sidecar(&target, suffix).exists(),
+            "the old target's {suffix} is beside the adopted copy"
+        );
+    }
+    assert_eq!(skill_names(&target), vec!["from-legacy".to_string()]);
+    let integrity: String = rusqlite::Connection::open(&target)
+        .unwrap()
+        .query_row("PRAGMA integrity_check;", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(integrity, "ok");
+    // The damaged file's WAL is kept with it (SQLite itself discarded the
+    // invalid journal when the failed read probed it).
+    let backup = only_backup(&target_dir);
+    assert!(
+        sidecar(&backup, "-wal").exists(),
+        "the WAL travelled with the backup"
+    );
 }

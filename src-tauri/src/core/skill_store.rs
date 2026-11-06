@@ -457,6 +457,7 @@ impl SkillStore {
     pub fn ensure_schema(&self) -> Result<()> {
         self.with_conn(|conn| {
             conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+            enable_wal(conn, &self.db_path);
 
             let tx = conn.unchecked_transaction()?;
             let user_version: i32 = tx.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
@@ -663,9 +664,10 @@ impl SkillStore {
     /// `secure_delete = ON` zeroes the deleted content
     /// (<https://www.sqlite.org/pragma.html#pragma_secure_delete>), then
     /// `VACUUM` rebuilds the file so no freed page keeps a historical copy
-    /// (<https://www.sqlite.org/lang_vacuum.html>). The store uses the default
-    /// rollback journal, which SQLite deletes at commit; should the database
-    /// ever be in WAL mode, the WAL is checkpointed and truncated too.
+    /// (<https://www.sqlite.org/lang_vacuum.html>). The store runs in WAL mode
+    /// (`enable_wal`), so the WAL is then checkpointed and truncated too; a
+    /// database still in the rollback journal has no WAL, and SQLite deletes
+    /// its journal at commit.
     ///
     /// Limits: this cannot reach copies outside the live file — backups,
     /// APFS / Time Machine snapshots, other legacy-identifier database copies,
@@ -1883,6 +1885,13 @@ impl SkillStore {
         // failing the caller with SQLITE_BUSY. Stated here rather than relying
         // on rusqlite's own default.
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        // WAL's documented pairing (see `enable_wal`): a commit appends to the
+        // WAL without an fsync, which happens at checkpoint. Per connection,
+        // and only in WAL mode — in rollback mode NORMAL is not corruption-safe.
+        let journal_mode: String = conn.query_row("PRAGMA journal_mode;", [], |row| row.get(0))?;
+        if journal_mode.eq_ignore_ascii_case("wal") {
+            conn.execute_batch("PRAGMA synchronous = NORMAL;")?;
+        }
         // Enforce foreign key constraints on every connection (rusqlite PRAGMA is per-connection).
         conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         f(&conn)
@@ -1928,14 +1937,27 @@ pub fn migrate_legacy_db_if_needed(data_root: &Path, target_db_path: &Path) -> R
             .with_context(|| format!("failed to create app data dir {:?}", parent))?;
     }
 
+    let backup = target_db_path.with_extension(format!(
+        "bak-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    ));
+    // The sidecars first: a WAL or hot journal must never be left beside a
+    // different database file — SQLite would replay it onto the adopted copy.
+    // Normally `db_has_any_skills`' connection checkpointed and removed them;
+    // when that read failed, nothing did.
+    for suffix in DB_SIDECAR_SUFFIXES {
+        let from = with_suffix(target_db_path, suffix);
+        if std::fs::symlink_metadata(&from).is_ok() {
+            let to = with_suffix(&backup, suffix);
+            std::fs::rename(&from, &to).with_context(|| {
+                format!("failed to backup existing db sidecar {from:?} -> {to:?}")
+            })?;
+        }
+    }
     if target_db_path.exists() {
-        let backup = target_db_path.with_extension(format!(
-            "bak-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-        ));
         std::fs::rename(target_db_path, &backup).with_context(|| {
             format!(
                 "failed to backup existing db {:?} -> {:?}",
@@ -1952,6 +1974,48 @@ pub fn migrate_legacy_db_if_needed(data_root: &Path, target_db_path: &Path) -> R
     })?;
 
     Ok(())
+}
+
+/// The files SQLite keeps beside a database (`<db>-wal`, its `-shm` index, a
+/// rollback `-journal`). They belong to that one file and move with it.
+const DB_SIDECAR_SUFFIXES: [&str; 3] = ["-wal", "-shm", "-journal"];
+
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+/// The store's journal policy (BACKLOG #104): write-ahead logging.
+///
+/// Under the rollback journal a reader's lock holds up a writer's commit and
+/// a writer's lock holds up every reader, so concurrent connections (the
+/// Refresh acquire pool, commands on blocking threads) take turns by
+/// busy-polling, and on a slow disk (journal create + delete and several
+/// fsyncs per commit) a call can lose every turn until its busy timeout. On
+/// GitHub's hosted Windows runner four read + upsert workers came within
+/// half a second of the 5 s timeout and eight failed "database is locked"
+/// every run — even with a 30 s timeout. In WAL mode readers and the writer
+/// never block each other and a commit is an append (with
+/// `synchronous = NORMAL`, see `with_conn`, no fsync until the checkpoint),
+/// so only writers queue, briefly: eight workers' slowest call stayed near
+/// 1 s there. NORMAL in WAL mode is corruption-safe; a power loss can roll
+/// back the last commits since a checkpoint, and every store call's
+/// connection close checkpoints when it is the last one open.
+///
+/// The mode is persistent, so this converts an existing database once
+/// (sqlite.org/wal.html § Persistence); an older build opens it unchanged.
+/// Failing to switch (a filesystem without shared-memory support, another
+/// process holding the file) is logged and the store keeps working in its
+/// current mode — contention-prone, never wrong.
+fn enable_wal(conn: &Connection, db_path: &Path) {
+    match conn.query_row("PRAGMA journal_mode = WAL;", [], |row| {
+        row.get::<_, String>(0)
+    }) {
+        Ok(mode) if mode.eq_ignore_ascii_case("wal") => {}
+        Ok(mode) => log::warn!("database {db_path:?} stays in journal mode {mode}, not WAL"),
+        Err(err) => log::warn!("database {db_path:?} could not switch to WAL: {err:#}"),
+    }
 }
 
 fn db_has_any_skills(db_path: &Path) -> Result<bool> {
@@ -2009,10 +2073,12 @@ fn compact_and_clear_cleanup_markers(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Test-only fault injection for the compaction step. In rollback-journal
-/// mode a real busy reader cannot fail `VACUUM` alone: a reader holding its
-/// lock before the deletion blocks the DELETE's commit instead. Per thread,
-/// so parallel tests do not see each other's fault.
+/// Test-only fault injection for the compaction step. A real busy reader
+/// cannot fail `VACUUM` alone: in WAL mode it fails the checkpoint after it
+/// (pinned on its own by `busy_wal_checkpoint_is_an_error_...`), and in
+/// rollback-journal mode a reader holding its lock before the deletion blocks
+/// the DELETE's commit instead. Per thread, so parallel tests do not see each
+/// other's fault.
 #[cfg(test)]
 pub(crate) mod compaction_fault {
     use std::cell::Cell;
