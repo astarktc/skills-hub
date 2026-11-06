@@ -1451,7 +1451,9 @@ copy are unchanged.
 no legacy stylesheet to add to, and the guard keeps it that way. `npm run styles:check` (part of `npm run check` and
 CI) fails when:
 
-- `src/App.css` exists, or a source file, a stylesheet or `index.html` imports an `App.css`;
+- `src/App.css` exists, or a source file, a stylesheet or `index.html` imports an `App.css` — read from syntax (the
+  TypeScript AST's module specifiers, `@import` rules, `<link>` / `<script>` tags), so a string or comment that looks
+  like an import is not one;
 - a retired legacy class returns — any class in `retiredClasses` (`scripts/styles-baseline.json`: the 44 class
   selectors `App.css` defined when it was deleted, frozen) used by a `src/` source file (test files, `src/fixtures/` and `src/bindings/` are not scanned), read from the TypeScript AST,
   following constants, objects, conditionals, templates and helpers in the file and through named relative / `@/`

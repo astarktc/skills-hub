@@ -5,7 +5,8 @@
  *
  *   1. The legacy stylesheet comes back — `src/App.css` exists (it was
  *      deleted when the last surface migrated, ticket 25), or a source file,
- *      a stylesheet or index.html imports an `App.css`.
+ *      a stylesheet or index.html imports an `App.css` (read from syntax —
+ *      module specifiers, `@import` rules, link/script tags — never text).
  *   2. A retired legacy class returns — any class token in a src/ source
  *      file that is one of `retiredClasses`, the class selectors App.css
  *      defined when it was deleted. Nothing defines them any more, so such a
@@ -64,23 +65,105 @@ function walk(dirRel) {
 
 const stripComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ""));
 
+/** A module specifier / URL naming the legacy stylesheet (any folder, an optional query). */
+const APP_CSS_SPECIFIER = /(?:^|\/)App\.css(?:\?[^"'\s]*)?$/;
+
 /**
- * Whether `text` imports an `App.css`: an ES import (`import "./App.css"`,
- * `import x from "../App.css?inline"`, a dynamic `import("…")`), a CSS
- * `@import`, or an HTML `href` / `src`. Comments are not imports.
+ * Whether `text` imports an `App.css` — read from the file's syntax, never
+ * from its text, so a string or comment that looks like an import is not one
+ * and a string that looks like a comment hides nothing (round-19 ticket-25
+ * audit F1):
+ *
+ * - TS / TSX: the TypeScript AST — `import … from`, a side-effect `import`,
+ *   `export … from`, `import x = require(…)`, and a literal `import(…)` /
+ *   `require(…)` argument; the module specifier itself is tested.
+ * - CSS: `@import` rules found by a string- and comment-aware scan.
+ * - HTML: `href` / `src` of `<link>` and `<script>` tags, outside comments
+ *   and inline script bodies.
  */
 export function importsAppCss(text, fileName) {
-  const target = String.raw`[^"'()\s]*\bApp\.css(?:\?[^"'()\s]*)?`;
-  if (/\.(css|scss|sass|less)$/.test(fileName)) {
-    return new RegExp(String.raw`@import\s+(?:url\(\s*)?["']?${target}`).test(stripComments(text));
+  if (STYLESHEET_EXT.test(fileName)) return cssImports(text).some((url) => APP_CSS_SPECIFIER.test(url));
+  if (fileName.endsWith(".html")) return htmlReferences(text).some((url) => APP_CSS_SPECIFIER.test(url));
+  return moduleSpecifiers(text, fileName).some((specifier) => APP_CSS_SPECIFIER.test(specifier));
+}
+
+/** Every module specifier a TS / TSX source names in an import position. */
+export function moduleSpecifiers(text, fileName) {
+  const sf = sourceFile(text, fileName);
+  const found = [];
+  const literal = (node) =>
+    node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) ? node.text : null;
+  const visit = (node) => {
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
+      const specifier = literal(node.moduleSpecifier);
+      if (specifier !== null) found.push(specifier);
+    } else if (ts.isExternalModuleReference(node)) {
+      const specifier = literal(node.expression);
+      if (specifier !== null) found.push(specifier);
+    } else if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      const dynamicImport = callee.kind === ts.SyntaxKind.ImportKeyword;
+      const require = ts.isIdentifier(callee) && callee.text === "require";
+      const specifier = (dynamicImport || require) && literal(node.arguments[0]);
+      if (typeof specifier === "string") found.push(specifier);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return found;
+}
+
+/** The URL of every `@import` rule in a stylesheet, outside strings and comments. */
+export function cssImports(css) {
+  const urls = [];
+  let i = 0;
+  const skipString = (from) => {
+    const quote = css[from];
+    let j = from + 1;
+    while (j < css.length && css[j] !== quote) j += css[j] === "\\" ? 2 : 1;
+    return j + 1;
+  };
+  while (i < css.length) {
+    const ch = css[i];
+    if (ch === "/" && css[i + 1] === "*") {
+      const close = css.indexOf("*/", i + 2);
+      i = close < 0 ? css.length : close + 2;
+    } else if (ch === '"' || ch === "'") {
+      i = skipString(i);
+    } else if (css.startsWith("@import", i) && !/[\w-]/.test(css[i + 7] ?? "")) {
+      // The prelude runs to the rule's `;` (strings may hold one).
+      let j = i + 7;
+      let prelude = "";
+      while (j < css.length && css[j] !== ";") {
+        if (css[j] === '"' || css[j] === "'") {
+          const end = skipString(j);
+          prelude += css.slice(j, end);
+          j = end;
+        } else if (css[j] === "/" && css[j + 1] === "*") {
+          const close = css.indexOf("*/", j + 2);
+          j = close < 0 ? css.length : close + 2;
+        } else prelude += css[j++];
+      }
+      const url = /^\s*(?:url\(\s*)?(["']?)([^"')\s]+)\1/.exec(prelude);
+      if (url) urls.push(url[2]);
+      i = j + 1;
+    } else i++;
   }
-  if (fileName.endsWith(".html")) {
-    return new RegExp(String.raw`\b(?:href|src)\s*=\s*["']${target}["']`).test(text.replace(/<!--[\s\S]*?-->/g, ""));
+  return urls;
+}
+
+/** The `href` / `src` of every `<link>` and `<script>` tag, outside comments and script bodies. */
+export function htmlReferences(html) {
+  const markup = html
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/(<script\b[^>]*>)[\s\S]*?(<\/script\s*>)/gi, "$1$2");
+  const urls = [];
+  for (const tag of markup.matchAll(/<(?:link|script)\b[^>]*>/gi)) {
+    for (const attribute of tag[0].matchAll(/\s(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/gi)) {
+      urls.push(attribute[1] ?? attribute[2] ?? attribute[3]);
+    }
   }
-  const code = text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
-  return new RegExp(
-    String.raw`(?:\bimport\s*(?:[\w*{}\s,]+\bfrom\s*)?|\bimport\s*\(\s*|\brequire\s*\(\s*)["']${target}["']`,
-  ).test(code);
+  return urls;
 }
 
 /**

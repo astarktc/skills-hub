@@ -21,6 +21,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { importsAppCss } from "./check-styles.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 let workspace;
@@ -103,6 +104,51 @@ describe("styles:check", () => {
         write(root, "src/CommentProbe.tsx", '// App.css was deleted; import "./App.css" never again\nexport const x = 1;\n'),
       );
       assert.equal(result.status, 0, result.output);
+    });
+
+    // Round-19 ticket-25 audit F1: the regex recognizer took a string for an
+    // import and lost a real import behind a `//` inside a URL.
+    it("accepts an import-looking string (it is not an import)", () => {
+      const result = runGuard((root) => write(root, "src/StringProbe.ts", "export const example = 'import \"./App.css\"';\n"));
+      assert.equal(result.status, 0, result.output);
+    });
+
+    it("rejects a real import after a URL string containing //", () => {
+      const result = runGuard((root) =>
+        write(root, "src/UrlProbe.ts", 'const url = "https://example.com"; import "./App.css";\nexport { url };\n'),
+      );
+      expectRejected(result, "legacy", "src/UrlProbe.ts imports an App.css");
+    });
+
+    it("reads module specifiers, not text, in every import form (BACKLOG #99 (4))", () => {
+      const ts = (text) => importsAppCss(text, "probe.ts");
+      // Imports: static, side-effect, re-export, dynamic, require, import-equals, a query.
+      assert.equal(ts('import styles from "../App.css";'), true);
+      assert.equal(ts('export * from "./App.css";'), true);
+      assert.equal(ts("const css = await import(`./App.css?inline`);"), true);
+      assert.equal(ts('const css = require("./legacy/App.css");'), true);
+      assert.equal(ts('import css = require("./App.css");'), true);
+      assert.equal(ts('const u = "a/*b"; import "./App.css"; // */'), true);
+      // Not imports: strings, templates, comments, other basenames.
+      assert.equal(ts('const s = `import "./App.css"`; const t = "require(\'./App.css\')";'), false);
+      assert.equal(ts('/* import "./App.css" */ import "./MyApp.css"; import "./App.css.map";'), false);
+      assert.equal(ts('log("./App.css");'), false);
+    });
+
+    it("reads @import rules, not strings or comments, in a stylesheet", () => {
+      const css = (text) => importsAppCss(text, "probe.css");
+      assert.equal(css('@import url("./App.css");'), true);
+      assert.equal(css('.x::after { content: "/*"; }\n@import "./App.css";'), true);
+      assert.equal(css('.x::after { content: \'@import "App.css"\'; }'), false);
+      assert.equal(css('/* @import "App.css"; */ @import "./theme.css";'), false);
+    });
+
+    it("reads link and script tags, not inline script text, in HTML", () => {
+      const html = (text) => importsAppCss(text, "index.html");
+      assert.equal(html('<link rel="stylesheet" href="/src/App.css">'), true);
+      assert.equal(html("<script type=\"module\" src='./App.css?x'></script>"), true);
+      assert.equal(html('<script>const s = \'<link href="App.css">\';</script>'), false);
+      assert.equal(html('<!-- <link href="App.css"> --><a href="/docs/App.css.md">x</a>'), false);
     });
   });
 
