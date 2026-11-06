@@ -814,14 +814,32 @@ pub mod test_overrides {
 /// door; a bare `create_dir_all(detect_dir)` is the footprint the rule rejects.
 #[cfg(test)]
 pub fn mark_installed_in(home: &Path, adapter: &ToolAdapter) {
-    let detect_dir = home.join(adapter.relative_detect_dirs[0]);
+    let detect_dir = join_relative(home, adapter.relative_detect_dirs[0]);
     std::fs::create_dir_all(&detect_dir).expect("create detect dir");
     std::fs::write(detect_dir.join("installed.marker"), b"").expect("write install marker");
 }
 
+/// The registry join: `relative` (a registry dir, always written with `/`)
+/// under `root`, one component at a time, so the result is spelled with the
+/// platform's own separator — `C:\Users\op\.claude\skills`, never
+/// `C:\Users\op\.claude/skills` (#103). Unix spelling is unchanged. A path
+/// recorded with mixed separators still compares equal: `Path` compares
+/// components, and Windows accepts both separators.
+fn join_relative(root: &Path, relative: &str) -> PathBuf {
+    let mut path = root.to_path_buf();
+    path.extend(relative.split('/').filter(|part| !part.is_empty()));
+    path
+}
+
 /// The tool's global skills directory under `home`.
 pub fn skills_dir_in(home: &Path, adapter: &ToolAdapter) -> PathBuf {
-    home.join(adapter.relative_skills_dir)
+    join_relative(home, adapter.relative_skills_dir)
+}
+
+/// The tool's project-scope skills directory under `project_root` (see
+/// [`ToolAdapter::project_relative_skills_dir`]).
+pub fn project_skills_dir_in(project_root: &Path, adapter: &ToolAdapter) -> PathBuf {
+    join_relative(project_root, adapter.project_relative_skills_dir)
 }
 
 /// The tool's former global skills directories under `home` (see
@@ -830,7 +848,7 @@ pub fn former_skills_dirs_in(home: &Path, adapter: &ToolAdapter) -> Vec<PathBuf>
     adapter
         .former_relative_skills_dirs
         .iter()
-        .map(|dir| home.join(dir))
+        .map(|dir| join_relative(home, dir))
         .collect()
 }
 
@@ -888,7 +906,7 @@ pub fn detect_dirs_in(home: &Path, adapter: &ToolAdapter) -> Vec<PathBuf> {
     adapter
         .relative_detect_dirs
         .iter()
-        .map(|dir| home.join(dir))
+        .map(|dir| join_relative(home, dir))
         .collect()
 }
 

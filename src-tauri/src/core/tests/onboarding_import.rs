@@ -16,7 +16,7 @@ use crate::core::onboarding_import::{
 };
 use crate::core::skill_store::SkillStore;
 use crate::core::sync_status::SyncMode;
-use crate::core::tool_adapters::{adapter_by_key, mark_installed_in};
+use crate::core::tool_adapters::{adapter_by_key, mark_installed_in, skills_dir_in};
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -50,7 +50,7 @@ fn install_tool(f: &Fixture, key: &str) {
 /// A pre-existing skill directory inside a Tool's global skills dir.
 fn seed_skill_dir(f: &Fixture, key: &str, name: &str, body: &str) -> PathBuf {
     let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {}", key));
-    let dir = f.paths.home.join(adapter.relative_skills_dir).join(name);
+    let dir = skills_dir_in(&f.paths.home, adapter).join(name);
     fs::create_dir_all(&dir).expect("create skill dir");
     fs::write(
         dir.join("SKILL.md"),
@@ -65,7 +65,7 @@ fn seed_skill_dir(f: &Fixture, key: &str, name: &str, body: &str) -> PathBuf {
 /// another by hand (or by an earlier tool's sync).
 fn seed_skill_link(f: &Fixture, key: &str, name: &str, target: &Path) -> PathBuf {
     let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {}", key));
-    let skills_dir = f.paths.home.join(adapter.relative_skills_dir);
+    let skills_dir = skills_dir_in(&f.paths.home, adapter);
     fs::create_dir_all(&skills_dir).expect("create skills dir");
     let link = skills_dir.join(name);
     #[cfg(unix)]
