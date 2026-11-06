@@ -8,9 +8,7 @@ use crate::core::skill_discovery::{manifest_validity, InvalidManifestReason};
 
 pub mod catalog;
 
-pub use catalog::{
-    global_tool_entries, installed_keys, project_tool_entries, ReaderEntry, ToolCatalogEntry,
-};
+pub use catalog::{global_tool_entries, installed_keys, project_tool_entries, ToolCatalogEntry};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolId {

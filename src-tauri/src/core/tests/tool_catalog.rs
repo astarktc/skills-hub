@@ -1,10 +1,11 @@
 use std::path::Path;
 
 use crate::core::environment::HostRoots;
+use crate::core::tool_adapters::catalog::ReaderEntry;
 use crate::core::tool_adapters::{
     adapter_by_key, constituents_of, default_tool_adapters, global_tool_entries, installed_keys,
     mark_installed_in, mark_reader_installed_in, project_tool_entries, skills_dir_in,
-    test_overrides, ReaderEntry, ToolCatalogEntry, ToolId, VirtualGroup,
+    test_overrides, ToolCatalogEntry, ToolId, VirtualGroup,
 };
 
 fn install(home: &Path, key: &str) {
