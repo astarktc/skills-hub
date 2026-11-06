@@ -7,6 +7,7 @@ import type {
   InstallBatchReport,
   InstallResult,
   InvocationEditReport,
+  LeftBehindReason,
   LibraryMoveReport,
   ProjectSyncReport,
   PropagationOutcome,
@@ -1719,12 +1720,55 @@ export function libraryMoveCounts(report: LibraryMoveReport) {
 }
 
 /**
+ * Every reason an old copy stays that is a skip, never a failure: the clean
+ * kept it on purpose (something still needs it, it is outside the old
+ * Library folder, or it is not provably a duplicate any more). Each is one
+ * warning, title and message.
+ */
+type KeptOldCopyReason = Exclude<LeftBehindReason, "old_library" | "unrecorded" | "removal_failed">;
+const KEPT_OLD_COPY_KEYS: Record<KeptOldCopyReason, { title: string; message: string }> = {
+  still_linked: {
+    title: "libraryMove.report.stillLinkedTitle",
+    message: "libraryMove.report.stillLinkedMessage",
+  },
+  still_recorded: {
+    title: "libraryMove.report.stillRecordedTitle",
+    message: "libraryMove.report.stillRecordedMessage",
+  },
+  outside_library_folder: {
+    title: "libraryMove.report.outsideLibraryFolderTitle",
+    message: "libraryMove.report.outsideLibraryFolderMessage",
+  },
+  changed_since_copy: {
+    title: "libraryMove.report.changedSinceCopyTitle",
+    message: "libraryMove.report.changedSinceCopyMessage",
+  },
+  destination_missing: {
+    title: "libraryMove.report.destinationMissingTitle",
+    message: "libraryMove.report.destinationMissingMessage",
+  },
+  replaced: {
+    title: "libraryMove.report.replacedTitle",
+    message: "libraryMove.report.replacedMessage",
+  },
+  stale_journal: {
+    title: "libraryMove.report.staleJournalTitle",
+    message: "libraryMove.report.staleJournalMessage",
+  },
+};
+
+function keptOldCopyKeys(reason: LeftBehindReason): { title: string; message: string } | undefined {
+  return Object.hasOwn(KEPT_OLD_COPY_KEYS, reason) ? KEPT_OLD_COPY_KEYS[reason as KeptOldCopyReason] : undefined;
+}
+
+/**
  * Move Library folder's report as one Outcome. The headline is the composite
  * line "12 moved · 30 re-linked · 1 deployment failed · 2 skipped · 3 left
  * behind" (zeros omitted), toned by D10's precedence: a failed re-point or an
  * old copy that could not be removed is a failure; a skipped skill or
- * Deployment, or an old copy kept because something still reaches it, is a
- * skip. Entries: each failed re-point (an error, Retry re-syncs the pair from
+ * Deployment, or an old copy the clean kept on purpose (`KEPT_OLD_COPY_KEYS`:
+ * still reached or recorded, outside the old folder, or no longer provably a
+ * duplicate), is a skip. Entries: each failed re-point (an error, Retry re-syncs the pair from
  * the new copy), each Unlocatable skill, skill kept in place (with why),
  * link pointing elsewhere, missing project folder and kept old copy
  * (warnings). Quiet notes name the old
@@ -1795,16 +1839,11 @@ export function libraryMoveOutcome(report: LibraryMoveReport, ctx: ReportContext
   for (const item of report.left_behind) {
     const name = item.skill_id ? (names.get(item.skill_id) ?? item.skill_id) : "";
     const subject = item.skill_id ? { skillId: item.skill_id, skillName: name } : undefined;
-    if (item.reason === "still_linked") {
+    const kept = keptOldCopyKeys(item.reason);
+    if (kept) {
       out.warnings.push({
-        title: ctx.t("libraryMove.report.stillLinkedTitle", { name }),
-        message: ctx.t("libraryMove.report.stillLinkedMessage", { path: item.path }),
-        ...(subject ? { subject } : {}),
-      });
-    } else if (item.reason === "still_recorded") {
-      out.warnings.push({
-        title: ctx.t("libraryMove.report.stillRecordedTitle", { name }),
-        message: ctx.t("libraryMove.report.stillRecordedMessage", { path: item.path }),
+        title: ctx.t(kept.title, { name }),
+        message: ctx.t(kept.message, { path: item.path }),
         ...(subject ? { subject } : {}),
       });
     } else if (item.reason === "removal_failed") {
@@ -1824,9 +1863,7 @@ export function libraryMoveOutcome(report: LibraryMoveReport, ctx: ReportContext
   if (counts.disabled > 0) out.notes.push(ctx.t("libraryMove.report.disabledLine", { count: counts.disabled }));
 
   const removalFailed = report.left_behind.filter((item) => item.reason === "removal_failed").length;
-  const stillKept = report.left_behind.filter(
-    (item) => item.reason === "still_linked" || item.reason === "still_recorded",
-  ).length;
+  const stillKept = report.left_behind.filter((item) => keptOldCopyKeys(item.reason)).length;
   const skipped = counts.missing + counts.kept + counts.notOurs + counts.folderMissing;
   const parts: string[] = [];
   const part = (key: string, count: number) => {

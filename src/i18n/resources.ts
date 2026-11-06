@@ -1699,6 +1699,8 @@ export const resources = {
           body: "Skills Hub copies your Library there, re-points every harness link to the new copies, then removes the old copies. Your old folder and anything else in it stay where they are.",
           missing_one: "{{count}} skill can't be found and stays where it is recorded.",
           missing_other: "{{count}} skills can't be found and stay where they are recorded.",
+          kept_one: "{{count}} skill can't be moved as it is and stays where it is. The report after the move says why.",
+          kept_other: "{{count}} skills can't be moved as they are and stay where they are. The report after the move says why.",
           cloud: "{{root}} is a cloud storage folder. If its files become online-only, harness links into the Library break until they download again.",
           confirm: "Move Library",
           cancel: "Cancel",
@@ -1722,6 +1724,8 @@ export const resources = {
             link_escapes:
               "{{entry}} links outside the skill's folder and would point somewhere else after the move. The skill stays where it is.",
             special_file: "{{entry}} is a special file that can't be copied. The skill stays where it is.",
+            hardlink_outside:
+              "{{entry}} is a hard link to a file outside the skill, and the copy would split it in two. The skill stays where it is.",
             shared_copy:
               "It shares its folder with {{other}}, so neither was moved. Remove one of them from My Skills, then move again.",
           },
@@ -1735,6 +1739,20 @@ export const resources = {
           stillRecordedTitle: "The old copy of {{name}} was kept",
           stillRecordedMessage: "A skill that was not moved is still recorded inside {{path}}, so it was not removed.",
           removalFailedTitle: "The old copy of {{name}} could not be removed",
+          outsideLibraryFolderTitle: "The old copy of {{name}} stays where it was",
+          outsideLibraryFolderMessage:
+            "{{path}} isn't inside the old Library folder, so Skills Hub doesn't remove it. Remove it yourself once you no longer need it.",
+          changedSinceCopyTitle: "The old copy of {{name}} was kept",
+          changedSinceCopyMessage:
+            "{{path}} changed after it was copied, so Skills Hub didn't remove it. Compare it with the new copy, then remove it yourself.",
+          destinationMissingTitle: "The old copy of {{name}} was kept",
+          destinationMissingMessage:
+            "The new copy is missing, so {{path}} may be the only copy left. Skills Hub didn't remove it.",
+          replacedTitle: "The old copy of {{name}} was left alone",
+          replacedMessage: "{{path}} isn't the folder that was copied any more, so Skills Hub didn't touch it.",
+          staleJournalTitle: "An interrupted move of {{name}} was left alone",
+          staleJournalMessage:
+            "Your Library changed since the move was interrupted, so Skills Hub didn't touch {{path}}.",
           oldLibraryLine: "Your old Library folder stays at {{path}}.",
           unrecordedLine: "Left in the old folder: {{path}}",
           copiesLine_one: "{{count}} copied deployment left as it is.",
