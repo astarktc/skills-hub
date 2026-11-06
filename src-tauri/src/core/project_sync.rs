@@ -26,9 +26,7 @@ pub(crate) fn resolve_project_sync_target(
     adapter: &ToolAdapter,
     skill_name: &str,
 ) -> PathBuf {
-    project_path
-        .join(adapter.project_relative_skills_dir)
-        .join(skill_name)
+    tool_adapters::project_skills_dir_in(project_path, adapter).join(skill_name)
 }
 
 /// Which name locates a Project assignment's artifact on disk.

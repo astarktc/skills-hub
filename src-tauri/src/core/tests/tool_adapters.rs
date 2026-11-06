@@ -4,7 +4,8 @@ use crate::core::errors::SignalError;
 use crate::core::tool_adapters::{
     adapter_by_key, adapters_sharing_skills_dir, constituents_of, default_tool_adapters,
     detect_dirs_in, ensure_path_within_tool_dirs, former_skills_dirs_in, is_installed_in,
-    scan_tool_dir, skills_dir_in, tool_holding_path, ToolAdapter, ToolId, VirtualGroup,
+    project_skills_dir_in, scan_tool_dir, skills_dir_in, tool_holding_path, ToolAdapter, ToolId,
+    VirtualGroup,
 };
 
 #[test]
@@ -40,6 +41,68 @@ fn path_resolution_joins_adapter_dirs_onto_home() {
             "detect dirs for {key}"
         );
     }
+}
+
+/// #103: the registry's relative dirs are written with `/`; joined onto a
+/// Windows root they must not keep it (`C:\Users\op\.claude/skills` is what
+/// 1.3.1 recorded). Every join spells the whole path with the platform's own
+/// separator. Meaningful on Windows, where the foreign separator is `/`.
+#[test]
+fn registry_joins_spell_paths_with_the_platform_separator() {
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
+    let foreign = if cfg!(windows) { '/' } else { '\\' };
+    for adapter in default_tool_adapters() {
+        let mut joined = vec![
+            skills_dir_in(root, adapter),
+            project_skills_dir_in(root, adapter),
+        ];
+        joined.extend(detect_dirs_in(root, adapter));
+        joined.extend(former_skills_dirs_in(root, adapter));
+        for path in joined {
+            assert!(
+                !path.to_string_lossy().contains(foreign),
+                "{}: {path:?} mixes separators",
+                adapter.id.as_key()
+            );
+        }
+    }
+}
+
+/// #103 on Windows: the exact spelling of a join, and a path recorded before
+/// the fix (mixed separators) still compares equal to the one derived now —
+/// `Path` compares components, and `\` and `/` both separate them there.
+#[cfg(windows)]
+#[test]
+fn a_mixed_separator_path_recorded_before_the_fix_still_matches_the_registry() {
+    let home = std::path::Path::new(r"C:\Users\op");
+    let claude = adapter_by_key("claude_code").expect("claude adapter");
+    assert_eq!(
+        skills_dir_in(home, claude).to_str(),
+        Some(r"C:\Users\op\.claude\skills")
+    );
+    assert_eq!(
+        project_skills_dir_in(std::path::Path::new(r"D:\work\app"), claude).to_str(),
+        Some(r"D:\work\app\.claude\skills")
+    );
+
+    let recorded = std::path::PathBuf::from(r"C:\Users\op\.claude/skills\grill-me");
+    assert_eq!(recorded, skills_dir_in(home, claude).join("grill-me"));
+    assert!(recorded.starts_with(skills_dir_in(home, claude)));
+    ensure_path_within_tool_dirs(home, &recorded).expect("a recorded target stays removable");
+    assert_eq!(
+        tool_holding_path(home, &recorded).map(|adapter| adapter.key()),
+        Some("claude_code")
+    );
+
+    // Target relocation finds a row by its parent: a former dir recorded
+    // with mixed separators is still that former dir.
+    let augment = adapter_by_key("augment").expect("augment adapter");
+    let former = std::path::PathBuf::from(r"C:\Users\op\.augment/rules\grill-me");
+    assert_eq!(
+        former.parent(),
+        Some(former_skills_dirs_in(home, augment)[0].as_path())
+    );
 }
 
 #[test]
