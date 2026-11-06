@@ -88,7 +88,8 @@ fn refused(result: anyhow::Result<usize>) -> RemovalRefusal {
 }
 
 /// An old checkout-shaped folder with user bytes, as the age-out would see a
-/// stale cache entry.
+/// stale cache entry. Only the alias tests (Unix links) build one.
+#[cfg(unix)]
 fn old_checkout(dir: &Path) -> PathBuf {
     fs::create_dir_all(dir.join(".git")).expect("mkdir");
     fs::write(
