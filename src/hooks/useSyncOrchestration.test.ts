@@ -155,9 +155,7 @@ function makeReporter(): Pick<
   | "notifyError"
   | "runAction"
   | "setActionMessage"
-  | "setError"
   | "setSuccessToastMessage"
-  | "formatError"
 > {
   return {
     loading: false,
@@ -175,13 +173,7 @@ function makeReporter(): Pick<
       return value instanceof ActionExit ? undefined : value;
     }) as StatusReporter["runAction"],
     setActionMessage: vi.fn(),
-    setError: vi.fn(),
     setSuccessToastMessage: vi.fn(),
-    // Same shape as the real formatError contract: null silences an entry.
-    formatError: vi.fn((err: unknown) => {
-      const code = (err as { code?: string })?.code;
-      return code === "CANCELLED" ? null : `formatted:${code}`;
-    }),
   };
 }
 
@@ -465,6 +457,23 @@ describe("useSyncOrchestration harness configuration (Settings → Harnesses)", 
     expect(result.current.scanSelectedToolsOnly).toBe(false);
   });
 
+  it("a failed auto-deploy toggle keeps the setting and says why through notifyError (#68)", async () => {
+    stubBackend({ config: { global_selected_tools: ["claude"] } });
+    const reporter = makeReporter();
+    const { result } = renderSync(reporter);
+    await waitFor(() => expect(result.current.globalSelectedTools).toEqual(["claude"]));
+    const base = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command, ...args) =>
+      command === "updateSetting" ? Promise.reject({ code: "OTHER" }) : base(command, ...args),
+    );
+    const before = result.current.autoSyncEnabled;
+    await act(async () => {
+      await result.current.handleAutoSyncToggle(!before);
+    });
+    expect(reporter.notifyError).toHaveBeenCalledWith({ code: "OTHER" });
+    expect(result.current.autoSyncEnabled).toBe(before);
+  });
+
   it("a failed write rolls back only itself and says why through notifyError", async () => {
     stubBackend({ config: { global_selected_tools: ["claude"] } });
     const reporter = makeReporter();
@@ -481,7 +490,6 @@ describe("useSyncOrchestration harness configuration (Settings → Harnesses)", 
     });
     expect(saved).toBe("failed");
     expect(reporter.notifyError).toHaveBeenCalledWith({ code: "OTHER" });
-    expect(reporter.setError).not.toHaveBeenCalled();
     expect(result.current.globalSelectedTools).toEqual(["claude"]);
     expect(result.current.scanScopeRevision).toBe(0);
   });

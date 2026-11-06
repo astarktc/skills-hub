@@ -158,8 +158,8 @@ export function useAddSkillFlow({
     loading,
     runAction,
     reportProgress,
-    setError,
     formatError,
+    notifyError,
     applyOutcome,
   } = reporter;
   const {
@@ -334,7 +334,7 @@ export function useAddSkillFlow({
           );
           report = mergeInstallRetry(report, asked, settled);
         } catch (err) {
-          setError(formatError(err));
+          notifyError(err);
         }
       }
       // A candidate that never installed reads under the name it was asked.
@@ -350,11 +350,10 @@ export function useAddSkillFlow({
     },
     [
       autoSyncEnabled,
-      formatError,
       getSelectedIds,
+      notifyError,
       reportProgress,
       resolveGlobalCollisions,
-      setError,
       t,
       toolLabelById,
     ],
@@ -363,17 +362,17 @@ export function useAddSkillFlow({
   /**
    * Post-mutation refresh that can never fail the action that already
    * succeeded: the bytes are installed, so a reload failure is a non-fatal
-   * warning on the reporter's one-shot error channel, not a thrown failure.
+   * notice through `notifyError`, not a thrown failure.
    */
   const refreshWithoutFailingAction = useCallback(
     async (refresh: () => Promise<unknown>) => {
       try {
         await refresh();
       } catch (err) {
-        setError(formatError(err));
+        notifyError(err);
       }
     },
-    [formatError, setError],
+    [notifyError],
   );
 
   /** Forget everything Add holds (a fresh opening, a finished Add). */
@@ -671,9 +670,9 @@ export function useAddSkillFlow({
       const [chosen] = await pickFolder({ title: t("selectLocalFolder") });
       if (chosen) editDraft({ path: chosen });
     } catch (err) {
-      setError(formatError(err));
+      notifyError(err);
     }
-  }, [editDraft, formatError, setError, t]);
+  }, [editDraft, notifyError, t]);
 
   const { setQuery, toggle: togglePick, toggleAll: toggleAllPick } = pick;
   const toggle = useCallback(

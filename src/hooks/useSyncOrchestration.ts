@@ -211,9 +211,7 @@ export type SyncOrchestrationDeps = {
     | "notifyError"
     | "runAction"
     | "setActionMessage"
-    | "setError"
     | "setSuccessToastMessage"
-    | "formatError"
   >;
   /** The surface module: this world's dialogs and its two asks. */
   surface: DialogDoor & Pick<SurfaceState, "ask">;
@@ -270,8 +268,6 @@ export function useSyncOrchestration({
     notifyError,
     runAction,
     setActionMessage,
-    setError,
-    formatError,
   } = reporter;
   const { ask, offerDialog, closeDialog } = surface;
   const {
@@ -672,10 +668,10 @@ export function useSyncOrchestration({
         });
         setAutoSyncEnabled(enabled);
       } catch (err) {
-        setError(formatError(err));
+        notifyError(err);
       }
     },
-    [formatError, setError],
+    [notifyError],
   );
 
   const handleCloseNewTools = useCallback(() => {

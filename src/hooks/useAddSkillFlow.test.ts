@@ -182,10 +182,16 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
   const formatError = vi.fn((err: unknown) =>
     err instanceof Error ? err.message : `formatted:${JSON.stringify(err)}`,
   );
-  const setError = vi.fn();
+  const notify = vi.fn();
+  // The real reporter's one failure dialect: formatted copy, or nothing for
+  // a silent cancellation.
+  const notifyError = vi.fn((err: unknown) => {
+    const message = formatError(err);
+    if (message) notify("error", message);
+  });
   const setSuccessToastMessage = vi.fn();
   // Stub of the runAction contract: the body's outcome lands on the same
-  // one-shot setters the real reporter uses, so assertions read naturally.
+  // channels the real reporter uses, so assertions read naturally.
   // The lifecycle itself (pending, Cancel) is the reporter's own test.
   const runAction = vi.fn(
     async <T>(
@@ -200,7 +206,7 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
           cancelRequested: () => false,
         });
         if (outcome instanceof ActionExit) {
-          if (outcome.kind === "failed") setError(outcome.message);
+          if (outcome.kind === "failed" && outcome.message) notify("error", outcome.message);
           return undefined;
         }
         const { successToast } = opts;
@@ -211,14 +217,13 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
         }
         return outcome;
       } catch (err) {
-        setError(formatError(err));
+        notifyError(err);
         return undefined;
       }
     },
   );
-  const showActionErrors = vi.fn();
-  const showActionWarnings = vi.fn();
-  const notify = vi.fn();
+  // An applied Outcome's entries, as the executor received them.
+  const outcome = { errors: vi.fn(), warnings: vi.fn() };
   const reporter: StatusReporter = {
     pending: null,
     loading: false,
@@ -233,15 +238,15 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
     // order — reload, entries and toast, close (the executor itself is
     // useStatusReporter's own test).
     applyOutcome: vi.fn(async (
-      outcome: Parameters<StatusReporter["applyOutcome"]>[0],
+      applied: Parameters<StatusReporter["applyOutcome"]>[0],
       handlers: Parameters<StatusReporter["applyOutcome"]>[1] = {},
     ) => {
-      if (outcome.completion.reload) await handlers.reload?.();
-      showActionErrors(outcome.errors);
-      showActionWarnings(outcome.warnings);
-      if (outcome.toast) notify(outcome.toast.kind, outcome.toast.message, outcome.toast.detail);
-      if (outcome.completion.closeModal) handlers.closeModal?.();
-      return outcome.completion;
+      if (applied.completion.reload) await handlers.reload?.();
+      outcome.errors(applied.errors);
+      outcome.warnings(applied.warnings);
+      if (applied.toast) notify(applied.toast.kind, applied.toast.message, applied.toast.detail);
+      if (applied.completion.closeModal) handlers.closeModal?.();
+      return applied.completion;
     }),
     openReport: vi.fn(),
     notify,
@@ -249,12 +254,9 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
     unreadCount: 0,
     markAllRead: vi.fn(),
     clearNotifications: vi.fn(),
-    setError,
     setSuccessToastMessage,
     formatError,
-    notifyError: vi.fn(),
-    showActionErrors,
-    showActionWarnings,
+    notifyError,
     copyToClipboard: vi.fn().mockResolvedValue(true),
     refuseHeld: vi.fn(),
     cancelPending: vi.fn(),
@@ -292,7 +294,7 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
     loadManagedSkills: vi.fn().mockResolvedValue(undefined),
   };
   const deps: FlowDeps = { t, reporter, sync, catalog, library };
-  return { deps, reporter, sync, library };
+  return { deps, reporter, sync, library, outcome };
 }
 
 function installCalls() {
@@ -377,7 +379,7 @@ describe("Add: open and the source step", () => {
     await listGit(result, "nope");
     expect(result.current.add.step).toBe("source");
     expect(result.current.add.sourceError).toBe('formatted:{"code":"INVALID_GITHUB_URL","url":"nope"}');
-    expect(setup.reporter.setError).not.toHaveBeenCalled();
+    expect(setup.reporter.notifyError).not.toHaveBeenCalled();
 
     stubBackend({ gitCandidates: [] });
     await act(async () => {
@@ -412,7 +414,7 @@ describe("Add: open and the source step", () => {
 
     pickFolder.mockRejectedValueOnce({ code: "OTHER", message: "dialog failed" });
     await act(async () => { await result.current.add.browse(); });
-    expect(setup.reporter.setError).toHaveBeenCalled();
+    expect(setup.reporter.notifyError).toHaveBeenCalledWith({ code: "OTHER", message: "dialog failed" });
     expect(result.current.add.draft.path).toBe("/home/op/my-skill");
   });
 });
@@ -487,7 +489,7 @@ describe("Add: the candidates step (the visible-and-checked rule, #47)", () => {
       { id: ".", name: "alpha", status: "failed", detail: describeCommandError(refusal, t), attention: false, retryable: true },
     ]);
     // The report records it as an error Notification with the typed copy.
-    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
+    expect(setup.outcome.errors).toHaveBeenCalledWith([
       { title: t("add.failedTitle", { name: "alpha" }), message: describeCommandError(refusal, t), error: refusal },
     ]);
     expect(setup.sync.resolveGlobalCollisions).not.toHaveBeenCalled();
@@ -800,7 +802,7 @@ describe("Add: install() and the settlement", () => {
     expect(installCalls()[0][1]).toMatchObject({ tools: [], deploy: true });
     expect(result.current.add.open).toBe(true);
     expect(result.current.add.settlement[0]).toMatchObject({ status: "installed", detail: "add.settlement.noTools", attention: true });
-    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([
+    expect(setup.outcome.errors).toHaveBeenCalledWith([
       {
         title: t("errors.unsyncedTitle", { name: "alpha" }),
         message: t("errors.noSyncTargets"),
@@ -981,7 +983,7 @@ describe("Add: one overwrite ask per batch (D12)", () => {
     await listGit(result);
     await act(async () => { await result.current.install(); });
     expect(setup.library.loadManagedSkills).toHaveBeenCalledTimes(1);
-    expect(setup.reporter.setError).toHaveBeenCalledWith("retry failed");
+    expect(setup.reporter.notify).toHaveBeenCalledWith("error", "retry failed");
     expect(setup.reporter.notify).toHaveBeenCalledWith(
       "warning",
       `${t("outcome.done.installed", { count: 1 })} · ${t("runReport.collisions", { count: 1 })}`,
@@ -1270,7 +1272,7 @@ describe("useAddSkillFlow import flow", () => {
     // goose is selected but not installed and still named; cursor is deselected.
     expect(policy).toEqual({ auto_sync: true, tools: ["claude", "goose"], remove_originals: true });
     expect(setup.reporter.notify).toHaveBeenCalledWith("success", t("outcome.done.imported", { count: 1 }), undefined);
-    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([]);
+    expect(setup.outcome.errors).toHaveBeenCalledWith([]);
     // The Result shows the outcome itself: its toast waits for the Close (F5).
     expect(vi.mocked(setup.reporter.applyOutcome).mock.calls[0][1]).toMatchObject({ resultShownIn: "import" });
     // The dialog stays on its Result: the operator reads it and closes it.
@@ -1526,8 +1528,8 @@ describe("useAddSkillFlow import flow", () => {
     expect(result.current.importReview.step).toBe("result");
     // ...while the reload failure is surfaced on its own, not as an import
     // failure.
-    expect(setup.reporter.setError).toHaveBeenCalledWith("plan reload boom");
-    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith([]);
+    expect(setup.reporter.notify).toHaveBeenCalledWith("error", "plan reload boom");
+    expect(setup.outcome.errors).toHaveBeenCalledWith([]);
   });
 
   it.each([false, true])("applies the import fold (reload=%s), publishes its entries and stays on the Result", async (complete) => {
@@ -1539,8 +1541,8 @@ describe("useAddSkillFlow import flow", () => {
     expect(spy).toHaveBeenCalledWith(report(importedGroup()), expect.objectContaining({ t }));
     expect(setup.library.loadManagedSkills).toHaveBeenCalledTimes(complete ? 1 : 0);
     expect(result.current.importReview.open).toBe(true);
-    expect(setup.reporter.showActionErrors).toHaveBeenCalledWith(outcome.errors);
-    expect(setup.reporter.showActionWarnings).toHaveBeenCalledWith(outcome.warnings);
+    expect(setup.outcome.errors).toHaveBeenCalledWith(outcome.errors);
+    expect(setup.outcome.warnings).toHaveBeenCalledWith(outcome.warnings);
     expect(setup.reporter.notify).toHaveBeenCalledWith("warning", "fold toast", undefined);
   });
 });

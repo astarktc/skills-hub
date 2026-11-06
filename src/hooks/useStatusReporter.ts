@@ -31,12 +31,6 @@ import {
 // lives in the building block (`useNotificationHistory`).
 export type { Notification, NotificationKind };
 
-export type ActionErrorEntry = {
-  title: string;
-  message: string;
-  action?: NotificationAction;
-};
-
 /**
  * The single owner of toast lifetime: errors stay until closed, and so does
  * a run's toast whose fold settled with a failure (`persist`, the `failure`
@@ -394,12 +388,6 @@ export type StatusReporter = {
   /** Empties the history (and with it the unread count). */
   clearNotifications: () => void;
   /**
-   * Legacy one-shot error trigger (a toast, then auto-cleared). The failure
-   * dialect is `notifyError(err)` / `notify("error", …)`; this remains only
-   * for the sync and Add worlds until they migrate.
-   */
-  setError: (value: string | null) => void;
-  /**
    * One-shot success trigger: rendered as a toast, then auto-cleared. For
    * successes outside an action; an action's success toast is `successToast`.
    */
@@ -415,14 +403,6 @@ export type StatusReporter = {
    * silent cancellation).
    */
   notifyError: NotifyErrorFn;
-  /**
-   * A batch's failures as error Notifications: one toast on screen (the
-   * first entry, "+N more"), every entry its own history row. Superseded by
-   * `applyOutcome`; kept only until the Add world switches.
-   */
-  showActionErrors: (errors: ActionErrorEntry[]) => void;
-  /** The same batching as warnings (see `showActionErrors`). */
-  showActionWarnings: (warnings: ActionErrorEntry[]) => void;
   /**
    * The one clipboard helper. Copying is a courtesy, not an outcome: a
    * success flashes a toast without becoming a Notification (it is never
@@ -515,7 +495,6 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
    * not this channel's.
    */
   const runToastRef = useRef<ToastId | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   // The one-shot completion trigger. Public callers set a string (see
   // `setSuccessToastMessage`); runAction may set the full shape.
@@ -560,48 +539,6 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
       else current.pushDialog(layer);
     },
     [markAllRead],
-  );
-
-  // One toast per batch kind: the head entry plus "+N more". Entries with
-  // an empty message are silenced failures (e.g. cancelled) and dropped by
-  // the callers before this.
-  const toastBatch = useCallback(
-    (kind: "error" | "warning", visible: ActionErrorEntry[]) => {
-      if (visible.length === 0) return;
-      const head = visible[0];
-      const more =
-        visible.length > 1
-          ? t("errors.moreCount", { count: visible.length - 1 })
-          : "";
-      toastUnlessPanel(kind, head.title, `${head.message}${more}`, { action: head.action });
-    },
-    [t, toastUnlessPanel],
-  );
-
-  // One batch rule for both kinds: one toast (head + "+N more"), every
-  // entry its own history row, so the N behind the suffix stay readable.
-  const showActionBatch = useCallback(
-    (kind: "error" | "warning", entries: ActionErrorEntry[]) => {
-      const visible = entries.filter((entry) => entry.message);
-      if (visible.length === 0) return;
-      toastBatch(kind, visible);
-      // The history lists newest first, so the batch is recorded last-to-
-      // first: its first entry ends up at the top of its block.
-      for (let i = visible.length - 1; i >= 0; i--) {
-        record(kind, visible[i].title, visible[i].message, visible[i].action);
-      }
-    },
-    [record, toastBatch],
-  );
-
-  const showActionErrors = useCallback(
-    (errors: ActionErrorEntry[]) => showActionBatch("error", errors),
-    [showActionBatch],
-  );
-
-  const showActionWarnings = useCallback(
-    (warnings: ActionErrorEntry[]) => showActionBatch("warning", warnings),
-    [showActionBatch],
   );
 
   const applyOutcome = useCallback<ApplyOutcomeFn>(
@@ -688,17 +625,6 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
     // by this effect, so deferring it one microtask is behavior-preserving.
     void Promise.resolve().then(() => setSuccessToastMessage(null));
   }, [notify, successToastMessage]);
-
-  useEffect(() => {
-    if (!error) return;
-    notify("error", error);
-    // Reset the one-shot error/action triggers in a microtask (see the success
-    // toast effect above) to keep the setState out of the synchronous effect body.
-    void Promise.resolve().then(() => {
-      setError(null);
-      setActionMessage(null);
-    });
-  }, [error, notify]);
 
   // Cancel withdrawn for the rest of the running action (a phase its command
   // no longer cancels); reset when the next action starts.
@@ -836,12 +762,9 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
     unreadCount,
     markAllRead,
     clearNotifications,
-    setError,
     setSuccessToastMessage,
     formatError,
     notifyError,
-    showActionErrors,
-    showActionWarnings,
     copyToClipboard,
     refuseHeld,
     cancelPending,

@@ -175,8 +175,7 @@ than re-tagging.
   command that follows a token-less step (the command resets the token); `cancelPending` hides
   nothing until the command returns; `applyOutcome(outcome, { reload, closeModal, onAction })` executes every
   fold's Outcome (reload first, toasts, one `recordRun` history block, close) — no caller unpacks an Outcome;
-  `notifyError(err)` is the one failure dialect (`setError` remains only in the sync, Add and Import-review worlds until
-  they migrate — BACKLOG #68). The project matrix's pending cells are the reporter's `{ kind: "cell" }` subject. **Progress is
+  `notifyError(err)` is the one failure dialect. The project matrix's pending cells are the reporter's `{ kind: "cell" }` subject. **Progress is
   `src/components/shell/HeaderProgress.tsx`, read from `pending` alone** (`showsHeaderProgress`): My Skills' header
   slot, a strip above any other area, or the foot of the dialog whose action runs (App's `progressInDialog`; the
   header copy yields while it shows) — there is no overlay; a bulk Remove shows in its Delete dialog. A refused

@@ -24,7 +24,7 @@ import type { StatusReporter, TranslateFn } from "./useStatusReporter";
 
 export type ImportReviewDeps = {
   t: TranslateFn;
-  reporter: Pick<StatusReporter, "runAction" | "setActionMessage" | "setError" | "formatError" | "applyOutcome" | "loading">;
+  reporter: Pick<StatusReporter, "runAction" | "setActionMessage" | "notifyError" | "applyOutcome" | "loading">;
   sync: Pick<SyncOrchestration, "autoSyncEnabled" | "scanScopeRevision" | "settleCollisionParts">;
   catalog: Pick<ToolCatalog, "toolLabelById">;
   /** Auto-deploy's harnesses: the operator's recorded selection, at the moment of the import. */
@@ -94,7 +94,7 @@ export function useImportReview({
   surface,
   isReviewWanted,
 }: ImportReviewDeps) {
-  const { runAction, setActionMessage, setError, formatError, applyOutcome } = reporter;
+  const { runAction, setActionMessage, notifyError, applyOutcome } = reporter;
   const { autoSyncEnabled, scanScopeRevision, settleCollisionParts } = sync;
   const { toolLabelById } = catalog;
   const { isOpen, openDialog, closeDialog } = surface;
@@ -208,11 +208,11 @@ export function useImportReview({
         });
         return { groups };
       } catch (err) {
-        setError(formatError(err));
+        notifyError(err);
         return answer;
       }
     },
-    [formatError, setError, settleCollisionParts],
+    [notifyError, settleCollisionParts],
   );
 
   /** Send selections under a policy; the Result folds this run into the opening's runs. */
@@ -256,7 +256,7 @@ export function useImportReview({
                 await loadManagedSkills();
                 await fetchPlan();
               } catch (err) {
-                setError(formatError(err));
+                notifyError(err);
               }
             },
             // The dialog stays on its Result: the operator closes it, and
@@ -268,7 +268,7 @@ export function useImportReview({
         }
       });
     },
-    [applyOutcome, fetchPlan, formatError, loadManagedSkills, runAction, setActionMessage, setError, settleCollisions, t, toolLabelById],
+    [applyOutcome, fetchPlan, loadManagedSkills, notifyError, runAction, setActionMessage, settleCollisions, t, toolLabelById],
   );
 
   const importSelected = useCallback(async () => {

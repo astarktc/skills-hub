@@ -140,22 +140,6 @@ describe("useStatusReporter", () => {
       expect(newest.id).not.toBe(oldest.id);
     });
 
-    it("the setters land in the history too (setError, showActionErrors)", () => {
-      const { result } = renderHook(() => useStatusReporter(t));
-
-      act(() => {
-        result.current.setError("it broke");
-        result.current.showActionErrors([{ title: "skill-b", message: "b failed" }]);
-      });
-
-      // setError is an effect-rendered trigger, so it lands after the
-      // synchronous showActionErrors; only presence is asserted.
-      expect(result.current.notifications.map((n) => n.title).sort()).toEqual(
-        ["it broke", "skill-b"],
-      );
-      expect(result.current.unreadCount).toBe(2);
-    });
-
     it("keeps only the last 100 entries, dropping the oldest", () => {
       const { result } = renderHook(() => useStatusReporter(t));
 
@@ -271,131 +255,6 @@ describe("useStatusReporter", () => {
       ]);
       expect(result.current.unreadCount).toBe(1);
     });
-  });
-
-  it("renders an error toast and clears the action message with it", async () => {
-    const { result } = renderHook(() => useStatusReporter(t));
-
-    act(() => {
-      result.current.setActionMessage("syncing…");
-      result.current.setError("it broke");
-    });
-
-    expect(toast.error).toHaveBeenCalledWith("it broke", ERROR_OPTIONS);
-    await waitFor(() => expect(result.current.actionMessage).toBeNull());
-  });
-
-  it("showActionErrors silences empty messages and counts the rest", () => {
-    const { result } = renderHook(() => useStatusReporter(t));
-
-    act(() => {
-      result.current.showActionErrors([
-        { title: "skill-a", message: "" }, // silenced (e.g. cancelled)
-        { title: "skill-b", message: "b failed" },
-        { title: "skill-c", message: "c failed" },
-      ]);
-    });
-
-    expect(toast.error).toHaveBeenCalledWith("skill-b", {
-      ...ERROR_OPTIONS,
-      description: 'b failed' + 'errors.moreCount {"count":1}',
-    });
-  });
-
-  // A batch with many per-target failures (Refresh all) must stay readable:
-  // the screen gets one toast, the history gets every entry.
-  it("showActionErrors toasts once but records every visible entry as its own error", () => {
-    const { result } = renderHook(() => useStatusReporter(t));
-
-    act(() => {
-      result.current.showActionErrors([
-        { title: "skill-a", message: "a failed" },
-        { title: "skill-b", message: "b failed" },
-        { title: "skill-c", message: "c failed" },
-      ]);
-    });
-
-    expect(toast.error).toHaveBeenCalledTimes(1);
-    expect(toast.error).toHaveBeenCalledWith("skill-a", {
-      ...ERROR_OPTIONS,
-      description: 'a failed' + 'errors.moreCount {"count":2}',
-    });
-    // The panel is newest first, so the batch is recorded last-to-first:
-    // its first failure sits at the top of its block and the entries read
-    // top-down in the order they happened. The head's row carries the plain
-    // message: the "+N more" belongs to the toast, the panel lists the N.
-    expect(
-      result.current.notifications.map((n) => [n.kind, n.title, n.message]),
-    ).toEqual([
-      ["error", "skill-a", "a failed"],
-      ["error", "skill-b", "b failed"],
-      ["error", "skill-c", "c failed"],
-    ]);
-    expect(result.current.unreadCount).toBe(3);
-  });
-
-  it("keeps batch actions on each history row and forwards the head action to its toast", () => {
-    const { result } = renderHook(() => useStatusReporter(t));
-    const action = { label: "Re-point", onClick: vi.fn() };
-    const secondAction = { label: "Repair", onClick: vi.fn() };
-
-    act(() => {
-      result.current.showActionErrors([
-        { title: "alpha", message: "not found", action },
-        { title: "beta", message: "failed", action: secondAction },
-        { title: "gamma", message: "failed" },
-      ]);
-    });
-
-    expect(toast.error).toHaveBeenCalledWith("alpha", {
-      ...ERROR_OPTIONS,
-      description: 'not founderrors.moreCount {"count":2}',
-      action,
-    });
-    expect(result.current.notifications[0].action).toBe(action);
-    expect(result.current.notifications[1].action).toBe(secondAction);
-    expect(result.current.notifications[2].action).toBeUndefined();
-    act(() => result.current.notifications[0].action?.onClick());
-    expect(action.onClick).toHaveBeenCalledTimes(1);
-  });
-
-  it("showActionErrors with only silenced entries shows nothing", () => {
-    const { result } = renderHook(() => useStatusReporter(t));
-
-    act(() => {
-      result.current.showActionErrors([{ title: "skill-a", message: "" }]);
-    });
-
-    expect(toast.error).not.toHaveBeenCalled();
-  });
-
-  // A batch that skipped skills (Refresh all over Unlocatable ones) reports
-  // them the same way, as warnings: one toast, one history row per skill,
-  // each counting as unread.
-  it("showActionWarnings toasts once but records every entry as its own warning", () => {
-    const { result } = renderHook(() => useStatusReporter(t));
-
-    act(() => {
-      result.current.showActionWarnings([
-        { title: "skill-a", message: "a skipped" },
-        { title: "skill-b", message: "b skipped" },
-      ]);
-    });
-
-    expect(toast.warning).toHaveBeenCalledTimes(1);
-    expect(toast.warning).toHaveBeenCalledWith("skill-a", {
-      description: 'a skipped' + 'errors.moreCount {"count":1}',
-      duration: 5000,
-      closeButton: true,
-    });
-    expect(toast.error).not.toHaveBeenCalled();
-    expect(
-      result.current.notifications.map((n) => [n.kind, n.title, n.message]),
-    ).toEqual([
-      ["warning", "skill-a", "a skipped"],
-      ["warning", "skill-b", "b skipped"],
-    ]);
-    expect(result.current.unreadCount).toBe(2);
   });
 
   it("cancelPending asks the backend to stop a cancellable action and hides nothing until it returns", async () => {
@@ -704,9 +563,7 @@ describe("useStatusReporter runAction", () => {
               : "all refreshed",
         },
         async () => {
-          result.current.showActionErrors([
-            { title: "skill-a", message: "refresh failed" },
-          ]);
+          result.current.notify("error", "skill-a", "refresh failed");
           return 2;
         },
       );
@@ -831,21 +688,6 @@ describe("useStatusReporter runAction", () => {
     expect(result.current.loading).toBe(false);
     expect(toast.error).not.toHaveBeenCalled();
     expect(toast.success).not.toHaveBeenCalled();
-  });
-
-  it("starting an action clears a pending error so it cannot re-fire", async () => {
-    const { result } = renderHook(() => useStatusReporter(t));
-
-    act(() => {
-      result.current.setError("stale");
-    });
-    expect(toast.error).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      await result.current.runAction({}, async () => undefined);
-    });
-
-    expect(toast.error).toHaveBeenCalledTimes(1);
   });
 });
 
