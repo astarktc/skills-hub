@@ -468,10 +468,16 @@ than re-tagging.
   `onboarding_import`'s original-removal step (paired with `ensure_path_within_tool_dirs`), inside
   `sync_engine`'s own overwrite-replacement path, and from the git cache's clean retry and age-out (`git_cache`,
   `cache_cleanup`) — never from `project_ops`, `project_sync` or a command. It takes a `removal_fence::Fence`: every
-  removal is admitted by **physical entry identity** (canonical parent + leaf name, the leaf never resolved) against
-  the recorded central library (`ProtectedLibrary::recorded(store)`), an overwrite's source (`sparing`) and the
-  caller's `Claim`, then removed at that physical location; a refusal is the typed `REMOVAL_REFUSED` (BACKLOG #107).
-  A lexical `starts_with` fence alone is never an admission — a Tool dir linked onto the library passes it.
+  removal is admitted by **physical entry identity** (canonical parent; a link leaf never resolved, any other leaf
+  resolved to its real spelling; compared by device + inode on Unix, never by spelling) against the library
+  (`ProtectedLibrary::new(store, central_dir)`: the **configured central repo's whole subtree** plus every recorded
+  copy), an overwrite's source (`sparing`) and the caller's `Claim`, then removed at that physical location; a refusal
+  is the typed `REMOVAL_REFUSED` (BACKLOG #107). So every removal entry point takes the configured `central_dir`,
+  resolved at the command seam (`resolve_central_repo_path_for_app` / `InstallerPaths::central_dir`) — core never
+  derives it — and a test fixture keeps Tool and Project dirs outside it (`removal_fence::central_repo_of`). The git
+  cache is owned only as an `OwnedDir` reached from the app cache dir through real directories. The Delete
+  settlement's own central copy is the one removal of central bytes (`sync_engine::remove_central_copy`, authorised by
+  the record). A lexical `starts_with` fence alone is never an admission — a Tool dir linked onto the library passes it.
 - Confirmations go through the Dialog primitive (`src/components/ui/dialog.tsx` / `confirm-dialog.tsx`) —
   `useSharedDirConfirmation` owns the shared-skills-dir one;
   the app uses no native browser dialog.
