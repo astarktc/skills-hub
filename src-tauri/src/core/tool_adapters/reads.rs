@@ -64,7 +64,6 @@ pub enum DuplicateBehaviour {
     #[allow(dead_code, reason = "first row: fx, round 20 ticket 05")]
     LoadsNone,
     /// Differing copies are flagged as a conflict (Cortex Code).
-    #[allow(dead_code, reason = "first row: Cortex Code, round 20 ticket 06")]
     FlagsConflict,
     Unknown,
 }

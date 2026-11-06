@@ -472,3 +472,58 @@ fn the_project_catalog_carries_no_pairs() {
         .iter()
         .all(|e| e.duplicate_readers.is_none()));
 }
+
+// round 20 ticket 06 rows
+
+/// With every harness installed, the ticket 06 rows resolve the pairs their
+/// brief facts promise (the fixture's `DUPLICATE_READS` restates them):
+/// Cortex Code flags a conflict with Claude Code's copy, Grok Build and
+/// Firebender also read Cursor's folder, and the harnesses that read no
+/// shared folder (IBM Bob, AiderDesk) make no pair.
+#[test]
+fn the_ticket_06_rows_resolve_their_cross_read_pairs() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    for adapter in default_tool_adapters() {
+        mark_installed_in(&roots, adapter);
+    }
+    let pair = |keys: &[&'static str], behaviour| {
+        Some(DuplicateReads {
+            keys: keys.to_vec(),
+            behaviour,
+        })
+    };
+    use DuplicateBehaviour::{FlagsConflict, Shadows, ShowsAll, Unknown};
+    let expected = [
+        (
+            "grok_build",
+            pair(&["agents_skills", "cursor", "claude_code"], Shadows),
+        ),
+        (
+            "deep_agents_code",
+            pair(&["agents_skills", "claude_code"], Shadows),
+        ),
+        ("reasonix", pair(&["agents_skills", "claude_code"], Unknown)),
+        ("cortex_code", pair(&["claude_code"], FlagsConflict)),
+        ("rovo_dev", pair(&["agents_skills"], Unknown)),
+        ("ibm_bob", None),
+        ("forgecode", pair(&["agents_skills"], Shadows)),
+        (
+            "firebender",
+            pair(&["agents_skills", "cursor", "claude_code", "codex"], ShowsAll),
+        ),
+        (
+            "minimax_code",
+            pair(&["agents_skills", "claude_code", "codex"], Shadows),
+        ),
+        ("posit_assistant", pair(&["agents_skills"], Shadows)),
+        ("aider_desk", None),
+        (
+            "autohand_code",
+            pair(&["agents_skills", "claude_code", "codex"], Shadows),
+        ),
+    ];
+    for (key, pairs) in expected {
+        assert_eq!(duplicate_readers_of(&roots, key), pairs, "{key}");
+    }
+}
