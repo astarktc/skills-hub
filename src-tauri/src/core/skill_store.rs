@@ -1883,8 +1883,11 @@ impl SkillStore {
         // Every call opens its own connection and several may run at once (the
         // Refresh acquire pool). Wait out a sibling's write window instead of
         // failing the caller with SQLITE_BUSY. Stated here rather than relying
-        // on rusqlite's own default.
-        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        // on rusqlite's own default. 30 s, not 5: every commit syncs the WAL
+        // (`synchronous = FULL`, below), and on a slow Windows disk eight
+        // concurrent writers' queue outlasted 5 s (1.3.3, hosted CI). A
+        // waiter that gets its turn later is correct; one that fails is not.
+        conn.busy_timeout(std::time::Duration::from_secs(30))?;
         // FULL, stated rather than inherited: every commit is synced to the
         // WAL before the call returns. The store is authoritative (Edit intent,
         // Disable state, artifact ownership), so an acknowledged write must
