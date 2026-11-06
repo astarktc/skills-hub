@@ -31,6 +31,7 @@ vi.mock("../lib/platform", () => ({
   pickFolder: vi.fn(),
 }));
 
+import { toast } from "sonner";
 import { invokeTauri, type CommandName } from "../lib/tauri";
 import * as folds from "../lib/reportOutcome";
 import { useSkillActions, RELOAD_ON_THROW, type SkillVerb } from "./useSkillActions";
@@ -164,7 +165,7 @@ type Setup = ReturnType<typeof setup>;
 
 function useDoor(s: Setup) {
   const surface = useSurfaceState();
-  const reporter = useStatusReporter(t);
+  const reporter = useStatusReporter(t, surface);
   const library = useSkillLibrary({ t, reporter, surface });
   const actions = useSkillActions({
     t,
@@ -655,6 +656,23 @@ describe("where confirmation happens", () => {
     // One run in the history: its headline and each failure.
     const runs = new Set(result.current.reporter.notifications.map((row) => row.runId));
     expect(runs.size).toBe(1);
+    // #101: the dialog is the run's report, so the run toast waits for it to
+    // close instead of covering its footer — then shows once.
+    expect(toast.warning).not.toHaveBeenCalled();
+    act(() => result.current.surface.closeDialog("deleteSkill"));
+    expect(toast.warning).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toast.warning).mock.calls[0][0]).toBe(spy.mock.results[0].value.toast?.message);
+  });
+
+  it("a Delete that removed everything closes its dialog, then toasts its run (#101)", async () => {
+    const s = setup();
+    const { result } = await render(s);
+    act(() => void result.current.actions.run("delete", [s.skills[0]]));
+    await act(async () => {
+      await result.current.actions.run("delete", [s.skills[0]], { confirmed: true });
+    });
+    expect(result.current.surface.layer("deleteSkill")).toBeNull();
+    expect(toast.success).toHaveBeenCalledTimes(1);
   });
 });
 

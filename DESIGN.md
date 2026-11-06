@@ -1416,7 +1416,8 @@ dismissed for good.
   cascade below is the import's one moment). **The run's toast waits for the Result to close**
   (`applyOutcome(…, { resultShownIn: "import" })`): the Result already says it, and a toast in the corner would cover
   its footer; the run is recorded and the catalog reloaded at once, a Retry's toast supersedes the waiting one. Add's
-  settlement step uses the same option (`"addSkill"`).
+  settlement step uses the same option (`"addSkill"`), and so does Delete, whose dialog turns into its report when a
+  skill is kept (`"deleteSkill"`). The toast still shows — once the dialog closes — through the one live host.
 - **Contrast** (measured 2026-11-04, fixture `first-run`, rendered, round 19 ticket 21 audit),
   dark / light: Match badge 7.65 / 6.75; Conflict badge 8.94 / 4.94; "In your Library" 7.65 / 6.75; "Differs from
   your managed copy" (`stale`) 10.13 / 5.68; "Removed" (`failed`) 6.96 / 5.64; modified time (`faint`) 5.52 / 6.24;

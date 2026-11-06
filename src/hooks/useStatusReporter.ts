@@ -276,7 +276,7 @@ export type OutcomeHandlers = {
   closeModal?: () => void;
   /**
    * The dialog that shows this outcome as its own Result step (Import's
-   * Result, Add's settlement). While it is open the run's one toast waits —
+   * Result, Add's settlement, Delete's report). While it is open the run's one toast waits —
    * it would repeat the Result and cover its footer (audit F5) — and shows
    * when the dialog closes; a later run of the same dialog (a Retry)
    * supersedes it. Reload, the history block and the completion happen at

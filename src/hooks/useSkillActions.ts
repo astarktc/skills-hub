@@ -683,7 +683,13 @@ export function useSkillActions({
             // Anything left behind: the same dialog becomes the report (before
             // the reload, so the confirmation never re-renders in between).
             if (!outcome.completion.closeModal) updateDialog({ kind: "deleteSkill", skillIds, report: settled });
-            await applyOutcome(outcome, { reload, closeModal: () => dismissDialog("deleteSkill") });
+            await applyOutcome(outcome, {
+              reload,
+              closeModal: () => dismissDialog("deleteSkill"),
+              // The dialog turned report shows this run itself: its toast
+              // waits for the Close instead of covering the footer (#101).
+              resultShownIn: "deleteSkill",
+            });
           },
         );
         return;
