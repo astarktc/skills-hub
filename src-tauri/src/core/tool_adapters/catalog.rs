@@ -5,10 +5,10 @@
 //! tools, how shared skills dirs group, and what "installed" means lives here
 //! so it is testable against a temp home.
 
-use super::reads::DuplicateBehaviour;
+use super::reads::{DuplicateBehaviour, ReadFacts};
 use super::{
     adapters_sharing_skills_dir, catalog_rows, constituents_of, is_installed_in,
-    reader_installed_in, readers_of, HostRoots, ToolAdapter,
+    reader_installed_in, readers_of, HostRoots, RegistryPath, ToolAdapter,
 };
 
 /// One row of a tool list, with every backend-owned fact already resolved.
@@ -66,6 +66,11 @@ pub struct ReaderEntry {
     pub key: &'static str,
     pub label: &'static str,
     pub installed: bool,
+    /// Its cross-read pairs ([`DuplicateReads`]), resolved as an adapter's
+    /// with the group entry's folder as its own deploy dir: set when, with
+    /// that entry deployed to, it would see a skill twice through one of the
+    /// `keys` (fx reads `~/.claude/skills` too).
+    pub duplicate_readers: Option<DuplicateReads>,
 }
 
 /// A global catalog entry's placement facts, straight from the registry,
@@ -94,7 +99,7 @@ pub struct GlobalPlacement {
 /// installedness is its own detect dir like any other entry, or any detected
 /// reader-only harness of it (`is_installed_in`).
 pub fn global_tool_entries(roots: &HostRoots) -> Vec<ToolCatalogEntry> {
-    let installed: Vec<&'static ToolAdapter> = catalog_rows()
+    let installed_rows: Vec<&'static ToolAdapter> = catalog_rows()
         .filter(|adapter| is_installed_in(roots, adapter))
         .collect();
     catalog_rows()
@@ -112,10 +117,22 @@ pub fn global_tool_entries(roots: &HostRoots) -> Vec<ToolCatalogEntry> {
                 .map(|group| {
                     readers_of(group)
                         .into_iter()
-                        .map(|reader| ReaderEntry {
-                            key: reader.key,
-                            label: reader.display_name,
-                            installed: reader_installed_in(roots, reader),
+                        .map(|reader| {
+                            let installed = reader_installed_in(roots, reader);
+                            ReaderEntry {
+                                key: reader.key,
+                                label: reader.display_name,
+                                installed,
+                                duplicate_readers: installed
+                                    .then(|| {
+                                        pairs_of(
+                                            &reader.reads,
+                                            &adapter.skills_dir,
+                                            &installed_rows,
+                                        )
+                                    })
+                                    .flatten(),
+                            }
                         })
                         .collect()
                 })
@@ -129,19 +146,32 @@ pub fn global_tool_entries(roots: &HostRoots) -> Vec<ToolCatalogEntry> {
                     .collect(),
                 supports_symlink: adapter.supports_symlink,
             }),
-            duplicate_readers: duplicate_reads(adapter, &installed),
+            duplicate_readers: duplicate_reads(adapter, &installed_rows),
         })
         .collect()
 }
 
-/// [`DuplicateReads`] for `reader` among the `installed` entries.
+/// [`DuplicateReads`] for the adapter `reader` among the `installed` entries.
 fn duplicate_reads(
     reader: &ToolAdapter,
     installed: &[&'static ToolAdapter],
 ) -> Option<DuplicateReads> {
-    let facts = &reader.reads;
-    let own = &reader.skills_dir;
-    if !installed.iter().any(|a| a.key() == reader.key()) || !facts.reads_by_default(own, own) {
+    if !installed.iter().any(|a| a.key() == reader.key()) {
+        return None;
+    }
+    pairs_of(&reader.reads, &reader.skills_dir, installed)
+}
+
+/// The pairs of an installed harness whose read facts are `facts` and whose
+/// deploy dir is `own` (an adapter's own folder, or for a reader-only harness
+/// its group entry's): the other `installed` entries whose deploy dir it
+/// reads by default, beside `own` — `None` unless it reads `own` by default.
+fn pairs_of(
+    facts: &ReadFacts,
+    own: &RegistryPath,
+    installed: &[&'static ToolAdapter],
+) -> Option<DuplicateReads> {
+    if !facts.reads_by_default(own, own) {
         return None;
     }
     let keys: Vec<&'static str> = installed

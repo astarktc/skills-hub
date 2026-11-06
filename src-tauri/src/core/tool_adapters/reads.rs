@@ -61,7 +61,6 @@ pub enum DuplicateBehaviour {
     /// One copy wins; the other is hidden (often with a warning).
     Shadows,
     /// An ambiguous name loads neither copy: invocation by name breaks (fx).
-    #[allow(dead_code, reason = "first row: fx, round 20 ticket 05")]
     LoadsNone,
     /// Differing copies are flagged as a conflict (Cortex Code).
     FlagsConflict,

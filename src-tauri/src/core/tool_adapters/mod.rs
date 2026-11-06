@@ -62,6 +62,24 @@ pub enum ToolId {
     Windsurf,
     Moltbot,
     HermesAgent,
+    // round 20 ticket 05 rows
+    DeepseekHarness,
+    Zcode,
+    Codewhale,
+    WorkBuddy,
+    // round 20 ticket 07 rows
+    LettaCode,
+    MuseCode,
+    Poolside,
+    Dirac,
+    CodeStudio,
+    CodeArtsAgent,
+    QoderCn,
+    QoderCnCli,
+    Kimchi,
+    AstrBot,
+    OhMyPi,
+    Stakpak,
     // round 20 ticket 06 rows
     GrokBuild,
     DeepAgentsCode,
@@ -125,6 +143,24 @@ impl ToolId {
             ToolId::Windsurf => "windsurf",
             ToolId::Moltbot => "moltbot",
             ToolId::HermesAgent => "hermes-agent",
+            // round 20 ticket 05 rows
+            ToolId::DeepseekHarness => "deepseek_harness",
+            ToolId::Zcode => "zcode",
+            ToolId::Codewhale => "codewhale",
+            ToolId::WorkBuddy => "workbuddy",
+            // round 20 ticket 07 rows
+            ToolId::LettaCode => "letta_code",
+            ToolId::MuseCode => "muse_code",
+            ToolId::Poolside => "poolside",
+            ToolId::Dirac => "dirac",
+            ToolId::CodeStudio => "code_studio",
+            ToolId::CodeArtsAgent => "codearts_agent",
+            ToolId::QoderCn => "qoder_cn",
+            ToolId::QoderCnCli => "qoder_cn_cli",
+            ToolId::Kimchi => "kimchi",
+            ToolId::AstrBot => "astrbot",
+            ToolId::OhMyPi => "oh_my_pi",
+            ToolId::Stakpak => "stakpak",
             // round 20 ticket 06 rows
             ToolId::GrokBuild => "grok_build",
             ToolId::DeepAgentsCode => "deep_agents_code",
@@ -1516,6 +1552,531 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
             also_reads: &[],
         },
     },
+    // round 20 ticket 05 rows
+    ToolAdapter {
+        id: ToolId::DeepseekHarness,
+        display_name: "DeepSeek Harness",
+        // `dsh`: `<dshHome>/skills`, default `~/.dsh/skills` (B02 § 4, S51).
+        // `DSH_HOME` / `DSH_AGENTS_HOME` are not honoured (env-var homes).
+        skills_dir: home(".dsh/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".dsh")],
+        project_skills_dir: Some(".dsh/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2 "The four #92 rows", row "DeepSeek Harness".
+        // VERIFIED T72 (re-checked 2026-11-06): rank 400 `user-dsh` beats 500
+        // `user-agents`, lower rank wins a duplicate name (one copy loads).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::Zcode,
+        display_name: "ZCode",
+        // `~/.zcode/skills` (zcode.z.ai/en/docs/skill, B02 S52).
+        skills_dir: home(".zcode/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".zcode")],
+        project_skills_dir: Some(".zcode/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2 "The four #92 rows", row "ZCode".
+        // VERIFIED T73, B02:S53: `~/.zcode` before `~/.agents`, first same-name
+        // skill wins. Claude Code's folder is only an Import source, never read.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::Codewhale,
+        display_name: "Codewhale",
+        // Owned `~/.codewhale/skills` (`$CODEWHALE_HOME/skills`, not
+        // honoured). Never detected on `.deepseek`: that legacy root is a read
+        // fallback, too generic to mean Codewhale (B02 I13).
+        skills_dir: home(".codewhale/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".codewhale")],
+        project_skills_dir: Some(".codewhale/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2 "The four #92 rows", row "Codewhale".
+        // VERIFIED T74 (re-checked 2026-11-06): global order `.codewhale` >
+        // `.agents` > `.claude` > legacy `.deepseek`, all read by the current
+        // release; shadowing warnings name both copies.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[AlsoRead {
+                dir: home(".deepseek/skills"),
+                mode: ReadMode::Default,
+            }],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::WorkBuddy,
+        display_name: "WorkBuddy",
+        // `~/.workbuddy/skills` per secondary sources only (B02 S56–S57; the
+        // vendor doc says "the user config directory"). No project dir: the
+        // secondary sources conflict, and upstream treats it as global-only.
+        skills_dir: home(".workbuddy/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".workbuddy")],
+        project_skills_dir: None,
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2 "The four #92 rows", row "WorkBuddy".
+        // LIKELY B02:S57: no fact is verified.
+        reads: ReadFacts::UNKNOWN,
+    },
+    // round 20 ticket 07 rows
+    ToolAdapter {
+        id: ToolId::LettaCode,
+        display_name: "Letta Code",
+        // Computer-scoped skills: docs.letta.com/configuration/skills (brief T40,
+        // re-fetched 2026-11-06). `~/.letta` holds `settings.json` (the config root).
+        // Its only project skills dir is `.agents/skills`, so it joins the group.
+        skills_dir: home(".letta/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".letta")],
+        project_skills_dir: Some(".agents/skills"),
+        group: Some(VirtualGroup::AgentsStandard),
+        supports_symlink: true,
+        // Read facts: brief § Part 2, row "Letta Code (extra)".
+        // VERIFIED T40: no global shared folder; project `.agents/skills` only.
+        // Agent-memory skills live in the agent's own MemFS, not modelled.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::MuseCode,
+        display_name: "Muse Code",
+        // `$XDG_CONFIG_HOME/muse/skills`, default `~/.config/muse/skills` (addendum
+        // P1, re-fetched 2026-11-06); `XDG_CONFIG_HOME` is not honoured, and the
+        // Windows default is UNKNOWN. `~/.config/muse` holds `settings.json` (P2).
+        skills_dir: home(".config/muse/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".config/muse")],
+        project_skills_dir: Some(".agents/skills"),
+        group: Some(VirtualGroup::AgentsStandard),
+        supports_symlink: true,
+        // Read facts: addendum § Shared-dir reads, row "Muse Code".
+        // VERIFIED P1. The "foreign personal roots" (`~/.claude/skills`,
+        // `$CODEX_HOME/skills` falling back to `~/.codex/skills`) are on by default; a
+        // user preference or rollout gate can turn them off. Collisions undocumented.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[AlsoRead {
+                dir: home(".codex/skills"),
+                mode: ReadMode::Default,
+            }],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::Poolside,
+        display_name: "Poolside",
+        // The `pool` CLI: docs.poolside.ai/skills (addendum P3, re-fetched
+        // 2026-11-06). `~/.config/poolside` holds `settings.yaml` (P5).
+        skills_dir: home(".config/poolside/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".config/poolside")],
+        project_skills_dir: Some(".agents/skills"),
+        group: Some(VirtualGroup::AgentsStandard),
+        supports_symlink: true,
+        // Read facts: addendum § Shared-dir reads, row "Poolside".
+        // VERIFIED P3–P4 (`~/.agents/skills` since 1.0.11). It "also scans
+        // directories used by other tools", unnamed: `.claude` stays Unknown.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Unknown,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Unknown,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::Dirac,
+        // A Cline fork, but its own product with its own `~/.dirac` root: never an
+        // alias of the `cline` row (addendum § Summary 5).
+        display_name: "Dirac",
+        // `getDiracHomePath()` = `~/.dirac`, no env override for skills (addendum
+        // P6–P8, re-read at master 2026-11-06).
+        skills_dir: home(".dirac/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".dirac")],
+        project_skills_dir: Some(".agents/skills"),
+        group: Some(VirtualGroup::AgentsStandard),
+        supports_symlink: true,
+        // Read facts: addendum § Shared-dir reads, row "Dirac".
+        // VERIFIED P6–P7: the dedupe iterates backwards, so `~/.ai` > `~/.claude` >
+        // `~/.agents` > `~/.dirac` — the shared copy wins, silently.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Shared,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[AlsoRead {
+                dir: home(".ai/skills"),
+                mode: ReadMode::Default,
+            }],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::CodeStudio,
+        display_name: "Code Studio",
+        // Syncfusion Code Studio: personal skills `~/.codestudio/skills` (brief T7,
+        // re-read via search index 2026-11-06; the help URL now redirects to
+        // docs.boldcreate.ai). FLAG (brief I4, spec Q29): `.codestudio` is not
+        // verified to hold more than skills on a real install; the skills-only
+        // footprint rule makes the worst case "not detected".
+        skills_dir: home(".codestudio/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".codestudio")],
+        project_skills_dir: Some(".codestudio/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2, row "Code Studio".
+        // VERIFIED T7: setting "Skill File Locations" defaults to `.codestudio`,
+        // `.agents`, `.claude` (project and home) plus `~/.copilot/skills`.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[AlsoRead {
+                dir: home(".copilot/skills"),
+                mode: ReadMode::Default,
+            }],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::CodeArtsAgent,
+        display_name: "CodeArts Agent",
+        // Huawei Cloud: user skills `%USERPROFILE%/.codeartsdoer/skills` (brief T6,
+        // re-fetched 2026-11-06; macOS/Linux `~/.codeartsdoer/skills` is LIKELY).
+        // FLAG (brief I4, spec Q29): `.codeartsdoer` is not verified to hold more
+        // than skills; the skills-only footprint rule makes the worst case "not
+        // detected".
+        skills_dir: home(".codeartsdoer/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".codeartsdoer")],
+        project_skills_dir: Some(".codeartsdoer/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2, row "CodeArts Agent".
+        // VERIFIED T6: its priority list names no shared folder.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::QoderCn,
+        // The Qoder CN IDE, formerly Lingma (通义灵码). Its CLI is its own row
+        // (`qoder_cn_cli`), the Trae / Trae CN pattern.
+        display_name: "Qoder CN",
+        // docs.qoder.cn/user-guide/skills (brief T19, re-fetched 2026-11-06).
+        skills_dir: home(".lingma/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".lingma")],
+        project_skills_dir: Some(".lingma/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2, row "Qoder CN (IDE, ex-Lingma)".
+        // VERIFIED T19: the IDE page lists only `.lingma`. The CN *desktop app*
+        // reads `~/.agents/skills`, but that is not this surface.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::QoderCnCli,
+        display_name: "Qoder CN CLI",
+        // help.aliyun.com/zh/lingma/qodercli-cn/user-guide/skills (brief T19,
+        // re-read 2026-11-06): user `~/.qoder-cn/skills`, project `.qoder/skills`
+        // (shared with the Qoder row's project dir). `~/.qoder-cn` holds
+        // `settings.json` (docs.qoder.cn/cli/settings); `QODERCN_CONFIG_DIR` is not
+        // honoured.
+        skills_dir: home(".qoder-cn/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".qoder-cn")],
+        project_skills_dir: Some(".qoder/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2, row "Qoder CN CLI".
+        // VERIFIED T19: the CLI page lists only its own two dirs.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::Kimchi,
+        display_name: "Kimchi",
+        // Cast AI: docs.kimchi.dev/docs/coding-skills (brief T28, re-fetched
+        // 2026-11-06). `~/.config/kimchi` holds `config.json` (`skillPaths`).
+        skills_dir: home(".config/kimchi/harness/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".config/kimchi")],
+        project_skills_dir: Some(".kimchi/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2, row "Kimchi (optional)".
+        // VERIFIED T28. Each other agent's dir is read "if installed" — exactly the
+        // case a cross-read pair needs, so the reads are `Default`. Per agent, the
+        // project-local dir is checked first and home is the fallback. Earlier
+        // `skillPaths` entries win. `.claude` needs `extensions.claude-code-skills`.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: OptIn,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: OptIn,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[
+                AlsoRead {
+                    dir: home(".pi/agent/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".codex/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".cursor/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".warp/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".factory/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".gemini/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".copilot/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".github/skills"),
+                    mode: ReadMode::Default,
+                },
+            ],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::AstrBot,
+        display_name: "AstrBot",
+        // `<root>/data/skills`, root = `$ASTRBOT_ROOT`, else `~/.astrbot` **only in
+        // the packaged desktop runtime**, else the cwd (brief T26, `astrbot_path.py`
+        // re-read 2026-11-06). Only the desktop runtime is reachable: a source
+        // install is undetectable, and `ASTRBOT_ROOT` is not honoured. Detected
+        // only through `.astrbot` (brief I4).
+        skills_dir: home(".astrbot/data/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".astrbot")],
+        // No project dir: its `data/skills` is relative to the AstrBot root, which
+        // the detected (desktop) runtime fixes at `~/.astrbot`, and its workspace
+        // skills are per chat session (`data/workspaces/<umo>/skills`), never a
+        // repository's (brief Part 1 says `data/skills`; deviation, ticket 07).
+        project_skills_dir: None,
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2, row "AstrBot (optional)".
+        // VERIFIED T26: workspace > local > plugin > sandbox; no shared folder.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::OhMyPi,
+        display_name: "oh-my-pi",
+        // `omp`: omp.sh/docs/skills (brief T41, re-fetched 2026-11-06). User
+        // `~/.omp/agent/skills`, project `.omp/skills`; `~/.omp/agent` holds
+        // `config.yml`. Its managed `~/.omp/agent/managed-skills` is never a target.
+        skills_dir: home(".omp/agent/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".omp")],
+        project_skills_dir: Some(".omp/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2, row "oh-my-pi (extra)".
+        // VERIFIED T41: every `skills.enable*` switch defaults on; the highest-priority
+        // provider wins (native `.omp` first) and `/extensions` shows the shadowed
+        // copy. The Pi user dir behind `enablePiUser` is not listed among the
+        // compatible locations: `Unknown`.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[
+                AlsoRead {
+                    dir: home(".agent/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".codex/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".config/opencode/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".pi/agent/skills"),
+                    mode: ReadMode::Unknown,
+                },
+            ],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::Stakpak,
+        display_name: "Stakpak",
+        // `default_skill_directories()`: project `.stakpak/skills`, then
+        // `$HOME/.stakpak/skills` (addendum P9, re-read at main 2026-11-06).
+        // `~/.stakpak` holds `config.toml`. Low priority: last release 2026-06.
+        skills_dir: home(".stakpak/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".stakpak")],
+        project_skills_dir: Some(".stakpak/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: addendum § Shared-dir reads, row "Stakpak".
+        // VERIFIED P9 (complete dir list): no shared folder; first seen wins.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
+    },
     // round 20 ticket 06 rows
     ToolAdapter {
         id: ToolId::GrokBuild,
@@ -1815,11 +2376,13 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         id: ToolId::PositAssistant,
         display_name: "Posit Assistant",
         // Brief § Part 1 A, row "Posit Assistant" (T18): `~/.posit/assistant`
-        // holds `settings.json`; `.positai` is its pre-rename root. Detected on
-        // those two, **never** on `.posit` (brief I4, spec: binding).
+        // holds `settings.json`. Detected there only: **never** on `.posit` (brief
+        // I4, spec: binding), and never on the pre-rename `.positai`: an old release
+        // reads `~/.positai/skills`, so detecting it would deploy into a folder that
+        // install does not read (spec Q7; orchestrator 2026-11-06, as ForgeCode's `forge`).
         skills_dir: home(".posit/assistant/skills"),
         former_skills_dirs: &[],
-        detect_dirs: &[home(".posit/assistant"), home(".positai")],
+        detect_dirs: &[home(".posit/assistant")],
         project_skills_dir: Some(".posit/assistant/skills"),
         group: None,
         supports_symlink: true,
@@ -1921,16 +2484,325 @@ pub struct ReaderOnlyHarness {
     /// Stable key, unique across both registry tables. Never stored.
     pub key: &'static str,
     pub display_name: &'static str,
-    /// Directories any one of whose presence marks the harness installed.
+    /// Directories any one of whose presence marks the harness installed —
+    /// its own config root(s), like an adapter's (never a shared skills
+    /// convention dir).
     pub detect_dirs: &'static [RegistryPath],
-    /// The group whose shared folder it reads.
-    pub reads: VirtualGroup,
+    /// The group whose shared folder it reads: its only way in, so that
+    /// group entry's folder stands as its own deploy dir.
+    pub group: VirtualGroup,
+    /// Its shared-folder read facts, each citing its brief row, exactly as an
+    /// adapter's ([`ToolAdapter::reads`]). They resolve the cross-read pairs
+    /// it would see (`catalog::ReaderEntry::duplicate_readers`).
+    pub reads: ReadFacts,
 }
 
-/// The reader-only harnesses, in presentation order. Empty until the first
-/// real row lands (round 20 ticket 05); tests add rows per thread
-/// (`test_overrides::sample_reader`).
-static READER_ONLY_HARNESSES: &[ReaderOnlyHarness] = &[];
+/// The reader-only harnesses, in presentation order; tests add rows per
+/// thread (`test_overrides::sample_reader`).
+static READER_ONLY_HARNESSES: &[ReaderOnlyHarness] = &[
+    // round 20 ticket 05 rows
+    ReaderOnlyHarness {
+        key: "warp",
+        display_name: "Warp",
+        // Warp's config root (`settings.toml`) per OS, from its file-locations
+        // reference (brief T80): `~/.warp` on macOS, `~/.config/warp-terminal`
+        // on Linux, `%LOCALAPPDATA%\warp\Warp` on Windows. `~/.warp` also holds
+        // the MCP config and bundled skills on every OS. Preview channels
+        // (`.warp-preview`, `warp-terminal-preview`) are not detected.
+        detect_dirs: &[
+            home(".warp"),
+            home(".config/warp-terminal").overridden(&[OsOverride {
+                os: HostOs::Windows,
+                root: HostRoot::LocalAppData,
+                rel: "warp/Warp",
+            }]),
+        ],
+        group: VirtualGroup::AgentsStandard,
+        // Read facts: brief § Part 2 "Recommended Part 1 additions", row
+        // "Warp (AGENTS)". VERIFIED T22 (re-checked 2026-11-06): every
+        // supported dir name under home is read and every copy is listed.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Both,
+            duplicates: DuplicateBehaviour::ShowsAll,
+            also_reads: &[
+                AlsoRead {
+                    dir: home(".warp/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".codex/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".cursor/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".gemini/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".copilot/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".factory/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".github/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".opencode/skills"),
+                    mode: ReadMode::Default,
+                },
+            ],
+        },
+    },
+    ReaderOnlyHarness {
+        key: "zed",
+        display_name: "Zed",
+        // Zed's config dir (`paths::config_dir`): `~/.config/zed` on macOS and
+        // Linux, `%APPDATA%\Zed` on Windows (brief I7). A Flatpak install keeps
+        // it under `FLATPAK_XDG_CONFIG_HOME` and is not detected.
+        detect_dirs: &[home(".config/zed").overridden(&[OsOverride {
+            os: HostOs::Windows,
+            root: HostRoot::RoamingAppData,
+            rel: "Zed",
+        }])],
+        group: VirtualGroup::AgentsStandard,
+        // Read facts: brief § Part 2 "Recommended Part 1 additions", row
+        // "Zed (AGENTS)". VERIFIED T23 (re-checked 2026-11-06): only
+        // `.agents/skills`, by design; precedence n/a.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
+    },
+    ReaderOnlyHarness {
+        key: "dexto",
+        display_name: "Dexto",
+        detect_dirs: &[home(".dexto")],
+        group: VirtualGroup::AgentsStandard,
+        // Read facts: brief § Part 2 "Recommended Part 1 additions", row
+        // "Dexto (AGENTS)". VERIFIED T34 (re-checked 2026-11-06): canonical
+        // `~/.agents/skills`, legacy `~/.dexto/skills` still read; "no source
+        // precedence rules". Claude plugin skills are not a skills folder.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[AlsoRead {
+                dir: home(".dexto/skills"),
+                mode: ReadMode::Default,
+            }],
+        },
+    },
+    ReaderOnlyHarness {
+        key: "fx",
+        display_name: "fx",
+        // `~/.fx` holds `settings.json` and its own `skills/` (T35). Never
+        // deployed to: a second copy there makes `$name` load nothing.
+        detect_dirs: &[home(".fx")],
+        group: VirtualGroup::AgentsStandard,
+        // Read facts: brief § Part 2 "Recommended Part 1 additions", row
+        // "fx (AGENTS)". VERIFIED T35 (re-checked 2026-11-06): "If several
+        // skills have the same name, typing `$name` loads none of them."
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Both,
+            duplicates: DuplicateBehaviour::LoadsNone,
+            also_reads: &[
+                AlsoRead {
+                    dir: home(".fx/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".config/opencode/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".codex/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".claw/skills"),
+                    mode: ReadMode::Default,
+                },
+            ],
+        },
+    },
+    ReaderOnlyHarness {
+        key: "sarvam_code",
+        display_name: "Sarvam Code",
+        // `~/.sarvam` holds `config.toml` (T37, secondary).
+        detect_dirs: &[home(".sarvam")],
+        group: VirtualGroup::AgentsStandard,
+        // Read facts: brief § Part 2 "Recommended Part 1 additions", row
+        // "Sarvam Code (AGENTS)". LOW CONFIDENCE — LIKELY T1, T37 only: the
+        // `~/.agents/skills` read is inferred from its Codex fork, so every fact
+        // is `Unknown`. Re-verify when the CLI is public (invite-gated as of
+        // 2026-11-06; the teardown names no `.agents` path).
+        reads: ReadFacts::UNKNOWN,
+    },
+    ReaderOnlyHarness {
+        key: "vt_code",
+        display_name: "VT Code",
+        // VT Code's config dir (`VtCodePaths`, addendum P12): macOS
+        // `~/Library/Application Support/com.vinhnx.vtcode`, Windows
+        // `%APPDATA%\vinhnx\vtcode`, else `~/.config/vtcode`; plus the legacy
+        // home `~/.vtcode`. `VTCODE_HOME` / `VTCODE_CONFIG` are not honoured.
+        detect_dirs: &[
+            home(".config/vtcode").overridden(&[
+                OsOverride {
+                    os: HostOs::MacOs,
+                    root: HostRoot::LocalAppData,
+                    rel: "com.vinhnx.vtcode",
+                },
+                OsOverride {
+                    os: HostOs::Windows,
+                    root: HostRoot::RoamingAppData,
+                    rel: "vinhnx/vtcode",
+                },
+            ]),
+            home(".vtcode"),
+        ],
+        group: VirtualGroup::AgentsStandard,
+        // Read facts: brief § Part 2 "Recommended Part 1 additions", row
+        // "VT Code (extra)"; addendum § Shared-dir reads, row "VT Code".
+        // VERIFIED T42, P10–P12 (re-checked at 86902fc): `~/.agents/skills` is
+        // the first user root, then its data dir and the legacy `~/.vtcode`;
+        // "only the first occurrence is loaded". The per-OS data dir and
+        // `/etc/codex/skills` hold no registry row's folder and are not listed.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Shared,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[AlsoRead {
+                dir: home(".vtcode/skills"),
+                mode: ReadMode::Default,
+            }],
+        },
+    },
+    ReaderOnlyHarness {
+        key: "dimcode",
+        display_name: "DimCode",
+        // `~/.dimcode` (v2 data home `~/.dimcode/v2`, P14). `DIMCODE_HOME` is
+        // not honoured.
+        detect_dirs: &[home(".dimcode")],
+        group: VirtualGroup::AgentsStandard,
+        // Read facts: addendum § Shared-dir reads, row "DimCode". VERIFIED P13
+        // (shipped bundle 0.5.24, re-checked 2026-11-06): the market root
+        // `~/.dimcode/v2/skills` before `~/.agents/skills` (own wins).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[AlsoRead {
+                dir: home(".dimcode/v2/skills"),
+                mode: ReadMode::Default,
+            }],
+        },
+    },
+    ReaderOnlyHarness {
+        key: "crow_cli",
+        display_name: "crow-cli",
+        // Its config root is `~/.agents/crow` (P15): its own folder inside
+        // `~/.agents`, not the shared convention dir itself.
+        detect_dirs: &[home(".agents/crow")],
+        group: VirtualGroup::AgentsStandard,
+        // Read facts: addendum § Shared-dir reads, row "crow-cli". VERIFIED
+        // P15–P16 (re-checked 2026-11-06): `~/.agents/skills` is its only user
+        // dir (precedence n/a); every hidden `*/skills` up to the git root at
+        // project scope; an earlier root wins, shadowed copies logged.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
+    },
+    ReaderOnlyHarness {
+        key: "corust_agent",
+        display_name: "Corust Agent",
+        // `~/.corust-agent` (P17). `CORUST_HOME` is not honoured.
+        detect_dirs: &[home(".corust-agent")],
+        group: VirtualGroup::AgentsStandard,
+        // Read facts: addendum § Shared-dir reads, row "Corust Agent".
+        // VERIFIED dirs P17 (v0.6.0 binary strings, re-checked 2026-11-06):
+        // `~/.corust-agent/skills` and `~/.agents/skills`, "keeping the first
+        // match"; own-first order LIKELY, `.claude` UNKNOWN.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Unknown,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Unknown,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[AlsoRead {
+                dir: home(".corust-agent/skills"),
+                mode: ReadMode::Default,
+            }],
+        },
+    },
+];
 
 /// Every reader-only harness, in registry order (plus, in tests, the calling
 /// thread's test-only rows).
@@ -1946,7 +2818,7 @@ pub fn reader_only_harnesses() -> Vec<&'static ReaderOnlyHarness> {
 pub fn readers_of(group: VirtualGroup) -> Vec<&'static ReaderOnlyHarness> {
     reader_only_harnesses()
         .into_iter()
-        .filter(|reader| reader.reads == group)
+        .filter(|reader| reader.group == group)
         .collect()
 }
 
@@ -2051,7 +2923,8 @@ pub mod test_overrides {
             key: "test_reader",
             display_name: "Test Reader",
             detect_dirs: SAMPLE_READER_DETECT,
-            reads: VirtualGroup::AgentsStandard,
+            group: VirtualGroup::AgentsStandard,
+            reads: super::ReadFacts::UNKNOWN,
         })
     }
 

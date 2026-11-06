@@ -76,7 +76,23 @@ fn the_group_roster_is_carried_at_project_scope_only() {
             "Cline",
             "Gemini CLI",
             "GitHub Copilot",
-        ]
+            // round 20 ticket 07 rows
+            "Letta Code",
+            "Muse Code",
+            "Poolside",
+            "Dirac",
+            // round 20 ticket 05 rows
+            "Warp",
+            "Zed",
+            "Dexto",
+            "fx",
+            "Sarvam Code",
+            "VT Code",
+            "DimCode",
+            "crow-cli",
+            "Corust Agent",
+        ],
+        "adapters first, then the reader-only members"
     );
 }
 
@@ -190,7 +206,12 @@ fn project_catalog_absorbs_constituents_into_the_virtual_group() {
         );
         assert!(agents.constituents.contains(&a.display_name));
     }
-    assert_eq!(agents.constituents.len(), 9);
+    assert_eq!(
+        agents.constituents.len(),
+        constituents_of(VirtualGroup::AgentsStandard).count()
+            + crate::core::tool_adapters::reader_only_harnesses().len(),
+        "every adapter member plus every reader-only member"
+    );
     // Real tools keep no constituents.
     assert!(entry(&entries, "claude_code").constituents.is_empty());
 }
@@ -293,12 +314,14 @@ fn a_reader_only_harness_is_listed_under_the_agents_entry_never_as_a_target() {
     let entries = global_tool_entries(&roots);
     assert!(entries.iter().all(|e| e.key != reader.key), "not an entry");
     assert_eq!(
-        entry(&entries, agents_key).readers,
-        vec![ReaderEntry {
+        entry(&entries, agents_key).readers.last(),
+        Some(&ReaderEntry {
             key: reader.key,
             label: reader.display_name,
             installed: false,
-        }]
+            duplicate_readers: None,
+        }),
+        "the test row follows the shipped readers"
     );
     assert!(
         entries
@@ -314,7 +337,14 @@ fn a_reader_only_harness_is_listed_under_the_agents_entry_never_as_a_target() {
     );
     mark_reader_installed_in(&roots, reader);
     let entries = global_tool_entries(&roots);
-    assert!(entry(&entries, agents_key).readers[0].installed, "detected");
+    assert!(
+        entry(&entries, agents_key)
+            .readers
+            .last()
+            .unwrap()
+            .installed,
+        "detected"
+    );
     assert!(
         entry(&entries, agents_key).installed,
         "a detected reader makes its group installed: the group is its only way in"
@@ -341,7 +371,8 @@ fn the_project_agents_group_absorbs_reader_only_harnesses() {
     assert_eq!(agents.constituents.last(), Some(&reader.display_name));
     assert_eq!(
         agents.constituents.len(),
-        constituents_of(VirtualGroup::AgentsStandard).count() + 1
+        constituents_of(VirtualGroup::AgentsStandard).count()
+            + crate::core::tool_adapters::reader_only_harnesses().len()
     );
     assert!(!agents.installed);
     assert!(agents.readers.is_empty(), "absorbed, not listed apart");
@@ -475,6 +506,114 @@ fn the_project_catalog_carries_no_pairs() {
     assert!(project_tool_entries(&roots)
         .iter()
         .all(|e| e.duplicate_readers.is_none()));
+}
+
+// ---------------------------------------------------------------------------
+// round 20 ticket 05 rows: reader-only harnesses' cross-read pairs
+// ---------------------------------------------------------------------------
+
+fn reader_entry_of(roots: &HostRoots, key: &str) -> ReaderEntry {
+    entry(&global_tool_entries(roots), ToolId::AgentsStandard.as_key())
+        .readers
+        .iter()
+        .find(|reader| reader.key == key)
+        .cloned()
+        .unwrap_or_else(|| panic!("reader {key}"))
+}
+
+fn install_reader(roots: &HostRoots, key: &str) {
+    let reader = crate::core::tool_adapters::reader_only_harnesses()
+        .into_iter()
+        .find(|reader| reader.key == key)
+        .unwrap_or_else(|| panic!("reader {key}"));
+    mark_reader_installed_in(roots, reader);
+}
+
+/// fx reads `~/.agents/skills` (the folder its group entry deploys to) and
+/// also `~/.claude/skills`, `~/.codex/skills` and OpenCode's folder: with
+/// those installed, a skill deployed to `.agents/skills` and one of them
+/// can't be invoked by name in fx (brief T35) — the pair is carried on fx's
+/// reader entry, its own deploy dir being the group entry's.
+#[test]
+fn fx_reads_the_claude_codex_and_opencode_folders_beside_the_agents_folder() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    for key in ["claude_code", "codex", "opencode", "cursor"] {
+        install(home.path(), key);
+    }
+    assert_eq!(
+        reader_entry_of(&roots, "fx").duplicate_readers,
+        None,
+        "an undetected reader sees nothing"
+    );
+
+    install_reader(&roots, "fx");
+    assert_eq!(
+        reader_entry_of(&roots, "fx").duplicate_readers,
+        Some(DuplicateReads {
+            keys: vec!["claude_code", "codex", "opencode"],
+            behaviour: DuplicateBehaviour::LoadsNone,
+        })
+    );
+}
+
+/// Zed reads only `~/.agents/skills`: never a pair. A reader whose read of
+/// that folder is not verified (Sarvam Code, LIKELY) carries none either.
+#[test]
+fn a_reader_of_the_agents_folder_alone_or_unverified_carries_no_pair() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    for key in ["claude_code", "codex", "opencode", "cursor"] {
+        install(home.path(), key);
+    }
+    for key in ["zed", "sarvam_code"] {
+        install_reader(&roots, key);
+        assert_eq!(
+            reader_entry_of(&roots, key).duplicate_readers,
+            None,
+            "{key}"
+        );
+    }
+}
+
+/// Warp lists every copy in every folder it reads (brief T22).
+#[test]
+fn warp_shows_every_copy_of_the_folders_it_also_reads() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    for key in ["claude_code", "codex", "cursor", "droid", "pi"] {
+        install(home.path(), key);
+    }
+    install_reader(&roots, "warp");
+    assert_eq!(
+        reader_entry_of(&roots, "warp").duplicate_readers,
+        Some(DuplicateReads {
+            keys: vec!["cursor", "claude_code", "codex", "droid"],
+            behaviour: DuplicateBehaviour::ShowsAll,
+        })
+    );
+}
+
+// round 20 ticket 07 rows
+/// Kimchi reads another agent's folder "if installed" — the very condition a
+/// pair requires, so the read counts: Kimchi with Pi installed sees a Pi
+/// deployment beside its own. Its `~/.claude/skills` read is opt-in, so
+/// Claude Code makes no pair.
+#[test]
+fn kimchi_reads_an_installed_agents_folder_but_not_claudes_by_default() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    for key in ["kimchi", "pi", "claude_code"] {
+        install(home.path(), key);
+    }
+
+    assert_eq!(
+        duplicate_readers_of(&roots, "kimchi"),
+        Some(DuplicateReads {
+            keys: vec!["pi"],
+            behaviour: DuplicateBehaviour::Shadows,
+        })
+    );
 }
 
 // round 20 ticket 06 rows
