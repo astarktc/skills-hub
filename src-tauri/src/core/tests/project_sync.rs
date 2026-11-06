@@ -326,10 +326,10 @@ fn unassign_failure_keeps_the_row_as_error_and_reports_the_path() {
         panic!("expected failed target");
     };
     match error {
-        crate::core::errors::CommandError::Other { message } => {
-            assert!(message.contains(target.to_str().unwrap()));
+        crate::core::errors::CommandError::RemovalPermissionDenied { path, .. } => {
+            assert_eq!(path, &target.to_string_lossy());
         }
-        other => panic!("expected classified removal failure, got {other:?}"),
+        other => panic!("expected the typed removal-permission failure, got {other:?}"),
     }
     assert!(store.get_skill_by_id(&skill.id).unwrap().is_some());
 

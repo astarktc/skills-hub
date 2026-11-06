@@ -115,9 +115,12 @@ export type FixtureBackendOptions = {
 type ProgressSink<T> = Pick<Channel<T>, "onmessage">;
 
 const permissionDeniedText = (path: string) => `Permission denied (os error 13): ${path}`;
+/** A removal the OS refuses for lack of permission — typed like Rust's
+ * `sync_engine::remove_path_any` (`REMOVAL_PERMISSION_DENIED`, BACKLOG #76). */
 const PERMISSION_DENIED = (path: string): CommandError => ({
-  code: "OTHER",
-  message: permissionDeniedText(path),
+  code: "REMOVAL_PERMISSION_DENIED",
+  path,
+  detail: permissionDeniedText(path),
 });
 
 export function createFixtureBackend(
@@ -1044,8 +1047,9 @@ export function createFixtureBackend(
       // TARGET_EXISTS; an owner replaces it.
       const occupied =
         firstSync && state.foreign.some((f) => `${globalRoot(f.tool)}/${f.name}` === driverPath);
-      // An unwritable dir surfaces as the sync engine's io error, which the
-      // command seam classifies as `OTHER` (not the batch's TOOL_NOT_WRITABLE).
+      // An unwritable dir refuses the replacement's removal of the existing
+      // copy: the typed removal-permission failure (not the batch's
+      // TOOL_NOT_WRITABLE).
       const error: CommandError | null = centralMissing
         ? missingSource(skill)
         : state.unwritableTools.includes(installed[0].tool)

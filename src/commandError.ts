@@ -46,6 +46,7 @@ const COMMAND_ERROR_CODE_MAP = {
   CREDENTIAL_STORE_UNAVAILABLE: true,
   IDENTITY_UNKNOWN: true,
   REMOVAL_REFUSED: true,
+  REMOVAL_PERMISSION_DENIED: true,
   EDIT_CONFLICT: true,
   OTHER: true,
 } as const satisfies Record<CommandError["code"], true>;
@@ -168,6 +169,10 @@ export function describeCommandError(
           : "errors.removalRefusedResolvesElsewhere",
         { path: e.path, resolved: e.resolved },
       );
+    case "REMOVAL_PERMISSION_DENIED":
+      // The OS refused for lack of permission: say what to check and that a
+      // retry fails the same way; the I/O chain stays in `detail` for the log.
+      return t("errors.removalPermissionDenied", { path: e.path });
     case "SKILL_MANIFEST_IO":
       return withDetail(t("errors.skillManifestIo", { path: e.path }), e.detail);
     case "SOURCE_PATH_MISSING":

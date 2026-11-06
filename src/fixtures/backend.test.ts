@@ -300,8 +300,8 @@ describe("failures", () => {
     }
 
     const copies = await statusOf(tdd.id);
-    expect(copies.amp).toMatchObject({ status: "failed", error: { code: "OTHER" } });
-    expect(copies.kimi_cli).toMatchObject({ status: "failed", error: { code: "OTHER" } });
+    expect(copies.amp).toMatchObject({ status: "failed", error: { code: "REMOVAL_PERMISSION_DENIED" } });
+    expect(copies.kimi_cli).toMatchObject({ status: "failed", error: { code: "REMOVAL_PERMISSION_DENIED" } });
     const copyRows = (await byName(handlers, "tdd")).targets;
     expect(copyRows.find((r) => r.tool === "amp")).toMatchObject({ mode: "copy", status: "error" });
   });
@@ -1048,7 +1048,7 @@ describe("F2: unwritable dirs refuse removal too (ADR-0002)", () => {
     const report = await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: docx.id, tool: "amp" });
     expect(report.targets).toHaveLength(1);
     expect(report.targets[0].rows.map((r) => r.tool).sort()).toEqual(["amp", "kimi_cli"]);
-    expect(report.targets[0].status).toMatchObject({ status: "failed", error: { code: "OTHER" } });
+    expect(report.targets[0].status).toMatchObject({ status: "failed", error: { code: "REMOVAL_PERMISSION_DENIED" } });
     const rows = (await byName(handlers, "docx")).targets.filter((r) => r.tool === "amp" || r.tool === "kimi_cli");
     expect(rows.map((r) => r.status)).toEqual(["error", "error"]);
   });

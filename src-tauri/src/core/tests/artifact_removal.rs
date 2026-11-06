@@ -775,8 +775,10 @@ fn a_failed_removal_keeps_every_attached_row_with_status_error() {
     }
 }
 
-/// An untyped I/O failure is classified at settlement with its full diagnostic
-/// chain. The persisted row still carries the original diagnostic, not JSON.
+/// A permission failure is classified at settlement as the typed
+/// `REMOVAL_PERMISSION_DENIED` (BACKLOG #76) naming the path, its I/O chain
+/// kept as the diagnostic. The persisted row still carries the original
+/// diagnostic chain, not JSON.
 #[cfg(unix)]
 #[test]
 fn a_failed_removal_classifies_the_error_after_persisting_its_chain() {
@@ -797,14 +799,16 @@ fn a_failed_removal_classifies_the_error_after_persisting_its_chain() {
     assert_eq!(report.targets.len(), 1);
     match &report.targets[0].status {
         RemovalTargetStatus::Failed {
-            error: CommandError::Other { message },
+            error: CommandError::RemovalPermissionDenied { path, detail },
         } => {
-            assert!(message.contains(shared.to_str().unwrap()));
+            assert_eq!(path, &shared.to_string_lossy());
+            assert!(detail.contains("Permission denied"), "{detail}");
             let row = store.get_skill_target(&skill.id, "amp").unwrap().unwrap();
-            assert_eq!(row.last_error.as_deref(), Some(message.as_str()));
-            assert!(message.contains("Permission denied"));
+            let chain = row.last_error.expect("the chain is recorded");
+            assert!(chain.contains(shared.to_str().unwrap()), "{chain}");
+            assert!(chain.contains("Permission denied"), "{chain}");
         }
-        other => panic!("the stuck artifact must report a classified I/O failure: {other:?}"),
+        other => panic!("the stuck artifact must report the typed permission failure: {other:?}"),
     }
 }
 
@@ -948,6 +952,15 @@ fn an_unstattable_target_is_treated_as_present_and_keeps_its_row_with_status_err
     fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
 
     assert_eq!(report.failed_rows(), 1, "the target reports Failed");
+    assert!(
+        matches!(
+            &report.targets[0].status,
+            RemovalTargetStatus::Failed {
+                error: CommandError::RemovalPermissionDenied { .. }
+            }
+        ),
+        "a permission-denied stat is the typed permission failure: {report}"
+    );
     assert_eq!(report.removed_rows(), 0);
     assert!(exists_any(&target), "the artifact is in fact still there");
     let kept = store
@@ -1053,8 +1066,8 @@ fn remove_skill_keeps_the_skill_and_reports_partial_failure() {
     assert_eq!(report.targets.len(), 1);
     assert_eq!(report.targets[0].path, bad);
     assert!(matches!(&report.targets[0].status,
-        RemovalTargetStatus::Failed { error: CommandError::Other { message } }
-        if message.contains(bad.to_str().unwrap())
+        RemovalTargetStatus::Failed { error: CommandError::RemovalPermissionDenied { path, .. } }
+        if path == &bad.to_string_lossy()
     ));
     // ADR-0002: nothing is deleted blind — the skill, its central copy and
     // its row survive so the operator can retry.
