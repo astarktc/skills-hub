@@ -2,6 +2,7 @@ import type {
   BatchTargetOutcome,
   CommandError,
   EnableReport,
+  GitCacheCleanup,
   ImportGroupStatus,
   ImportReport,
   InstallBatchReport,
@@ -1763,6 +1764,26 @@ const KEPT_OLD_COPY_KEYS: Record<KeptOldCopyReason, { title: string; message: st
 
 function keptOldCopyKeys(reason: LeftBehindReason): { title: string; message: string } | undefined {
   return Object.hasOwn(KEPT_OLD_COPY_KEYS, reason) ? KEPT_OLD_COPY_KEYS[reason as KeptOldCopyReason] : undefined;
+}
+
+/**
+ * Clean Now's counts → its one toast: "Cleared N cached repos", plus "; M in
+ * use, skipped" when an acquisition was using M entries (omitted at zero). A
+ * skipped entry is not a failure — the tone is `skipped`. Nothing on screen
+ * reads the git cache, so nothing reloads or closes.
+ */
+export function gitCacheCleanOutcome(
+  cleanup: GitCacheCleanup,
+  ctx: ReportContext,
+): Outcome<PlainEntry> {
+  const out = empty();
+  out.completion = { reload: false, closeModal: false, conflict: false };
+  const cleared = ctx.t("gitCacheClean.cleared", { count: cleanup.cleared });
+  out.toast =
+    cleanup.in_use > 0
+      ? toast("skipped", ctx.t("gitCacheClean.withInUse", { cleared, count: cleanup.in_use }))
+      : toast("success", cleared);
+  return out;
 }
 
 /**

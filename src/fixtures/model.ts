@@ -152,6 +152,8 @@ export type FixtureState = {
   /** Folders the fake native picker answers with, in rotation. */
   dialogPicks: string[];
   gitCacheEntries: number;
+  /** Of `gitCacheEntries`, how many an acquisition is using: Clean Now skips them. */
+  gitCacheEntriesInUse: number;
   /** Monotonic id source. */
   nextId: number;
   cancelRequested: boolean;

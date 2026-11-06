@@ -515,7 +515,7 @@ fn git_repoint_to_another_repo_propagates_every_existing_scope() {
 /// repository-name resolution exercises acquisition without external networking.
 fn seed_repoint_repository(f: &Fixture, matching_name: bool) {
     use crate::core::git_cache::{
-        fetch_through_cache, repo_cache_key, CacheKeyInputs, FetchRequest,
+        fetch_through_cache, repo_cache_key, CacheKeyInputs, CachedCheckout, FetchRequest,
     };
     let repo = fixture_repo();
     if matching_name {
@@ -540,7 +540,7 @@ fn seed_repoint_repository(f: &Fixture, matching_name: bool) {
     git(&["add", "-A"], repo.path());
     git(&["commit", "-q", "-m", "two skills"], repo.path());
     let url = repo.path().to_string_lossy();
-    let (cached, _) = fetch_through_cache(
+    let CachedCheckout { dir: cached, .. } = fetch_through_cache(
         &f.paths.cache_dir,
         &crate::core::removal_fence::ProtectedLibrary::new(&f.store, &f.paths.central_dir),
         &FetchRequest {
@@ -562,7 +562,7 @@ fn seed_repoint_repository(f: &Fixture, matching_name: bool) {
 #[test]
 fn git_repoint_root_manifest_stores_no_subpath() {
     use crate::core::git_cache::{
-        fetch_through_cache, repo_cache_key, CacheKeyInputs, FetchRequest,
+        fetch_through_cache, repo_cache_key, CacheKeyInputs, CachedCheckout, FetchRequest,
     };
     let f = git_repoint_fixture();
     let repo = fixture_repo();
@@ -573,7 +573,7 @@ fn git_repoint_root_manifest_stores_no_subpath() {
     .unwrap();
     git(&["add", "-A"], repo.path());
     git(&["commit", "-q", "-m", "root skill"], repo.path());
-    let (cached, _) = fetch_through_cache(
+    let CachedCheckout { dir: cached, .. } = fetch_through_cache(
         &f.paths.cache_dir,
         &crate::core::removal_fence::ProtectedLibrary::new(&f.store, &f.paths.central_dir),
         &FetchRequest {

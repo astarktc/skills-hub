@@ -4,6 +4,7 @@
 // rather than literals. The backend is mocked at the invokeTauri module seam.
 
 import { act, renderHook, waitFor } from "@testing-library/react";
+import i18next from "i18next";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AppSettings,
@@ -13,7 +14,14 @@ import type {
   LibraryMoveResultDto,
   SettingUpdate,
 } from "../components/skills/types";
-import { ActionExit, useStatusReporter, type StatusReporter } from "./useStatusReporter";
+import { resources } from "../i18n/resources";
+import { describeRefusal } from "../lib/actionLifecycle";
+import {
+  ActionExit,
+  useStatusReporter,
+  type StatusReporter,
+  type TranslateFn,
+} from "./useStatusReporter";
 import type { AskAnswer, SurfaceState } from "./useSurfaceState";
 
 vi.mock("sonner", () => ({
@@ -932,5 +940,122 @@ describe("useSettingsState a resumed Library move", () => {
     expect(
       result.current.reporter.notifications.some((entry) => entry.runLabel === "libraryMove.resumedLabel"),
     ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Clean Now (round 20 #04): under the real lifecycle, in English.
+// ---------------------------------------------------------------------------
+
+async function english(): Promise<TranslateFn> {
+  const i18n = i18next.createInstance();
+  await i18n.init({ resources, lng: "en", interpolation: { escapeValue: false } });
+  return i18n.t.bind(i18n) as unknown as TranslateFn;
+}
+
+/** The backend for Clean Now: `clearGitCacheNow` waits until `finish()`. */
+function stubCleanBackend(answer: { cleared: number; in_use: number }) {
+  stubBackend();
+  let finish: () => void = () => {};
+  const base = mockInvoke.getMockImplementation()!;
+  mockInvoke.mockImplementation((command, ...args) =>
+    command === "clearGitCacheNow"
+      ? new Promise((resolve) => (finish = () => resolve(answer)))
+      : base(command, ...args),
+  );
+  return { finish: () => finish() };
+}
+
+function renderClean(tr: TranslateFn) {
+  return renderHook(() => {
+    const reporter = useStatusReporter(tr);
+    const settings = useSettingsState({
+      t: tr,
+      reporter,
+      surface: noSurface(),
+      library: { replaceCatalog: vi.fn(), loadManagedSkills: vi.fn(async () => {}) },
+      projects: { reloadViews: vi.fn(async () => {}) },
+    });
+    return { reporter, settings };
+  });
+}
+
+describe("useSettingsState Clean Now", () => {
+  it("runs under the lifecycle and toasts what it cleared and what was in use", async () => {
+    const en = await english();
+    const backend = stubCleanBackend({ cleared: 3, in_use: 1 });
+    const { result } = renderClean(en);
+    await waitFor(() => expect(commandsCalled()).toContain("getSettings"));
+
+    let done: Promise<void> = Promise.resolve();
+    act(() => {
+      done = result.current.settings.handleClearGitCacheNow();
+    });
+    await waitFor(() => expect(commandsCalled()).toContain("clearGitCacheNow"));
+    expect(result.current.reporter.pending).toMatchObject({
+      label: "Clean the git cache",
+      activity: "Cleaning the git cache",
+      cancellable: false,
+    });
+
+    await act(async () => {
+      backend.finish();
+      await done;
+    });
+    const { toast } = await import("sonner");
+    expect(vi.mocked(toast.warning)).toHaveBeenCalledWith(
+      "Cleared 3 cached repos; 1 in use, skipped",
+      expect.anything(),
+    );
+    expect(result.current.reporter.pending).toBeNull();
+  });
+
+  it("omits the in-use clause when nothing was in use", async () => {
+    const en = await english();
+    const backend = stubCleanBackend({ cleared: 1, in_use: 0 });
+    const { result } = renderClean(en);
+    await waitFor(() => expect(commandsCalled()).toContain("getSettings"));
+
+    await act(async () => {
+      const done = result.current.settings.handleClearGitCacheNow();
+      backend.finish();
+      await done;
+    });
+    const { toast } = await import("sonner");
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Cleared 1 cached repo", expect.anything());
+  });
+
+  it("is refused with the running action's reason while another action runs", async () => {
+    const en = await english();
+    stubCleanBackend({ cleared: 0, in_use: 0 });
+    const { result } = renderClean(en);
+    await waitFor(() => expect(commandsCalled()).toContain("getSettings"));
+    let release: () => void = () => {};
+    let other: Promise<unknown> = Promise.resolve();
+    act(() => {
+      other = result.current.reporter.runAction(
+        { label: "Update all" },
+        () => new Promise<void>((resolve) => (release = resolve)),
+      );
+    });
+    // The reason App hands the held Clean Now control (`blockedReason`: its
+    // title, focusable while disabled) names what runs.
+    const reason = describeRefusal(result.current.reporter.refusal!, en);
+    expect(reason).toContain("Update all");
+
+    await act(async () => {
+      await result.current.settings.handleClearGitCacheNow();
+    });
+
+    expect(commandsCalled()).not.toContain("clearGitCacheNow");
+    const { toast } = await import("sonner");
+    expect(vi.mocked(toast.info)).toHaveBeenCalledWith(
+      reason,
+      expect.objectContaining({ id: "lifecycle-refusal" }),
+    );
+    await act(async () => {
+      release();
+      await other;
+    });
   });
 });

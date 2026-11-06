@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use super::{
     explore_preview_key, fetch_through_cache, key_lock, repo_cache_key,
-    repo_cache_key_under_policy, CacheKeyInputs, FetchRequest,
+    repo_cache_key_under_policy, with_idle_entry, CacheKeyInputs, CachedCheckout, FetchRequest,
 };
 use crate::core::cancel_token::CancelToken;
 use crate::core::errors::SignalError;
@@ -177,7 +177,11 @@ fn fetch_within_ttl_serves_the_cached_head() {
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (dir_a, head_a) = fetch_through_cache(
+    let CachedCheckout {
+        dir: dir_a,
+        head: head_a,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &request(&url, FRESH_TTL_MS),
@@ -186,7 +190,11 @@ fn fetch_within_ttl_serves_the_cached_head() {
 
     commit_more(repo.path(), "second.txt");
 
-    let (dir_b, head_b) = fetch_through_cache(
+    let CachedCheckout {
+        dir: dir_b,
+        head: head_b,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &request(&url, FRESH_TTL_MS),
@@ -205,14 +213,22 @@ fn fetch_with_zero_ttl_always_refetches() {
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (_dir, head_a) = fetch_through_cache(
+    let CachedCheckout {
+        dir: _dir,
+        head: head_a,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &request(&url, 0),
     )
     .expect("first fetch");
     commit_more(repo.path(), "second.txt");
-    let (_dir, head_b) = fetch_through_cache(
+    let CachedCheckout {
+        dir: _dir,
+        head: head_b,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &request(&url, 0),
@@ -229,7 +245,11 @@ fn fetch_past_the_ttl_boundary_refetches() {
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (repo_dir, head_a) = fetch_through_cache(
+    let CachedCheckout {
+        dir: repo_dir,
+        head: head_a,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &request(&url, FRESH_TTL_MS),
@@ -246,7 +266,11 @@ fn fetch_past_the_ttl_boundary_refetches() {
 
     commit_more(repo.path(), "second.txt");
 
-    let (_dir, head_b) = fetch_through_cache(
+    let CachedCheckout {
+        dir: _dir,
+        head: head_b,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &request(&url, FRESH_TTL_MS),
@@ -275,7 +299,7 @@ fn corrupt_cache_dir_is_rebuilt_once() {
     fs::create_dir_all(&repo_dir).expect("create corrupt dir");
     fs::write(repo_dir.join("garbage.txt"), "not a repo").expect("write garbage");
 
-    let (dir, head) = fetch_through_cache(
+    let CachedCheckout { dir, head, .. } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &request(&url, FRESH_TTL_MS),
@@ -466,7 +490,9 @@ fn cancelled_fetch_leaves_no_fresh_entry() {
     );
 
     // And the cache still works afterwards.
-    let (_dir, head) = fetch_through_cache(
+    let CachedCheckout {
+        dir: _dir, head, ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &request(&url, FRESH_TTL_MS),
@@ -494,6 +520,54 @@ fn the_same_key_serialises() {
     assert!(
         key_lock("serialise-key").try_lock().is_ok(),
         "the key is free again once the first fetch finishes"
+    );
+}
+
+/// Round 20 #04: the key lock is released when the fetch returns, but the
+/// caller still reads the checkout (copies a skill out, lists candidates).
+/// The checkout it was handed keeps the entry in use until it is dropped —
+/// the cleanup's try-lock door answers "in use" meanwhile, and a second
+/// reader of the same entry is not blocked by the first.
+#[test]
+fn a_handed_out_checkout_keeps_its_entry_in_use_until_dropped() {
+    let repo = fixture_repo();
+    let url = url_of(repo.path());
+    let cache = tempfile::tempdir().expect("tempdir");
+    let key = repo_cache_key(&CacheKeyInputs {
+        clone_url: &url,
+        branch: None,
+    });
+
+    let first = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect("fetch");
+    assert!(
+        key_lock(&key).try_lock().is_ok(),
+        "the key lock itself is free once the fetch returns"
+    );
+    assert!(
+        with_idle_entry(&key, || ()).is_none(),
+        "a reader holds the entry"
+    );
+
+    let second = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect("a second reader is served alongside the first");
+    drop(first);
+    assert!(
+        with_idle_entry(&key, || ()).is_none(),
+        "the second reader still holds it"
+    );
+    drop(second);
+    assert!(
+        with_idle_entry(&key, || ()).is_some(),
+        "idle once every reader is done"
     );
 }
 
@@ -551,8 +625,8 @@ fn concurrent_fetches_of_different_repos_both_succeed() {
             )
             .expect("fetch b")
         });
-        let (dir_a, _) = one.join().expect("thread a");
-        let (dir_b, _) = two.join().expect("thread b");
+        let CachedCheckout { dir: dir_a, .. } = one.join().expect("thread a");
+        let CachedCheckout { dir: dir_b, .. } = two.join().expect("thread b");
         assert_ne!(dir_a, dir_b, "different repos get different cache dirs");
     });
 }
@@ -598,7 +672,11 @@ fn a_full_entry_serves_a_later_subpath_request() {
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (listing_dir, listing_head) = fetch_through_cache(
+    let CachedCheckout {
+        dir: listing_dir,
+        head: listing_head,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &request(&url, FRESH_TTL_MS),
@@ -607,7 +685,11 @@ fn a_full_entry_serves_a_later_subpath_request() {
 
     commit_more(repo.path(), "after-listing.txt");
 
-    let (install_dir, install_head) = fetch_through_cache(
+    let CachedCheckout {
+        dir: install_dir,
+        head: install_head,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &FetchRequest {
@@ -639,7 +721,9 @@ fn a_sparse_entry_does_not_serve_a_later_full_request() {
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (sparse_dir, _) = fetch_through_cache(
+    let CachedCheckout {
+        dir: sparse_dir, ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &FetchRequest {
@@ -654,7 +738,9 @@ fn a_sparse_entry_does_not_serve_a_later_full_request() {
         "precondition: the sparse entry holds only skills/a"
     );
 
-    let (listing_dir, _) = fetch_through_cache(
+    let CachedCheckout {
+        dir: listing_dir, ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &request(&url, FRESH_TTL_MS),
@@ -678,7 +764,11 @@ fn widening_does_not_renew_freshness() {
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (repo_dir, head_a) = fetch_through_cache(
+    let CachedCheckout {
+        dir: repo_dir,
+        head: head_a,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &FetchRequest {
@@ -691,7 +781,11 @@ fn widening_does_not_renew_freshness() {
     set_entry_fetch_time(&repo_dir, halfway);
     commit_more(repo.path(), "after-sparse.txt");
 
-    let (_dir, head_b) = fetch_through_cache(
+    let CachedCheckout {
+        dir: _dir,
+        head: head_b,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &request(&url, FRESH_TTL_MS),
@@ -721,13 +815,21 @@ fn a_second_install_after_ttl_expiry_fetches_again() {
         ..request(&url, FRESH_TTL_MS)
     };
 
-    let (repo_dir, listing_head) = fetch_through_cache(
+    let CachedCheckout {
+        dir: repo_dir,
+        head: listing_head,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &request(&url, FRESH_TTL_MS),
     )
     .expect("listing fetch");
-    let (_dir, install_head) = fetch_through_cache(
+    let CachedCheckout {
+        dir: _dir,
+        head: install_head,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &install("skills/a"),
@@ -741,7 +843,11 @@ fn a_second_install_after_ttl_expiry_fetches_again() {
     age_entry_past_ttl(&repo_dir);
     commit_more(repo.path(), "after-install.txt");
 
-    let (later_dir, later_head) = fetch_through_cache(
+    let CachedCheckout {
+        dir: later_dir,
+        head: later_head,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &install("skills/a"),
@@ -790,13 +896,21 @@ fn a_second_subpath_widens_the_entry_without_removing_the_first() {
         ..request(&url, FRESH_TTL_MS)
     };
 
-    let (dir_a, head_a) = fetch_through_cache(
+    let CachedCheckout {
+        dir: dir_a,
+        head: head_a,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &install("skills/a"),
     )
     .expect("a");
-    let (dir_b, head_b) = fetch_through_cache(
+    let CachedCheckout {
+        dir: dir_b,
+        head: head_b,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &install("skills/b"),
@@ -819,7 +933,9 @@ fn a_second_subpath_widens_the_entry_without_removing_the_first() {
     );
 
     // And now both are covered: a third request for either is a plain hit.
-    let (_, head_again) = fetch_through_cache(
+    let CachedCheckout {
+        head: head_again, ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &install("skills/a"),
@@ -842,14 +958,22 @@ fn the_cache_record_and_the_sparse_pattern_normalise_a_subpath_identically() {
         ..request(&url, FRESH_TTL_MS)
     };
 
-    let (repo_dir, head_a) = fetch_through_cache(
+    let CachedCheckout {
+        dir: repo_dir,
+        head: head_a,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &install("/skills/a/"),
     )
     .expect("first spelling");
     commit_more(repo.path(), "after-first.txt");
-    let (_dir, head_b) = fetch_through_cache(
+    let CachedCheckout {
+        dir: _dir,
+        head: head_b,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &install("skills/./a"),
@@ -898,7 +1022,7 @@ fn a_clone_without_a_record_is_refetched_full_never_narrowed() {
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (repo_dir, _) = fetch_through_cache(
+    let CachedCheckout { dir: repo_dir, .. } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &request(&url, FRESH_TTL_MS),
@@ -907,7 +1031,7 @@ fn a_clone_without_a_record_is_refetched_full_never_narrowed() {
     let meta_path = repo_dir.join(".skills-hub-cache.json");
     fs::remove_file(&meta_path).expect("drop the sidecar");
 
-    let (dir, _) = fetch_through_cache(
+    let CachedCheckout { dir, .. } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &FetchRequest {
@@ -936,7 +1060,7 @@ fn a_clone_with_an_unparseable_record_is_refetched_full_never_narrowed() {
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (repo_dir, _) = fetch_through_cache(
+    let CachedCheckout { dir: repo_dir, .. } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &request(&url, FRESH_TTL_MS),
@@ -944,7 +1068,7 @@ fn a_clone_with_an_unparseable_record_is_refetched_full_never_narrowed() {
     .expect("listing fetch");
     fs::write(repo_dir.join(".skills-hub-cache.json"), "{not json").expect("corrupt the sidecar");
 
-    let (dir, _) = fetch_through_cache(
+    let CachedCheckout { dir, .. } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &FetchRequest {
@@ -971,7 +1095,7 @@ fn a_failed_record_write_does_not_fail_the_fetch() {
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (repo_dir, _) = fetch_through_cache(
+    let CachedCheckout { dir: repo_dir, .. } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &request(&url, FRESH_TTL_MS),
@@ -981,7 +1105,7 @@ fn a_failed_record_write_does_not_fail_the_fetch() {
     fs::remove_file(&meta_path).expect("drop the sidecar");
     fs::create_dir(&meta_path).expect("block the sidecar path");
 
-    let (dir, head) = fetch_through_cache(
+    let CachedCheckout { dir, head, .. } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &request(&url, FRESH_TTL_MS),
@@ -1038,7 +1162,7 @@ fn a_pre_policy_entry_is_neither_served_nor_touched() {
     fs::write(old_entry.join("SKILL.md"), crlf).expect("crlf bytes");
     let old_index = fs::read(old_entry.join(".git/index")).expect("old index");
 
-    let (dir, head) = fetch_through_cache(
+    let CachedCheckout { dir, head, .. } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &request(&url, FRESH_TTL_MS),
@@ -1083,7 +1207,11 @@ fn a_legacy_record_without_a_checkout_shape_reads_as_full() {
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (repo_dir, head_a) = fetch_through_cache(
+    let CachedCheckout {
+        dir: repo_dir,
+        head: head_a,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &request(&url, FRESH_TTL_MS),
@@ -1099,7 +1227,11 @@ fn a_legacy_record_without_a_checkout_shape_reads_as_full() {
 
     commit_more(repo.path(), "after-listing.txt");
 
-    let (_dir, head_b) = fetch_through_cache(
+    let CachedCheckout {
+        dir: _dir,
+        head: head_b,
+        ..
+    } = fetch_through_cache(
         cache.path(),
         &ProtectedLibrary::unrecorded(),
         &FetchRequest {

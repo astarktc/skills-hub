@@ -7,7 +7,7 @@ import type {
   SettingsBounds,
 } from "../components/skills/types";
 import { createProgressChannel, pickFolder, setZoom } from "../lib/platform";
-import { libraryMoveOutcome } from "../lib/reportOutcome";
+import { gitCacheCleanOutcome, libraryMoveOutcome } from "../lib/reportOutcome";
 import { invokeTauri, isTauri } from "../lib/tauri";
 import type { ProjectState } from "../components/projects/useProjectState";
 import type { SkillLibrary } from "./useSkillLibrary";
@@ -40,7 +40,6 @@ export type SettingsStateDeps = {
   reporter: Pick<
     StatusReporter,
     | "notifyError"
-    | "setSuccessToastMessage"
     | "notify"
     | "runAction"
     | "reportProgress"
@@ -91,8 +90,7 @@ export function useSettingsState({
   library,
   projects,
 }: SettingsStateDeps) {
-  const { notifyError, setSuccessToastMessage, notify, runAction, reportProgress, applyOutcome } =
-    reporter;
+  const { notifyError, notify, runAction, reportProgress, applyOutcome } = reporter;
   const { ask } = surface;
   const { replaceCatalog, loadManagedSkills } = library;
   const { reloadViews } = projects;
@@ -423,18 +421,25 @@ export function useSettingsState({
     [submitGithubToken],
   );
 
+  /**
+   * Clean Now (round 20 #04): a mutation under `runAction` — refused with the
+   * running action's reason while another runs, never queued; not
+   * cancellable. The backend skips (and counts) a cache entry an acquisition
+   * is using; `gitCacheCleanOutcome` folds the counts into the one toast.
+   */
   const handleClearGitCacheNow = useCallback(async () => {
     if (!isTauri) {
       notify("error", t("errors.notTauri"));
       return;
     }
-    try {
-      const removed = await invokeTauri("clearGitCacheNow");
-      setSuccessToastMessage(t("status.gitCacheCleared", { count: removed }));
-    } catch (err) {
-      notifyError(err);
-    }
-  }, [notify, notifyError, setSuccessToastMessage, t]);
+    await runAction(
+      { label: t("gitCacheClean.label"), activity: t("gitCacheClean.activity") },
+      async () => {
+        const cleanup = await invokeTauri("clearGitCacheNow");
+        await applyOutcome(gitCacheCleanOutcome(cleanup, { t }));
+      },
+    );
+  }, [applyOutcome, notify, runAction, t]);
 
   /** Reveal the backend log: partial forensics (backend-logged events) for earlier runs. */
   const handleOpenLogFolder = useCallback(async () => {

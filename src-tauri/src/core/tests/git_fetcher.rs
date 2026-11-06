@@ -303,7 +303,7 @@ fn ambient_child_a_pre_policy_cache_entry_is_left_alone() {
     use crate::core::content_identity::{read as identity, Source};
     use crate::core::git_cache::{
         fetch_through_cache, repo_cache_key, repo_cache_key_under_policy, CacheKeyInputs,
-        FetchRequest,
+        CachedCheckout, FetchRequest,
     };
 
     if ambient_child_home().is_none() {
@@ -360,7 +360,9 @@ fn ambient_child_a_pre_policy_cache_entry_is_left_alone() {
     );
     let old_bytes = snapshot(&old_entry);
 
-    let (dir, served) = fetch_through_cache(
+    let CachedCheckout {
+        dir, head: served, ..
+    } = fetch_through_cache(
         cache.path(),
         &crate::core::removal_fence::ProtectedLibrary::unrecorded(),
         &FetchRequest {

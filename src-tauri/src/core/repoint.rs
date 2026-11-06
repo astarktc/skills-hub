@@ -366,7 +366,6 @@ fn list_candidates(
                 cancel,
             },
         )
-        .map(|(dir, _revision)| dir)
     })?;
     check_cancelled(cancel)?;
     Ok(listing.candidates)

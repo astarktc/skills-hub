@@ -47,9 +47,19 @@
 //! > **The lock-table mutex is never held across a fetch.** Take the table
 //! > only long enough to get or insert the key's `Arc<Mutex<()>>`, release it,
 //! > then lock the key.
+//!
+//! **Readers outlive the key lock.** The fetch releases the key's lock when
+//! it returns, but its caller then reads the checkout (copies a skill out,
+//! lists candidates). So the fetch hands out a [`CachedCheckout`] carrying a
+//! reader lease on the key — taken while the key's lock is held, released
+//! when the checkout is dropped. Readers never block one another; they only
+//! keep the cache cleanup away ([`with_idle_entry`]: the key's lock taken
+//! with a try-lock, and no live lease), so Clean Now and the startup age-out
+//! never delete an entry an acquisition is using.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::{Context, Result};
@@ -138,19 +148,98 @@ impl Checkout {
     }
 }
 
-/// One `Arc<Mutex<()>>` per cache key. Entries are never removed: a cache key
-/// is a bounded, long-lived identity, and dropping one would let two fetches
-/// of the same repository race.
-static LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+/// One [`KeySlot`] per cache key. Entries are never removed: a cache key is a
+/// bounded, long-lived identity, and dropping one would let two fetches of
+/// the same repository race.
+static LOCKS: OnceLock<Mutex<HashMap<String, KeySlot>>> = OnceLock::new();
 
-/// The lock guarding one cache key. Crate-private so the module's own tests
-/// can assert the concurrency rule; nothing else may call it.
-pub(crate) fn key_lock(key: &str) -> Arc<Mutex<()>> {
+/// One cache key's concurrency state: the lock its fetches serialise on, and
+/// how many handed-out checkouts are still being read. `readers` only ever
+/// grows while `lock` is held, so whoever holds `lock` and reads zero knows
+/// no reader can appear until it lets go.
+#[derive(Clone)]
+struct KeySlot {
+    lock: Arc<Mutex<()>>,
+    readers: Arc<AtomicUsize>,
+}
+
+impl KeySlot {
+    /// Hand out the entry `dir` at `head` with a reader lease on this key.
+    /// Called only while this key's lock is held (see [`KeySlot`]).
+    fn checkout(&self, dir: PathBuf, head: String) -> CachedCheckout {
+        self.readers.fetch_add(1, Ordering::SeqCst);
+        CachedCheckout {
+            dir,
+            head,
+            _lease: ReaderLease(self.readers.clone()),
+        }
+    }
+}
+
+fn key_slot(key: &str) -> KeySlot {
     let table = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut map = table.lock().unwrap_or_else(|err| err.into_inner());
     map.entry(key.to_string())
-        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .or_insert_with(|| KeySlot {
+            lock: Arc::new(Mutex::new(())),
+            readers: Arc::new(AtomicUsize::new(0)),
+        })
         .clone()
+}
+
+/// The lock guarding one cache key — for tests that assert the concurrency
+/// rule or play an acquisition holding a key; production code reaches the
+/// locks only through [`fetch_through_cache`] and [`with_idle_entry`].
+#[cfg(test)]
+pub(crate) fn key_lock(key: &str) -> Arc<Mutex<()>> {
+    key_slot(key).lock
+}
+
+/// A cached clone handed out by [`fetch_through_cache`]: the entry's
+/// directory and head revision, plus a reader lease that keeps the cache
+/// cleanup off the entry until this value is dropped. Hold it for as long as
+/// the checkout is read.
+#[derive(Debug)]
+pub(crate) struct CachedCheckout {
+    pub dir: PathBuf,
+    pub head: String,
+    _lease: ReaderLease,
+}
+
+impl AsRef<Path> for CachedCheckout {
+    fn as_ref(&self) -> &Path {
+        &self.dir
+    }
+}
+
+/// One reader of a cache key; releases itself on drop.
+#[derive(Debug)]
+struct ReaderLease(Arc<AtomicUsize>);
+
+impl Drop for ReaderLease {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Run `reclaim` on the entry named `key` only while nothing uses it: its key
+/// lock is taken with a **try-lock** and held across `reclaim`, so no fetch
+/// can start on the entry — and no reader be handed it — meanwhile. A held
+/// lock, or a handed-out [`CachedCheckout`] still being read, answers `None`
+/// at once: the entry is in use, and is never waited on. An entry's directory
+/// name *is* its key ([`prepare_repo_dir`]), so the cache cleanup passes the
+/// name it reads off disk. This is the cleanup's only door into the locks.
+pub(crate) fn with_idle_entry<T>(key: &str, reclaim: impl FnOnce() -> T) -> Option<T> {
+    let slot = key_slot(key);
+    let _guard = match slot.lock.try_lock() {
+        Ok(guard) => guard,
+        Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(std::sync::TryLockError::WouldBlock) => return None,
+    };
+    if slot.readers.load(Ordering::SeqCst) > 0 {
+        return None;
+    }
+    Some(reclaim())
 }
 
 /// The inputs that identify one cached clone: the bytes' origin, never the
@@ -181,7 +270,8 @@ impl<'a> FetchRequest<'a> {
 }
 
 /// Clone (or refresh) `req.clone_url` into the git cache under `cache_dir`,
-/// returning the cached clone's directory and head revision.
+/// returning the cached clone's directory and head revision as a
+/// [`CachedCheckout`] — hold it while reading the checkout.
 ///
 /// Serves the cached head when the entry's metadata is within `req.ttl_ms`
 /// and its checkout covers `req.subpath` (widening the working tree in place
@@ -195,14 +285,14 @@ pub(crate) fn fetch_through_cache(
     cache_dir: &Path,
     library: &ProtectedLibrary<'_>,
     req: &FetchRequest,
-) -> Result<(PathBuf, String)> {
+) -> Result<CachedCheckout> {
     let started = std::time::Instant::now();
     let key = repo_cache_key(&req.key_inputs());
     let repo_dir = prepare_repo_dir(cache_dir, &key)?;
     let meta_path = repo_dir.join(".skills-hub-cache.json");
 
-    let lock = key_lock(&key);
-    let _guard = lock.lock().unwrap_or_else(|err| err.into_inner());
+    let slot = key_slot(&key);
+    let _guard = slot.lock.lock().unwrap_or_else(|err| err.into_inner());
 
     let existing = read_meta(&repo_dir, &meta_path);
     // The shape the entry ends up with. A clone without a readable record
@@ -227,7 +317,7 @@ pub(crate) fn fetch_through_cache(
                 req,
                 &format!("repo_dir={:?}", repo_dir),
             );
-            return Ok((repo_dir, head));
+            return Ok(slot.checkout(repo_dir, head));
         }
 
         if req.cancel.is_some_and(|c| c.is_cancelled()) {
@@ -254,7 +344,7 @@ pub(crate) fn fetch_through_cache(
                     req,
                     &format!("repo_dir={:?} checkout={:?}", repo_dir, checkout),
                 );
-                return Ok((repo_dir, head));
+                return Ok(slot.checkout(repo_dir, head));
             }
             Err(err) if err.downcast_ref::<SignalError>() == Some(&SignalError::Cancelled) => {
                 return Err(err);
@@ -304,7 +394,7 @@ pub(crate) fn fetch_through_cache(
     );
 
     log_cache("ready", &started, req, &format!("head={}", rev));
-    Ok((repo_dir, rev))
+    Ok(slot.checkout(repo_dir, rev))
 }
 
 /// The one place that picks a fetcher: sparse for a sparse checkout, full
