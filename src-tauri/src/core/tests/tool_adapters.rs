@@ -1832,10 +1832,7 @@ fn every_row_restates_its_brief_read_facts() {
             [Yes, Yes],
             P::Own,
             D::Shadows,
-            &[
-                (".codex/skills", M::Default),
-                (".agent/skills", M::Default),
-            ],
+            &[(".codex/skills", M::Default), (".agent/skills", M::Default)],
         ),
     ];
     let keys: Vec<&str> = default_tool_adapters().iter().map(|a| a.key()).collect();

@@ -510,7 +510,10 @@ fn the_ticket_06_rows_resolve_their_cross_read_pairs() {
         ("forgecode", pair(&["agents_skills"], Shadows)),
         (
             "firebender",
-            pair(&["agents_skills", "cursor", "claude_code", "codex"], ShowsAll),
+            pair(
+                &["agents_skills", "cursor", "claude_code", "codex"],
+                ShowsAll,
+            ),
         ),
         (
             "minimax_code",
