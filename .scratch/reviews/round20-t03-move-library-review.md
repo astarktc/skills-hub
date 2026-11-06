@@ -117,3 +117,18 @@ folder.** The parts:
 6. **Fidelity.** Extended to directory modes, directory and file xattrs, and hardlink groups (recreated inside the
    skill; a link outside the skill is unrelocatable).
 7. **Preview.** Classifies kept skills read-only.
+
+## Round 3 (Opus 5.5, high): PR #12 head `011f13d`
+
+All seven round-2 findings were fixed as the direction above set out. All 13 regressions failed on `5e8dd507`.
+
+Compared facets:
+
+- the tree, with links never followed;
+- bytes and link text;
+- mode bits on files and directories;
+- xattrs on files, directories and links (macOS excludes `com.apple.provenance` and `com.apple.rootless`);
+- hardlink structure.
+
+Residuals: ACLs, Windows ADS, sparse holes, BSD flags, ownership and creation times. CI is green, and rust-windows ran
+908 tests. Round-3 review: two independent reviewers (Astra and Sol) in parallel.
