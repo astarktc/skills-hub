@@ -123,7 +123,8 @@ than re-tagging.
   assign/unassign/toggle, resync (of one assignment via `resync_project_assignment`, one project, or every project),
   `resolve_project_collisions`, configure project tools, remove project,
   gitignore update, Refresh's apply phase, Onboarding import's apply phase, Move Library folder
-  (`library_move::move_library` — the only writer of the Library folder setting)) wraps its **own** body in
+  (`library_move::move_library` — the only writer of the Library folder setting — and `resume_library_move`, which
+  startup runs to finish a move journaled at its switch)) wraps its **own** body in
   `core/mutation_guard::serialized` at its entry point — commands carry no lock state and make no
   per-call-site decision. The mutex is private to that module; per-target internals are unlocked
   `pub(crate)` `*_unlocked` seams. The guard is non-reentrant, so **an entry point never calls another

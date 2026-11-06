@@ -825,7 +825,10 @@ export type InvocationOverride = {
 export type LeftBehind = {
 	path: string,
 	reason: LeftBehindReason,
-	/**  The skill whose old copy this is (`still_linked`, `removal_failed`). */
+	/**
+	 *  The skill whose old copy this is (`still_linked`, `still_recorded`,
+	 *  `removal_failed`).
+	 */
 	skill_id: string | null,
 	/**  Why its removal failed (`removal_failed`). */
 	error: CommandError | null,
@@ -836,8 +839,16 @@ export type LeftBehindReason =
 "old_library" |
 /**  Something in the old Library folder no record names — never removed. */
 "unrecorded" |
-/**  A moved skill's old copy that a Deployment still reaches. */
+/**
+ *  A moved skill's old copy that a Deployment (of any skill) still
+ *  reaches.
+ */
 "still_linked" |
+/**
+ *  A moved skill's old copy that a skill which stays still records (an
+ *  Unlocatable skill recorded inside it).
+ */
+"still_recorded" |
 /**  A moved skill's old copy whose removal failed or was refused. */
 "removal_failed";
 
@@ -1612,6 +1623,20 @@ export type SkillHealth = {
 	at: number,
 };
 
+/**  Why a locatable skill was kept where it is. */
+export type SkillKept =
+/**
+ *  Something in its copy cannot be relocated faithfully: `entry` (the
+ *  first one found, as it sits in the old copy) and why.
+ */
+{ kind: "unrelocatable"; entry: string; cause: UnrelocatableCause } |
+/**
+ *  Its recorded copy is physically the same folder as another skill's,
+ *  or holds or lies inside it (`with_skill_id`): the records alias one
+ *  set of bytes, so neither is moved.
+ */
+{ kind: "shared_copy"; with_skill_id: string };
+
 export type SkillMoveOutcome = {
 	skill_id: string,
 	name: string,
@@ -1622,7 +1647,12 @@ export type SkillMoveSkip =
 /**  Unlocatable: the central copy is gone; the record keeps its path. */
 "missing";
 
-export type SkillMoveStatus = { status: "moved"; from: string; to: string } | { status: "skipped"; reason: SkillMoveSkip };
+export type SkillMoveStatus = { status: "moved"; from: string; to: string } | { status: "skipped"; reason: SkillMoveSkip } |
+/**
+ *  Not moved: its copy stays where it is recorded, untouched, and so do
+ *  its Deployments.
+ */
+{ status: "kept"; reason: SkillKept };
 
 export type SkillMutationResultDto = {
 	report: RefreshReport,
@@ -1808,6 +1838,24 @@ export type UnlocatableState =
 "source_missing" |
 /**  The central copy is not there. */
 "central_missing";
+
+/**  Why an entry cannot be relocated faithfully. */
+export type UnrelocatableCause =
+/**
+ *  An absolute link into the old Library (its own copy included): after
+ *  the move it would still point at the old place.
+ */
+"link_into_old_library" |
+/**
+ *  A relative link that reaches outside the skill's own folder: from the
+ *  new place it would point somewhere else.
+ */
+"link_escapes" |
+/**
+ *  Not a file, folder or link (a FIFO, socket or device): it cannot be
+ *  copied.
+ */
+"special_file";
 
 export type UpdateSkip = "skill_gone" | "stale_acquisition";
 

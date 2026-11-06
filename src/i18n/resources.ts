@@ -1711,6 +1711,16 @@ export const resources = {
           leftBehind_other: "{{count}} left behind",
           missingTitle: "{{name}} was not moved",
           missingMessage: "Its copy is missing, so it stays where it is recorded. Restore or remove it from My Skills.",
+          keptTitle: "{{name}} was not moved",
+          kept: {
+            link_into_old_library:
+              "{{entry}} links into the old Library folder and would break after the move. The skill stays where it is; change the link to a relative one inside the skill, then move again.",
+            link_escapes:
+              "{{entry}} links outside the skill's folder and would point somewhere else after the move. The skill stays where it is.",
+            special_file: "{{entry}} is a special file that can't be copied. The skill stays where it is.",
+            shared_copy:
+              "It shares its folder with {{other}}, so neither was moved. Remove one of them from My Skills, then move again.",
+          },
           relinkFailedTitle: "{{name}} on {{tool}} still points to the old folder",
           notOursTitle: "{{name}} on {{tool}} was left alone",
           notOursMessage: "{{path}} doesn't point to the Library copy any more, so Skills Hub didn't touch it.",
@@ -1718,6 +1728,8 @@ export const resources = {
           folderMissingMessage: "{{path}} will be re-linked the next time you deploy to the project once its folder is back.",
           stillLinkedTitle: "The old copy of {{name}} was kept",
           stillLinkedMessage: "A harness still reaches {{path}}, so it was not removed.",
+          stillRecordedTitle: "The old copy of {{name}} was kept",
+          stillRecordedMessage: "A skill that was not moved is still recorded inside {{path}}, so it was not removed.",
           removalFailedTitle: "The old copy of {{name}} could not be removed",
           oldLibraryLine: "Your old Library folder stays at {{path}}.",
           unrecordedLine: "Left in the old folder: {{path}}",

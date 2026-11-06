@@ -1681,9 +1681,11 @@ export function combineOutcomes<Entry>(
  * `moved`; Deployments `relinked`, left `unchanged` (copies), `failed`;
  * `skipped` broken down — `missing` (Unlocatable skills, not moved),
  * `notOurs` (an owned link that points elsewhere), `folderMissing` (a project
- * whose folder is gone), `disabled`; and `leftBehind` — what stays in the old
- * place beyond the old folder itself (unrecorded entries, an old copy still
- * reached or not removable).
+ * whose folder is gone), `disabled`; `kept` — skills not moved because their
+ * copy cannot be relocated faithfully or is shared with another record; and
+ * `leftBehind` — what stays in the old place beyond the old folder itself
+ * (unrecorded entries, an old copy still reached, still recorded or not
+ * removable).
  */
 export function libraryMoveCounts(report: LibraryMoveReport) {
   const counts = {
@@ -1695,10 +1697,12 @@ export function libraryMoveCounts(report: LibraryMoveReport) {
     notOurs: 0,
     folderMissing: 0,
     disabled: 0,
+    kept: 0,
     leftBehind: 0,
   };
   for (const skill of report.skills) {
     if (skill.status.status === "moved") counts.moved++;
+    else if (skill.status.status === "kept") counts.kept++;
     else counts.missing++;
   }
   for (const deployment of report.deployments) {
@@ -1721,8 +1725,9 @@ export function libraryMoveCounts(report: LibraryMoveReport) {
  * old copy that could not be removed is a failure; a skipped skill or
  * Deployment, or an old copy kept because something still reaches it, is a
  * skip. Entries: each failed re-point (an error, Retry re-syncs the pair from
- * the new copy), each Unlocatable skill, link pointing elsewhere, missing
- * project folder and kept old copy (warnings). Quiet notes name the old
+ * the new copy), each Unlocatable skill, skill kept in place (with why),
+ * link pointing elsewhere, missing project folder and kept old copy
+ * (warnings). Quiet notes name the old
  * folder and every unrecorded entry left in it. The catalog is replaced from
  * the command's own response, so nothing reloads, and Settings stays open.
  */
@@ -1734,12 +1739,26 @@ export function libraryMoveOutcome(report: LibraryMoveReport, ctx: ReportContext
   const names = new Map(report.skills.map((skill) => [skill.skill_id, skill.name]));
 
   for (const skill of report.skills) {
-    if (skill.status.status !== "skipped") continue;
-    out.warnings.push({
-      title: ctx.t("libraryMove.report.missingTitle", { name: skill.name }),
-      message: ctx.t("libraryMove.report.missingMessage"),
-      subject: { skillId: skill.skill_id, skillName: skill.name },
-    });
+    const subject = { skillId: skill.skill_id, skillName: skill.name };
+    if (skill.status.status === "skipped") {
+      out.warnings.push({
+        title: ctx.t("libraryMove.report.missingTitle", { name: skill.name }),
+        message: ctx.t("libraryMove.report.missingMessage"),
+        subject,
+      });
+    } else if (skill.status.status === "kept") {
+      const kept = skill.status.reason;
+      out.warnings.push({
+        title: ctx.t("libraryMove.report.keptTitle", { name: skill.name }),
+        message:
+          kept.kind === "unrelocatable"
+            ? ctx.t(`libraryMove.report.kept.${kept.cause}`, { entry: kept.entry })
+            : ctx.t("libraryMove.report.kept.shared_copy", {
+                other: names.get(kept.with_skill_id) ?? kept.with_skill_id,
+              }),
+        subject,
+      });
+    }
   }
   for (const deployment of report.deployments) {
     const { status } = deployment;
@@ -1782,6 +1801,12 @@ export function libraryMoveOutcome(report: LibraryMoveReport, ctx: ReportContext
         message: ctx.t("libraryMove.report.stillLinkedMessage", { path: item.path }),
         ...(subject ? { subject } : {}),
       });
+    } else if (item.reason === "still_recorded") {
+      out.warnings.push({
+        title: ctx.t("libraryMove.report.stillRecordedTitle", { name }),
+        message: ctx.t("libraryMove.report.stillRecordedMessage", { path: item.path }),
+        ...(subject ? { subject } : {}),
+      });
     } else if (item.reason === "removal_failed") {
       out.errors.push({
         title: ctx.t("libraryMove.report.removalFailedTitle", { name }),
@@ -1799,8 +1824,10 @@ export function libraryMoveOutcome(report: LibraryMoveReport, ctx: ReportContext
   if (counts.disabled > 0) out.notes.push(ctx.t("libraryMove.report.disabledLine", { count: counts.disabled }));
 
   const removalFailed = report.left_behind.filter((item) => item.reason === "removal_failed").length;
-  const stillLinked = report.left_behind.filter((item) => item.reason === "still_linked").length;
-  const skipped = counts.missing + counts.notOurs + counts.folderMissing;
+  const stillKept = report.left_behind.filter(
+    (item) => item.reason === "still_linked" || item.reason === "still_recorded",
+  ).length;
+  const skipped = counts.missing + counts.kept + counts.notOurs + counts.folderMissing;
   const parts: string[] = [];
   const part = (key: string, count: number) => {
     if (count > 0) parts.push(ctx.t(key, { count }));
@@ -1814,7 +1841,7 @@ export function libraryMoveOutcome(report: LibraryMoveReport, ctx: ReportContext
   const tone: OutcomeTone =
     counts.failed > 0 || removalFailed > 0
       ? "failure"
-      : skipped > 0 || stillLinked > 0
+      : skipped > 0 || stillKept > 0
         ? "skipped"
         : "success";
   out.toast = toast(tone, parts.join(HEADLINE_SEPARATOR), detailOf(out.notes));

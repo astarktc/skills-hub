@@ -13,6 +13,7 @@ import type {
   ProjectSyncReport,
   RefreshReport,
   RemovalReport,
+  SkillKept,
   SkillRefreshOutcome,
 } from "../bindings";
 import {
@@ -2519,6 +2520,7 @@ describe("libraryMoveOutcome", () => {
       notOurs: 1,
       folderMissing: 1,
       disabled: 1,
+      kept: 0,
       leftBehind: 2,
     });
     const outcome = libraryMoveOutcome(r, ctx);
@@ -2584,6 +2586,49 @@ describe("libraryMoveOutcome", () => {
     expect(outcome.errors[0]).toMatchObject({ title: 'libraryMove.report.removalFailedTitle {"name":"a"}', error: refused });
   });
 
+  it("a skill kept in place is a skip that says why, and so is an old copy a skill still records", () => {
+    const kept = (id: string, reason: SkillKept): LibraryMoveReport["skills"][number] => ({
+      skill_id: id,
+      name: id,
+      status: { status: "kept", reason },
+    });
+    const r = report({
+      skills: [
+        moved("a"),
+        kept("link", { kind: "unrelocatable", entry: "/old/link/abs", cause: "link_into_old_library" }),
+        kept("esc", { kind: "unrelocatable", entry: "/old/esc/up", cause: "link_escapes" }),
+        kept("fifo", { kind: "unrelocatable", entry: "/old/fifo/pipe", cause: "special_file" }),
+        kept("x", { kind: "shared_copy", with_skill_id: "y" }),
+        kept("y", { kind: "shared_copy", with_skill_id: "x" }),
+      ],
+      left_behind: [
+        { path: "/old", reason: "old_library", skill_id: null, error: null },
+        { path: "/old/a", reason: "still_recorded", skill_id: "a", error: null },
+      ],
+    });
+
+    expect(libraryMoveCounts(r)).toMatchObject({ moved: 1, missing: 0, kept: 5, leftBehind: 1 });
+    const outcome = libraryMoveOutcome(r, ctx);
+    expect(outcome.toast).toMatchObject({
+      tone: "skipped",
+      message: [
+        'outcome.done.moved {"count":1}',
+        'outcome.skipped {"count":5}',
+        'libraryMove.report.leftBehind {"count":1}',
+      ].join(" · "),
+    });
+    expect(outcome.errors).toEqual([]);
+    expect(outcome.warnings.map((entry) => [entry.title, entry.message])).toEqual([
+      ['libraryMove.report.keptTitle {"name":"link"}', 'libraryMove.report.kept.link_into_old_library {"entry":"/old/link/abs"}'],
+      ['libraryMove.report.keptTitle {"name":"esc"}', 'libraryMove.report.kept.link_escapes {"entry":"/old/esc/up"}'],
+      ['libraryMove.report.keptTitle {"name":"fifo"}', 'libraryMove.report.kept.special_file {"entry":"/old/fifo/pipe"}'],
+      ['libraryMove.report.keptTitle {"name":"x"}', 'libraryMove.report.kept.shared_copy {"other":"y"}'],
+      ['libraryMove.report.keptTitle {"name":"y"}', 'libraryMove.report.kept.shared_copy {"other":"x"}'],
+      ['libraryMove.report.stillRecordedTitle {"name":"a"}', 'libraryMove.report.stillRecordedMessage {"path":"/old/a"}'],
+    ]);
+    expect(outcome.warnings[0].subject).toEqual({ skillId: "link", skillName: "link" });
+  });
+
   it("every copy key it uses exists in English", () => {
     const en = i18next.createInstance();
     void en.init({ lng: "en", resources });
@@ -2596,5 +2641,30 @@ describe("libraryMoveOutcome", () => {
     );
     expect(outcome.toast?.message).toBe("1 moved · 2 skipped");
     expect(outcome.warnings[0].title).toBe("g was not moved");
+  });
+
+  it("every kept reason has English copy", () => {
+    const en = i18next.createInstance();
+    void en.init({ lng: "en", resources });
+    const causes = ["link_into_old_library", "link_escapes", "special_file"] as const;
+    const outcome = libraryMoveOutcome(
+      report({
+        skills: [
+          ...causes.map((cause) => ({
+            skill_id: cause,
+            name: cause,
+            status: { status: "kept", reason: { kind: "unrelocatable", entry: "/old/e", cause } } as const,
+          })),
+          { skill_id: "x", name: "x", status: { status: "kept", reason: { kind: "shared_copy", with_skill_id: "y" } } },
+        ],
+        left_behind: [{ path: "/old/a", reason: "still_recorded", skill_id: "a", error: null }],
+      }),
+      { t: en.t.bind(en) as unknown as typeof t },
+    );
+    for (const entry of outcome.warnings) {
+      expect(entry.message).not.toMatch(/libraryMove\./);
+      expect(entry.title).not.toMatch(/libraryMove\./);
+    }
+    expect(outcome.warnings).toHaveLength(5);
   });
 });
