@@ -428,9 +428,64 @@ function removalCounts(report: RemovalReport) {
   return counts;
 }
 
+/**
+ * A sync report's outcomes are per stored row: a pre-1.4.0 app wrote one row
+ * per shared-dir sibling (Amp and Kimi Code; Trae and Trae CN), and each is
+ * settled by itself. The folds count **Deployments**: one per (skill, folder)
+ * — per project for an assignment — by the backend's `folder_key`, never a
+ * path. Each keeps its strongest row (failed › to review › skipped ›
+ * declined › done), named by its folder, in order of first appearance; the
+ * overwrite ask reads the raw rows, never this.
+ */
+function onePerDeployment<R>(rows: readonly R[], key: (row: R) => string, rank: (row: R) => number): R[] {
+  const kept = new Map<string, R>();
+  for (const row of rows) {
+    const at = key(row);
+    const before = kept.get(at);
+    if (before === undefined || rank(row) > rank(before)) kept.set(at, row);
+  }
+  return [...kept.values()];
+}
+
+const syncRank = (status: BatchTargetOutcome["status"] | ProjectSyncReport["items"][number]["status"]): number => {
+  switch (status.status) {
+    case "failed":
+      return unansweredCollision(status.error) ? 4 : 5;
+    case "skipped":
+      return 3;
+    case "declined":
+      return 2;
+    case "synced":
+      return 1;
+    default:
+      return 0;
+  }
+};
+
+/** The global batch's outcomes, one per Deployment (`onePerDeployment`). */
+function batchDeployments(report: readonly BatchTargetOutcome[]): BatchTargetOutcome[] {
+  return onePerDeployment(
+    report,
+    (row) => `${row.skill_id}\n${row.folder_key}`,
+    (row) => syncRank(row.status),
+  ).map((row) => ({ ...row, tool_key: row.folder_key }));
+}
+
+/** A project sync report's items, one per Deployment (`onePerDeployment`). */
+function projectDeployments(report: ProjectSyncReport): ProjectSyncReport {
+  return {
+    ...report,
+    items: onePerDeployment(
+      report.items,
+      (item) => `${item.project_id}\n${item.skill_id}\n${item.folder_key}`,
+      (item) => syncRank(item.status),
+    ).map((item) => ({ ...item, tool: item.folder_key })),
+  };
+}
+
 function projectSyncCounts(report: ProjectSyncReport) {
   const counts = { synced: 0, alreadyAssigned: 0, failed: 0, skipped: 0, declined: 0 };
-  for (const { status } of report.items) {
+  for (const { status } of projectDeployments(report).items) {
     if (status.status === "synced") counts.synced++;
     else if (status.status === "already_assigned") counts.alreadyAssigned++;
     else if (status.status === "skipped") counts.skipped++;
@@ -828,7 +883,7 @@ export function projectSyncOutcome(
   const { t } = ctx;
   const projectLabel = (id: string) => ctx.projectLabelById?.[id] ?? id;
   let collisions = 0;
-  for (const item of report.items) {
+  for (const item of projectDeployments(report).items) {
     // "Keep existing" in the overwrite ask (ticket 04): a quiet note, never
     // an error — the row is kept `disabled` (D9, D10).
     if (item.status.status === "declined") {
@@ -1042,7 +1097,7 @@ function foldSync(
   const tally: SyncTally = { synced: 0, failed: 0, skipped: 0, declined: 0, collisions: 0 };
   const skips = new NotInstalledSkips();
   let disabledSkip = false;
-  for (const result of report) {
+  for (const result of batchDeployments(report)) {
     const status = result.status;
     if (status.status === "synced") {
       tally.synced++;
@@ -1129,7 +1184,7 @@ export function enableOutcome(
   // A project skipped whole is one warning line, counted once as skipped.
   const projects = projectSyncOutcome(report.projects, { ...ctx, action: "toggleOn" });
   const projectCounts = projectSyncCounts(report.projects);
-  const projectCollisions = report.projects.items.filter(
+  const projectCollisions = projectDeployments(report.projects).items.filter(
     (item) => item.status.status === "failed" && unansweredCollision(item.status.error),
   ).length;
   const errors = [...global.errors, ...projects.errors];

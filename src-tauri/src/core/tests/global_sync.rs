@@ -1140,3 +1140,117 @@ fn a_detected_reader_makes_its_group_deployable_before_the_group_folder_exists()
     );
     assert!(targets.iter().any(|t| t.tool == agents_key));
 }
+
+/// Sol's finding 101, global arm: each stored row of a folder is synced at its
+/// own recorded path and an answer applies to the row it names. Two
+/// pre-1.4.0 rows of Amp's folder record two paths, each holding a foreign
+/// folder; an Overwrite naming `kimi_cli` (the row whose collision was asked
+/// about) replaces Kimi's path only, while Amp's row asks again and its
+/// folder stays. A Keep naming `amp` records Amp's row `disabled` at its own
+/// path and leaves Kimi's alone.
+#[test]
+fn an_answer_reaches_only_the_row_and_path_it_names() {
+    use crate::core::skill_store::SkillTargetRecord;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = make_store(dir.path());
+    seed_skill(&store, "skill-1");
+    let source = make_skill_dir(dir.path(), "central-skill", "# New");
+    let amp = adapter_by_key("amp").expect("amp adapter");
+    let root = dir.path().join("shared-root");
+    let amp_path = make_skill_dir(&root, "my-skill", "# Foreign A");
+    let kimi_path = make_skill_dir(&root, "previous", "# Foreign K");
+    for (tool, path) in [("amp", &amp_path), ("kimi_cli", &kimi_path)] {
+        store
+            .upsert_skill_target(&SkillTargetRecord {
+                id: format!("t-{tool}"),
+                skill_id: "skill-1".to_string(),
+                tool: tool.to_string(),
+                target_path: path.to_string_lossy().into_owned(),
+                mode: SyncMode::Symlink,
+                status: SyncStatus::Error,
+                last_error: Some("an earlier first sync failed".to_string()),
+                synced_at: None,
+            })
+            .expect("seed row");
+    }
+    let skills = vec![batch_skill("skill-1", "my-skill", &source)];
+    let answer = |tool: &str, decision| BatchPolicy {
+        overwrite: false,
+        overwrite_if_same_content: false,
+        overrides: vec![BatchOverride {
+            skill_id: "skill-1".to_string(),
+            tool_key: tool.to_string(),
+            decision,
+        }],
+    };
+    let row = |tool: &str| {
+        store
+            .get_skill_target("skill-1", tool)
+            .expect("query")
+            .expect("row")
+    };
+
+    let outcomes = sync_skills_to_planned_tools(
+        &store,
+        &central_repo_of(&store),
+        &skills,
+        &[planned(amp, &root, true)],
+        &answer("kimi_cli", OverrideDecision::Overwrite),
+        1000,
+        |_| {},
+    );
+
+    assert_eq!(outcomes.len(), 2, "one outcome per row: {outcomes:?}");
+    let status_of = |outcomes: &[crate::core::global_sync::BatchTargetOutcome], tool: &str| {
+        outcomes
+            .iter()
+            .find(|o| o.tool_key == tool)
+            .map(|o| format!("{:?}", o.status))
+            .unwrap_or_default()
+    };
+    assert!(
+        status_of(&outcomes, "kimi_cli").starts_with("Synced"),
+        "{outcomes:?}"
+    );
+    assert!(
+        status_of(&outcomes, "amp").contains("TargetExists"),
+        "{outcomes:?}"
+    );
+    assert_ne!(
+        fs::read_to_string(kimi_path.join("SKILL.md"))
+            .ok()
+            .as_deref(),
+        Some("# Foreign K"),
+        "the asked path is replaced"
+    );
+    assert_eq!(
+        fs::read_to_string(amp_path.join("SKILL.md")).unwrap(),
+        "# Foreign A",
+        "a path the answer never named stays"
+    );
+    assert_eq!(row("kimi_cli").target_path, kimi_path.to_string_lossy());
+    assert!(row("kimi_cli").owns_artifact());
+    assert_eq!(row("amp").target_path, amp_path.to_string_lossy());
+    assert!(!row("amp").owns_artifact());
+
+    let outcomes = sync_skills_to_planned_tools(
+        &store,
+        &central_repo_of(&store),
+        &skills,
+        &[planned(amp, &root, true)],
+        &answer("amp", OverrideDecision::Keep),
+        1100,
+        |_| {},
+    );
+    assert!(
+        status_of(&outcomes, "amp").starts_with("Declined"),
+        "{outcomes:?}"
+    );
+    assert_eq!(row("amp").status, SyncStatus::Disabled);
+    assert_eq!(row("amp").target_path, amp_path.to_string_lossy());
+    assert_eq!(row("kimi_cli").status, SyncStatus::Synced);
+    assert_eq!(
+        fs::read_to_string(amp_path.join("SKILL.md")).unwrap(),
+        "# Foreign A"
+    );
+}

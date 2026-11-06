@@ -17,9 +17,9 @@ use crate::core::{
     mutation_guard,
     placement::{self, row_folder, PlacementScope, PlacementSettings, ScopeKind},
     removal_fence::ProtectedLibrary,
-    skill_store::{SkillStore, TargetTransition},
+    skill_store::{SkillStore, SkillTargetRecord, TargetTransition},
     sync_engine::{self, SyncOutcome},
-    sync_status::SyncMode,
+    sync_status::{SyncMode, SyncStatus},
     tool_adapters::{adapter_by_key, installed_set_in, ToolAdapter},
 };
 
@@ -89,13 +89,14 @@ pub struct OverwritePolicy {
     pub overwrite_if_same_content: bool,
 }
 
-/// Deterministic single-pair sync: probe writability of `tool_root`, apply
-/// the overwrite policy, sync, and record the one `Synced` Deployment row of
-/// the folder `folder_key` through [`TargetTransition::Recorded`]. `adapter`
-/// is the registry entry whose capability governs the folder
-/// (`placement::capability_entry`). The batch engine
-/// ([`sync_planned_tools_lifting`]) drives this per attempted pair; tests
-/// drive it directly. Unlocked internal seam — callers reach it through an
+/// Deterministic single-row sync: probe writability of `tool_root`, apply
+/// the overwrite policy, sync `tool_root/skill_name`, and record the `Synced`
+/// row keyed `key` through [`TargetTransition::Recorded`] — the row's own key,
+/// or the folder key for a folder's new row (one folder, one new row; never a
+/// row per harness sharing it). `adapter` is the registry entry whose
+/// capability governs the folder (`placement::capability_entry`). The batch
+/// engine ([`sync_skills_to_planned_tools`]) drives this per row; tests drive
+/// it directly. Unlocked internal seam — callers reach it through an
 /// entry point that has already taken the mutation guard.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sync_skill_into_root(
@@ -107,7 +108,7 @@ pub(crate) fn sync_skill_into_root(
     skill_id: &str,
     skill_name: &str,
     policy: &OverwritePolicy,
-    folder_key: &str,
+    key: &str,
     now: i64,
 ) -> Result<SyncOutcome, GlobalSyncError> {
     // Pre-check: ensure the skills directory is writable (fixes #20 — Windows OS error 5).
@@ -140,14 +141,14 @@ pub(crate) fn sync_skill_into_root(
     )
     .map_err(|err| classify_sync_error(err, adapter, tool_root, &target))?;
 
-    // One folder, one row: harnesses sharing it read this row through their
-    // folder key, never through a row of their own.
+    // This row alone settles: harnesses sharing its folder read it through
+    // their folder key, never through a row of their own.
     let target_path = outcome.target_path.to_string_lossy();
     store.transition_skill_target(
         &Uuid::new_v4().to_string(),
         TargetTransition::Recorded {
             skill_id,
-            tool: folder_key,
+            tool: key,
             mode: outcome.mode_used,
             target_path: &target_path,
             synced_at: now,
@@ -241,9 +242,9 @@ pub enum OverrideDecision {
     Keep,
 }
 
-/// The operator's decision for one (skill, tool) pair. Applies to the folder
-/// the named key's row describes (`placement::row_folder`): the folder, not
-/// the harness, is the identity of a Deployment.
+/// The operator's decision for one (skill, row) pair: `tool_key` is the key
+/// of the row the ask was raised for (the report row's `tool_key`), and the
+/// answer applies to that row alone (`answer_for`).
 #[derive(Debug, Clone)]
 pub struct BatchOverride {
     pub skill_id: String,
@@ -263,7 +264,7 @@ pub struct BatchPolicy {
 /// capability governs it, its resolved skills root, and whether any harness it
 /// serves is installed. Produced by [`plan_batch_tool_targets`] (placement
 /// over the environment); consumed by the deterministic
-/// [`sync_planned_tools_lifting`], which tests drive with fabricated roots.
+/// [`sync_skills_to_planned_tools`], which tests drive with fabricated roots.
 #[derive(Debug)]
 pub struct PlannedToolTarget {
     pub adapter: &'static ToolAdapter,
@@ -296,11 +297,18 @@ pub enum BatchTargetStatus {
     Declined,
 }
 
+/// One row's result. `tool_key` is the raw row the outcome settled (a
+/// pre-1.4.0 shared-dir sibling's row keeps its own key) — the key an
+/// overwrite answer names. `folder_key` is the Deployment folder that row
+/// describes (`placement::row_folder`): the backend's answer to "which
+/// Deployment is this", so a report reader counts one Deployment per (skill,
+/// folder) however many legacy rows describe it, and never derives a folder.
 #[derive(Debug, serde::Serialize, specta::Type)]
 pub struct BatchTargetOutcome {
     pub skill_id: String,
     pub skill_name: String,
     pub tool_key: String,
+    pub folder_key: String,
     pub status: BatchTargetStatus,
 }
 
@@ -351,51 +359,56 @@ pub fn plan_batch_tool_targets(
         .collect()
 }
 
-/// The batch engine with nothing lifted — test fixtures' door, driven with
-/// fabricated roots ([`sync_planned_tools_lifting`]).
-#[cfg(test)]
+/// One stored row a batch acts on — or, when the skill has no row describing
+/// the target's folder, the folder's row-to-be.
+struct BatchRow {
+    /// The row's own key (a pre-1.4.0 shared-dir sibling's row keeps its
+    /// harness key), or the folder key for a new row.
+    key: String,
+    /// The row's own recorded path, or placement's for a new row.
+    path: PathBuf,
+}
+
+/// The rows of `skill` the batch acts on for `target`'s folder: every stored
+/// row describing it (`placement::row_folder`), each by itself; else the one
+/// new row keyed by the folder (no row is added per harness sharing it).
+fn batch_rows(
+    rows: &[SkillTargetRecord],
+    target: &PlannedToolTarget,
+    skill: &BatchSkill,
+) -> Vec<BatchRow> {
+    let stored: Vec<BatchRow> = rows
+        .iter()
+        .filter(|row| row_folder(ScopeKind::Global, &row.tool) == target.folder_key)
+        .map(|row| BatchRow {
+            key: row.tool.clone(),
+            path: PathBuf::from(&row.target_path),
+        })
+        .collect();
+    if !stored.is_empty() {
+        return stored;
+    }
+    vec![BatchRow {
+        key: target.folder_key.clone(),
+        path: target.root.join(&skill.skill_name),
+    }]
+}
+
+/// Deterministic batch engine: dedupe targets by folder key (a folder is
+/// planned once, whichever of its harnesses was asked for), emit `Skipped`
+/// for a folder no installed harness reads, then act on **each row** of each
+/// attempted folder by itself ([`batch_rows`]): its own key, its own recorded
+/// path, the Disabled rule, its own overwrite policy and its own settlement.
+/// Nothing is lent or settled from one row to another; a folder with no row
+/// yet gets one new row keyed by the folder. Failures are isolated per row —
+/// one bad row never aborts the batch. Unlocked internal seam — callers reach
+/// it through an entry point that has already taken the mutation guard.
 pub(crate) fn sync_skills_to_planned_tools(
     store: &SkillStore,
     central_dir: &Path,
     skills: &[BatchSkill],
     targets: &[PlannedToolTarget],
     policy: &BatchPolicy,
-    now: i64,
-    on_progress: impl FnMut(BatchProgress),
-) -> Vec<BatchTargetOutcome> {
-    sync_planned_tools_lifting(
-        store,
-        central_dir,
-        skills,
-        targets,
-        policy,
-        &[],
-        now,
-        on_progress,
-    )
-}
-
-/// Deterministic batch engine: dedupe targets by folder key (a folder is
-/// written once, whichever of its harnesses was asked for, and every outcome
-/// names the folder), emit `Skipped` for a folder no installed harness reads,
-/// apply the Disabled rule and the per-pair overwrite policy, and isolate
-/// failures per target — one bad pair never aborts the batch. Unlocked
-/// internal seam — callers reach it through an entry point that has already
-/// taken the mutation guard.
-///
-/// `lifted` (Enable only, else empty) names the folders whose Disabled state
-/// Enable has just lifted (`skill_disable`): a row still `disabled` there — an
-/// independent row recording another path, never the folder's own (Enable
-/// cleared those) — does not block the folder. A skill disabled at skill
-/// grain still blocks everything.
-#[allow(clippy::too_many_arguments)]
-fn sync_planned_tools_lifting(
-    store: &SkillStore,
-    central_dir: &Path,
-    skills: &[BatchSkill],
-    targets: &[PlannedToolTarget],
-    policy: &BatchPolicy,
-    lifted: &[String],
     now: i64,
     mut on_progress: impl FnMut(BatchProgress),
 ) -> Vec<BatchTargetOutcome> {
@@ -407,7 +420,7 @@ fn sync_planned_tools_lifting(
     let mut skipped_not_installed: Vec<&PlannedToolTarget> = Vec::new();
     for target in targets {
         if seen_folders.contains(&target.folder_key.as_str()) {
-            continue; // the folder is already planned: one folder, one row
+            continue; // the folder is already planned
         }
         seen_folders.push(target.folder_key.as_str());
         if target.installed {
@@ -424,6 +437,7 @@ fn sync_planned_tools_lifting(
                 skill_id: skill.skill_id.clone(),
                 skill_name: skill.skill_name.clone(),
                 tool_key: tool_key.to_string(),
+                folder_key: tool_key.to_string(),
                 status: BatchTargetStatus::Skipped {
                     error: CommandError::from(GlobalSyncError::ToolNotInstalled {
                         tool_key: tool_key.to_string(),
@@ -436,168 +450,224 @@ fn sync_planned_tools_lifting(
     let total = skills.len() * attempted.len();
     let mut index = 0usize;
     for skill in skills {
-        // Read once per skill: a store failure fails this skill's pairs as
-        // report data, never the batch (the engine itself never errors).
-        let gate = DisabledGate::read(store, &skill.skill_id);
+        let rows = store.list_skill_targets(&skill.skill_id);
+        let skill_disabled = store
+            .skill_disabled_at(&skill.skill_id)
+            .map(|at| at.is_some());
         for target in &attempted {
             index += 1;
-            let tool_key = target.folder_key.as_str();
             on_progress(BatchProgress {
                 index,
                 total,
                 skill_name: &skill.skill_name,
-                tool_key,
+                tool_key: &target.folder_key,
             });
 
-            let blocked = match &gate {
-                Ok(gate) => {
-                    gate.blocks(&target.folder_key, lifted)
-                        .then(|| BatchTargetStatus::Skipped {
-                            error: CommandError::from(GlobalSyncError::TargetDisabled {
-                                tool_key: tool_key.to_string(),
-                            }),
-                        })
+            // The rows of this folder, and the Disabled rule over them: the
+            // skill is off at skill grain, or a row of the folder is
+            // `disabled` — writing the shared artifact for any one of its rows
+            // would re-materialise it where the disabled harness reads. The
+            // rule only withholds; it never grants a write.
+            let (rows, folder_off) = match (&rows, &skill_disabled) {
+                (Ok(rows), Ok(skill_disabled)) => {
+                    let folder_off = *skill_disabled
+                        || rows.iter().any(|row| {
+                            row.status == SyncStatus::Disabled
+                                && row_folder(ScopeKind::Global, &row.tool) == target.folder_key
+                        });
+                    (batch_rows(rows, target, skill), folder_off)
                 }
-                Err(error) => Some(BatchTargetStatus::Failed {
-                    error: CommandError::internal(format!("{error:#}")),
-                }),
+                (Err(error), _) | (_, Err(error)) => {
+                    outcomes.push(BatchTargetOutcome {
+                        skill_id: skill.skill_id.clone(),
+                        skill_name: skill.skill_name.clone(),
+                        tool_key: target.folder_key.clone(),
+                        folder_key: target.folder_key.clone(),
+                        status: BatchTargetStatus::Failed {
+                            error: CommandError::internal(format!("{error:#}")),
+                        },
+                    });
+                    continue;
+                }
             };
-            if let Some(status) = blocked {
+
+            for row in &rows {
+                let status = if folder_off {
+                    BatchTargetStatus::Skipped {
+                        error: CommandError::from(GlobalSyncError::TargetDisabled {
+                            tool_key: row.key.clone(),
+                        }),
+                    }
+                } else {
+                    sync_row(store, central_dir, target, skill, row, &rows, policy, now)
+                };
                 outcomes.push(BatchTargetOutcome {
                     skill_id: skill.skill_id.clone(),
                     skill_name: skill.skill_name.clone(),
-                    tool_key: tool_key.to_string(),
+                    tool_key: row.key.clone(),
+                    folder_key: target.folder_key.clone(),
                     status,
                 });
-                continue;
             }
-
-            // An override names a key; it applies to this target when that
-            // key's row describes the target's folder.
-            let decision = |wanted: OverrideDecision| {
-                policy.overrides.iter().any(|o| {
-                    o.decision == wanted
-                        && o.skill_id == skill.skill_id
-                        && row_folder(ScopeKind::Global, &o.tool_key) == target.folder_key
-                })
-            };
-            if decision(OverrideDecision::Keep) {
-                outcomes.push(BatchTargetOutcome {
-                    skill_id: skill.skill_id.clone(),
-                    skill_name: skill.skill_name.clone(),
-                    tool_key: tool_key.to_string(),
-                    status: record_kept(store, target, skill),
-                });
-                continue;
-            }
-            let overwrite = policy.overwrite || decision(OverrideDecision::Overwrite);
-            let pair_policy = OverwritePolicy {
-                overwrite,
-                overwrite_if_same_content: policy.overwrite_if_same_content,
-            };
-
-            let status = match sync_skill_into_root(
-                store,
-                central_dir,
-                target.adapter,
-                &target.root,
-                &skill.source_path,
-                &skill.skill_id,
-                &skill.skill_name,
-                &pair_policy,
-                &target.folder_key,
-                now,
-            ) {
-                Ok(outcome) => BatchTargetStatus::Synced { outcome },
-                // Asked first (D12): no row until the operator decides.
-                Err(error @ GlobalSyncError::TargetExists { .. }) => BatchTargetStatus::Failed {
-                    error: CommandError::from(error),
-                },
-                Err(error) => {
-                    record_failed(store, target, skill, &error);
-                    match error {
-                        GlobalSyncError::ToolNotWritable { .. } => BatchTargetStatus::Skipped {
-                            error: CommandError::from(error),
-                        },
-                        error => BatchTargetStatus::Failed {
-                            error: CommandError::from(error),
-                        },
-                    }
-                }
-            };
-            outcomes.push(BatchTargetOutcome {
-                skill_id: skill.skill_id.clone(),
-                skill_name: skill.skill_name.clone(),
-                tool_key: tool_key.to_string(),
-                status,
-            });
         }
     }
 
     outcomes
 }
 
-/// Where an attempted target's artifact is (or would be), and the mode a
-/// sync would try first — what a row that never materialised records.
-fn would_be(target: &PlannedToolTarget, skill: &BatchSkill) -> (String, SyncMode) {
-    let path = target.root.join(&skill.skill_name);
-    let mode = if target.adapter.supports_symlink {
+/// One row of an attempted folder: apply the operator's answer for exactly
+/// this row ([`answer_for`]), else the batch policy, sync at the row's own
+/// path and settle the row under its own key.
+#[allow(clippy::too_many_arguments)]
+fn sync_row(
+    store: &SkillStore,
+    central_dir: &Path,
+    target: &PlannedToolTarget,
+    skill: &BatchSkill,
+    row: &BatchRow,
+    rows: &[BatchRow],
+    policy: &BatchPolicy,
+    now: i64,
+) -> BatchTargetStatus {
+    let answer = answer_for(policy, skill, target, row, rows);
+    if answer == Some(OverrideDecision::Keep) {
+        return record_kept(store, target, skill, row);
+    }
+    let pair_policy = OverwritePolicy {
+        overwrite: policy.overwrite || answer == Some(OverrideDecision::Overwrite),
+        overwrite_if_same_content: policy.overwrite_if_same_content,
+    };
+    let (Some(tool_root), Some(name)) = (
+        row.path.parent(),
+        row.path.file_name().map(|name| name.to_string_lossy()),
+    ) else {
+        return BatchTargetStatus::Failed {
+            error: CommandError::internal(format!(
+                "the recorded target {:?} names no folder",
+                row.path
+            )),
+        };
+    };
+    match sync_skill_into_root(
+        store,
+        central_dir,
+        target.adapter,
+        tool_root,
+        &skill.source_path,
+        &skill.skill_id,
+        &name,
+        &pair_policy,
+        &row.key,
+        now,
+    ) {
+        Ok(outcome) => BatchTargetStatus::Synced { outcome },
+        Err(error) => {
+            // Every failure but an unanswered collision settles the row
+            // `error` (D9); a collision records nothing until the operator
+            // answers the ask (D12).
+            if !matches!(error, GlobalSyncError::TargetExists { .. }) {
+                record_failed(store, target, skill, row, &error);
+            }
+            match error {
+                GlobalSyncError::ToolNotWritable { .. } => BatchTargetStatus::Skipped {
+                    error: CommandError::from(error),
+                },
+                error => BatchTargetStatus::Failed {
+                    error: CommandError::from(error),
+                },
+            }
+        }
+    }
+}
+
+/// The operator's answer (D12) that applies to `row`: an override naming the
+/// row's own key — the key the ask's report row carried — so an answer reaches
+/// exactly the row, and the path, it was asked about. An override naming
+/// another key of the same folder (a harness rather than the folder key)
+/// applies only where that cannot be ambiguous: the folder has a single row
+/// and no override names it exactly.
+fn answer_for(
+    policy: &BatchPolicy,
+    skill: &BatchSkill,
+    target: &PlannedToolTarget,
+    row: &BatchRow,
+    rows: &[BatchRow],
+) -> Option<OverrideDecision> {
+    let for_skill = || {
+        policy
+            .overrides
+            .iter()
+            .filter(|o| o.skill_id == skill.skill_id)
+    };
+    if let Some(exact) = for_skill().find(|o| o.tool_key == row.key) {
+        return Some(exact.decision);
+    }
+    if rows.len() != 1 {
+        return None;
+    }
+    for_skill()
+        .find(|o| row_folder(ScopeKind::Global, &o.tool_key) == target.folder_key)
+        .map(|o| o.decision)
+}
+
+/// The mode a sync of `target`'s folder tries first — what a row that never
+/// materialised records.
+fn first_attempt_mode(target: &PlannedToolTarget) -> SyncMode {
+    if target.adapter.supports_symlink {
         SyncMode::Symlink
     } else {
         SyncMode::Copy
-    };
-    (path.to_string_lossy().into_owned(), mode)
+    }
 }
 
-/// A failed sync settles its row here (D9, symmetric with ADR-0002): the
-/// folder's row is recorded `error` with the diagnostic chain — a new row owns
-/// nothing (`synced_at` NULL), an existing one keeps its ownership. A store
-/// failure here is logged: the report row already carries the sync failure,
-/// which is what the operator acts on.
+/// A failed sync settles its row here (D9, symmetric with ADR-0002): the row
+/// is recorded `error` with the diagnostic chain — a new row owns nothing
+/// (`synced_at` NULL), an existing one keeps its key, path and ownership. A
+/// store failure here is logged: the report row already carries the sync
+/// failure, which is what the operator acts on.
 fn record_failed(
     store: &SkillStore,
     target: &PlannedToolTarget,
     skill: &BatchSkill,
+    row: &BatchRow,
     error: &GlobalSyncError,
 ) {
-    let (target_path, mode) = would_be(target, skill);
     let detail = error.to_string();
     if let Err(err) = store.transition_skill_target(
         &Uuid::new_v4().to_string(),
         TargetTransition::FailedRecorded {
             skill_id: &skill.skill_id,
-            tool: &target.folder_key,
-            mode,
-            target_path: &target_path,
+            tool: &row.key,
+            mode: first_attempt_mode(target),
+            target_path: &row.path.to_string_lossy(),
             error: &detail,
         },
     ) {
         log::warn!(
             "recording the failed sync of {} to {} failed: {err:#}",
             skill.skill_id,
-            target.folder_key
+            row.key
         );
     }
 }
 
 /// The operator kept the folder in the way (`OverrideDecision::Keep`): the
-/// folder's row is recorded `disabled` — a marker that owns nothing at its
-/// path — and reported `Declined`. A store failure fails the pair as report
-/// data.
+/// row is recorded `disabled` under its own key at its own path — a marker
+/// that owns nothing there — and reported `Declined`. A store failure fails
+/// the row as report data.
 fn record_kept(
     store: &SkillStore,
     target: &PlannedToolTarget,
     skill: &BatchSkill,
+    row: &BatchRow,
 ) -> BatchTargetStatus {
-    let (target_path, mode) = would_be(target, skill);
-    let tool_key = target.folder_key.as_str();
     match store.transition_skill_target(
         &Uuid::new_v4().to_string(),
         TargetTransition::DisabledRecorded {
             skill_id: &skill.skill_id,
-            tool: tool_key,
-            mode,
-            target_path: &target_path,
+            tool: &row.key,
+            mode: first_attempt_mode(target),
+            target_path: &row.path.to_string_lossy(),
         },
     ) {
         Ok(()) => BatchTargetStatus::Declined,
@@ -607,42 +677,9 @@ fn record_kept(
     }
 }
 
-/// The Disabled rule of the batch (see **Disabled** in `CONTEXT.md`): a pair
-/// is skipped when its skill is disabled at skill grain, or when the target's
-/// folder is off (`placement::FolderRows::disabled`): a row of the skill on
-/// the folder driver's recorded path is `Disabled` — the folder's own row, or
-/// a row a shared-dir sibling wrote on that same path before rows were per
-/// folder. An independent row (another recorded path) never blocks it.
-struct DisabledGate {
-    skill_disabled: bool,
-    disabled_folders: Vec<String>,
-}
-
-impl DisabledGate {
-    fn read(store: &SkillStore, skill_id: &str) -> Result<Self> {
-        Ok(Self {
-            skill_disabled: store.skill_disabled_at(skill_id)?.is_some(),
-            disabled_folders: placement::folder_rows(
-                ScopeKind::Global,
-                store.list_skill_targets(skill_id)?,
-            )
-            .into_iter()
-            .filter(|group| group.disabled())
-            .map(|group| group.folder)
-            .collect(),
-        })
-    }
-
-    fn blocks(&self, folder_key: &str, lifted: &[String]) -> bool {
-        self.skill_disabled
-            || (self.disabled_folders.iter().any(|f| f == folder_key)
-                && !lifted.iter().any(|f| f == folder_key))
-    }
-}
-
 /// Sync N skills to M tools in one call: environment probing under `roots`
 /// ([`plan_batch_tool_targets`]) composed with the deterministic engine
-/// ([`sync_planned_tools_lifting`]). Planning failures surface as `Failed`
+/// ([`sync_skills_to_planned_tools`]). Planning failures surface as `Failed`
 /// outcomes per skill; the function itself never errors.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
@@ -682,33 +719,6 @@ pub(crate) fn sync_skills_to_tools_unlocked(
     now: i64,
     on_progress: impl FnMut(BatchProgress),
 ) -> Vec<BatchTargetOutcome> {
-    sync_skills_to_tools_lifting_unlocked(
-        roots,
-        store,
-        central_dir,
-        skills,
-        tool_keys,
-        policy,
-        &[],
-        now,
-        on_progress,
-    )
-}
-
-/// [`sync_skills_to_tools_unlocked`] for Enable, lifting the Disabled state of
-/// the folders `lifted` names ([`sync_planned_tools_lifting`]).
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn sync_skills_to_tools_lifting_unlocked(
-    roots: &HostRoots,
-    store: &SkillStore,
-    central_dir: &Path,
-    skills: &[BatchSkill],
-    tool_keys: &[String],
-    policy: &BatchPolicy,
-    lifted: &[String],
-    now: i64,
-    on_progress: impl FnMut(BatchProgress),
-) -> Vec<BatchTargetOutcome> {
     let mut targets: Vec<PlannedToolTarget> = Vec::new();
     let mut outcomes: Vec<BatchTargetOutcome> = Vec::new();
     for plan in plan_batch_tool_targets(roots, tool_keys) {
@@ -721,6 +731,7 @@ pub(crate) fn sync_skills_to_tools_lifting_unlocked(
                     outcomes.push(BatchTargetOutcome {
                         skill_id: skill.skill_id.clone(),
                         skill_name: skill.skill_name.clone(),
+                        folder_key: row_folder(ScopeKind::Global, &tool_key),
                         tool_key: tool_key.clone(),
                         status: BatchTargetStatus::Failed {
                             error: error.clone(),
@@ -730,13 +741,12 @@ pub(crate) fn sync_skills_to_tools_lifting_unlocked(
             }
         }
     }
-    outcomes.extend(sync_planned_tools_lifting(
+    outcomes.extend(sync_skills_to_planned_tools(
         store,
         central_dir,
         skills,
         &targets,
         policy,
-        lifted,
         now,
         on_progress,
     ));

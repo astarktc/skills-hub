@@ -143,7 +143,9 @@ export default function CountConfirmModal({
             : `${t("bulk.confirm.sync.body", {
                 pairs: t("bulk.confirm.sync.pairs", { count: counts.pairs }),
                 skills: n("skills", counts.skills),
-                tools: n("tools", counts.tools),
+                // The harnesses ticked; the deployments are one per folder
+                // they name (two sharing a folder are one deployment).
+                tools: n("tools", picked.length),
               })} ${parts.join(" · ")}`}
         </p>
       </div>

@@ -405,8 +405,9 @@ than re-tagging.
     target row (pair), or `skills.disabled_at` plus every row `disabled` (skill). There is no unrecorded unsync.
     **Every fan-out skips a disabled target as report data, never `Failed`**: Propagation
     (`PropagationSkip::Disabled`); the global batch, hence Onboarding import's first sync (`Skipped` with
-    `TARGET_DISABLED`, also for a shared-dir sibling recording a disabled row's very path — a row recording another
-    path is independent, `placement::folder_rows`); project sync (`ProjectSyncSkip::Disabled`).
+    `TARGET_DISABLED`, also for every other row of a Deployment folder one of whose rows is disabled); project sync
+    (`ProjectSyncSkip::Disabled`). Every mutation acts on each stored row by itself (its own path, ownership and
+    settlement); grouping rows by Deployment folder is presentation and counting only (`placement::fold_folder_rows`).
     A fan-out gates on `skills.disabled_at` as well as row status: a failed skill Disable keeps rows `error`
     (ADR-0002), and those are skipped too (resync, bulk assign, relocation).
     Only Enable re-materialises, as a first sync (`EnableReport { global, projects }`).

@@ -206,8 +206,9 @@ export function enableConfirmLines(counts: EnableCounts, t: Translate): string[]
 
 export type SyncCounts = {
   skills: number;
+  /** Distinct Deployment folders among the picked Tools. */
   tools: number;
-  /** skills × Tools. */
+  /** skills × Deployment folders. */
   pairs: number;
   /** Pairs already synced (a re-sync; identical content is replaced silently). */
   alreadySynced: number;
@@ -220,20 +221,23 @@ export type SyncCounts = {
 /**
  * Sync to the picked Tools, over the selection. `tools` names each picked
  * Tool by the Deployment folder serving it (`ToolInfoDto.folder_key`) — the
- * key its row carries.
+ * key its row carries. Two picked harnesses sharing one folder (Amp and Kimi
+ * Code) name it twice and count once: the batch writes one Deployment per
+ * folder, so the confirmation states exactly that.
  */
 export function syncCounts(skills: readonly ManagedSkill[], tools: readonly string[]): SyncCounts {
+  const folders = [...new Set(tools)];
   let alreadySynced = 0;
   let disabled = 0;
   for (const skill of skills) {
-    for (const tool of tools) {
+    for (const tool of folders) {
       const target = skill.targets.find((row) => row.tool === tool);
       if (skill.disabled_at !== null || target?.status === "disabled") disabled++;
       else if (target && (target.status === "synced" || target.status === "stale")) alreadySynced++;
     }
   }
-  const pairs = skills.length * tools.length;
-  return { skills: skills.length, tools: tools.length, pairs, alreadySynced, disabled, added: pairs - alreadySynced - disabled };
+  const pairs = skills.length * folders.length;
+  return { skills: skills.length, tools: folders.length, pairs, alreadySynced, disabled, added: pairs - alreadySynced - disabled };
 }
 
 /**

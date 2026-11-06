@@ -61,13 +61,14 @@ fn cancelled_and_declined_rows_cross_the_wire_as_their_own_kinds() {
         skill_id: "s1".into(),
         skill_name: "alpha".into(),
         tool_key: "claude_code".into(),
+        folder_key: "claude_code".into(),
         status: BatchTargetStatus::Declined,
     };
     assert_eq!(
         serde_json::to_value(declined).unwrap(),
         serde_json::json!({
             "skill_id": "s1", "skill_name": "alpha", "tool_key": "claude_code",
-            "status": { "status": "declined" }
+            "folder_key": "claude_code", "status": { "status": "declined" }
         })
     );
 }

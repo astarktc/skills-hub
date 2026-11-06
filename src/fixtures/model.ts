@@ -214,35 +214,29 @@ export function projectFolderOf(key: string): string {
 }
 
 /**
- * Rust `placement::folder_rows` for one folder's rows: the driver — among the
- * rows owning their artifact (`synced_at` set) when any does, the row keyed by
- * the folder, else the first — and the rows recording its very location
- * (`locationOf`, compared byte for byte). Every other row is independent: no
- * write of the folder touches it. Without `locationOf` every row records one
- * location (a scenario's pre-1.4.0 siblings were all written on one path).
+ * Rust `placement::fold_status`: the displayed state of one Deployment folder
+ * over all its rows — any `disabled` row makes it `disabled`, otherwise the
+ * row needing the most attention (`error` › `missing` › `stale` › `pending` ›
+ * `synced`).
  */
-export function folderDriver<R extends { tool: string; synced_at?: number | null }>(
-  members: readonly R[],
-  folder: string,
-  locationOf: (row: R) => string = () => "",
-): { driver: R; onPath: R[] } {
-  const owns = (row: R) => row.synced_at !== undefined && row.synced_at !== null;
-  const candidates = members.some(owns) ? members.filter(owns) : members;
-  const driver = candidates.find((row) => row.tool === folder) ?? candidates[0];
-  return { driver, onPath: members.filter((row) => locationOf(row) === locationOf(driver)) };
+const FOLD_RANK: Record<string, number> = { disabled: 6, error: 5, missing: 4, stale: 3, pending: 2, synced: 1 };
+export function foldStatus<S extends string>(statuses: readonly S[]): S | undefined {
+  return statuses.reduce<S | undefined>(
+    (best, status) => (best === undefined || (FOLD_RANK[status] ?? 0) > (FOLD_RANK[best] ?? 0) ? status : best),
+    undefined,
+  );
 }
 
 /**
- * Rust `placement::one_row_per_folder`: rows written once per shared-dir
- * sibling read as their folder — per owner, one row keyed by the folder: a
- * `disabled` row on the driver's location when there is one, else the driver
- * ([`folderDriver`]) — in the order each folder first appears.
+ * Rust `placement::fold_folder_rows`, for display and counting only: per
+ * owner, one row per folder keyed by the folder — its first row whose status
+ * is the folder's folded status — in the order each folder first appears.
+ * Mutations never read it: they act on every row by itself.
  */
-export function oneRowPerFolder<R extends { tool: string; status: string; synced_at?: number | null }>(
+export function foldFolderRows<R extends { tool: string; status: string }>(
   rows: readonly R[],
   folderOf: (tool: string) => string,
   ownerOf: (row: R) => string = () => "",
-  locationOf?: (row: R) => string,
 ): R[] {
   const groups = new Map<string, { folder: string; rows: R[] }>();
   for (const row of rows) {
@@ -253,8 +247,8 @@ export function oneRowPerFolder<R extends { tool: string; status: string; synced
     groups.set(key, group);
   }
   return [...groups.values()].map(({ folder, rows: members }) => {
-    const { driver, onPath } = folderDriver(members, folder, locationOf);
-    const pick = driver.status === "disabled" ? driver : (onPath.find((row) => row.status === "disabled") ?? driver);
+    const status = foldStatus(members.map((row) => row.status));
+    const pick = members.find((row) => row.status === status) ?? members[0];
     return { ...pick, tool: folder };
   });
 }

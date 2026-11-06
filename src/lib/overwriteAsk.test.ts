@@ -18,12 +18,14 @@ const collided = (skill_id: string, tool_key: string, sameContent = false): Batc
   skill_id,
   skill_name: skill_id,
   tool_key,
+  folder_key: tool_key,
   status: { status: "failed", error: { code: "TARGET_EXISTS", path: `/${tool_key}/${skill_id}`, modifiedAt: 7, sameContent } },
 });
 const synced = (skill_id: string, tool_key: string): BatchTargetOutcome => ({
   skill_id,
   skill_name: skill_id,
   tool_key,
+  folder_key: tool_key,
   status: { status: "synced", outcome: { mode_used: "symlink", target_path: `/${tool_key}/${skill_id}`, replaced: true } },
 });
 
@@ -60,6 +62,7 @@ describe("overwriteAsk", () => {
           skill_id: "a",
           skill_name: "a",
           tool: "claude",
+          folder_key: "claude",
           status: { status: "failed", error: { code: "TARGET_EXISTS", path: "/p/a", modifiedAt: null, sameContent: false } },
         },
       ],
@@ -102,6 +105,7 @@ describe("overwriteAsk", () => {
       skill_id: "a",
       skill_name: "a",
       tool,
+      folder_key: tool,
       status,
     });
     const merged = mergeProjectRetry(
@@ -118,6 +122,7 @@ describe("overwriteAsk", () => {
       skill_id: "a",
       skill_name: "a",
       tool,
+      folder_key: tool,
       status,
     });
     const collided = { status: "failed" as const, error: { code: "TARGET_EXISTS" as const, path: "/x", modifiedAt: null, sameContent: false } };
@@ -173,10 +178,10 @@ describe("Propagation rows (ticket 09 B2)", () => {
     const merged = mergePropagationRetry(skill, targets, {
       rows,
       global: [
-        { skill_id: "a", skill_name: "alpha", tool_key: "claude", status: { status: "declined" } },
-        { skill_id: "a", skill_name: "alpha", tool_key: "cursor", status: { status: "failed", error: { code: "OTHER", message: "busy" } } },
+        { skill_id: "a", skill_name: "alpha", tool_key: "claude", folder_key: "claude", status: { status: "declined" } },
+        { skill_id: "a", skill_name: "alpha", tool_key: "cursor", folder_key: "cursor", status: { status: "failed", error: { code: "OTHER", message: "busy" } } },
       ],
-      projects: { skipped_projects: [], items: [{ assignment_id: "x", project_id: "p1", skill_id: "a", skill_name: "alpha", tool: "claude", status: { status: "synced" } }] },
+      projects: { skipped_projects: [], items: [{ assignment_id: "x", project_id: "p1", skill_id: "a", skill_name: "alpha", tool: "claude", folder_key: "claude", status: { status: "synced" } }] },
     });
     expect(merged.declined).toEqual([{ skillName: "alpha", tool: "claude" }]);
     expect(merged.targets).toEqual([

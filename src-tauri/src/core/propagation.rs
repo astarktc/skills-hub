@@ -40,16 +40,14 @@ use anyhow::Result;
 use super::environment::HostRoots;
 use super::errors::{CommandError, SignalError};
 use super::installer::InstallerPaths;
-use super::placement::{self, folder_rows, one_row_per_folder, row_folder, FolderRows, ScopeKind};
-use super::project_sync::{
-    deploy_adapter, project_folder_rows, settle_same_path, AssignmentSyncContext,
-};
+use super::placement::{self, row_folder, ScopeKind};
+use super::project_sync::{deploy_adapter, AssignmentSyncContext};
 use super::removal_fence::ProtectedLibrary;
 use super::skill_store::{
     AssignmentTransition, ProjectSkillAssignmentRecord, SkillRecord, SkillStore, TargetTransition,
 };
 use super::sync_engine;
-use super::sync_status::SyncMode;
+use super::sync_status::{SyncMode, SyncStatus};
 use super::tool_adapters::{catalog_rows, installed_set_in, ToolAdapter};
 
 /// Which Sync target an outcome is about.
@@ -139,16 +137,13 @@ pub(crate) fn propagate_unlocked(
 
     let mut report = PropagationReport::default();
     if store.skill_disabled_at(skill_id)?.is_some() {
-        // Off everywhere until enabled: every folder is reported, none is touched.
-        for row in one_row_per_folder(ScopeKind::Global, store.list_skill_targets(skill_id)?) {
+        // Off everywhere until enabled: every row is reported, none is touched.
+        for row in store.list_skill_targets(skill_id)? {
             report
                 .targets
                 .push(skipped_global(&row.tool, PropagationSkip::Disabled));
         }
-        for assignment in one_row_per_folder(
-            ScopeKind::Project,
-            store.list_project_skill_assignments_by_skill(skill_id)?,
-        ) {
+        for assignment in store.list_project_skill_assignments_by_skill(skill_id)? {
             report.targets.push(PropagationOutcome {
                 scope: PropagationScope::Project {
                     project_id: assignment.project_id,
@@ -187,16 +182,19 @@ fn missing_source(central_path: &Path) -> anyhow::Error {
 // Global scope
 // ---------------------------------------------------------------------------
 
-/// Global target rows, handled one **Deployment folder at a time**: one
-/// outcome per folder, named by its folder key. A folder's rows are its own
-/// row plus any written once per shared-dir sibling before rows were per
-/// folder (`placement::row_folder` reads them as the folder) until the
-/// redeploy collapses them. The write acts on the driver's recorded path
-/// (`placement::folder_rows`) with the driver's own permission: it is ours to
-/// replace only when the driver materialised it. The rows recording that very
-/// path decide whether it is off and whether it needs new bytes, and settle
-/// with it; a row recording any other path is left as it is. A folder whose
-/// driver never materialised its path gets a first deploy.
+/// Global target rows, **one row at a time**: each row is synced at its own
+/// recorded path, with its own ownership, and settles only itself. Rows a
+/// pre-1.4.0 app wrote once per shared-dir sibling (Amp and Kimi on
+/// `~/.config/agents/skills`) are each their own row here until the redeploy
+/// collapses them; nothing is lent or settled between them.
+///
+/// Two facts are the row's folder's (`placement::row_folder`) rather than its
+/// key's: the capability it is deployed with (`placement::capability_entry` —
+/// a group's capability stays its own fact) and whether any harness reading
+/// it is installed. And one disabled row of the folder keeps every row of it
+/// skipped, as on every Sync-target path: writing the shared artifact for one
+/// row would re-materialise it where the disabled harness reads. That rule
+/// only ever withholds a write; it never grants one.
 fn propagate_global_rows(
     store: &SkillStore,
     central_dir: &Path,
@@ -206,61 +204,59 @@ fn propagate_global_rows(
     now: i64,
     report: &mut PropagationReport,
 ) -> Result<()> {
-    let groups = folder_rows(ScopeKind::Global, store.list_skill_targets(skill_id)?);
-    if groups.is_empty() {
+    let rows = store.list_skill_targets(skill_id)?;
+    if rows.is_empty() {
         return Ok(());
     }
     let installed = installed_set_in(roots);
 
-    for group in &groups {
-        let folder = &group.folder;
-        // A disabled row on the driver's path disables the folder: writing it
-        // would re-materialise it where the disabled harness reads.
-        if group.disabled() {
+    for row in &rows {
+        let folder = row_folder(ScopeKind::Global, &row.tool);
+        let folder_disabled = rows.iter().any(|other| {
+            other.status == SyncStatus::Disabled
+                && row_folder(ScopeKind::Global, &other.tool) == folder
+        });
+        if folder_disabled {
             report
                 .targets
-                .push(skipped_global(folder, PropagationSkip::Disabled));
+                .push(skipped_global(&row.tool, PropagationSkip::Disabled));
             continue;
         }
-        let Some(adapter) = placement::capability_entry(ScopeKind::Global, folder) else {
+        let Some(adapter) = placement::capability_entry(ScopeKind::Global, &folder) else {
             report.targets.push(skipped_global(
-                folder,
+                &row.tool,
                 PropagationSkip::UnknownTool {
-                    tool: folder.clone(),
+                    tool: row.tool.clone(),
                 },
             ));
             continue;
         };
-        // The folder is reachable when any harness whose own folder it is, is
-        // installed (its rows are what is recorded here, whatever key wrote them).
+        // Reachable when any harness whose own folder it is, is installed:
+        // the row is that folder's, whatever key wrote it.
         let reachable = catalog_rows()
-            .filter(|a| row_folder(ScopeKind::Global, a.key()) == *folder)
+            .filter(|a| row_folder(ScopeKind::Global, a.key()) == folder)
             .any(|a| installed.contains(a.key()));
         if !reachable {
             report.targets.push(skipped_global(
-                folder,
+                &row.tool,
                 PropagationSkip::ToolNotInstalled {
-                    tool: folder.clone(),
+                    tool: row.tool.clone(),
                 },
             ));
             continue;
         }
 
-        // The artifact is ours to replace only when the driver materialised
-        // its path (`owns_artifact` — the driver is an owner whenever any row
-        // is); otherwise this is a first sync and foreign bytes there are
-        // `TARGET_EXISTS`. A link of ours already follows the central copy —
-        // unless a row on that path says it is a copy (`needs_new_bytes` over
-        // every such row, not one representative).
-        let owned = group.driver.owns_artifact();
-        if owned
-            && !group
-                .path_rows()
-                .any(|row| needs_new_bytes(row.mode, adapter))
-        {
-            report
-                .targets
-                .push(skipped_global(folder, PropagationSkip::LinkFollowsSource));
+        // A link already follows the central copy — but only a link of ours:
+        // a row that never materialised (a failed first sync's `error` row,
+        // `owns_artifact` false) has no link yet, so it gets a first sync,
+        // and foreign bytes there are `TARGET_EXISTS`. The artifact is ours
+        // to replace only when this row materialised it.
+        let owned = row.owns_artifact();
+        if owned && !needs_new_bytes(row.mode, adapter) {
+            report.targets.push(skipped_global(
+                &row.tool,
+                PropagationSkip::LinkFollowsSource,
+            ));
             continue;
         }
 
@@ -272,7 +268,7 @@ fn propagate_global_rows(
                 adapter,
                 central_path,
                 super::content_identity::Source::Managed { store, skill_id },
-                Path::new(&group.driver.target_path),
+                Path::new(&row.target_path),
                 owned,
                 &ProtectedLibrary::new(store, central_dir),
             )
@@ -281,31 +277,24 @@ fn propagate_global_rows(
         let status = match result {
             Ok(outcome) => {
                 let target_path = outcome.target_path.to_string_lossy().to_string();
-                for row in group.path_rows() {
-                    store.transition_skill_target(
-                        &row.id,
-                        TargetTransition::SyncCompleted {
-                            mode: outcome.mode_used,
-                            target_path: &target_path,
-                            synced_at: now,
-                        },
-                    )?;
-                }
+                store.transition_skill_target(
+                    &row.id,
+                    TargetTransition::SyncCompleted {
+                        mode: outcome.mode_used,
+                        target_path: &target_path,
+                        synced_at: now,
+                    },
+                )?;
                 PropagationStatus::Synced {
                     mode_used: outcome.mode_used,
                 }
             }
             Err(error) => {
-                // A failed first sync records nothing new (D9): a
-                // `TARGET_EXISTS` is answered by the operator's ask, any other
-                // failure settles the rows on the driver's path `error`.
                 let detail = format!("{:#}", error);
-                for row in group.path_rows() {
-                    store.transition_skill_target(
-                        &row.id,
-                        TargetTransition::SyncFailed { error: &detail },
-                    )?;
-                }
+                store.transition_skill_target(
+                    &row.id,
+                    TargetTransition::SyncFailed { error: &detail },
+                )?;
                 PropagationStatus::Failed {
                     error: CommandError::from_anyhow(error),
                     first_deploy: !owned,
@@ -314,7 +303,7 @@ fn propagate_global_rows(
         };
         report.targets.push(PropagationOutcome {
             scope: PropagationScope::Global {
-                tool: folder.clone(),
+                tool: row.tool.clone(),
             },
             status,
         });
@@ -342,38 +331,32 @@ fn propagate_project_rows(
     now: i64,
     report: &mut PropagationReport,
 ) -> Result<()> {
-    // One folder per project, one sync of the driver's recorded path, with
-    // the rows recording that very path (`project_sync::project_folder_rows`).
-    // A pre-1.4.0 sibling recording another name is left as it is.
-    let groups = project_folder_rows(store.list_project_skill_assignments_by_skill(&skill.id)?);
-    for group in groups {
+    for assignment in store.list_project_skill_assignments_by_skill(&skill.id)? {
         let scope = PropagationScope::Project {
-            project_id: group.driver.project_id.clone(),
-            tool: group.folder.clone(),
+            project_id: assignment.project_id.clone(),
+            tool: assignment.tool.clone(),
         };
-        let status = propagate_one_folder(store, central_dir, skill, now, &group)?;
+        let status = propagate_one_assignment(store, central_dir, skill, now, &assignment)?;
         report.targets.push(PropagationOutcome { scope, status });
     }
     Ok(())
 }
 
-/// One project folder's driver path: decide whether it needs new bytes, from
-/// every row recording it, then sync the driver through
-/// `project_sync::sync_assignment_target` (which locates the artifact by the
-/// driver's stored name and records `SyncCompleted`), settle the rows
-/// recording the same path as the driver settled, and settle a failure here. The
-/// deploy capability is the folder's (`project_sync::deploy_adapter`, through
-/// placement), never a pre-1.4.0 member key's; the skill was read once for
-/// the whole Propagation — both travel down in the [`AssignmentSyncContext`].
-fn propagate_one_folder(
+/// One project assignment: decide whether it needs new bytes, then sync it
+/// through `project_sync::sync_assignment_target` (which locates the artifact
+/// by its stored name and records `SyncCompleted`) and settle a failure here.
+/// The adapter is resolved here, once — the capability of the project folder
+/// the row describes (`project_sync::deploy_adapter`, through placement),
+/// never a pre-1.4.0 member key's own; the skill was read once for the whole
+/// Propagation — both travel down in the [`AssignmentSyncContext`].
+fn propagate_one_assignment(
     store: &SkillStore,
     central_dir: &Path,
     skill: &SkillRecord,
     now: i64,
-    group: &FolderRows<ProjectSkillAssignmentRecord>,
+    assignment: &ProjectSkillAssignmentRecord,
 ) -> Result<PropagationStatus> {
-    let assignment = &group.driver;
-    if group.disabled() {
+    if assignment.status == SyncStatus::Disabled {
         return Ok(PropagationStatus::Skipped {
             reason: PropagationSkip::Disabled,
         });
@@ -401,15 +384,9 @@ fn propagate_one_folder(
             reason: unavailable,
         });
     }
-    // Only a link of ours follows the source; a path the driver never
-    // materialised gets a first sync (see the global arm). Any row on that
-    // path recording a copy means the bytes may be stale.
-    let owned = assignment.owns_artifact();
-    if owned
-        && !group
-            .path_rows()
-            .any(|row| needs_new_bytes(row.mode, adapter))
-    {
+    // Only a link of ours follows the source; a row that never materialised
+    // gets a first sync (see the global arm).
+    if assignment.owns_artifact() && !needs_new_bytes(assignment.mode, adapter) {
         return Ok(PropagationStatus::Skipped {
             reason: PropagationSkip::LinkFollowsSource,
         });
@@ -425,9 +402,9 @@ fn propagate_one_folder(
             project_path: &project_path,
             adapter,
             skill,
-            // Only the driver's own artifact is replaced; a path it never
+            // Only an artifact of ours is replaced; a row that never
             // materialised gets a first sync (`owns_artifact`).
-            overwrite: owned,
+            overwrite: assignment.owns_artifact(),
             now,
         };
         super::project_sync::sync_assignment_target(&ctx, assignment, || skill.content_hash.clone())
@@ -436,23 +413,18 @@ fn propagate_one_folder(
     };
 
     match result {
-        Ok(outcome) => {
-            settle_same_path(store, assignment, &group.same_path)?;
-            Ok(PropagationStatus::Synced {
-                mode_used: outcome.mode_used,
-            })
-        }
+        Ok(outcome) => Ok(PropagationStatus::Synced {
+            mode_used: outcome.mode_used,
+        }),
         Err(error) => {
             let detail = format!("{:#}", error);
-            for row in group.path_rows() {
-                store.transition_assignment(
-                    &row.id,
-                    AssignmentTransition::SyncFailed { error: &detail },
-                )?;
-            }
+            store.transition_assignment(
+                &assignment.id,
+                AssignmentTransition::SyncFailed { error: &detail },
+            )?;
             Ok(PropagationStatus::Failed {
                 error: CommandError::from_anyhow(error),
-                first_deploy: !owned,
+                first_deploy: !assignment.owns_artifact(),
             })
         }
     }

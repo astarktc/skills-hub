@@ -201,6 +201,20 @@ describe("syncCounts", () => {
       added: 4,
     });
   });
+
+  it("counts one Deployment per folder when two picked harnesses share it (Sol 105)", () => {
+    // Amp and Kimi Code both picked: each names the folder `amp`
+    // (`ToolInfoDto.folder_key`), which the batch writes once.
+    const skills = [skill("fresh", []), skill("there", [target("amp")])];
+    expect(syncCounts(skills, ["amp", "amp", "claude"])).toEqual({
+      skills: 2,
+      tools: 2,
+      pairs: 4,
+      alreadySynced: 1, // there:amp
+      disabled: 0,
+      added: 3, // fresh:amp, fresh:claude, there:claude
+    });
+  });
 });
 
 describe("harnessArrivals (D48)", () => {

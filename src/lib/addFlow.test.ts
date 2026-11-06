@@ -92,6 +92,7 @@ describe("settlementRows", () => {
     skill_id: "id",
     skill_name: "lint",
     tool_key: tool,
+    folder_key: tool,
     status,
   });
   const synced = { status: "synced", outcome: { mode_used: "symlink", target_path: "/t", replaced: false } } as const;

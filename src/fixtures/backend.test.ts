@@ -262,10 +262,10 @@ describe("rich", () => {
     const global = Object.fromEntries(
       status.targets.flatMap((o) => (o.scope.scope === "global" ? [[o.scope.tool, o.status]] : [])),
     );
-    // amp/kimi_cli are copies of one shared artifact, one folder (`amp`):
-    // rewritten once, recovered, reported once.
+    // amp/kimi_cli are pre-1.4.0 rows of one folder (`amp`), copies: each row
+    // is rewritten by itself and reported by itself (Rust per-row Propagation).
     expect(global.amp).toEqual({ status: "synced", mode_used: "symlink" });
-    expect(global.kimi_cli).toBeUndefined();
+    expect(global.kimi_cli).toEqual({ status: "synced", mode_used: "symlink" });
     // Synced links are skipped: the central copy was refreshed in place.
     expect(global.claude_code).toEqual({ status: "skipped", reason: { reason: "link_follows_source" } });
     const after = await byName(handlers, "using-git-worktrees");
@@ -372,12 +372,12 @@ describe("failures", () => {
       );
     };
 
-    // Amp and Kimi Code's rows are one folder (`amp`), reported once.
+    // Amp and Kimi Code's pre-1.4.0 rows are one folder (`amp`) to readers,
+    // and each its own row to Propagation, reported by itself.
     const links = await statusOf(worktrees.id);
-    for (const tool of ["amp", "cursor"]) {
+    for (const tool of ["amp", "kimi_cli", "cursor"]) {
       expect(links[tool]).toEqual({ status: "skipped", reason: { reason: "link_follows_source" } });
     }
-    expect(links.kimi_cli).toBeUndefined();
     const linkRows = (await byName(handlers, "using-git-worktrees")).targets;
     for (const tool of ["amp", "cursor"]) {
       expect(linkRows.find((r) => r.tool === tool)).toMatchObject({ mode: "symlink", status: "error" });
@@ -385,7 +385,7 @@ describe("failures", () => {
 
     const copies = await statusOf(tdd.id);
     expect(copies.amp).toMatchObject({ status: "failed", error: { code: "REMOVAL_PERMISSION_DENIED" } });
-    expect(copies.kimi_cli).toBeUndefined();
+    expect(copies.kimi_cli).toMatchObject({ status: "failed", error: { code: "REMOVAL_PERMISSION_DENIED" } });
     const copyRows = (await byName(handlers, "tdd")).targets;
     expect(copyRows.find((r) => r.tool === "amp")).toMatchObject({ mode: "copy", status: "error" });
   });
@@ -674,17 +674,22 @@ describe("D34: an Update only reaches deployments that exist (auto-sync on)", ()
     expect(state.settings.auto_sync_enabled).toBe(true);
     const zod = await byName(handlers, "zod-schema-first");
     const before = zod.targets.map((row) => row.tool);
+    // Propagation reports each stored row (pre-1.4.0 sibling rows included);
+    // the catalog reads them as their folders.
+    const stored = () => state.skills.find((s) => s.dto.id === zod.id)!.dto.targets.map((row) => row.tool);
+    const storedBefore = stored();
     // Cursor holds a foreign zod-schema-first folder in this scenario: an
     // Update never goes there, so nothing collides.
     const updated = await handlers.updateManagedSkill(zod.id, sink().channel);
-    expect(globalTools(updated.report.skills[0].status)).toEqual(before);
+    expect(globalTools(updated.report.skills[0].status)).toEqual(storedBefore);
     const refreshed = await handlers.refreshManagedSkills([zod.id], sink().channel);
-    expect(globalTools(refreshed.skills[0].status)).toEqual(before);
+    expect(globalTools(refreshed.skills[0].status)).toEqual(storedBefore);
     const repointed = await handlers.repointSkillSource(zod.id, {
       kind: "git",
       url: "https://github.com/mattpocock/skills/tree/main/skills/engineering/zod-schema-first",
     });
-    expect(globalTools(repointed.report.skills[0].status)).toEqual(before);
+    expect(globalTools(repointed.report.skills[0].status)).toEqual(storedBefore);
+    expect(stored()).toEqual(storedBefore);
     expect((await byName(handlers, "zod-schema-first")).targets.map((row) => row.tool)).toEqual(before);
     const fold = refreshOutcome(updated.report, { t, single: { name: zod.name, success: "UPDATED" } });
     expect(fold.toast?.tone).toBe("success");
@@ -1991,6 +1996,7 @@ describe("fixture parity with Rust (#90)", () => {
           skill_id: "s-any",
           skill_name: "",
           tool: "claude_code",
+          folder_key: "claude_code",
           status: { status: "failed", error: { code: "NOT_FOUND", kind: "assignment", id: "prj-gone/s-any/claude_code" } },
         },
       ],

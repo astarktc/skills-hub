@@ -310,10 +310,19 @@ export type BatchSyncSkillDto = {
 	source_path: string,
 };
 
+/**
+ *  One row's result. `tool_key` is the raw row the outcome settled (a
+ *  pre-1.4.0 shared-dir sibling's row keeps its own key) — the key an
+ *  overwrite answer names. `folder_key` is the Deployment folder that row
+ *  describes (`placement::row_folder`): the backend's answer to "which
+ *  Deployment is this", so a report reader counts one Deployment per (skill,
+ *  folder) however many legacy rows describe it, and never derives a folder.
+ */
 export type BatchTargetOutcome = {
 	skill_id: string,
 	skill_name: string,
 	tool_key: string,
+	folder_key: string,
 	status: BatchTargetStatus,
 };
 
@@ -1301,8 +1310,18 @@ export type ProjectSyncOutcome = {
 	project_id: string,
 	skill_id: string,
 	skill_name: string,
-	/**  Registry key of the project Tool. */
+	/**
+	 *  Registry key of the project Tool: the raw row the outcome settled (a
+	 *  pre-1.4.0 shared-dir sibling's row keeps its own key) — the key an
+	 *  overwrite answer names.
+	 */
 	tool: string,
+	/**
+	 *  The project Deployment folder that row describes
+	 *  (`placement::row_folder`): a report reader counts one Deployment per
+	 *  (project, skill, folder) however many legacy rows describe it.
+	 */
+	folder_key: string,
 	status: ProjectSyncOutcomeStatus,
 };
 

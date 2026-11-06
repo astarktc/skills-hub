@@ -511,3 +511,35 @@ fn the_catalog_reads_sibling_rows_as_one_folder() {
     let one = managed_skill_entry(&store, "s1").unwrap().unwrap();
     assert_eq!(one.targets.len(), 2);
 }
+
+/// A folder's state on the catalog is the one fold over all its rows
+/// (`placement::fold_status`): an error on any row of the folder shows,
+/// whichever row is keyed by the folder — the global batch's Retry of the
+/// folder reaches every one of them.
+#[test]
+fn the_catalog_shows_a_folders_state_folded_over_every_row() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = tmp.path().join("central");
+    let alpha = write_manifest(&central, "alpha", "---\nname: alpha\n---\n");
+    seed_skill(&store, "s1", "alpha", &alpha);
+    seed_target(&store, "s1", "amp");
+    store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "s1-kimi_cli".to_string(),
+            skill_id: "s1".to_string(),
+            tool: "kimi_cli".to_string(),
+            target_path: "/tmp/elsewhere/s1".to_string(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Error,
+            last_error: Some("an earlier first sync failed".to_string()),
+            synced_at: None,
+        })
+        .unwrap();
+
+    let entry = managed_skill_entry(&store, "s1").unwrap().unwrap();
+    assert_eq!(entry.targets.len(), 1);
+    assert_eq!(entry.targets[0].tool, "amp");
+    assert_eq!(entry.targets[0].status, SyncStatus::Error);
+    assert_eq!(entry.targets[0].id, "s1-kimi_cli", "the row the fold shows");
+}

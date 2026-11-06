@@ -18,7 +18,7 @@ use std::path::Path;
 
 use crate::core::{
     manifest::{invocation_mode_for_dir, InvocationMode},
-    placement::{one_row_per_folder, ScopeKind},
+    placement::{fold_folder_rows, ScopeKind},
     project_ops::project_name_from_path,
     provenance::is_refreshable,
     skill_health::{all_skill_health, skill_health, SkillHealth},
@@ -37,7 +37,7 @@ pub struct SkillProject {
     /// The project's display name (its folder's basename, `project_name_from_path`).
     pub project_name: String,
     /// One per Deployment folder of this skill in the project, keyed by its
-    /// folder key (`placement::one_row_per_folder`).
+    /// folder key (`placement::fold_folder_rows`).
     pub deployments: Vec<SkillProjectDeployment>,
 }
 
@@ -57,7 +57,7 @@ fn projects_by_skill(
     rows: Vec<SkillProjectDeploymentRecord>,
 ) -> HashMap<String, Vec<SkillProject>> {
     let mut out: HashMap<String, Vec<SkillProject>> = HashMap::new();
-    for row in one_row_per_folder(ScopeKind::Project, rows) {
+    for row in fold_folder_rows(ScopeKind::Project, rows) {
         let projects = out.entry(row.skill_id).or_default();
         let deployment = SkillProjectDeployment {
             tool: row.tool,
@@ -93,7 +93,7 @@ pub struct ManagedSkillEntry {
     pub invocation_mode: InvocationMode,
     pub invocation_override: Option<super::skill_edits::InvocationOverride>,
     /// The skill's global Deployments, one per folder keyed by its folder key
-    /// (`placement::one_row_per_folder`: rows written once per shared-dir
+    /// (`placement::fold_folder_rows`: rows written once per shared-dir
     /// sibling before 1.4.0 read as their folder), in store order —
     /// `disabled` rows included: they are the operator's record.
     pub targets: Vec<SkillTargetRecord>,
@@ -167,7 +167,7 @@ fn build_entry(
     health: Option<SkillHealth>,
     projects: Vec<SkillProject>,
 ) -> Result<ManagedSkillEntry> {
-    let targets = one_row_per_folder(
+    let targets = fold_folder_rows(
         ScopeKind::Global,
         store
             .list_skill_targets(&skill.id)

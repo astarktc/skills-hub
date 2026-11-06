@@ -6,7 +6,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use tauri::Manager;
 
 use super::errors::SignalError;
-use super::placement::{row_folder, ScopeKind};
+use super::placement::{fold_status, row_folder, ScopeKind};
 use super::sync_status::{aggregate, ProjectSyncStatus, SyncMode, SyncStatus};
 
 const DB_FILE_NAME: &str = "skills_hub.db";
@@ -281,8 +281,6 @@ pub struct SkillProjectDeploymentRecord {
     pub project_id: String,
     pub project_path: String,
     pub tool: String,
-    /// The artifact name the row records (`ProjectSkillAssignmentRecord::skill_name`).
-    pub skill_name: String,
     pub status: SyncStatus,
     pub synced_at: Option<i64>,
 }
@@ -390,6 +388,15 @@ pub enum TargetTransition<'a> {
         mode: SyncMode,
         target_path: &'a str,
     },
+    /// Enable admits a `disabled` row back for a first sync: a successful
+    /// Disable removed its artifact, so its ownership is cleared (`synced_at`
+    /// NULL) and it reads `pending` — row created or re-admitted, sync not yet
+    /// attempted — keeping its own key, mode and recorded path. Only a sync of
+    /// it that succeeds makes it an owner again; a collision leaves a
+    /// non-owner the overwrite ask can settle. A row that is not `disabled` is
+    /// left untouched. The global sibling of
+    /// [`AssignmentTransition::EnableAdmitted`].
+    EnableAdmitted,
 }
 
 /// A typed write to an assignment's lifecycle columns — the only way the
@@ -1473,13 +1480,13 @@ impl SkillStore {
         self.with_conn(|conn| {
             let sql = match only {
                 Some(_) => {
-                    "SELECT a.id, a.skill_id, a.project_id, p.path, a.tool, a.mode, a.status, a.last_error, a.synced_at, a.skill_name
+                    "SELECT a.id, a.skill_id, a.project_id, p.path, a.tool, a.mode, a.status, a.last_error, a.synced_at
                      FROM project_skill_assignments a JOIN projects p ON p.id = a.project_id
                      WHERE a.skill_id = ?1
                      ORDER BY a.skill_id ASC, p.path ASC, a.tool ASC"
                 }
                 None => {
-                    "SELECT a.id, a.skill_id, a.project_id, p.path, a.tool, a.mode, a.status, a.last_error, a.synced_at, a.skill_name
+                    "SELECT a.id, a.skill_id, a.project_id, p.path, a.tool, a.mode, a.status, a.last_error, a.synced_at
                      FROM project_skill_assignments a JOIN projects p ON p.id = a.project_id
                      ORDER BY a.skill_id ASC, p.path ASC, a.tool ASC"
                 }
@@ -1493,7 +1500,6 @@ impl SkillStore {
                     project_id: row.get(2)?,
                     project_path: row.get(3)?,
                     tool: row.get(4)?,
-                    skill_name: row.get(9)?,
                     status,
                     synced_at: row.get(8)?,
                 })
@@ -1649,6 +1655,21 @@ impl SkillStore {
                 });
             }
             TargetTransition::Disabled => (SyncStatus::Disabled, None, None, None, None),
+            TargetTransition::EnableAdmitted => {
+                return self.with_conn(|conn| {
+                    conn.execute(
+                        "UPDATE skill_targets
+                         SET status = ?1, last_error = NULL, synced_at = NULL
+                         WHERE id = ?2 AND status = ?3",
+                        params![
+                            SyncStatus::Pending.as_str(),
+                            target_id,
+                            SyncStatus::Disabled.as_str()
+                        ],
+                    )?;
+                    Ok(())
+                });
+            }
             TargetTransition::DisabledRecorded {
                 skill_id,
                 tool,
@@ -1903,28 +1924,39 @@ impl SkillStore {
                 None => stmt.query_map([], read_assignment)?,
             };
 
-            let mut statuses: HashMap<String, Vec<SyncStatus>> = HashMap::new();
             let mut skills: HashMap<String, HashSet<String>> = HashMap::new();
-            // One Deployment per (skill, folder): rows written once per
-            // shared-dir sibling before rows were per folder count once.
-            let mut deployments: HashSet<(String, String, String)> = HashSet::new();
+            // One Deployment per (project, skill, folder): its rows — several
+            // when a pre-1.4.0 app wrote one per shared-dir sibling — count
+            // once, with the folder's folded status (`placement::fold_status`,
+            // the fold the project listing shows), so the project total never
+            // disagrees with its matrix.
+            let mut deployments: HashMap<(String, String, String), Vec<SyncStatus>> =
+                HashMap::new();
             for row in assignment_rows {
                 let (project_id, skill_id, status, tool) = row?;
                 let folder = row_folder(ScopeKind::Project, &tool);
-                if deployments.insert((project_id.clone(), skill_id.clone(), folder)) {
-                    aggregates
-                        .entry(project_id.clone())
-                        .or_default()
-                        .assignment_count += 1;
-                }
                 skills
                     .entry(project_id.clone())
                     .or_default()
-                    .insert(skill_id);
-                statuses.entry(project_id).or_default().push(status);
+                    .insert(skill_id.clone());
+                deployments
+                    .entry((project_id, skill_id, folder))
+                    .or_default()
+                    .push(status);
             }
             for (project_id, skill_ids) in skills {
                 aggregates.entry(project_id).or_default().skill_count = skill_ids.len();
+            }
+            let mut statuses: HashMap<String, Vec<SyncStatus>> = HashMap::new();
+            for ((project_id, _, _), rows) in deployments {
+                aggregates
+                    .entry(project_id.clone())
+                    .or_default()
+                    .assignment_count += 1;
+                statuses
+                    .entry(project_id)
+                    .or_default()
+                    .extend(fold_status(rows));
             }
             for (project_id, statuses) in statuses {
                 aggregates.entry(project_id).or_default().sync_status = aggregate(statuses);

@@ -2105,12 +2105,12 @@ fn seed_legacy_sibling(f: &Fixture) {
         .unwrap();
 }
 
-/// Existing per-sharer rows on a dir shared today read as one folder: a pair
-/// Disable of either harness settles both rows, the batch skips the folder
-/// while either is disabled, and Enable clears both before deploying the
-/// folder's one row.
+/// Existing per-sharer rows on a dir shared today are each their own row: a
+/// pair Disable of either harness's folder settles both rows, the batch skips
+/// every row of the folder while one is disabled, and Enable admits each row
+/// and syncs it by itself at its own recorded path — no row minted, none lost.
 #[test]
-fn legacy_sibling_rows_are_disabled_gated_and_enabled_as_one_folder() {
+fn legacy_sibling_rows_are_disabled_gated_and_enabled_each_by_itself() {
     let f = fixture(&["amp", "kimi_cli"]);
     f.sync(&["amp"]);
     seed_legacy_sibling(&f);
@@ -2134,10 +2134,8 @@ fn legacy_sibling_rows_are_disabled_gated_and_enabled_as_one_folder() {
     assert_eq!(f.status("kimi_cli"), Some(SyncStatus::Disabled));
 
     let outcomes = f.sync(&["amp"]);
-    assert!(
-        matches!(outcomes.as_slice(), [o] if skipped_disabled(o)),
-        "{outcomes:?}"
-    );
+    assert_eq!(outcomes.len(), 2, "one outcome per row: {outcomes:?}");
+    assert!(outcomes.iter().all(skipped_disabled), "{outcomes:?}");
     assert!(!exists_any(&shared));
 
     let enabled = enable_targets(
@@ -2148,21 +2146,27 @@ fn legacy_sibling_rows_are_disabled_gated_and_enabled_as_one_folder() {
         NOW,
     )
     .unwrap();
-    assert_eq!(enabled.global.len(), 1, "{:?}", enabled.global);
+    assert_eq!(enabled.global.len(), 2, "{:?}", enabled.global);
     assert!(exists_any(&shared));
-    assert_eq!(f.status("amp"), Some(SyncStatus::Synced));
-    assert_eq!(
-        f.status("kimi_cli"),
-        None,
-        "the cleared sibling is not re-minted"
-    );
+    for tool in ["amp", "kimi_cli"] {
+        let row = f
+            .store
+            .get_skill_target(&f.skill_id, tool)
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.status, SyncStatus::Synced, "{tool}");
+        assert!(row.owns_artifact(), "{tool}");
+        assert_eq!(row.target_path, shared.to_string_lossy(), "{tool}");
+    }
 }
 
-/// Global Enable never deletes or re-records an independent row: a Kimi Code
-/// Keep marker recorded under another name over a foreign folder neither
-/// blocks the folder's Enable nor is touched by it, and its folder stays.
+/// A Kimi Code Keep marker recorded under another name over a foreign folder
+/// is its own row: Enable admits it with the folder's other row and its own
+/// first sync at its own path meets the foreign folder and asks, so it stays a
+/// `disabled` marker owning nothing there — its record and its folder are
+/// kept, and the folder's own row is enabled by its own sync.
 #[test]
-fn global_enable_leaves_an_independent_keep_marker_alone() {
+fn global_enable_keeps_a_keep_marker_as_its_own_row() {
     let f = fixture(&["amp", "kimi_cli"]);
     f.sync(&["amp"]);
     let shared = f.global_path(".config/agents/skills");
@@ -2206,21 +2210,30 @@ fn global_enable_leaves_an_independent_keep_marker_alone() {
     )
     .unwrap();
 
-    assert!(
-        matches!(
-            enabled.global.as_slice(),
-            [o] if matches!(o.status, crate::core::global_sync::BatchTargetStatus::Synced { .. })
-        ),
-        "{:?}",
-        enabled.global
-    );
+    let outcome = |tool: &str| {
+        enabled
+            .global
+            .iter()
+            .find(|o| o.tool_key == tool)
+            .unwrap_or_else(|| panic!("no outcome for {tool}: {:?}", enabled.global))
+    };
+    assert!(matches!(
+        outcome("amp").status,
+        crate::core::global_sync::BatchTargetStatus::Synced { .. }
+    ));
+    assert!(matches!(
+        &outcome("kimi_cli").status,
+        crate::core::global_sync::BatchTargetStatus::Failed {
+            error: CommandError::TargetExists { path, .. }
+        } if *path == old_name.to_string_lossy()
+    ));
     assert!(exists_any(&shared));
     assert_eq!(f.status("amp"), Some(SyncStatus::Synced));
     let marker = f
         .store
         .get_skill_target(&f.skill_id, "kimi_cli")
         .unwrap()
-        .expect("the independent record is kept");
+        .expect("the record is kept");
     assert_eq!(
         (marker.status, marker.synced_at, &marker.target_path),
         (
@@ -2233,6 +2246,109 @@ fn global_enable_leaves_an_independent_keep_marker_alone() {
         std::fs::read_to_string(old_name.join("SKILL.md")).unwrap(),
         "foreign"
     );
+}
+
+/// Astra's finding 9 / Sol's 103, the reported key order: the folder key's
+/// row (`amp`) is a never-synced record of another path, while a pre-1.4.0
+/// `kimi_cli` row owns the folder's artifact. Neither a successful global
+/// batch nor an Enable of the folder ever settles the write of Kimi's path
+/// onto Amp's record: each row is synced and settled by itself.
+#[test]
+fn a_global_write_or_enable_never_repurposes_another_rows_record() {
+    let f = fixture(&["amp", "kimi_cli"]);
+    f.sync(&["amp"]);
+    seed_legacy_sibling(&f);
+    let shared = f.global_path(".config/agents/skills");
+    let independent = shared.with_file_name("independent");
+    foreign_folder(&independent);
+    // The folder key's row: never synced, recording another path.
+    f.store.delete_skill_target(&f.skill_id, "amp").unwrap();
+    let seed_amp = |status: SyncStatus| {
+        f.store
+            .upsert_skill_target(&crate::core::skill_store::SkillTargetRecord {
+                id: "amp-record".into(),
+                skill_id: f.skill_id.clone(),
+                tool: "amp".into(),
+                target_path: independent.to_string_lossy().into(),
+                mode: crate::core::sync_status::SyncMode::Symlink,
+                status,
+                last_error: None,
+                synced_at: None,
+            })
+            .unwrap();
+    };
+    let amp_record = |f: &Fixture| {
+        f.store
+            .get_skill_target(&f.skill_id, "amp")
+            .unwrap()
+            .unwrap()
+    };
+
+    // A successful global batch (Sol 103): an `error` record is not gated.
+    seed_amp(SyncStatus::Error);
+    let outcomes = f.sync(&["kimi_cli"]);
+    assert!(
+        outcomes
+            .iter()
+            .any(|o| o.tool_key == "kimi_cli"
+                && matches!(o.status, BatchTargetStatus::Synced { .. })),
+        "{outcomes:?}"
+    );
+    let amp = amp_record(&f);
+    assert_eq!(
+        amp.target_path,
+        independent.to_string_lossy(),
+        "{outcomes:?}"
+    );
+    assert!(!amp.owns_artifact());
+    assert!(foreign_bytes_survive(&independent));
+    let kimi = f
+        .store
+        .get_skill_target(&f.skill_id, "kimi_cli")
+        .unwrap()
+        .unwrap();
+    assert_eq!(kimi.target_path, shared.to_string_lossy());
+    assert_eq!(kimi.status, SyncStatus::Synced);
+
+    // Disable then Enable the folder (Astra 9): Amp's record is a Keep marker.
+    seed_amp(SyncStatus::Disabled);
+    let roots = HostRoots::under_home(f.home());
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &roots,
+        &f.pair("kimi_cli"),
+        NOW,
+    )
+    .unwrap();
+    assert!(!exists_any(&shared));
+    enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &roots,
+        &f.pair("kimi_cli"),
+        NOW,
+    )
+    .unwrap();
+
+    let amp = amp_record(&f);
+    assert_eq!(
+        amp.target_path,
+        independent.to_string_lossy(),
+        "its own path"
+    );
+    assert_eq!(amp.status, SyncStatus::Disabled, "its Keep answer stands");
+    assert!(!amp.owns_artifact());
+    assert!(foreign_bytes_survive(&independent));
+    let kimi = f
+        .store
+        .get_skill_target(&f.skill_id, "kimi_cli")
+        .unwrap()
+        .unwrap();
+    assert_eq!(kimi.target_path, shared.to_string_lossy());
+    assert_eq!(kimi.status, SyncStatus::Synced);
+    assert!(kimi.owns_artifact());
+    assert!(exists_any(&shared));
 }
 
 /// The batch's Disabled rule reads a sibling's disabled row as its folder's.

@@ -177,17 +177,22 @@ pub(crate) fn project_folder(tool_key: &str) -> String {
         .unwrap_or_else(|| row_folder(ScopeKind::Project, tool_key))
 }
 
-/// The assignment standing for the folder `tool_key` names in `project_id`
-/// for `skill_id`: the folder's driver ([`folder_rows_of`]), whichever key
-/// wrote it — the row keyed by the folder itself, or one a sibling sharing it
-/// wrote before rows were per folder.
-pub(crate) fn folder_assignment(
+/// Every stored assignment row of `skill_id` in `project_id` describing the
+/// folder `tool_key` names (`row_folder`), in store order: the row keyed by the
+/// folder itself, and any a sibling sharing it wrote before rows were per
+/// folder. A mutation of the folder acts on each of them by itself.
+pub(crate) fn folder_assignments(
     store: &SkillStore,
     project_id: &str,
     skill_id: &str,
     tool_key: &str,
-) -> Result<Option<ProjectSkillAssignmentRecord>> {
-    Ok(folder_rows_of(store, project_id, skill_id, tool_key)?.map(|group| group.driver))
+) -> Result<Vec<ProjectSkillAssignmentRecord>> {
+    let folder = project_folder(tool_key);
+    Ok(store
+        .list_project_skill_assignments(project_id)?
+        .into_iter()
+        .filter(|a| a.skill_id == skill_id && row_folder(ScopeKind::Project, &a.tool) == folder)
+        .collect())
 }
 
 /// The registry entry that deploys into the project folder a row keyed
@@ -205,33 +210,6 @@ pub(crate) fn deploy_adapter(tool_key: &str) -> Result<&'static ToolAdapter> {
                 tool: tool_key.to_string(),
             })
         })
-}
-
-/// Group assignment rows by (project, skill, folder) and split each folder
-/// by recorded path (`placement::folder_rows`): the driver, the rows recording
-/// its very path (they share its state and settle with it) and independent
-/// rows recording another name, which no write of the folder touches.
-pub(crate) fn project_folder_rows(
-    rows: Vec<ProjectSkillAssignmentRecord>,
-) -> Vec<placement::FolderRows<ProjectSkillAssignmentRecord>> {
-    placement::folder_rows(ScopeKind::Project, rows)
-}
-
-/// The rows of one (project, skill) describing the folder `tool_key` names,
-/// split by recorded path; `None` when the folder has no row.
-fn folder_rows_of(
-    store: &SkillStore,
-    project_id: &str,
-    skill_id: &str,
-    tool_key: &str,
-) -> Result<Option<placement::FolderRows<ProjectSkillAssignmentRecord>>> {
-    let folder = project_folder(tool_key);
-    let rows: Vec<ProjectSkillAssignmentRecord> = store
-        .list_project_skill_assignments(project_id)?
-        .into_iter()
-        .filter(|a| a.skill_id == skill_id && row_folder(ScopeKind::Project, &a.tool) == folder)
-        .collect();
-    Ok(project_folder_rows(rows).into_iter().next())
 }
 
 /// Test fixture over [`assign_and_settle`]: create one assignment row and
@@ -378,8 +356,14 @@ pub struct ProjectSyncOutcome {
     pub project_id: String,
     pub skill_id: String,
     pub skill_name: String,
-    /// Registry key of the project Tool.
+    /// Registry key of the project Tool: the raw row the outcome settled (a
+    /// pre-1.4.0 shared-dir sibling's row keeps its own key) — the key an
+    /// overwrite answer names.
     pub tool: String,
+    /// The project Deployment folder that row describes
+    /// (`placement::row_folder`): a report reader counts one Deployment per
+    /// (project, skill, folder) however many legacy rows describe it.
+    pub folder_key: String,
     pub status: ProjectSyncOutcomeStatus,
 }
 
@@ -563,23 +547,26 @@ pub(crate) fn assign_skill_to_tools(
         folders.push(folder);
     }
     for tool_key in &folders {
-        let (assignment_id, status) = match folder_rows_of(store, &project.id, &skill.id, tool_key)?
-        {
+        // The folder is assigned when any row describes it; which state it
+        // is in is the one presentation fold (`placement::fold_folder_rows`),
+        // read here and nothing written.
+        let existing = placement::fold_folder_rows(
+            ScopeKind::Project,
+            folder_assignments(store, &project.id, &skill.id, tool_key)?,
+        )
+        .into_iter()
+        .next();
+        let (assignment_id, status) = match existing {
             // A skill disabled at skill grain answers Disabled for every
             // existing row too: a failed Disable leaves it `error`, and
             // that row is not "already assigned" — it is off until Enable.
-            // The folder is off when a row on its driver's path is; an
-            // independent row's status never counts.
-            Some(existing) if existing.disabled() || skill_disabled => (
-                Some(existing.driver.id),
+            Some(existing) if existing.status == SyncStatus::Disabled || skill_disabled => (
+                Some(existing.id),
                 ProjectSyncOutcomeStatus::Skipped {
                     reason: ProjectSyncSkip::Disabled,
                 },
             ),
-            Some(existing) => (
-                Some(existing.driver.id),
-                ProjectSyncOutcomeStatus::AlreadyAssigned,
-            ),
+            Some(existing) => (Some(existing.id), ProjectSyncOutcomeStatus::AlreadyAssigned),
             None if skill_disabled => match deploy_adapter(tool_key) {
                 Ok(_) => {
                     let record = ProjectSkillAssignmentRecord {
@@ -633,6 +620,7 @@ pub(crate) fn assign_skill_to_tools(
             skill_id: skill.id.clone(),
             skill_name: skill.name.clone(),
             tool: tool_key.clone(),
+            folder_key: row_folder(ScopeKind::Project, tool_key),
             status,
         });
     }
@@ -785,12 +773,15 @@ pub(crate) fn resync_project_unlocked(
     resync_assignments_unlocked(store, central_dir, &project, &assignments, now)
 }
 
-/// Re-sync one assignment of a project — a matrix cell's **Sync this** (a
-/// stale copy, a missing artifact, a failed sync). The project re-sync's rule
-/// for one row: a disabled row is skipped, only a row that owns its path
-/// replaces what is there (otherwise a folder in the way is `TARGET_EXISTS`
-/// report data), and a missing project folder is skipped whole. An absent
-/// assignment is the typed `NotFound`.
+/// Re-sync one cell of a project — a matrix cell's **Sync this** (a stale
+/// copy, a missing artifact, a failed sync). The cell is the folder `tool`
+/// names, and every stored row describing it is re-synced by itself
+/// ([`folder_assignments`]: one row, or several a pre-1.4.0 app wrote once per
+/// shared-dir sibling), so whatever state the cell's fold shows, this settles.
+/// The project re-sync's rule for each row: a disabled row is skipped, only a
+/// row that owns its path replaces what is there (otherwise a folder in the
+/// way is `TARGET_EXISTS` report data), and a missing project folder is
+/// skipped whole. A cell with no row is the typed `NotFound`.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
 pub fn resync_assignment(
@@ -803,18 +794,13 @@ pub fn resync_assignment(
 ) -> Result<ProjectSyncReport> {
     mutation_guard::serialized(|| {
         let project = project_ops::require_project(store, project_id)?;
-        if folder_assignment(store, project_id, skill_id, tool)?.is_none() {
+        let rows = folder_assignments(store, project_id, skill_id, tool)?;
+        if rows.is_empty() {
             anyhow::bail!(SignalError::NotFound {
                 kind: "assignment".to_string(),
                 id: format!("{project_id}/{skill_id}/{tool}"),
             });
         }
-        let folder = project_folder(tool);
-        let rows: Vec<ProjectSkillAssignmentRecord> = store
-            .list_project_skill_assignments(project_id)?
-            .into_iter()
-            .filter(|a| a.skill_id == skill_id && row_folder(ScopeKind::Project, &a.tool) == folder)
-            .collect();
         resync_assignments_unlocked(store, central_dir, &project, &rows, now)
     })
 }
@@ -841,8 +827,7 @@ fn resync_assignments_unlocked(
     // so the row status alone cannot gate the re-sync.
     let mut skill_disabled: HashMap<String, bool> = HashMap::new();
 
-    for group in project_folder_rows(assignments.to_vec()) {
-        let assignment = &group.driver;
+    for assignment in assignments {
         let disabled_skill = match skill_disabled.get(&assignment.skill_id) {
             Some(disabled) => *disabled,
             None => {
@@ -852,15 +837,15 @@ fn resync_assignments_unlocked(
             }
         };
         // Skipped before any filesystem work; an `error` row keeps its
-        // status and `last_error` (the failed removal stays observable). The
-        // folder is off when a row on the driver's path is.
-        if group.disabled() || disabled_skill {
+        // status and `last_error` (the failed removal stays observable).
+        if assignment.status == SyncStatus::Disabled || disabled_skill {
             report.items.push(ProjectSyncOutcome {
                 assignment_id: Some(assignment.id.clone()),
                 project_id: assignment.project_id.clone(),
                 skill_id: assignment.skill_id.clone(),
                 skill_name: reported_skill_name(store, assignment),
-                tool: group.folder.clone(),
+                tool: assignment.tool.clone(),
+                folder_key: row_folder(ScopeKind::Project, &assignment.tool),
                 status: ProjectSyncOutcomeStatus::Skipped {
                     reason: ProjectSyncSkip::Disabled,
                 },
@@ -870,19 +855,24 @@ fn resync_assignments_unlocked(
         // Re-sync replaces only an artifact of ours: a row that never
         // materialised (a failed first sync or Enable met someone else's
         // folder) is a first sync again, so that folder stays and the
-        // collision is `TARGET_EXISTS` report data (`owns_artifact`). The
-        // permission is the driver's own (the driver is an owner whenever
-        // any row of the folder is); no sibling lends it.
+        // collision is `TARGET_EXISTS` report data (`owns_artifact`).
         let overwrite = assignment.owns_artifact();
         let status =
             match sync_single_assignment(store, central_dir, project, assignment, overwrite, now) {
-                Ok(()) => {
-                    settle_same_path(store, assignment, &group.same_path)?;
-                    ProjectSyncOutcomeStatus::Synced
-                }
+                Ok(()) => ProjectSyncOutcomeStatus::Synced,
                 Err(e) => {
                     let err_msg = format!("{:#}", e);
-                    settle_failed(store, group.path_rows(), &err_msg, "re-sync")?;
+                    store
+                        .transition_assignment(
+                            &assignment.id,
+                            AssignmentTransition::SyncFailed { error: &err_msg },
+                        )
+                        .with_context(|| {
+                            format!(
+                                "settle assignment {} as error after its re-sync failed: {err_msg}",
+                                assignment.id
+                            )
+                        })?;
                     ProjectSyncOutcomeStatus::Failed {
                         error: CommandError::from_anyhow(e),
                     }
@@ -893,7 +883,8 @@ fn resync_assignments_unlocked(
             project_id: assignment.project_id.clone(),
             skill_id: assignment.skill_id.clone(),
             skill_name: reported_skill_name(store, assignment),
-            tool: group.folder.clone(),
+            tool: assignment.tool.clone(),
+            folder_key: row_folder(ScopeKind::Project, &assignment.tool),
             status,
         });
     }
@@ -901,75 +892,16 @@ fn resync_assignments_unlocked(
     Ok(report)
 }
 
-/// Settle `same_path` exactly as `driver`'s successful sync settled it. Only
-/// rows recording the driver's very path (`FolderRows::same_path`) are passed:
-/// the app has just written exactly that path, so they now name an artifact of
-/// ours. A row recording any other path — another name, or another spelling
-/// of the same place — is never settled from this one: only a successful
-/// write of a row's own recorded path makes it an owner.
-pub(crate) fn settle_same_path(
-    store: &SkillStore,
-    driver: &ProjectSkillAssignmentRecord,
-    same_path: &[ProjectSkillAssignmentRecord],
-) -> Result<()> {
-    if same_path.is_empty() {
-        return Ok(());
-    }
-    let Some(settled) =
-        store.get_project_skill_assignment(&driver.project_id, &driver.skill_id, &driver.tool)?
-    else {
-        return Ok(());
-    };
-    for row in same_path {
-        store.transition_assignment(
-            &row.id,
-            AssignmentTransition::SyncCompleted {
-                mode: settled.mode,
-                synced_at: settled.synced_at.unwrap_or_default(),
-                content_hash: settled.content_hash.as_deref(),
-            },
-        )?;
-    }
-    Ok(())
-}
-
-/// Settle every row recording one path `error` after its sync failed.
-fn settle_failed<'r>(
-    store: &SkillStore,
-    rows: impl Iterator<Item = &'r ProjectSkillAssignmentRecord>,
-    err_msg: &str,
-    what: &str,
-) -> Result<()> {
-    for row in rows {
-        store
-            .transition_assignment(&row.id, AssignmentTransition::SyncFailed { error: err_msg })
-            .with_context(|| {
-                format!(
-                    "settle assignment {} as error after its {what} failed: {err_msg}",
-                    row.id
-                )
-            })?;
-    }
-    Ok(())
-}
-
-/// Enable's project half (`core::skill_disable`): a **first** sync of every
-/// disabled Deployment folder among the given assignment rows — overwrite
-/// off, so a directory in the way is the typed `TARGET_EXISTS`, as for a new
-/// assignment.
-///
-/// The rows are grouped by folder (`project_folder_rows`) and a folder is
-/// enabled only when it is off: a row on its driver's recorded path is
-/// `disabled`. Its disabled rows on that path are admitted first — a
-/// successful Disable removed their artifact, so their ownership is cleared
-/// (`EnableAdmitted`) and a collision leaves a non-owner the overwrite ask can
-/// settle (Keep → `disabled`, Overwrite → synced and owning again) — then the
-/// driver gets its first sync and the rows on its path settle with it,
-/// `synced`, or `error` with its chain (report data). An **independent** row
-/// (another recorded name) is never admitted, deleted, synced or settled here,
-/// whatever its status: it neither blocks the folder nor is touched, and the
-/// redeploy (ticket 10) reconciles it. A store failure fails the whole
-/// operation.
+/// Enable's project half (`core::skill_disable`): a **first** sync of each
+/// given assignment row — overwrite off, so a directory in the way is the
+/// typed `TARGET_EXISTS`, as for a new assignment. Each row settles
+/// `synced`, or `error` with its chain (report data); a store failure fails
+/// the whole operation. The caller has already decided these rows may be
+/// materialised (their skill is not disabled), so their stored status is not
+/// consulted here — except to admit a `disabled` row: a successful Disable
+/// removed its artifact, so its ownership is cleared first
+/// (`EnableAdmitted`) and a collision leaves a non-owner the overwrite ask
+/// can settle (Keep → `disabled`, Overwrite → synced and owning again).
 ///
 /// A row of a project whose folder is missing is left exactly as it is (not
 /// admitted, not synced) and its project answers one `folder_missing` skip:
@@ -983,11 +915,7 @@ pub(crate) fn first_sync_assignments_unlocked(
     now: i64,
 ) -> Result<ProjectSyncReport> {
     let mut report = ProjectSyncReport::default();
-    for group in project_folder_rows(assignments.to_vec()) {
-        if !group.disabled() {
-            continue;
-        }
-        let assignment = &group.driver;
+    for assignment in assignments {
         let project = project_ops::require_project(store, &assignment.project_id);
         if let Ok(project) = &project {
             if !project_ops::project_folder_exists(project) {
@@ -995,22 +923,27 @@ pub(crate) fn first_sync_assignments_unlocked(
                 continue;
             }
         }
-        for row in group.path_rows() {
-            if row.status == SyncStatus::Disabled {
-                store.transition_assignment(&row.id, AssignmentTransition::EnableAdmitted)?;
-            }
+        if assignment.status == SyncStatus::Disabled {
+            store.transition_assignment(&assignment.id, AssignmentTransition::EnableAdmitted)?;
         }
         let result = project.and_then(|project| {
             sync_single_assignment(store, central_dir, &project, assignment, false, now)
         });
         let status = match result {
-            Ok(()) => {
-                settle_same_path(store, assignment, &group.same_path)?;
-                ProjectSyncOutcomeStatus::Synced
-            }
+            Ok(()) => ProjectSyncOutcomeStatus::Synced,
             Err(e) => {
                 let err_msg = format!("{:#}", e);
-                settle_failed(store, group.path_rows(), &err_msg, "enable")?;
+                store
+                    .transition_assignment(
+                        &assignment.id,
+                        AssignmentTransition::SyncFailed { error: &err_msg },
+                    )
+                    .with_context(|| {
+                        format!(
+                            "settle assignment {} as error after its enable failed: {err_msg}",
+                            assignment.id
+                        )
+                    })?;
                 ProjectSyncOutcomeStatus::Failed {
                     error: CommandError::from_anyhow(e),
                 }
@@ -1021,7 +954,8 @@ pub(crate) fn first_sync_assignments_unlocked(
             project_id: assignment.project_id.clone(),
             skill_id: assignment.skill_id.clone(),
             skill_name: reported_skill_name(store, assignment),
-            tool: group.folder.clone(),
+            tool: assignment.tool.clone(),
+            folder_key: row_folder(ScopeKind::Project, &assignment.tool),
             status,
         });
     }
@@ -1071,8 +1005,7 @@ fn resolve_collisions_unlocked(
     use crate::core::global_sync::OverrideDecision;
     let mut report = ProjectSyncReport::default();
     for decision in decisions {
-        let group = folder_rows_of(
-            store,
+        let assignment = store.get_project_skill_assignment(
             &decision.project_id,
             &decision.skill_id,
             &decision.tool,
@@ -1082,10 +1015,11 @@ fn resolve_collisions_unlocked(
             project_id: decision.project_id.clone(),
             skill_id: decision.skill_id.clone(),
             skill_name,
-            tool: project_folder(&decision.tool),
+            tool: decision.tool.clone(),
+            folder_key: row_folder(ScopeKind::Project, &decision.tool),
             status,
         };
-        let Some(group) = group else {
+        let Some(assignment) = assignment else {
             report.items.push(item(
                 None,
                 String::new(),
@@ -1101,14 +1035,10 @@ fn resolve_collisions_unlocked(
             ));
             continue;
         };
-        // The answer is about the driver's recorded path: the driver and the
-        // rows recording that very path. A row recording another path is not
-        // part of the collision and is left as it is.
-        let assignment = &group.driver;
-        let name = reported_skill_name(store, assignment);
+        let name = reported_skill_name(store, &assignment);
         let id = Some(assignment.id.clone());
         let skill_disabled = store.skill_disabled_at(&assignment.skill_id)?.is_some();
-        let status = if group.disabled() || skill_disabled {
+        let status = if assignment.status == SyncStatus::Disabled || skill_disabled {
             ProjectSyncOutcomeStatus::Skipped {
                 reason: ProjectSyncSkip::Disabled,
             }
@@ -1123,9 +1053,7 @@ fn resolve_collisions_unlocked(
         } else {
             match decision.decision {
                 OverrideDecision::Keep => {
-                    for row in group.path_rows() {
-                        store.transition_assignment(&row.id, AssignmentTransition::Disabled)?;
-                    }
+                    store.transition_assignment(&assignment.id, AssignmentTransition::Disabled)?;
                     ProjectSyncOutcomeStatus::Declined
                 }
                 OverrideDecision::Overwrite => {
@@ -1135,19 +1063,26 @@ fn resolve_collisions_unlocked(
                                 store,
                                 central_dir,
                                 &project,
-                                assignment,
+                                &assignment,
                                 true,
                                 now,
                             )
                         });
                     match result {
-                        Ok(()) => {
-                            settle_same_path(store, assignment, &group.same_path)?;
-                            ProjectSyncOutcomeStatus::Synced
-                        }
+                        Ok(()) => ProjectSyncOutcomeStatus::Synced,
                         Err(e) => {
                             let err_msg = format!("{:#}", e);
-                            settle_failed(store, group.path_rows(), &err_msg, "overwrite")?;
+                            store
+                                .transition_assignment(
+                                    &assignment.id,
+                                    AssignmentTransition::SyncFailed { error: &err_msg },
+                                )
+                                .with_context(|| {
+                                    format!(
+                                        "settle assignment {} as error after its overwrite failed: {err_msg}",
+                                        assignment.id
+                                    )
+                                })?;
                             ProjectSyncOutcomeStatus::Failed {
                                 error: CommandError::from_anyhow(e),
                             }
@@ -1331,9 +1266,12 @@ pub fn list_assignments_with_staleness(
         reconcile_listing_unlocked(store, project_id, &mut assignments)
     });
     Ok(AssignmentListing {
-        // One row per (skill, folder), keyed by the folder: rows written once
-        // per shared-dir sibling before rows were per folder read as one.
-        assignments: placement::one_row_per_folder(ScopeKind::Project, assignments),
+        // One row per (skill, folder), keyed by the folder, in the state the
+        // one presentation fold gives it (`placement::fold_folder_rows`) — the
+        // fold the project total reads too. Rows written once per shared-dir
+        // sibling before rows were per folder read as one; each stays its own
+        // row for every mutation.
+        assignments: placement::fold_folder_rows(ScopeKind::Project, assignments),
         reconciled: pass.is_some(),
         rewrote_statuses: pass.unwrap_or(false),
     })
@@ -1405,7 +1343,7 @@ pub fn toggle_skill_assignment(
         // Both branches use the unlocked seams — the guard is not reentrant.
         // The cell is the folder `tool_key` names: any row describing it is
         // the assignment.
-        if folder_assignment(store, project_id, skill_id, tool_key)?.is_some() {
+        if !folder_assignments(store, project_id, skill_id, tool_key)?.is_empty() {
             let (project, skill) = lookup_project_and_skill(store, project_id, skill_id)?;
             let report =
                 unassign_and_remove_artifacts(store, central_dir, &project, &skill, tool_key)?;

@@ -86,6 +86,7 @@ function syncItem(
     skill_id: row.skill_id,
     skill_name: row.skill_name,
     tool: row.tool,
+    folder_key: row.tool,
     status,
   };
 }

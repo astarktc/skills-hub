@@ -849,9 +849,50 @@ const projectItem = (
   skill_id: skill,
   skill_name: `${skill}-name`,
   tool,
+  folder_key: tool,
   status,
 });
 const denied = { status: "failed", error: { code: "OTHER", message: "denied" } } as const;
+describe("sync reports count one Deployment per folder (round 20 t09)", () => {
+  const synced = { status: "synced" as const, outcome: { mode_used: "symlink" as const, target_path: "/a", replaced: false } };
+  it("a pre-1.4.0 Amp + Kimi pair, each row settled by itself, is one deployment named by its folder", () => {
+    const report: BatchTargetOutcome[] = [
+      { skill_id: "s1", skill_name: "git", tool_key: "amp", folder_key: "amp", status: synced },
+      { skill_id: "s1", skill_name: "git", tool_key: "kimi_cli", folder_key: "amp", status: synced },
+      { skill_id: "s1", skill_name: "git", tool_key: "claude", folder_key: "claude", status: synced },
+    ];
+    const out = syncOutcome(report, { ...ctx, action: "bulk" });
+    expect(out.tally?.done).toEqual([{ verb: "synced", count: 2 }]);
+  });
+  it("the folder's strongest row decides it, and an error names the folder", () => {
+    const report: BatchTargetOutcome[] = [
+      { skill_id: "s1", skill_name: "git", tool_key: "amp", folder_key: "amp", status: synced },
+      {
+        skill_id: "s1",
+        skill_name: "git",
+        tool_key: "kimi_cli",
+        folder_key: "amp",
+        status: { status: "failed", error: { code: "OTHER", message: "busy" } },
+      },
+    ];
+    const out = syncOutcome(report, { ...ctx, action: "bulk" });
+    expect(out.tally?.done).toEqual([{ verb: "synced", count: 0 }]);
+    expect(out.tally?.counts.failed).toBe(1);
+    expect(out.errors.map((entry) => entry.subject?.tool)).toEqual(["amp"]);
+  });
+  it("a project resync of Trae and Trae CN rows counts one deployment", () => {
+    const report: ProjectSyncReport = {
+      skipped_projects: [],
+      items: [
+        { ...projectItem("trae", { status: "synced" }) },
+        { ...projectItem("trae_cn", { status: "synced" }), folder_key: "trae" },
+      ],
+    };
+    const out = projectSyncOutcome(report, { ...ctx, action: "resync" });
+    expect(out.toast?.message).toBe(line(["outcome.done.synced", 1]));
+  });
+});
+
 describe("projectSyncOutcome", () => {
   const actions = ["toggleOn", "bulkAssign", "resync", "resyncAll"] as const;
 
@@ -1048,27 +1089,33 @@ const syncReport: BatchTargetOutcome[] = [
       skill_id: "git",
       skill_name: "git",
       tool_key: "claude",
+      folder_key: "claude",
       status: { status: "synced", outcome: { mode_used: "copy", target_path: "/target", replaced: false } },
     },
     {
       skill_id: "git",
       skill_name: "git",
       tool_key: "unknown",
+      folder_key: "unknown",
       status: { status: "failed", error: { code: "OTHER", message: "failed" } },
     },
     {
       skill_id: "git",
       skill_name: "git",
       tool_key: "absent",
+      folder_key: "absent",
       status: {
         status: "skipped",
         error: { code: "TOOL_NOT_INSTALLED", tool: "absent" },
       },
     },
     {
-      skill_id: "git",
+      // Another skill of the same name: a second Deployment on Claude Code
+      // (one (skill, folder) is one Deployment to every fold).
+      skill_id: "git-2",
       skill_name: "git",
       tool_key: "claude",
+      folder_key: "claude",
       status: {
         status: "skipped",
         error: { code: "TOOL_NOT_WRITABLE", tool: "claude", path: "/locked" },
@@ -1149,6 +1196,7 @@ describe("syncOutcome", () => {
       skill_id: skill,
       skill_name: skill,
       tool_key: tool,
+      folder_key: tool,
       status: { status: "skipped", error: { code: "TOOL_NOT_INSTALLED", tool } },
     });
     const out = syncOutcome(
@@ -1207,7 +1255,7 @@ describe("syncOutcome", () => {
       expect(out.warnings).toMatchObject([{ review: true, repair: { verb: "overwrite", tool: "claude", via: "enable" } }]);
     });
     it("a bulk sync counts it in the headline as to review, beside what synced", () => {
-      const out = syncOutcome([syncReport[0], { ...unanswered("failed"), tool_key: "cursor" }], { ...ctx, action: "bulk" });
+      const out = syncOutcome([syncReport[0], { ...unanswered("failed"), tool_key: "cursor", folder_key: "cursor" }], { ...ctx, action: "bulk" });
       expect(out.errors).toEqual([]);
       expect(out.toast).toMatchObject({
         tone: "conflict",
@@ -1216,7 +1264,7 @@ describe("syncOutcome", () => {
       expect(out.tally?.counts.collisions).toBe(1);
     });
     it("a failure beside it still wins the tone; the collision is never counted failed", () => {
-      const out = syncOutcome([syncReport[1], { ...unanswered("failed"), tool_key: "cursor" }], { ...ctx, action: "bulk" });
+      const out = syncOutcome([syncReport[1], { ...unanswered("failed"), tool_key: "cursor", folder_key: "cursor" }], { ...ctx, action: "bulk" });
       expect(out.toast).toMatchObject({
         tone: "failure",
         message: line(["outcome.failed", 1], ["runReport.collisions", 1]),
@@ -1238,7 +1286,7 @@ describe("syncOutcome", () => {
     it("a project assignment collision is to review and names the project in its subject", () => {
       const report: ProjectSyncReport = { skipped_projects: [],
         items: [
-          { assignment_id: "a1", project_id: "p1", skill_id: "s1", skill_name: "tdd", tool: "claude", status: { status: "failed", error: exists } },
+          { assignment_id: "a1", project_id: "p1", skill_id: "s1", skill_name: "tdd", tool: "claude", folder_key: "claude", status: { status: "failed", error: exists } },
         ],
       };
       const out = projectSyncOutcome(report, { ...ctx, action: "toggleOn" });
@@ -1257,6 +1305,7 @@ describe("syncOutcome", () => {
     skill_id: skill,
     skill_name: skill,
     tool_key: tool,
+    folder_key: tool,
     status: { status: "declined" },
   });
   it("a declined-only bulk sync is one quiet line per pair, declined-toned", () => {
@@ -1569,7 +1618,7 @@ describe("importOutcome", () => {
     const out = importOutcome(
       importReport(imported({
         forced_tools: ["claude"],
-        targets: [{ ...syncReport[0], tool_key: "cursor", status: { status: "declined" } }],
+        targets: [{ ...syncReport[0], tool_key: "cursor", folder_key: "cursor", status: { status: "declined" } }],
       })),
       ctx,
     );
@@ -1743,7 +1792,7 @@ describe("installOutcome", () => {
         result: installed,
         deployment: {
           status: "reported",
-          report: [syncReport[0], { ...syncReport[0], tool_key: "cursor", status: { status: "declined" } }],
+          report: [syncReport[0], { ...syncReport[0], tool_key: "cursor", folder_key: "cursor", status: { status: "declined" } }],
         },
       }],
       { ...ctx, source: "git" },
@@ -1767,6 +1816,7 @@ describe("Disabled is a skip in every fold", () => {
     skill_id: "s1",
     skill_name: "alpha",
     tool_key: "claude",
+    folder_key: "claude",
     status: { status: "skipped", error: { code: "TARGET_DISABLED", tool: "claude" } },
   };
   const disabledPropagation = [
@@ -1990,7 +2040,7 @@ describe("ticket 04: the install batch report and the project Keep", () => {
     const out = projectSyncOutcome(
       { skipped_projects: [],
         items: [
-          { assignment_id: "x", project_id: "p", skill_id: "a", skill_name: "alpha", tool: "claude_code", status: { status: "declined" } },
+          { assignment_id: "x", project_id: "p", skill_id: "a", skill_name: "alpha", tool: "claude_code", folder_key: "claude_code", status: { status: "declined" } },
         ],
       },
       { t, action: "toggleOn" },
@@ -2075,6 +2125,7 @@ describe("combineOutcomes (one action, several reports, one run)", () => {
     skill_id: skill,
     skill_name: skill,
     tool_key: tool,
+    folder_key: tool,
     status,
   });
   const synced: BatchTargetOutcome["status"] = {
@@ -2273,7 +2324,7 @@ describe("Enable over several skills (ticket 13)", () => {
   it("reads as the count line over targets, even when clean", () => {
     const report: EnableReport = {
       global: [
-        { skill_id: "a", skill_name: "alpha", tool_key: "claude", status: { status: "synced", outcome: { mode_used: "symlink", target_path: "/x", replaced: false } } },
+        { skill_id: "a", skill_name: "alpha", tool_key: "claude", folder_key: "claude", status: { status: "synced", outcome: { mode_used: "symlink", target_path: "/x", replaced: false } } },
       ],
       projects: { skipped_projects: [], items: [] },
     };
@@ -2294,6 +2345,7 @@ describe("importGroupKind / import headline by settled targets", () => {
     skill_id: "tdd",
     skill_name: "tdd",
     tool_key: tool,
+    folder_key: tool,
     status,
   });
   const synced = (tool: string) =>

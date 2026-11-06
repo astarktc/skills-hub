@@ -935,6 +935,7 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     skill_id,
     skill_name: skill_id === "s1" ? "alpha" : skill_id === "s2" ? "beta" : "gamma",
     tool_key,
+    folder_key: tool_key,
     status,
   });
   const collided = (skill_id: string, tool: string) => pair(skill_id, tool, { status: "failed", error: exists(`/tools/${tool}/${skill_id}`) });

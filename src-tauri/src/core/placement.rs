@@ -23,10 +23,12 @@
 //!   Harnesses pane.
 //!
 //! Stored rows are read through [`row_folder`] (a row describes the folder of
-//! the dir it was written to) and collapsed by [`one_row_per_folder`], so rows
-//! written once per shared-dir sibling before 1.4.0 (Amp and Kimi on
+//! the dir it was written to). For display and counting only, the rows of one
+//! folder are folded by [`fold_folder_rows`] / [`fold_status`], so rows written
+//! once per shared-dir sibling before 1.4.0 (Amp and Kimi on
 //! `~/.config/agents/skills`) read as one folder until the redeploy collapses
-//! them.
+//! them. Mutations never group rows: each acts on every stored row by itself,
+//! at its own recorded path, with its own ownership and settlement.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -406,123 +408,54 @@ fn reads_folder(
 }
 
 // ---------------------------------------------------------------------------
-// Reading stored rows as folders
+// Reading stored rows as folders — presentation and counting only
 // ---------------------------------------------------------------------------
 
-/// A stored Deployment row, as [`folder_rows`] and [`one_row_per_folder`]
-/// read it.
+/// A stored Deployment row, as [`fold_folder_rows`] reads it.
 pub trait FolderRow {
     /// What the row belongs to beside its folder: the skill (global rows), or
     /// the project and the skill (project rows).
     fn owner(&self) -> String;
     fn tool(&self) -> &str;
     fn status(&self) -> SyncStatus;
-    /// Whether a sync of ours succeeded at the row's recorded path
-    /// (`synced_at` set) — the only source of overwrite permission.
-    fn owns_artifact(&self) -> bool;
-    /// The part of the row's **recorded** artifact path that can differ
-    /// between rows of one (owner, folder), compared byte for byte: a global
-    /// row's whole `target_path`; a project row's artifact name (every row of
-    /// one project folder lives in the same project dir, so its name is the
-    /// only part of its path that varies). Never resolved, canonicalised or
-    /// compared by physical identity.
-    fn recorded_location(&self) -> &str;
     fn set_tool(&mut self, tool: String);
 }
 
-/// One row per (owner, folder): rows written once per shared-dir sibling read
-/// as their folder — for display, counting and selection, never ownership.
-/// Each group comes out as the row standing for its folder's state (a
-/// `disabled` row on the driver's recorded path when there is one, else the
-/// [`FolderRows::driver`]), keyed by the folder key, in the order its group
-/// first appeared. Rows of a folder of their own pass through unchanged.
-pub fn one_row_per_folder<R: FolderRow>(scope: ScopeKind, rows: Vec<R>) -> Vec<R> {
-    folder_rows(scope, rows)
-        .into_iter()
-        .map(|group| {
-            let mut row = match group
-                .same_path
-                .iter()
-                .position(|r| r.status() == SyncStatus::Disabled)
-            {
-                Some(index) if group.driver.status() != SyncStatus::Disabled => {
-                    let mut same_path = group.same_path;
-                    same_path.swap_remove(index)
-                }
-                _ => group.driver,
-            };
-            row.set_tool(group.folder);
-            row
-        })
-        .collect()
-}
-
-/// One (owner, folder)'s stored rows as the write paths act on them. Folder
-/// grouping is for display, counting and selection; it never transfers
-/// ownership. A write acts on the **driver's** recorded path with the
-/// driver's own overwrite permission, and its settlement extends only to rows
-/// recording that very path, byte for byte.
-#[derive(Debug)]
-pub struct FolderRows<R> {
-    /// The folder key every row here describes.
-    pub folder: String,
-    /// The row a write of the folder acts on: among the rows owning their
-    /// artifact when any does (so overwrite permission is always the
-    /// driver's own), the row keyed by the folder, else the first.
-    pub driver: R,
-    /// Other rows whose recorded path is byte-identical to the driver's
-    /// ([`FolderRow::recorded_location`]): a write of the driver's path is a
-    /// write of theirs, so they share its state and settle with it.
-    pub same_path: Vec<R>,
-    /// Rows recording any other path — another name, or another spelling of
-    /// the same place (an alias, a hard link, a case variant): each stands
-    /// only for itself. No write of the folder touches, settles or consults
-    /// it; the redeploy (ticket 10) reconciles it. Removal still plans it by
-    /// its own row and ownership. Kept, never read by a write path, so the
-    /// split is whole and testable.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub independent: Vec<R>,
-}
-
-impl<R: FolderRow> FolderRows<R> {
-    /// The driver and every row recording its path.
-    pub fn path_rows(&self) -> impl Iterator<Item = &R> {
-        std::iter::once(&self.driver).chain(self.same_path.iter())
+/// The displayed state of one Deployment folder, folded over the statuses of
+/// **all** its stored rows — the one fold the skill catalog, the project
+/// listing and the project total read, so no surface can disagree with
+/// another about a folder.
+///
+/// - Any `disabled` row makes the folder `disabled`: every Sync-target path
+///   withholds a write to a folder one of whose rows is disabled (see
+///   **Disabled** in `CONTEXT.md`), and Enable — the action a disabled folder
+///   offers — re-enables every disabled row of it.
+/// - Otherwise the row needing the most attention: `error` › `missing` ›
+///   `stale` › `pending` › `synced`. Every row is reached by the per-row
+///   resync / Retry of its folder, so whatever this shows, that action
+///   settles.
+///
+/// `None` for no rows.
+pub fn fold_status(statuses: impl IntoIterator<Item = SyncStatus>) -> Option<SyncStatus> {
+    fn rank(status: SyncStatus) -> u8 {
+        match status {
+            SyncStatus::Disabled => 6,
+            SyncStatus::Error => 5,
+            SyncStatus::Missing => 4,
+            SyncStatus::Stale => 3,
+            SyncStatus::Pending => 2,
+            SyncStatus::Synced => 1,
+        }
     }
-
-    /// Whether the folder is off: a row on the driver's recorded path is
-    /// `disabled`. An independent row's status never counts.
-    pub fn disabled(&self) -> bool {
-        self.path_rows().any(|r| r.status() == SyncStatus::Disabled)
-    }
+    statuses.into_iter().max_by_key(|status| rank(*status))
 }
 
-/// Group `rows` by (owner, folder), pick each group's driver and split the
-/// rest by recorded path: byte-identical to the driver's, or independent.
-/// Pure: nothing here reads the filesystem, so no physical identity can
-/// widen a group. Groups come out in the order they first appeared; rows keep
-/// their order within a group.
-pub fn folder_rows<R: FolderRow>(scope: ScopeKind, rows: Vec<R>) -> Vec<FolderRows<R>> {
-    group_by_folder(scope, rows)
-        .into_iter()
-        .map(|(folder, mut members)| {
-            let driver = members.remove(driver_index(&members, &folder));
-            let (same_path, independent) = members
-                .into_iter()
-                .partition(|row| row.recorded_location() == driver.recorded_location());
-            FolderRows {
-                folder,
-                driver,
-                same_path,
-                independent,
-            }
-        })
-        .collect()
-}
-
-/// Rows grouped by (owner, folder), each group keyed by its folder, in order
-/// of first appearance.
-fn group_by_folder<R: FolderRow>(scope: ScopeKind, rows: Vec<R>) -> Vec<(String, Vec<R>)> {
+/// One row per (owner, folder), for display and counting — never for a
+/// mutation, which always acts on every stored row by itself. Each group
+/// comes out as its first row whose status is the folder's folded status
+/// ([`fold_status`]), keyed by the folder key, in the order the group first
+/// appeared. A folder with a single row passes it through, re-keyed.
+pub fn fold_folder_rows<R: FolderRow>(scope: ScopeKind, rows: Vec<R>) -> Vec<R> {
     let mut groups: Vec<(String, String, Vec<R>)> = Vec::new();
     for row in rows {
         let owner = row.owner();
@@ -537,24 +470,13 @@ fn group_by_folder<R: FolderRow>(scope: ScopeKind, rows: Vec<R>) -> Vec<(String,
     }
     groups
         .into_iter()
-        .map(|(_, folder, members)| (folder, members))
+        .filter_map(|(_, folder, members)| {
+            let status = fold_status(members.iter().map(FolderRow::status))?;
+            let mut row = members.into_iter().find(|row| row.status() == status)?;
+            row.set_tool(folder);
+            Some(row)
+        })
         .collect()
-}
-
-/// The index of the driver among `members` (non-empty). Candidates are the
-/// rows owning their artifact when any does, else every row; among them the
-/// row keyed by the folder, else the first. Status plays no part: the folder's
-/// state is read from the driver's path ([`FolderRows::disabled`]), so a
-/// `disabled` row recording another name can never become the driver and
-/// turn the folder off.
-fn driver_index<R: FolderRow>(members: &[R], folder: &str) -> usize {
-    let any_owner = members.iter().any(FolderRow::owns_artifact);
-    let candidate = |r: &R| !any_owner || r.owns_artifact();
-    members
-        .iter()
-        .position(|r| candidate(r) && r.tool() == folder)
-        .or_else(|| members.iter().position(candidate))
-        .unwrap_or(0)
 }
 
 impl FolderRow for SkillTargetRecord {
@@ -566,12 +488,6 @@ impl FolderRow for SkillTargetRecord {
     }
     fn status(&self) -> SyncStatus {
         self.status
-    }
-    fn owns_artifact(&self) -> bool {
-        SkillTargetRecord::owns_artifact(self)
-    }
-    fn recorded_location(&self) -> &str {
-        &self.target_path
     }
     fn set_tool(&mut self, tool: String) {
         self.tool = tool;
@@ -588,15 +504,6 @@ impl FolderRow for ProjectSkillAssignmentRecord {
     fn status(&self) -> SyncStatus {
         self.status
     }
-    fn owns_artifact(&self) -> bool {
-        ProjectSkillAssignmentRecord::owns_artifact(self)
-    }
-    /// The stored artifact name (`project_sync::assignment_artifact_name`'s
-    /// rule; an empty, un-backfilled name resolves to the same live name for
-    /// every row of the skill, so two empty names are one path too).
-    fn recorded_location(&self) -> &str {
-        &self.skill_name
-    }
     fn set_tool(&mut self, tool: String) {
         self.tool = tool;
     }
@@ -611,12 +518,6 @@ impl FolderRow for SkillProjectDeploymentRecord {
     }
     fn status(&self) -> SyncStatus {
         self.status
-    }
-    fn owns_artifact(&self) -> bool {
-        self.synced_at.is_some()
-    }
-    fn recorded_location(&self) -> &str {
-        &self.skill_name
     }
     fn set_tool(&mut self, tool: String) {
         self.tool = tool;

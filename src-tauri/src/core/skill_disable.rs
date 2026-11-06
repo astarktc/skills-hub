@@ -33,9 +33,10 @@
 //!    materialised, e.g. `error` after a failed Enable) flips to `disabled`
 //!    with no path touched. This module never removes a path.
 //! 2. **Enable is a first sync again.** It clears the marker and re-syncs
-//!    through the existing batches — `global_sync` for global targets (the
-//!    disabled rows on each off folder's driver path are deleted so the batch
-//!    records the folder afresh) and
+//!    through the existing batches — `global_sync` for global targets (each
+//!    disabled row is admitted by itself, `TargetTransition::EnableAdmitted`:
+//!    its ownership cleared, its key and recorded path kept, so the batch
+//!    syncs it where it was and settles it alone) and
 //!    `project_sync::first_sync_assignments_unlocked` for assignments — with
 //!    overwrite off, so `TARGET_EXISTS` can occur and is report data. A
 //!    global pair whose folder is in the way stays `disabled` until the
@@ -43,9 +44,8 @@
 //!    scope with per-pair decisions ([`enable_targets_with`]); any other
 //!    failed pair is the batch's `error` row; an assignment keeps its row
 //!    `error` and is retried through `project_sync::resolve_collisions`.
-//!    A folder is off, and Enable acts on it, only when a row on its driver's
-//!    recorded path is `disabled` (`placement::FolderRows`); a row recording
-//!    another path is never deleted, admitted or re-synced by Enable.
+//!    Rows a pre-1.4.0 app wrote once per shared-dir sibling are each their
+//!    own row here: nothing is lent or settled between them.
 //!
 //! Both answer with report types that cross the wire as themselves:
 //! [`RemovalReport`] for Disable, [`EnableReport`] for Enable. Only a store
@@ -67,8 +67,8 @@ use super::artifact_removal::{self, RemovalPlan, RemovalReport, RemovalScope, Ro
 use super::environment::HostRoots;
 use super::errors::{CommandError, SignalError};
 use super::global_sync::{
-    sync_skills_to_tools_lifting_unlocked, BatchOverride, BatchPolicy, BatchSkill,
-    BatchTargetOutcome, BatchTargetStatus, GlobalSyncError,
+    sync_skills_to_tools_unlocked, BatchOverride, BatchPolicy, BatchSkill, BatchTargetOutcome,
+    BatchTargetStatus, GlobalSyncError,
 };
 use super::mutation_guard;
 use super::placement::{self, row_folder, PlacementSettings, ScopeKind};
@@ -385,8 +385,9 @@ fn enable_unlocked(
 
 /// One pair. A skill disabled at skill grain stays off: only a skill-grain
 /// Enable lifts that, so the pair is reported skipped and nothing changes.
-/// Otherwise the folder serving `tool` is enabled ([`admit_folders`]) and
-/// synced as a first sync.
+/// Otherwise every `disabled` row of the folder serving `tool` is admitted
+/// ([`admit_disabled`]) and the folder is synced as a first sync, each row by
+/// itself at its own recorded path.
 fn enable_pair(
     store: &SkillStore,
     central_dir: &Path,
@@ -403,6 +404,7 @@ fn enable_pair(
                 skill_id: skill.id.clone(),
                 skill_name: skill.name.clone(),
                 tool_key: folder.clone(),
+                folder_key: folder.clone(),
                 status: BatchTargetStatus::Skipped {
                     error: CommandError::from(GlobalSyncError::TargetDisabled {
                         tool_key: folder.clone(),
@@ -412,7 +414,8 @@ fn enable_pair(
             projects: ProjectSyncReport::default(),
         });
     }
-    let lifted = admit_folders(store, &skill.id, |group| group == folder)?;
+    let live = live_keys(store, &skill.id)?;
+    admit_disabled(store, &skill.id, |row_folder| row_folder == folder)?;
     Ok(EnableReport {
         global: first_sync_global(
             store,
@@ -420,7 +423,7 @@ fn enable_pair(
             roots,
             skill,
             &[folder],
-            &lifted,
+            &live,
             overrides,
             now,
         ),
@@ -428,38 +431,45 @@ fn enable_pair(
     })
 }
 
-/// Clear the Disabled state of the skill's global folders `wanted` selects
-/// that are off (`placement::FolderRows::disabled`: a row on the driver's
-/// recorded path is `disabled`), so the batch records them afresh: the
-/// `disabled` rows on the driver's path are deleted (a successful Disable
-/// removed their artifact; the batch's first sync records the folder again).
-/// An **independent** row — one recording another path — is never deleted or
-/// re-recorded here, whatever its status (the redeploy reconciles it).
-/// Answers the folder keys it enabled, in row order.
-fn admit_folders(
+/// The keys of the skill's global rows that are not `disabled` — rows Enable
+/// does not admit, whose state a collision of this Enable must not change.
+fn live_keys(store: &SkillStore, skill_id: &str) -> Result<Vec<String>> {
+    Ok(store
+        .list_skill_targets(skill_id)?
+        .into_iter()
+        .filter(|row| row.status != SyncStatus::Disabled)
+        .map(|row| row.tool)
+        .collect())
+}
+
+/// Admit every `disabled` global row of the skill whose folder `wanted`
+/// selects back for a first sync, each by itself
+/// (`TargetTransition::EnableAdmitted`): its ownership is cleared — a
+/// successful Disable removed its artifact — and it keeps its own key and
+/// recorded path, so the batch syncs it where it was and settles it alone.
+/// Answers the folder keys admitted rows describe, each once, in row order.
+fn admit_disabled(
     store: &SkillStore,
     skill_id: &str,
     wanted: impl Fn(&str) -> bool,
 ) -> Result<Vec<String>> {
-    let mut admitted = Vec::new();
-    for group in placement::folder_rows(ScopeKind::Global, store.list_skill_targets(skill_id)?) {
-        if !wanted(&group.folder) || !group.disabled() {
+    let mut folders: Vec<String> = Vec::new();
+    for row in store.list_skill_targets(skill_id)? {
+        let folder = row_folder(ScopeKind::Global, &row.tool);
+        if row.status != SyncStatus::Disabled || !wanted(&folder) {
             continue;
         }
-        for row in group.path_rows() {
-            if row.status == SyncStatus::Disabled {
-                store.delete_skill_target(skill_id, &row.tool)?;
-            }
+        store.transition_skill_target(&row.id, TargetTransition::EnableAdmitted)?;
+        if !folders.contains(&folder) {
+            folders.push(folder);
         }
-        admitted.push(group.folder);
     }
-    Ok(admitted)
+    Ok(folders)
 }
 
-/// One skill: clear the skill-level marker, then re-sync every disabled
-/// Deployment folder — the global ones through the batch ([`admit_folders`]
-/// first, so the batch records them afresh), the project ones through
-/// `project_sync`. Independent rows are left as they are at both scopes.
+/// One skill: clear the skill-level marker, then re-sync every disabled row —
+/// the global ones through the batch ([`admit_disabled`] first), the
+/// assignments through `project_sync` — each row by itself.
 fn enable_skill(
     store: &SkillStore,
     central_dir: &Path,
@@ -470,10 +480,13 @@ fn enable_skill(
 ) -> Result<EnableReport> {
     store.set_skill_disabled_at(&skill.id, None)?;
 
-    let tools = admit_folders(store, &skill.id, |_| true)?;
-    // Every assignment of the skill: the project half groups them by folder
-    // and enables only the folders that are off.
-    let assignments = store.list_project_skill_assignments_by_skill(&skill.id)?;
+    let live = live_keys(store, &skill.id)?;
+    let tools = admit_disabled(store, &skill.id, |_| true)?;
+    let assignments: Vec<_> = store
+        .list_project_skill_assignments_by_skill(&skill.id)?
+        .into_iter()
+        .filter(|assignment| assignment.status == SyncStatus::Disabled)
+        .collect();
 
     Ok(EnableReport {
         global: if tools.is_empty() {
@@ -485,7 +498,7 @@ fn enable_skill(
                 roots,
                 skill,
                 &tools,
-                &tools,
+                &live,
                 overrides,
                 now,
             )
@@ -496,9 +509,10 @@ fn enable_skill(
 
 /// The global sync batch as a first sync: overwrite off, identical content
 /// replaced silently (the same policy as every operator-initiated sync),
-/// plus the operator's per-pair answers to an earlier ask for this skill.
-/// `lifted` names the folders [`admit_folders`] just enabled: an independent
-/// `disabled` row left there (another recorded path) does not block them.
+/// plus the operator's per-row answers to an earlier ask for this skill.
+/// `live` names the rows that were not `disabled` before this Enable: a
+/// collision of one of them keeps its state (the batch records nothing for
+/// it), while every other row is the one this Enable re-materialises.
 #[allow(clippy::too_many_arguments)]
 fn first_sync_global(
     store: &SkillStore,
@@ -506,7 +520,7 @@ fn first_sync_global(
     roots: &HostRoots,
     skill: &SkillRecord,
     tools: &[String],
-    lifted: &[String],
+    live: &[String],
     overrides: &[BatchOverride],
     now: i64,
 ) -> Vec<BatchTargetOutcome> {
@@ -524,28 +538,30 @@ fn first_sync_global(
             .cloned()
             .collect(),
     };
-    let outcomes = sync_skills_to_tools_lifting_unlocked(
+    let outcomes = sync_skills_to_tools_unlocked(
         roots,
         store,
         central_dir,
         &skills,
         tools,
         &policy,
-        lifted,
         now,
         |_| {},
     );
     // A folder in the way is asked about, never recorded as a failure (D9);
-    // until the operator answers, the pair keeps the state it was enabled from:
-    // `disabled`, re-recorded as a marker owning nothing at that path (the
-    // cleared row was deleted above so the batch could record afresh). Any
-    // other failure is the batch's own `error` row.
+    // until the operator answers, the row keeps the state it was enabled from:
+    // `disabled`, a marker owning nothing at its own path (its ownership was
+    // cleared on admission). Any other failure is the batch's own `error` row.
     for outcome in &outcomes {
+        if live.contains(&outcome.tool_key) {
+            continue;
+        }
         if let BatchTargetStatus::Failed {
             error: CommandError::TargetExists { path, .. },
         } = &outcome.status
         {
-            let mode = placement::folder_mode(ScopeKind::Global, &outcome.tool_key).first_attempt();
+            let folder = row_folder(ScopeKind::Global, &outcome.tool_key);
+            let mode = placement::folder_mode(ScopeKind::Global, &folder).first_attempt();
             if let Err(err) = store.transition_skill_target(
                 &Uuid::new_v4().to_string(),
                 TargetTransition::DisabledRecorded {

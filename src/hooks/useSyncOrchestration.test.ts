@@ -745,6 +745,7 @@ describe("syncSkillsToTools overwrite ask", () => {
     skill_id,
     skill_name: skill_id,
     tool_key,
+    folder_key: tool_key,
     status: {
       status: "synced",
       outcome: { mode_used: "symlink", target_path: `/t/${tool_key}/${skill_id}`, replaced: false },
@@ -754,6 +755,7 @@ describe("syncSkillsToTools overwrite ask", () => {
     skill_id,
     skill_name: skill_id,
     tool_key,
+    folder_key: tool_key,
     status: {
       status: "failed",
       error: { code: "TARGET_EXISTS", path: `/t/${tool_key}/${skill_id}`, modifiedAt: 1_000, sameContent: false },
@@ -1017,6 +1019,7 @@ describe("the one overwrite ask across producers (ticket 04)", () => {
     skill_id,
     skill_name: skill_id,
     tool_key,
+    folder_key: tool_key,
     status: collided
       ? { status: "failed", error: { code: "TARGET_EXISTS", path: `/g/${tool_key}/${skill_id}`, ...facts } }
       : { status: "synced", outcome: { mode_used: "symlink", target_path: `/g/${tool_key}/${skill_id}`, replaced: true } },
@@ -1027,6 +1030,7 @@ describe("the one overwrite ask across producers (ticket 04)", () => {
     skill_id: "s1",
     skill_name: "s1",
     tool: "claude",
+    folder_key: "claude",
     status,
   });
   const projectCollision = projectItem({
