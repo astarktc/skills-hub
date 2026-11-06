@@ -51,4 +51,69 @@ Verification: move tests 22, switch tests 2, removal-fence tests 21 (+1 ignored)
 
 ## Disposition
 
-Round 2 dispatched to an implementer on top of `t3/move-library-folder` (orchestrator, 2026-11-06).
+Round 2 (Opus 5.5, high) fixed all five on PR #12, head `5e8dd507`. Each fix has a regression test that failed on
+`be610918` (#4's resume tests could not compile there). CI is green.
+
+1. Exclusive `create_dir` reservation, with `-2`, `-3` suffixes for a taken name.
+2. A relocation-fidelity copy that keeps every entry, `.git` and links as text, verified over the full tree. A skill
+   that can't be copied faithfully is `kept { unrelocatable }`.
+3. Clean decides by physical identity (`removal_fence::Place`): `still_recorded`, `still_linked`, or
+   `kept { shared_copy }`.
+4. A move journal (settings row) is written in the Switch transaction. It is resumed at startup and at every
+   `move_library`.
+5. Admission runs after creation, by identity. A refusal removes only the empty dirs the move created.
+
+Known gap: the preview still counts kept skills as moving, so its "Move N skills" can overstate. Round-2 review
+dispatched.
+
+## Round 2 — GPT-6 Astra (high), 2026-11-06, `5e8dd507`: **BLOCK**
+
+Round-1 status:
+
+- #1 and #5 are closed.
+- #2 and #3 are closed for their reproducers.
+- #4 is not fully closed: the automatic resume introduced new deletion paths.
+
+Nine probes failed.
+
+1. **P1, Clean deletes unverified bytes.** Verification happens before Switch and is not repeated at deletion:
+   - Resume after the destination was deleted removes the only copy.
+   - An operator edit made after verification is deleted.
+
+   Probes `review_probe_resume_missing_destination_preserves_last_copy`, `review_probe_edit_after_verify_survives_clean`.
+2. **P1, the journal's path strings authorise removal of whatever occupies them now.** Two cases:
+   - A replacement directory at the old path is deleted.
+   - An edited journal `old` value outside the Library is deleted.
+
+   `journal.to` is not checked against the configured root. Probes `review_probe_stale_journal_does_not_remove_replacement_directory`,
+   `review_probe_journal_cannot_authorize_unrelated_removal`.
+3. **P2, a kept, unrelocatable skill's absolute link into another old copy dangles.** The other skill moves and its old
+   copy is removed. Probe `review_probe_kept_skill_link_dependency_survives`.
+4. **P1, Clean modifies a copy-mode deployment that contains an old copy.** Only `at.within(old)` is checked, not the
+   reverse. Probe `review_probe_copy_deployment_containing_old_copy_is_untouched`.
+5. **P1, the fidelity copy drops directory permissions (`0700` → `0755`) and directory xattrs.** File xattrs and resource
+   forks survived.
+6. **P2, hardlinks become independent files.**
+7. **P3, the preview overcounts** kept and shared copies.
+
+## Round 3 direction (orchestrator)
+
+One principle: **delete only what is provably duplicated, at the moment of deletion, and only inside the old Library
+folder.** The parts:
+
+1. **Scope.** Clean removes only direct children of the old configured Library root. Old copies recorded elsewhere (a
+   split Library) are copied and switched, then left in place and reported.
+2. **Identity.** The journal records the old and new copy identities (device+inode, or the Windows file id).
+3. **Authority.** Resume requires all of these:
+   - the configured root equals `journal.to`;
+   - the record equals `entry.new`;
+   - both identities still match;
+   - the old copy is a direct child of `journal.from`.
+
+   Otherwise nothing is removed, the copy is reported left behind, and the entry is cleared.
+4. **Removal.** Rename the old copy aside within the old root, then re-verify it against the new copy over every
+   compared facet. Delete it if identical; otherwise rename it back and keep it.
+5. **Retention.** Retention checks deployments in both directions, and also links inside every retained skill.
+6. **Fidelity.** Extended to directory modes, directory and file xattrs, and hardlink groups (recreated inside the
+   skill; a link outside the skill is unrelocatable).
+7. **Preview.** Classifies kept skills read-only.
