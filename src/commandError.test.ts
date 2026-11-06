@@ -167,6 +167,19 @@ describe("describeCommandError", () => {
     ).toBe(
       'errors.removalRefusedContainsMount {"path":"/home/u/.claude/skills/alpha","resolved":"/home/u/.claude/skills/alpha/attached"}',
     );
+    expect(
+      describeCommandError({ ...refused, reason: "mountPoint", resolved: "/home/u/.claude/skills/alpha" }, t),
+    ).toBe(
+      'errors.removalRefusedMountPoint {"path":"/home/u/.claude/skills/alpha","resolved":"/home/u/.claude/skills/alpha"}',
+    );
+    expect(
+      describeCommandError(
+        { ...refused, reason: "mountTableUnreadable", resolved: "/home/u/.claude/skills/alpha" },
+        t,
+      ),
+    ).toBe(
+      'errors.removalRefusedMountTableUnreadable {"path":"/home/u/.claude/skills/alpha","resolved":"/home/u/.claude/skills/alpha"}',
+    );
   });
 
   it("names the path and what to check for REMOVAL_PERMISSION_DENIED, keeping the I/O chain out of the copy", () => {

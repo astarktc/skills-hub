@@ -319,9 +319,17 @@ pub enum RemovalRefusal {
     ResolvesElsewhere,
     /// A folder inside the entry is a mount the recursive removal would cross
     /// — a bind mount of the library or of a folder around the entry, another
-    /// device, or (Linux) any mount point at or below the entry; `resolved`
-    /// is that folder.
+    /// device, or (Linux) any mount point the kernel lists below the entry;
+    /// `resolved` is that folder.
     ContainsMount,
+    /// The entry itself is a mount point — a filesystem (a disk image, a
+    /// network share, a bind mount) is mounted at it — so removing it would
+    /// delete that filesystem's contents; `resolved` is the entry.
+    MountPoint,
+    /// (Linux) The kernel's mount table (`/proc/self/mountinfo`) could not
+    /// be read or parsed, so whether a mount lies at or below the entry is
+    /// unknown: admission fails closed. `resolved` is the entry.
+    MountTableUnreadable,
 }
 
 /// Structured command failure crossing the IPC seam. `Deserialize` because a

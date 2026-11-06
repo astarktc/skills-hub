@@ -38,11 +38,24 @@
 //!   directly inside a directory the app owns ([`OwnedDir`]), reached from a
 //!   trusted boundary through real directories only.
 //!
-//! A directory entry is removed recursively, so admission also walks what
-//! lies **beneath** it — without following any link or junction, exactly as
-//! the removal itself (`std::fs::remove_dir_all`) never follows one — and
-//! refuses (`ContainsMount`) when the recursion would leave the entry through
-//! a mount:
+//! A directory entry is removed recursively, so admission refuses one that
+//! is itself a **mount point** (`MountPoint`) — a filesystem mounted at it
+//! would have its contents deleted:
+//!
+//! * it sits on another device than its (resolved) parent folder (Unix) — a
+//!   disk image or share attached at a skill folder reports one device for
+//!   the entry and everything inside it, so only this comparison shows it;
+//! * on Linux the kernel's mount table lists it (a same-device bind mount).
+//!
+//! On Windows a mounted folder (a volume mount point, like a junction) is a
+//! name-surrogate reparse point, which std reports as a link: the entry is
+//! located and removed as a link, never recursed into.
+//!
+//! Admission also walks what lies **beneath** it — without following any
+//! link or junction, exactly as the removal itself
+//! (`std::fs::remove_dir_all`) never follows one — and refuses
+//! (`ContainsMount`) when the recursion would leave the entry through a
+//! mount:
 //!
 //! * a directory inside it has the identity of a protected directory — the
 //!   library's, an overwrite's source, or any directory around them, or the
@@ -52,10 +65,12 @@
 //!   path, a mounted folder is a reparse point the walk never enters);
 //! * a directory inside it sits on another device than the entry (Unix): a
 //!   mounted filesystem inside a skill folder is never the skill's;
-//! * on Linux, `/proc/self/mountinfo` lists a mount point at the entry or
-//!   below it — this also catches a bind mount of a folder *inside* the
-//!   library, whose identity names no protected directory. Where procfs is
-//!   unreadable the two portable rules still apply.
+//! * on Linux, `/proc/self/mountinfo` lists a mount point below it — this
+//!   also catches a bind mount of a folder *inside* the library, whose
+//!   identity names no protected directory. The table is read as bytes and
+//!   compared as paths (a mount point need not be UTF-8), and a table that
+//!   cannot be read or parsed fails closed (`MountTableUnreadable`): not
+//!   knowing the mounts is never "no mounts".
 //!
 //! A refusal is the typed `SignalError::RemovalRefused`; nothing is touched.
 //!
@@ -505,13 +520,16 @@ impl Located {
         self.id.as_ref().is_some_and(|id| root.ids.contains(id))
     }
 
-    /// Walk a directory entry's subtree as its recursive removal would —
-    /// never through a link or junction — and refuse (`ContainsMount`, with
-    /// the offending directory as `resolved`) when a directory in it is a
-    /// mount: it has the identity of a directory in one of the `protected`
-    /// lineages, of the entry, or of a directory around the entry; it sits on
-    /// another device; or (Linux) a mount point lies at or below the entry.
-    /// A link or a file entry has no subtree to walk.
+    /// Refuse a directory entry that is a mount point (`MountPoint`: on
+    /// another device than its parent, or — Linux — listed in the mount
+    /// table), or whose mount table cannot be read (`MountTableUnreadable`).
+    /// Then walk its subtree as its recursive removal would — never through a
+    /// link or junction — and refuse (`ContainsMount`, with the offending
+    /// directory as `resolved`) when a directory in it is a mount: it has the
+    /// identity of a directory in one of the `protected` lineages, of the
+    /// entry, or of a directory around the entry; it sits on another device;
+    /// or (Linux) the mount table lists a mount point below the entry. A link
+    /// or a file entry has no subtree to walk.
     fn ensure_no_mount_inside<'r>(
         &self,
         path: &Path,
@@ -520,16 +538,55 @@ impl Located {
         let Some(own) = self.id.as_ref().filter(|_| self.file_type.is_dir()) else {
             return Ok(());
         };
-        let refuse = |at: &Path| {
+        let refuse_at = |at: &Path, reason| {
             anyhow::anyhow!(SignalError::RemovalRefused {
                 path: path.to_string_lossy().into_owned(),
                 resolved: at.to_string_lossy().into_owned(),
-                reason: RemovalRefusal::ContainsMount,
+                reason,
             })
         };
-        #[cfg(target_os = "linux")]
-        if let Some(mount_point) = mounts::first_at_or_below(&self.physical) {
-            return Err(refuse(&mount_point));
+        let refuse = |at: &Path| refuse_at(at, RemovalRefusal::ContainsMount);
+        // A filesystem mounted at the entry itself shares one device with
+        // everything inside it, so only the entry against its folder shows it.
+        if self
+            .parent
+            .ids
+            .first()
+            .is_some_and(|parent| !own.same_device(parent))
+        {
+            return Err(refuse_at(&self.physical, RemovalRefusal::MountPoint));
+        }
+        // The kernel's mount table (Linux) also lists a same-device bind mount
+        // of a folder inside the library. Not knowing is never "none".
+        #[cfg(unix)]
+        match mounts::table() {
+            Ok(None) => {}
+            Ok(Some(table)) => {
+                let Some(points) = mounts::mount_points(&table) else {
+                    return Err(refuse_at(
+                        &self.physical,
+                        RemovalRefusal::MountTableUnreadable,
+                    ));
+                };
+                if points.iter().any(|point| point == &self.physical) {
+                    return Err(refuse_at(&self.physical, RemovalRefusal::MountPoint));
+                }
+                if let Some(below) = points
+                    .iter()
+                    .find(|point| point.starts_with(&self.physical))
+                {
+                    return Err(refuse(below));
+                }
+            }
+            // The I/O error is diagnostic text, never a cause in the chain:
+            // the removal primitive would read an `EACCES` there as the
+            // entry's own permission failure.
+            Err(err) => {
+                return Err(
+                    refuse_at(&self.physical, RemovalRefusal::MountTableUnreadable)
+                        .context(format!("could not read the mount table: {err}")),
+                );
+            }
         }
         let forbidden: Vec<&Id> = protected
             .flat_map(|lineage| lineage.ids.iter())
@@ -602,6 +659,10 @@ struct Id(PathBuf);
 /// The identity of the entry at the resolved path `path` (no link on the way,
 /// so following and not following agree).
 fn identity(path: &Path) -> Result<Id> {
+    #[cfg(test)]
+    if let Some(id) = test_seams::pretended(path) {
+        return Ok(id);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -619,8 +680,9 @@ fn identity(path: &Path) -> Result<Id> {
 
 impl Id {
     /// Whether both lie on one device (Unix `st_dev`). Windows has no stable
-    /// device number in std; a mounted folder there is a reparse point the
-    /// walk never enters.
+    /// device number in std; a mounted folder there is a reparse point that
+    /// std reports as a link — removed as itself at the entry, never entered
+    /// by the walk.
     fn same_device(&self, other: &Id) -> bool {
         #[cfg(unix)]
         {
@@ -656,33 +718,47 @@ fn subtree_identity(path: &Path) -> std::io::Result<Id> {
     }
 }
 
-/// Linux mount points, as the kernel lists them for this process.
-#[cfg(target_os = "linux")]
+/// The mount points the kernel lists for this process (Linux), as raw bytes:
+/// a mount point is a Unix path, any bytes but NUL, never necessarily UTF-8.
+#[cfg(unix)]
 mod mounts {
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
-    /// The first mount point at `dir` or below it; `None` when there is none
-    /// or `/proc/self/mountinfo` cannot be read (the portable identity and
-    /// device rules still apply).
-    pub(super) fn first_at_or_below(dir: &Path) -> Option<PathBuf> {
-        let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").ok()?;
-        at_or_below(&mountinfo, dir)
+    /// This process's mount table: on Linux `/proc/self/mountinfo`, read as
+    /// bytes; elsewhere there is none (`Ok(None)` — the portable identity and
+    /// device rules carry admission). A table that cannot be read is an
+    /// error, never an empty table.
+    pub(super) fn table() -> std::io::Result<Option<Vec<u8>>> {
+        #[cfg(test)]
+        if let Some(pretended) = super::test_seams::pretended_mount_table() {
+            return pretended.map(Some);
+        }
+        #[cfg(target_os = "linux")]
+        {
+            std::fs::read("/proc/self/mountinfo").map(Some)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Ok(None)
+        }
     }
 
-    /// The first mount point in `mountinfo` (proc(5) format: the fifth field,
-    /// octal-escaped) at `dir` or below it.
-    pub(super) fn at_or_below(mountinfo: &str, dir: &Path) -> Option<PathBuf> {
-        mountinfo
-            .lines()
-            .filter_map(|line| line.split(' ').nth(4))
-            .map(unescape)
-            .find(|mount_point| mount_point.starts_with(dir))
+    /// Every mount point in `mountinfo` (proc(5) format: the fifth
+    /// space-separated field of each line, octal-escaped), in table order;
+    /// `None` when it is not a mount table — empty (a real one always lists
+    /// `/`), or a line without a fifth field.
+    pub(super) fn mount_points(mountinfo: &[u8]) -> Option<Vec<PathBuf>> {
+        let points = mountinfo
+            .split(|&byte| byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| line.split(|&byte| byte == b' ').nth(4).map(unescape))
+            .collect::<Option<Vec<_>>>()?;
+        (!points.is_empty()).then_some(points)
     }
 
     /// Undo the kernel's `\ooo` escaping of space, tab, newline and `\`.
-    fn unescape(field: &str) -> PathBuf {
+    fn unescape(bytes: &[u8]) -> PathBuf {
         use std::os::unix::ffi::OsStringExt;
-        let bytes = field.as_bytes();
         let mut out = Vec::with_capacity(bytes.len());
         let mut i = 0;
         while i < bytes.len() {
@@ -769,9 +845,10 @@ pub(crate) fn central_repo_of(store: &SkillStore) -> PathBuf {
     store.db_path().with_file_name("central")
 }
 
-/// Test seams over what the subtree walk reads: a test declares a directory
-/// inside an entry to be a mount, as the filesystem would report one, without
-/// the privileges a real mount needs.
+/// Test seams over what the mount checks read: a test declares a directory —
+/// the entry or one inside it — to be a mount, as the filesystem would report
+/// one, or sets the mount table (or makes it unreadable), without the
+/// privileges a real mount needs.
 #[cfg(test)]
 pub(crate) mod test_seams {
     use std::cell::RefCell;
@@ -816,6 +893,52 @@ pub(crate) mod test_seams {
                 ino: real.ino,
             },
         )
+    }
+
+    #[cfg(unix)]
+    thread_local! {
+        /// `Some(None)`: the table cannot be read; `Some(Some(bytes))`: it
+        /// reads `bytes`.
+        static MOUNT_TABLE: RefCell<Option<Option<Vec<u8>>>> = const { RefCell::new(None) };
+    }
+
+    /// Undoes a pretended mount table when dropped.
+    #[cfg(unix)]
+    pub(crate) struct TableGuard(());
+
+    #[cfg(unix)]
+    impl Drop for TableGuard {
+        fn drop(&mut self) {
+            MOUNT_TABLE.with(|cell| *cell.borrow_mut() = None);
+        }
+    }
+
+    /// The mount table reads `bytes` (mountinfo format), on every Unix.
+    #[cfg(unix)]
+    pub(crate) fn mount_table(bytes: &[u8]) -> TableGuard {
+        MOUNT_TABLE.with(|cell| *cell.borrow_mut() = Some(Some(bytes.to_vec())));
+        TableGuard(())
+    }
+
+    /// The mount table cannot be read, as with procfs masked or unmounted.
+    #[cfg(unix)]
+    pub(crate) fn unreadable_mount_table() -> TableGuard {
+        MOUNT_TABLE.with(|cell| *cell.borrow_mut() = Some(None));
+        TableGuard(())
+    }
+
+    #[cfg(unix)]
+    pub(super) fn pretended_mount_table() -> Option<std::io::Result<Vec<u8>>> {
+        MOUNT_TABLE.with(|cell| {
+            cell.borrow().as_ref().map(|table| {
+                table.clone().ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "pretended: the mount table cannot be read",
+                    )
+                })
+            })
+        })
     }
 
     pub(super) fn pretended(path: &Path) -> Option<Id> {

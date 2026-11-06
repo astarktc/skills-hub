@@ -1221,10 +1221,22 @@ export type RemovalRefusal =
 /**
  *  A folder inside the entry is a mount the recursive removal would cross
  *  — a bind mount of the library or of a folder around the entry, another
- *  device, or (Linux) any mount point at or below the entry; `resolved`
- *  is that folder.
+ *  device, or (Linux) any mount point the kernel lists below the entry;
+ *  `resolved` is that folder.
  */
-"containsMount";
+"containsMount" |
+/**
+ *  The entry itself is a mount point — a filesystem (a disk image, a
+ *  network share, a bind mount) is mounted at it — so removing it would
+ *  delete that filesystem's contents; `resolved` is the entry.
+ */
+"mountPoint" |
+/**
+ *  (Linux) The kernel's mount table (`/proc/self/mountinfo`) could not
+ *  be read or parsed, so whether a mount lies at or below the entry is
+ *  unknown: admission fails closed. `resolved` is the entry.
+ */
+"mountTableUnreadable";
 
 export type RemovalReport = {
 	targets: RemovalTargetOutcome[],

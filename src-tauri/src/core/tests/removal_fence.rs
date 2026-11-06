@@ -459,6 +459,36 @@ fn a_folder_inside_the_entry_on_another_device_refuses_the_removal() {
     assert!(target.join("SKILL.md").is_file());
 }
 
+/// Round-3 re-check P1: a filesystem mounted *at* the entry (a disk image
+/// attached on a Tool's skill folder) reports one device throughout — the
+/// entry and everything inside it — so comparing the subtree with the entry
+/// finds nothing. The entry's own device against its folder's does: removing
+/// it would delete the mounted filesystem's contents, so it is refused
+/// before anything goes.
+#[cfg(unix)]
+#[test]
+fn a_filesystem_mounted_at_the_entry_itself_refuses_the_removal() {
+    let tmp = tempfile::tempdir().unwrap();
+    let library = ProtectedLibrary::unrecorded();
+    let (target, nested) = target_with_nested(tmp.path());
+    fs::write(nested.join("keep"), "the mounted volume's bytes").unwrap();
+
+    // The entry and the folder inside it both on the mounted device.
+    let _entry = test_seams::mount_other_device(&target);
+    let _nested = test_seams::mount_other_device(&nested);
+
+    assert_eq!(
+        refusal(admit(&target, &Fence::new(&library))),
+        Some(RemovalRefusal::MountPoint)
+    );
+    assert_eq!(
+        removal_refusal(remove_path_any(&target, &Fence::new(&library))),
+        RemovalRefusal::MountPoint
+    );
+    assert!(target.join("SKILL.md").is_file(), "nothing is deleted");
+    assert!(nested.join("keep").is_file(), "the volume survives");
+}
+
 /// The Delete settlement's own central copy is walked too: a copy holding a
 /// mount of the configured repo (or of another skill's copy) is refused
 /// before its own bytes go.
@@ -482,7 +512,163 @@ fn a_central_copy_holding_a_mount_of_the_library_is_refused() {
     assert!(alpha.join("SKILL.md").is_file());
 }
 
-/// Linux mounts: the `/proc/self/mountinfo` rule, and real bind mounts.
+/// The mount table rule (`/proc/self/mountinfo` on Linux), driven through
+/// the table seam so it runs on every Unix: read as bytes, compared as
+/// paths, and failing closed when the table cannot be read or parsed.
+#[cfg(unix)]
+mod mount_table {
+    use std::ffi::OsString;
+    use std::fs;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    use std::path::PathBuf;
+
+    use super::{admit, refusal, removal_refusal, target_with_nested};
+    use crate::core::errors::{CommandError, RemovalRefusal};
+    use crate::core::removal_fence::{mounts, test_seams, Entry, Fence, ProtectedLibrary};
+    use crate::core::sync_engine::remove_path_any;
+
+    /// One mountinfo line (proc(5)) mounting at `mount_point`, escaped as the
+    /// kernel writes it.
+    fn line(id: u32, mount_point: &[u8]) -> Vec<u8> {
+        let mut escaped = Vec::new();
+        for &byte in mount_point {
+            match byte {
+                b' ' | b'\t' | b'\n' | b'\\' => escaped.extend(format!("\\{byte:03o}").bytes()),
+                byte => escaped.push(byte),
+            }
+        }
+        let mut line = format!("{id} 22 8:1 /central ").into_bytes();
+        line.extend(escaped);
+        line.extend(b" rw,relatime shared:1 - ext4 /dev/sda1 rw\n");
+        line
+    }
+
+    fn table(mount_points: &[&[u8]]) -> Vec<u8> {
+        let mut table = b"22 1 8:1 / / rw,relatime shared:1 - ext4 /dev/sda1 rw\n".to_vec();
+        for (n, mount_point) in mount_points.iter().enumerate() {
+            table.extend(line(40 + n as u32, mount_point));
+        }
+        table
+    }
+
+    /// Every mount point is read as the bytes the kernel wrote, escapes
+    /// undone — a space in a name, and a name that is not UTF-8 (round-3
+    /// P1: one such mount anywhere used to discard the whole table).
+    #[test]
+    fn mount_points_are_parsed_as_bytes_including_a_non_utf8_mount_point() {
+        let mountinfo = table(&[
+            b"/home/me/.claude/skills/my skill/attached",
+            b"/srv/invalid-\xff",
+            b"/srv/back\\slash",
+        ]);
+        assert!(std::str::from_utf8(&mountinfo).is_err());
+
+        assert_eq!(
+            mounts::mount_points(&mountinfo),
+            Some(vec![
+                PathBuf::from("/"),
+                PathBuf::from("/home/me/.claude/skills/my skill/attached"),
+                PathBuf::from(OsString::from_vec(b"/srv/invalid-\xff".to_vec())),
+                PathBuf::from("/srv/back\\slash"),
+            ])
+        );
+    }
+
+    /// A table that is not one — empty (it always lists `/`), or a line
+    /// without a mount point field — is never read as "no mounts".
+    #[test]
+    fn a_table_that_lists_nothing_or_a_short_line_is_not_a_mount_table() {
+        assert_eq!(mounts::mount_points(b""), None);
+        assert_eq!(mounts::mount_points(b"22 1 8:1 /\n"), None);
+    }
+
+    /// A mount point at the entry or below it is found — a non-UTF-8 one
+    /// elsewhere in the table no longer hides it; one beside the entry is not
+    /// in its way.
+    #[test]
+    fn a_mount_listed_below_or_at_the_entry_refuses_its_removal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let library = ProtectedLibrary::unrecorded();
+        let (target, attached) = target_with_nested(tmp.path());
+        let target = target.canonicalize().unwrap();
+        let attached = attached.canonicalize().unwrap();
+        let beside = target.with_file_name("alphabet");
+        fs::create_dir_all(&beside).unwrap();
+
+        {
+            let _table = test_seams::mount_table(&table(&[
+                b"/srv/invalid-\xff",
+                attached.as_os_str().as_bytes(),
+            ]));
+            assert_eq!(
+                removal_refusal(remove_path_any(&target, &Fence::new(&library))),
+                RemovalRefusal::ContainsMount
+            );
+        }
+        {
+            let _table = test_seams::mount_table(&table(&[target.as_os_str().as_bytes()]));
+            assert_eq!(
+                refusal(admit(&target, &Fence::new(&library))),
+                Some(RemovalRefusal::MountPoint)
+            );
+        }
+        assert!(target.join("SKILL.md").is_file(), "nothing is deleted");
+
+        let _table = test_seams::mount_table(&table(&[target.as_os_str().as_bytes()]));
+        remove_path_any(&beside, &Fence::new(&library)).unwrap();
+        assert!(!beside.exists());
+    }
+
+    /// Round-3 P1: a mount table that cannot be read (procfs masked or
+    /// unmounted) or parsed says nothing about the mounts in a directory, so
+    /// the directory's removal is refused, typed, before anything goes. A
+    /// file has no subtree to cross and is still removed.
+    #[test]
+    fn an_unreadable_or_malformed_mount_table_refuses_a_directory_removal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let library = ProtectedLibrary::unrecorded();
+        let (target, _) = target_with_nested(tmp.path());
+        let file = target.with_file_name("note.md");
+        fs::write(&file, "a file").unwrap();
+
+        let tables: [fn() -> test_seams::TableGuard; 2] =
+            [test_seams::unreadable_mount_table, || {
+                test_seams::mount_table(b"22 1 8:1 /\n")
+            }];
+        for table in tables {
+            let guard = table();
+            assert_eq!(
+                refusal(admit(&target, &Fence::new(&library))),
+                Some(RemovalRefusal::MountTableUnreadable)
+            );
+            assert_eq!(
+                removal_refusal(remove_path_any(&target, &Fence::new(&library))),
+                RemovalRefusal::MountTableUnreadable
+            );
+            assert!(target.join("SKILL.md").is_file(), "nothing is deleted");
+            // Crosses the wire as the refusal, never as a permission failure.
+            let err = remove_path_any(&target, &Fence::new(&library)).unwrap_err();
+            assert!(matches!(
+                CommandError::from_anyhow(err),
+                CommandError::RemovalRefused {
+                    reason: RemovalRefusal::MountTableUnreadable,
+                    ..
+                }
+            ));
+            drop(guard);
+        }
+
+        let _table = test_seams::unreadable_mount_table();
+        assert!(matches!(
+            admit(&file, &Fence::new(&library)),
+            Ok(Entry::Present { .. })
+        ));
+        remove_path_any(&file, &Fence::new(&library)).unwrap();
+        assert!(!file.exists());
+    }
+}
+
+/// Linux mounts: real bind mounts.
 #[cfg(target_os = "linux")]
 mod linux_mounts {
     use std::fs;
@@ -491,33 +677,8 @@ mod linux_mounts {
 
     use super::{store_with_copy, target_with_nested};
     use crate::core::errors::{RemovalRefusal, SignalError};
-    use crate::core::removal_fence::{mounts, Fence, ProtectedLibrary};
+    use crate::core::removal_fence::{Fence, ProtectedLibrary};
     use crate::core::sync_engine::remove_path_any;
-
-    /// A mount point at the entry or below it is found, escaped as the
-    /// kernel writes it; one beside it or above it is not.
-    #[test]
-    fn a_mount_point_at_or_below_the_entry_is_found_in_mountinfo() {
-        let mountinfo = "\
-22 1 8:1 / / rw,relatime shared:1 - ext4 /dev/sda1 rw
-40 22 8:1 /central /home/me/.claude/skills/my\\040skill/attached rw shared:1 - ext4 /dev/sda1 rw
-41 22 0:5 / /home/me/.claude/skills/my\\040skills rw - tmpfs tmpfs rw
-";
-        let entry = Path::new("/home/me/.claude/skills/my skill");
-        assert_eq!(
-            mounts::at_or_below(mountinfo, entry),
-            Some(PathBuf::from("/home/me/.claude/skills/my skill/attached"))
-        );
-        assert_eq!(
-            mounts::at_or_below(mountinfo, Path::new("/home/me/.claude/skills/my skills")),
-            Some(PathBuf::from("/home/me/.claude/skills/my skills")),
-            "the entry itself mounted"
-        );
-        assert_eq!(
-            mounts::at_or_below(mountinfo, Path::new("/home/me/.claude/skills/beta")),
-            None
-        );
-    }
 
     /// Unmounts on drop, so a failed assertion never leaves the test's temp
     /// dir cleanup to recurse into the library.
@@ -589,8 +750,121 @@ mod linux_mounts {
             assert!(scripts.join("run.sh").is_file(), "the library survives");
         }
 
+        // A bind mount *at* a target shares its folder's device: only the
+        // mount table shows it.
+        let mounted_target = target.with_file_name("beta");
+        fs::create_dir_all(&mounted_target).unwrap();
+        {
+            let Some(_mount) = BindMount::new(&scripts, &mounted_target) else {
+                panic!("mounted once already, so this process may mount");
+            };
+            let err = remove_path_any(&mounted_target, &Fence::new(&library))
+                .expect_err("a mount at the entry is refused");
+            assert!(
+                matches!(
+                    err.downcast_ref::<SignalError>(),
+                    Some(SignalError::RemovalRefused {
+                        reason: RemovalRefusal::MountPoint,
+                        ..
+                    })
+                ),
+                "{err:#}"
+            );
+            assert!(scripts.join("run.sh").is_file(), "the library survives");
+        }
+
         remove_path_any(&target, &Fence::new(&library)).unwrap();
         assert!(!target.exists());
         assert!(alpha.join("keep").is_file());
+    }
+}
+
+/// macOS: a real disk image attached at a Tool target (round-3 P1, where the
+/// image's contents were deleted before `EBUSY` on its root).
+#[cfg(target_os = "macos")]
+mod macos_mounts {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    use super::removal_refusal;
+    use crate::core::errors::RemovalRefusal;
+    use crate::core::removal_fence::{Fence, ProtectedLibrary};
+    use crate::core::sync_engine::remove_path_any;
+
+    /// Detaches on drop, so a failed assertion never leaves an image mounted
+    /// (or the temp dir's cleanup recursing into it).
+    struct Attached(PathBuf);
+
+    impl Attached {
+        fn new(image: &Path, at: &Path) -> Self {
+            let attached = Command::new("hdiutil")
+                .args(["attach", "-nobrowse", "-mountpoint"])
+                .arg(at)
+                .arg(image)
+                .status()
+                .expect("run hdiutil");
+            assert!(attached.success(), "hdiutil attach");
+            Self(at.to_path_buf())
+        }
+    }
+
+    impl Drop for Attached {
+        fn drop(&mut self) {
+            let _ = Command::new("hdiutil")
+                .args(["detach", "-force"])
+                .arg(&self.0)
+                .status();
+        }
+    }
+
+    /// A disk image attached at the target itself, and one attached below
+    /// it: neither removal touches the image's bytes. Creates and attaches a
+    /// 32 MB APFS image in a temp dir (no privileges, detached on drop), so
+    /// it is ignored by default; run it with
+    /// `cargo test --lib real_disk_image -- --ignored`.
+    #[test]
+    #[ignore = "creates and attaches a disk image with hdiutil"]
+    fn a_real_disk_image_at_or_inside_a_target_is_never_removed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let image = tmp.path().join("volume.dmg");
+        let created = Command::new("hdiutil")
+            .args(["create", "-quiet", "-size", "32m", "-fs", "APFS"])
+            .args(["-volname", "SkillsHubFenceTest"])
+            .arg(&image)
+            .status()
+            .expect("run hdiutil");
+        assert!(created.success(), "hdiutil create");
+        let library = ProtectedLibrary::unrecorded();
+
+        let target = tmp.path().join("skills/alpha");
+        fs::create_dir_all(&target).unwrap();
+        {
+            let _image = Attached::new(&image, &target);
+            fs::create_dir_all(target.join("nested")).unwrap();
+            fs::write(target.join("keep"), "the image's bytes").unwrap();
+            assert_eq!(
+                removal_refusal(remove_path_any(&target, &Fence::new(&library))),
+                RemovalRefusal::MountPoint
+            );
+            assert!(target.join("keep").is_file(), "the image survives");
+        }
+
+        let attached = target.join("attached");
+        fs::create_dir_all(&attached).unwrap();
+        fs::write(target.join("SKILL.md"), "---\nname: alpha\n---\n").unwrap();
+        {
+            let _image = Attached::new(&image, &attached);
+            assert!(attached.join("keep").is_file());
+            assert_eq!(
+                removal_refusal(remove_path_any(&target, &Fence::new(&library))),
+                RemovalRefusal::ContainsMount
+            );
+            assert!(attached.join("keep").is_file(), "the image survives");
+            assert!(target.join("SKILL.md").is_file(), "nothing is deleted");
+        }
+
+        remove_path_any(&target, &Fence::new(&library)).unwrap();
+        assert!(!target.exists());
     }
 }

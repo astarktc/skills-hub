@@ -89,6 +89,8 @@ const REMOVAL_REFUSAL_KEYS: Record<RemovalRefusal, string> = {
   centralLibrary: "errors.removalRefusedCentralLibrary",
   resolvesElsewhere: "errors.removalRefusedResolvesElsewhere",
   containsMount: "errors.removalRefusedContainsMount",
+  mountPoint: "errors.removalRefusedMountPoint",
+  mountTableUnreadable: "errors.removalRefusedMountTableUnreadable",
 };
 
 const INVALID_PATH_KEYS: Record<string, string> = {

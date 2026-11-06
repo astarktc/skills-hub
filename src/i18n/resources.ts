@@ -237,6 +237,10 @@ export const resources = {
           "Could not remove {{path}}: your account is not allowed to. Check that you own it, that it and the folder holding it are not read-only or locked, that the disk or volume it is on is not read-only (remount it writable, or move the folder to a writable disk), and that no other app has it open. Retry will fail the same way until that is fixed.",
         removalRefusedContainsMount:
           "Refused to remove {{path}}: the folder {{resolved}} inside it is another disk or a mounted folder — possibly your Skills Hub library — and removing {{path}} would delete the files there. Unmount it, then try again.",
+        removalRefusedMountPoint:
+          "Refused to remove {{path}}: another disk, disk image, network share or mounted folder is attached at it, and removing it would delete the files on that disk. Unmount it (eject the disk or image), then try again.",
+        removalRefusedMountTableUnreadable:
+          "Refused to remove {{path}}: Skills Hub could not read the system's list of mounted folders (/proc/self/mountinfo), so it cannot rule out that a folder inside it is mounted from somewhere else — possibly your Skills Hub library. Check that /proc is mounted and readable for your account, then try again.",
         removalRefusedResolvesElsewhere:
           "Refused to remove {{path}}: it leads to {{resolved}}, outside the folder Skills Hub manages there. A folder on that path is probably a link — check where it points, then try again.",
         skillManifestIo: "Could not read or save the skill manifest at {{path}}.",
