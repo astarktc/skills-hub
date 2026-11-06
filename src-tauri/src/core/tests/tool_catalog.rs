@@ -598,12 +598,21 @@ fn warp_shows_every_copy_of_the_folders_it_also_reads() {
 /// Kimchi reads another agent's folder "if installed" — the very condition a
 /// pair requires, so the read counts: Kimchi with Pi installed sees a Pi
 /// deployment beside its own. Its `~/.claude/skills` read is opt-in, so
-/// Claude Code makes no pair.
+/// Claude Code makes no pair, and its home reads of the other agents' folders
+/// (Cursor, Codex) are only a fallback for a project without its own folder,
+/// so they make none either (round 20 rows review, P2).
 #[test]
 fn kimchi_reads_an_installed_agents_folder_but_not_claudes_by_default() {
     let home = tempfile::tempdir().unwrap();
     let roots = HostRoots::under_home(home.path());
-    for key in ["kimchi", "pi", "claude_code"] {
+    for key in [
+        "kimchi",
+        "pi",
+        "claude_code",
+        "cursor",
+        "codex",
+        "agents_skills",
+    ] {
         install(home.path(), key);
     }
 

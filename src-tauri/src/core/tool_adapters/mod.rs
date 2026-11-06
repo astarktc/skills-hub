@@ -1916,13 +1916,14 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         group: None,
         supports_symlink: true,
         // Read facts: brief § Part 2, row "Kimchi (optional)".
-        // VERIFIED T28. Each other agent's dir is read "if installed" — exactly the
-        // case a cross-read pair needs, so the reads are `Default`. Per agent, the
-        // project-local dir is checked first and home is the fallback. Earlier
-        // `skillPaths` entries win. `.claude` needs `extensions.claude-code-skills`.
+        // VERIFIED T28. Each other agent's dir is read "if installed", but per agent
+        // the project-local dir is checked first and home is only the fallback, so a
+        // home read is conditional on the project (round 20 rows review, P2) — never
+        // a warning pair. Pi's dir is explicitly global, so it stays `Default`.
+        // Earlier `skillPaths` entries win. `.claude` needs `extensions.claude-code-skills`.
         reads: ReadFacts {
             global: ScopeReads {
-                agents: Yes,
+                agents: Conditional(KIMCHI_FALLBACK),
                 claude: OptIn,
             },
             project: ScopeReads {
@@ -1938,31 +1939,31 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
                 },
                 AlsoRead {
                     dir: home(".codex/skills"),
-                    mode: ReadMode::Default,
+                    mode: ReadMode::Conditional(KIMCHI_FALLBACK),
                 },
                 AlsoRead {
                     dir: home(".cursor/skills"),
-                    mode: ReadMode::Default,
+                    mode: ReadMode::Conditional(KIMCHI_FALLBACK),
                 },
                 AlsoRead {
                     dir: home(".warp/skills"),
-                    mode: ReadMode::Default,
+                    mode: ReadMode::Conditional(KIMCHI_FALLBACK),
                 },
                 AlsoRead {
                     dir: home(".factory/skills"),
-                    mode: ReadMode::Default,
+                    mode: ReadMode::Conditional(KIMCHI_FALLBACK),
                 },
                 AlsoRead {
                     dir: home(".gemini/skills"),
-                    mode: ReadMode::Default,
+                    mode: ReadMode::Conditional(KIMCHI_FALLBACK),
                 },
                 AlsoRead {
                     dir: home(".copilot/skills"),
-                    mode: ReadMode::Default,
+                    mode: ReadMode::Conditional(KIMCHI_FALLBACK),
                 },
                 AlsoRead {
                     dir: home(".github/skills"),
-                    mode: ReadMode::Default,
+                    mode: ReadMode::Conditional(KIMCHI_FALLBACK),
                 },
             ],
         },
@@ -2488,6 +2489,12 @@ pub struct ReaderOnlyHarness {
     /// its own config root(s), like an adapter's (never a shared skills
     /// convention dir).
     pub detect_dirs: &'static [RegistryPath],
+    /// The harness's own (or legacy) skills folders, which Skills Hub never
+    /// deploys to (it reaches the harness through its group's folder). Read only
+    /// by the installedness rule: a detect dir holding nothing but the path down
+    /// to one of them is a skill deployer's footprint, not the harness — the same
+    /// rule as an adapter's (`is_installed_in`). Empty when it has none.
+    pub skills_dirs: &'static [RegistryPath],
     /// The group whose shared folder it reads: its only way in, so that
     /// group entry's folder stands as its own deploy dir.
     pub group: VirtualGroup,
@@ -2496,6 +2503,10 @@ pub struct ReaderOnlyHarness {
     /// it would see (`catalog::ReaderEntry::duplicate_readers`).
     pub reads: ReadFacts,
 }
+
+/// Kimchi's cross-agent fallback: an agent's home folder is read only when the
+/// project has none of that agent's own (docs.kimchi.dev, brief T28).
+const KIMCHI_FALLBACK: &str = "only when the project has no folder of its own";
 
 /// The reader-only harnesses, in presentation order; tests add rows per
 /// thread (`test_overrides::sample_reader`).
@@ -2517,6 +2528,7 @@ static READER_ONLY_HARNESSES: &[ReaderOnlyHarness] = &[
                 rel: "warp/Warp",
             }]),
         ],
+        skills_dirs: &[home(".warp/skills")],
         group: VirtualGroup::AgentsStandard,
         // Read facts: brief § Part 2 "Recommended Part 1 additions", row
         // "Warp (AGENTS)". VERIFIED T22 (re-checked 2026-11-06): every
@@ -2579,6 +2591,7 @@ static READER_ONLY_HARNESSES: &[ReaderOnlyHarness] = &[
             root: HostRoot::RoamingAppData,
             rel: "Zed",
         }])],
+        skills_dirs: &[],
         group: VirtualGroup::AgentsStandard,
         // Read facts: brief § Part 2 "Recommended Part 1 additions", row
         // "Zed (AGENTS)". VERIFIED T23 (re-checked 2026-11-06): only
@@ -2601,6 +2614,7 @@ static READER_ONLY_HARNESSES: &[ReaderOnlyHarness] = &[
         key: "dexto",
         display_name: "Dexto",
         detect_dirs: &[home(".dexto")],
+        skills_dirs: &[home(".dexto/skills")],
         group: VirtualGroup::AgentsStandard,
         // Read facts: brief § Part 2 "Recommended Part 1 additions", row
         // "Dexto (AGENTS)". VERIFIED T34 (re-checked 2026-11-06): canonical
@@ -2629,6 +2643,7 @@ static READER_ONLY_HARNESSES: &[ReaderOnlyHarness] = &[
         // `~/.fx` holds `settings.json` and its own `skills/` (T35). Never
         // deployed to: a second copy there makes `$name` load nothing.
         detect_dirs: &[home(".fx")],
+        skills_dirs: &[home(".fx/skills")],
         group: VirtualGroup::AgentsStandard,
         // Read facts: brief § Part 2 "Recommended Part 1 additions", row
         // "fx (AGENTS)". VERIFIED T35 (re-checked 2026-11-06): "If several
@@ -2669,6 +2684,7 @@ static READER_ONLY_HARNESSES: &[ReaderOnlyHarness] = &[
         display_name: "Sarvam Code",
         // `~/.sarvam` holds `config.toml` (T37, secondary).
         detect_dirs: &[home(".sarvam")],
+        skills_dirs: &[],
         group: VirtualGroup::AgentsStandard,
         // Read facts: brief § Part 2 "Recommended Part 1 additions", row
         // "Sarvam Code (AGENTS)". LOW CONFIDENCE — LIKELY T1, T37 only: the
@@ -2699,6 +2715,7 @@ static READER_ONLY_HARNESSES: &[ReaderOnlyHarness] = &[
             ]),
             home(".vtcode"),
         ],
+        skills_dirs: &[home(".vtcode/skills")],
         group: VirtualGroup::AgentsStandard,
         // Read facts: brief § Part 2 "Recommended Part 1 additions", row
         // "VT Code (extra)"; addendum § Shared-dir reads, row "VT Code".
@@ -2729,6 +2746,7 @@ static READER_ONLY_HARNESSES: &[ReaderOnlyHarness] = &[
         // `~/.dimcode` (v2 data home `~/.dimcode/v2`, P14). `DIMCODE_HOME` is
         // not honoured.
         detect_dirs: &[home(".dimcode")],
+        skills_dirs: &[home(".dimcode/v2/skills"), home(".dimcode/skills")],
         group: VirtualGroup::AgentsStandard,
         // Read facts: addendum § Shared-dir reads, row "DimCode". VERIFIED P13
         // (shipped bundle 0.5.24, re-checked 2026-11-06): the market root
@@ -2756,6 +2774,7 @@ static READER_ONLY_HARNESSES: &[ReaderOnlyHarness] = &[
         // Its config root is `~/.agents/crow` (P15): its own folder inside
         // `~/.agents`, not the shared convention dir itself.
         detect_dirs: &[home(".agents/crow")],
+        skills_dirs: &[],
         group: VirtualGroup::AgentsStandard,
         // Read facts: addendum § Shared-dir reads, row "crow-cli". VERIFIED
         // P15–P16 (re-checked 2026-11-06): `~/.agents/skills` is its only user
@@ -2780,6 +2799,7 @@ static READER_ONLY_HARNESSES: &[ReaderOnlyHarness] = &[
         display_name: "Corust Agent",
         // `~/.corust-agent` (P17). `CORUST_HOME` is not honoured.
         detect_dirs: &[home(".corust-agent")],
+        skills_dirs: &[home(".corust-agent/skills")],
         group: VirtualGroup::AgentsStandard,
         // Read facts: addendum § Shared-dir reads, row "Corust Agent".
         // VERIFIED dirs P17 (v0.6.0 binary strings, re-checked 2026-11-06):
@@ -2822,13 +2842,19 @@ pub fn readers_of(group: VirtualGroup) -> Vec<&'static ReaderOnlyHarness> {
         .collect()
 }
 
-/// Whether a reader-only harness is installed: any of its detect dirs exists.
-/// It has no skills dir, so there is no skills-only footprint to discount.
+/// Whether a reader-only harness is installed: some detect dir exists and is
+/// not a skills-only footprint of one of the harness's own skills folders
+/// (`ReaderOnlyHarness::skills_dirs`) — the adapter rule (`is_installed_in`),
+/// since a skill deployer writes into those folders too.
 pub fn reader_installed_in(roots: &HostRoots, reader: &ReaderOnlyHarness) -> bool {
-    reader
-        .detect_dirs
-        .iter()
-        .any(|dir| dir.resolve(roots).exists())
+    reader.detect_dirs.iter().any(|dir| {
+        let detect_dir = dir.resolve(roots);
+        detect_dir.exists()
+            && !reader
+                .skills_dirs
+                .iter()
+                .any(|skills| is_skills_only_footprint(&detect_dir, &skills.resolve(roots)))
+    })
 }
 
 /// Test-only: install a reader-only harness the way the harness does (its
@@ -2923,6 +2949,7 @@ pub mod test_overrides {
             key: "test_reader",
             display_name: "Test Reader",
             detect_dirs: SAMPLE_READER_DETECT,
+            skills_dirs: &[],
             group: VirtualGroup::AgentsStandard,
             reads: super::ReadFacts::UNKNOWN,
         })

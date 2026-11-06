@@ -153,6 +153,15 @@ describe("rich", () => {
     expect((await handlers.listProjects()).map((p) => p.name)).toEqual(["skills-hub", "quartermaster", "agent-skills"]);
   });
 
+  // Round 20 rows review (P3): the registry's copy-only capability reaches the fixture's placement, so a
+  // fixture-driven check sees Deep Agents Code deploy as a copy (the one `supports_symlink: false` row).
+  it("carries each harness's link-vs-copy capability", async () => {
+    const { handlers } = backendFor("rich");
+    const status = await handlers.getToolStatus();
+    const copyOnly = status.tools.filter((tool) => tool.placement?.supports_symlink === false).map((tool) => tool.key);
+    expect(copyOnly).toEqual(["deep_agents_code"]);
+  });
+
   // Round 20 ticket 01: reader-only harnesses are listed under the
   // `.agents/skills` entry with their detected state, never as entries, never
   // installed keys, and are absorbed into the project group's roster.

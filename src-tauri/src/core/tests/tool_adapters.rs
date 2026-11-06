@@ -1345,6 +1345,11 @@ fn every_row_restates_its_brief_read_facts() {
     const U: SharedRead = Unknown;
     const ALL_UNKNOWN: [SharedRead; 2] = [U, U];
     const CLI_ONLY: M = M::Conditional("Antigravity CLI only");
+    // Kimchi reads each agent's home folder only when the project has none of
+    // that agent's own (project-local first, home the fallback): never a
+    // by-default read, so never a warning pair.
+    const KIMCHI_FALLBACK: &str = "only when the project has no folder of its own";
+    const KIMCHI_FALLBACK_READ: M = M::Conditional(KIMCHI_FALLBACK);
     let expected: &[Row] = &[
         (
             "agents_skills",
@@ -1893,19 +1898,19 @@ fn every_row_restates_its_brief_read_facts() {
         (
             "kimchi",
             "Kimchi (optional)",
-            [Yes, OptIn],
+            [Conditional(KIMCHI_FALLBACK), OptIn],
             [Yes, OptIn],
             P::Unknown,
             D::Shadows,
             &[
                 (".pi/agent/skills", M::Default),
-                (".codex/skills", M::Default),
-                (".cursor/skills", M::Default),
-                (".warp/skills", M::Default),
-                (".factory/skills", M::Default),
-                (".gemini/skills", M::Default),
-                (".copilot/skills", M::Default),
-                (".github/skills", M::Default),
+                (".codex/skills", KIMCHI_FALLBACK_READ),
+                (".cursor/skills", KIMCHI_FALLBACK_READ),
+                (".warp/skills", KIMCHI_FALLBACK_READ),
+                (".factory/skills", KIMCHI_FALLBACK_READ),
+                (".gemini/skills", KIMCHI_FALLBACK_READ),
+                (".copilot/skills", KIMCHI_FALLBACK_READ),
+                (".github/skills", KIMCHI_FALLBACK_READ),
             ],
         ),
         (
@@ -2459,4 +2464,51 @@ fn codewhale_is_never_detected_by_the_legacy_deepseek_root() {
     assert!(!is_installed_in(&roots, codewhale));
     mark_installed_in(&roots, codewhale);
     assert!(is_installed_in(&roots, codewhale));
+}
+
+/// A reader-only harness is installedness-checked like an adapter: a detect
+/// dir holding nothing but the path down to one of the harness's own (or
+/// legacy) skills folders is what a skill deployer leaves behind, not the
+/// harness (round 20 rows review, P1). Each such reader is probed alone in its
+/// own home, with only `<skills folder>/x` on disk: neither the reader nor the
+/// AGENTS group it reads may count as installed.
+#[test]
+fn a_skills_only_footprint_never_detects_a_reader_only_harness() {
+    use crate::core::tool_adapters::reader_installed_in;
+    let footprints = [
+        ("warp", ".warp/skills"),
+        ("dexto", ".dexto/skills"),
+        ("fx", ".fx/skills"),
+        ("vt_code", ".vtcode/skills"),
+        ("dimcode", ".dimcode/v2/skills"),
+        ("corust_agent", ".corust-agent/skills"),
+    ];
+    let agents = adapter_by_key(ToolId::AgentsStandard.as_key()).unwrap();
+    for (key, skills) in footprints {
+        let home = tempfile::tempdir().unwrap();
+        let roots = HostRoots::under_home(home.path());
+        fs::create_dir_all(home.path().join(skills).join("x")).unwrap();
+        let reader = reader_only_harnesses()
+            .into_iter()
+            .find(|r| r.key == key)
+            .unwrap_or_else(|| panic!("{key}"));
+        assert!(
+            !reader_installed_in(&roots, reader),
+            "{key} detected by a skills-only footprint"
+        );
+        assert!(
+            !is_installed_in(&roots, agents),
+            "{key}'s footprint made the AGENTS group installed"
+        );
+        // Anything beside the skills path is the harness itself.
+        fs::write(
+            home.path().join(skills).parent().unwrap().join("config"),
+            b"",
+        )
+        .unwrap();
+        assert!(
+            reader_installed_in(&roots, reader),
+            "{key} with a config beside its skills"
+        );
+    }
 }
