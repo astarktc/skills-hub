@@ -42,3 +42,8 @@ back with evidence, not forced.
 - L1: Sol (high) review FAIL — three P1s (case-insensitive leaf alias deletes a recorded central copy; cache ancestor
   alias; no configured-library boundary, cache cleanup unprotected) + #76 gap; round-2 implementer dispatched on
   `t3/removal-fence-round2`. PR #7 (draft, round 1) passed Windows CI.
+- L1 round 2 re-check: round-1 findings closed; new P1 (nested bind mount) + P2 (EROFS). Round 3 (PR #9) re-check:
+  EROFS and the original mount probes closed; two new P1s (mountinfo fails open on non-UTF-8 / no procfs; a filesystem
+  mounted at the entry itself on macOS). Round 4 dispatched on `t3/removal-fence-round4`.
+- `main` regression from the L2 review fix: `synchronous = FULL` pushed hosted-Windows SQLite contention past the 5 s
+  busy timeout; `b8a530b` raises it to 30 s (two green hosted-Windows runs, PR #10).
