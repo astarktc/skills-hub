@@ -24,14 +24,19 @@ A per-harness fact that changes how deploying behaves for that harness, recorded
 _Avoid_: tool capability, special case, harness quirk, Cursor mode
 
 **Virtual group**:
-A harness entry that stands in for several harnesses sharing one project-scope skills convention (today: the AGENTS standard's `.agents/skills`, labelled `.agents/skills (9 harnesses)` in a project). It appears in harness lists in place of its constituent harnesses and deploys by its own capability (symlink-capable), whatever its constituents' individual capabilities are.
-**Code name**: `ToolAdapter::as_virtual_group`, `group_label`.
+A harness entry that stands in for several harnesses sharing one project-scope skills convention (today: the AGENTS standard's `.agents/skills`, labelled `.agents/skills (N harnesses)` in a project, N counted from its constituents and reader-only harnesses). It appears in harness lists in place of its constituent harnesses and deploys by its own capability (symlink-capable), whatever its constituents' individual capabilities are.
+**Code name**: `ToolAdapter::as_virtual_group`; the frontend's `projectToolLabel` composes the counted label.
 _Avoid_: meta-tool, umbrella harness
 
 **Constituent harnesses**:
 The harnesses absorbed into a virtual group entry. The group counts as installed when any constituent is; group membership is owned by the backend and only presented by the frontend.
 **Code name**: the `group` field of `ToolAdapter` (constituent tools).
 _Avoid_: constituent tools, member harnesses, sub-harnesses
+
+**Reader-only harness**:
+A Harness that reads a virtual group's shared folder (`~/.agents/skills`, `<project>/.agents/skills`) and has no skills folder of its own (Zed, Warp, …). Skills Hub detects it and lists it as a reader of that folder's entry ("Read by …", detected or not) but never deploys to it: it has no switch, is never in the saved selection or the new-harness ask, and owns no Deployment. At project scope it is absorbed into the group like a constituent harness and counts in the group's "(N harnesses)". The first, minimal form of "a Deployment is a folder; harnesses are its readers" (#109).
+**Code name**: `ReaderOnlyHarness`, `READER_ONLY_HARNESSES` (`core/tool_adapters/mod.rs`), `ToolCatalogEntry::readers`, `ToolInfoDto.readers`.
+_Avoid_: passive harness, virtual harness, follower
 
 **Shared skills dir group**:
 Global harnesses whose skills directories resolve to the same location, so deploying to one deploys to all. Owned by the backend; the frontend only presents it.
@@ -40,7 +45,7 @@ _Avoid_: dir alias, linked harnesses
 
 **Former skills dir**:
 A global skills directory the registry once named for a Harness and has since corrected (Augment: `~/.augment/rules`, its rules dir, until 1.2.18; now `~/.augment/skills`). A registry fact per entry, empty for almost every harness. Never scanned, never deployed into; **Deployment relocation** (once per launch under the Mutation guard) moves each global Deployment still recorded directly inside one into the current dir from the central copy — replacing an existing artifact there only when byte-identical — settles the row at the new path and removes the superseded artifact through Artifact removal's fenced seam; an absent old artifact, a missing central copy or foreign bytes at the new path leave the row where it is, logged, retried next launch. A former dir stays inside the deletion rule so such a row's artifact can always be removed.
-**Code name**: `ToolAdapter::former_relative_skills_dirs`; the relocation is Target relocation, `core/target_relocation.rs`.
+**Code name**: `ToolAdapter::former_skills_dirs`; the relocation is Target relocation, `core/target_relocation.rs`.
 _Avoid_: legacy path, old dir, migration (that word is the DB's)
 
 **Harness catalog**:
