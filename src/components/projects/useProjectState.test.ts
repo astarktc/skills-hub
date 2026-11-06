@@ -1351,6 +1351,32 @@ describe("useProjectState project-assignment verbs (the door's entry points)", (
     expect(onDeploymentsChanged).not.toHaveBeenCalled();
   });
 
+  // L5 review (Sol): one project's failed read must not hide another's rewrite.
+  it("converges on a rewrite even when another project's view read fails (BACKLOG #96)", async () => {
+    const backend = stubBackend();
+    const onDeploymentsChanged = vi.fn(async () => {});
+    const { result } = await renderReady({ onDeploymentsChanged });
+    await withSelectedProject(result, ["pi"]);
+    await act(async () => {
+      await result.current.registerProject("/work/p2", { add_to_gitignore: false, add_to_exclude: false });
+    });
+    const projectIds = result.current.projects.map((project) => project.id);
+    expect(projectIds.length).toBeGreaterThanOrEqual(2);
+    const [rewriting, failing] = projectIds as [string, string];
+    const passThrough = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command: CommandName, ...args: unknown[]) =>
+      command === "getProjectView" && args[0] === failing
+        ? Promise.reject(new Error("project folder vanished"))
+        : passThrough(command, ...args),
+    );
+    backend.rewriteOnRead.add(rewriting);
+    onDeploymentsChanged.mockClear();
+    await act(async () => {
+      await result.current.loadPlacementViews();
+    });
+    expect(onDeploymentsChanged).toHaveBeenCalledTimes(1);
+  });
+
   it("assigns several skills, then asks about all their collisions once", async () => {
     const settleCollisions = vi.fn(async (report: ProjectSyncReport) => ({ report, resolved: true }));
     const { result } = await renderReady({ settleCollisions });

@@ -585,26 +585,28 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
     // A re-read keeps what is shown until it lands (a failed one too — the
     // views stay, the note goes).
     setPlacementViews((current) => (current.status === "ready" ? current : { ...current, status: "loading" }));
-    try {
-      const views = await Promise.all(
-        projectsRef.current.map((project) => invokeTauri("getProjectView", project.id)),
-      );
-      // A reconcile pass that rewrote a status moved the library's rows (#96).
-      if (views.some((view) => view.rewrote_statuses)) converge();
-      if (placementReadRef.current !== read) return;
-      const stamps = viewStampRef.current.byProject;
-      setPlacementViews((current) => {
-        const next = { ...current.views };
-        for (const view of views) {
-          if ((stamps.get(view.project.id) ?? 0) <= started) next[view.project.id] = view;
-        }
-        return { status: "ready", loaded: true, views: next };
-      });
-    } catch {
-      if (placementReadRef.current !== read) return;
+    const settled = await Promise.allSettled(
+      projectsRef.current.map((project) => invokeTauri("getProjectView", project.id)),
+    );
+    // A reconcile pass that rewrote a status moved the library's rows (#96) —
+    // even when another project's read failed, so one bad read never hides
+    // a rewrite a later read would no longer report.
+    if (settled.some((result) => result.status === "fulfilled" && result.value.rewrote_statuses)) converge();
+    if (placementReadRef.current !== read) return;
+    if (settled.some((result) => result.status === "rejected")) {
       // Last-good views (and any a mutation applied meanwhile) stay.
       setPlacementViews((current) => ({ ...current, status: "failed" }));
+      return;
     }
+    const views = settled.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+    const stamps = viewStampRef.current.byProject;
+    setPlacementViews((current) => {
+      const next = { ...current.views };
+      for (const view of views) {
+        if ((stamps.get(view.project.id) ?? 0) <= started) next[view.project.id] = view;
+      }
+      return { status: "ready", loaded: true, views: next };
+    });
   }, [converge]);
   const placementOf = useCallback(
     (skillId: string) => skillPlacement(projects, placementViews, skillId),

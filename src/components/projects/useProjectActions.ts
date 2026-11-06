@@ -186,10 +186,12 @@ export function useProjectActions({ t, state, catalog, reporter, surface }: Proj
       ? `${unassigned.skillId}:${unassigned.tool}`
       : null;
 
-  const handleToggleAssignment = useCallback(
-    async (skillId: string, tool: string) => {
+  const toggleCell = useCallback(
+    async (skillId: string, tool: string, spendsUndo: boolean) => {
       const projectId = state.selectedProjectId;
       await runAction({ subject: { kind: "cell", ids: [`${skillId}:${tool}`] }, label: cellLabel }, async () => {
+        // Spent only once admitted: a refused Undo changes nothing (D19).
+        if (spendsUndo) setUnassigned(null);
         const result = await state.toggleAssignment(skillId, tool);
         if (!result) return;
         if (result.kind === "unassigned" && projectId) setUnassigned({ projectId, skillId, tool });
@@ -202,14 +204,15 @@ export function useProjectActions({ t, state, catalog, reporter, surface }: Proj
     },
     [applyOutcome, cellLabel, runAction, state, t, toolLabelById],
   );
+  const handleToggleAssignment = useCallback(
+    (skillId: string, tool: string) => toggleCell(skillId, tool, false),
+    [toggleCell],
+  );
 
-  /** A cell's Undo: the toggle back on (re-assign), and the Undo is spent. */
+  /** A cell's Undo: the toggle back on (re-assign), and the Undo is spent once admitted. */
   const handleUndoUnassign = useCallback(
-    async (skillId: string, tool: string) => {
-      setUnassigned(null);
-      await handleToggleAssignment(skillId, tool);
-    },
-    [handleToggleAssignment],
+    (skillId: string, tool: string) => toggleCell(skillId, tool, true),
+    [toggleCell],
   );
 
   // A cell's Sync this: one assignment re-synced, its cell pending alone.

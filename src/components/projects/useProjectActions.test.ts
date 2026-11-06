@@ -310,6 +310,34 @@ describe("useProjectActions: a cell's toggle-off offers Undo for five seconds (#
     expect(result.current.actions.undoCell).toBeNull();
   });
 
+  // L5 review (Sol): a refused Undo changes nothing (D19) — it stays offered.
+  it("a refused Undo is not spent", async () => {
+    toggleBackend();
+    const result = await selected();
+    await act(async () => {
+      await result.current.actions.handleToggleAssignment("s2", "cursor");
+    });
+    let release!: () => void;
+    let held!: Promise<unknown>;
+    act(() => {
+      held = result.current.reporter.runAction({ subject: { kind: "cell", ids: ["other"] }, label: "hold" }, () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+      );
+    });
+    mockInvoke.mockClear();
+    await act(async () => {
+      await result.current.actions.handleUndoUnassign("s2", "cursor");
+    });
+    expect(mockInvoke).not.toHaveBeenCalledWith("toggleProjectSkillAssignment", "p1", "s2", "cursor");
+    expect(result.current.actions.undoCell).toBe("s2:cursor");
+    await act(async () => {
+      release();
+      await held;
+    });
+  });
+
   it("a removal that failed keeps the row (ADR-0002) and offers no Undo", async () => {
     toggleBackend({ keepRow: true });
     const result = await selected();
