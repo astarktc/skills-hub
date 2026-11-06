@@ -1816,3 +1816,35 @@ fn preview_does_not_count_kept_skills_as_moving() {
     assert_eq!(preview.skills, 1, "only alpha moves");
     assert_eq!(preview.kept, 1);
 }
+
+/// The extended attributes the copy carries and compares: on Linux the
+/// owner's `user.*` namespace; on macOS every name, `com.apple.*` included,
+/// but the two the system alone owns (the kernel assigns
+/// `com.apple.provenance` to each new file and ignores writes to it; SIP
+/// forbids writing `com.apple.rootless`) — comparing those would fail every
+/// real Library's verification.
+#[cfg(unix)]
+#[test]
+fn the_compared_extended_attributes_are_the_ones_a_process_owns() {
+    use super::compared_xattr;
+    use std::ffi::OsStr;
+    assert!(compared_xattr(OsStr::new("user.note")));
+    if cfg!(target_os = "linux") {
+        for system in ["security.selinux", "system.posix_acl_access", "trusted.x"] {
+            assert!(!compared_xattr(OsStr::new(system)), "{system}");
+        }
+    } else {
+        for owned in [
+            "com.apple.FinderInfo",
+            "com.apple.ResourceFork",
+            "com.apple.quarantine",
+            "com.apple.metadata:kMDItemWhereFroms",
+            "com.apple.macl",
+        ] {
+            assert!(compared_xattr(OsStr::new(owned)), "{owned}");
+        }
+        for system in ["com.apple.provenance", "com.apple.rootless"] {
+            assert!(!compared_xattr(OsStr::new(system)), "{system}");
+        }
+    }
+}

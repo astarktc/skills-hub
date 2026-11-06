@@ -1192,9 +1192,10 @@ fn rollback<'p>(
 //   `user.*` namespace, the one an unprivileged owner reads and writes
 //   (`security.*`, `trusted.*` and `system.*` are the system's); on macOS
 //   every name, `com.apple.*` included (Finder info, resource forks,
-//   quarantine, Spotlight metadata), except `com.apple.provenance`, which
-//   the kernel itself assigns to every file a process creates and silently
-//   ignores writes to;
+//   quarantine, Spotlight metadata), except the two the system alone owns:
+//   `com.apple.provenance`, which the kernel assigns to every file a process
+//   creates and silently ignores writes to, and `com.apple.rootless` (System
+//   Integrity Protection), which no process may write;
 // * hard links: names of one file inside the skill are names of one file in
 //   the copy, with the same link count. A file with another name outside the
 //   skill cannot be relocated as one file (`hardlink_outside`).
@@ -1426,7 +1427,7 @@ fn compared_xattr(name: &std::ffi::OsStr) -> bool {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        name != "com.apple.provenance"
+        name != "com.apple.provenance" && name != "com.apple.rootless"
     }
 }
 
