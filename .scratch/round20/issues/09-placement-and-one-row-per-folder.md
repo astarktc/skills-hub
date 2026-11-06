@@ -29,9 +29,13 @@ instead of two.
 - [ ] **Folder key rule:** `agents_skills` for `.agents`, `claude_code` for `.claude`, otherwise the harness's own
       key. A dir several entries share takes the virtual group entry when one owns it, else the first entry in
       registry order. Table tests cover every dir the registry shares.
-- [ ] **One row per folder.**
-  - The global sync batch, Propagation, Disable/Enable, delete, Onboarding import's first sync and project sync
-    record and read one row per (skill, folder key).
+- [ ] **One row per folder (amended 2026-11-06, after review round 3).**
+  - New rows are recorded once per (skill, folder key), in the global sync batch, Onboarding import's first sync and
+    project sync.
+  - Every mutation acts on each stored row exactly as on `main`: its own recorded path, its own ownership and its own
+    settlement. Grouping by folder is presentation and counting only: one pure fold per folder, shared by listings,
+    health and project totals. Counts de-duplicate folder keys.
+  - Collapsing existing rows into one is the redeploy's job (tickets 10 and 11).
   - The per-sharer record fan-out (D34 amendment) is retired.
   - Existing tests that pinned per-sharer rows are rewritten to the folder rule, not deleted.
 - [ ] **Existing per-sharer rows on a dir shared today** (Amp + Kimi) are read correctly. Collapsing them to one row is
@@ -53,3 +57,9 @@ instead of two.
   `commands/mod.rs`. Keep the change mechanical where possible.
 - Everything later builds on placement (10's redeploy, 12's serving rule, 14's mode levels, 15's project overrides), so
   keep its interface narrow: inputs in, answers out, no store access.
+
+## Comments
+
+- 2026-11-06 (orchestrator): scope amended after review round 3 (`.scratch/reviews/round20-t09-placement-review.md`,
+  "Disposition after round 3"). Mutations keep `main`'s per-row semantics, and grouping by folder is for presentation
+  and counting only. The pre-existing finding about historical-ownership authority moved to ticket 18.
