@@ -3168,6 +3168,8 @@ fn our_link(skill: &SkillRecord, path: &Path) {
     std::os::unix::fs::symlink(&skill.central_path, path).unwrap();
     #[cfg(not(unix))]
     {
+        // No unprivileged symlink on Windows CI: stand in with a folder.
+        let _ = &skill.central_path;
         fs::create_dir_all(path).unwrap();
         fs::write(path.join("SKILL.md"), "ours").unwrap();
     }
