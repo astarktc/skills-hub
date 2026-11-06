@@ -956,7 +956,10 @@ Composed from primitives and tokens; the one new variant is Dialog `placement="s
   with **Undo** (`ghost accent`) for 5 s — in the list on the harness's row, under the grid as one line (the tile keeps
   focus). The grid (Segmented List / Grid, persisted `skills-inspector-targetsView`)
   is `outline md` tiles, glyph + harness; each names its state and what a press does. A skill off everywhere or with
-  its central copy gone offers no per-harness action — Health carries the repair.
+  its central copy gone offers no per-harness action — Health carries the repair. On a harness detection no longer
+  sees ("Windsurf (not detected)"), the verbs that write to it — Deploy, Retry, Enable — are refused in place
+  (`targetActions`' `refusal`): held disabled and focusable with "{harness} is not detected on this computer — install
+  it to deploy here.", the state line adding "· install it to deploy here"; Disable stays (it only removes).
 - **Source**: icon · the source line (`sm` underlined link for a repo; a recorded folder in `font-mono xs`) · Copy
   (`ghost icon-sm`) · provenance (`xs`; a missing folder in `stale`) · "Last updated" (`faint`) · Update, Change
   source…, Detach.

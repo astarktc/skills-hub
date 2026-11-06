@@ -741,6 +741,8 @@ export const resources = {
           enableLabel: "Enable on {{tool}}",
           sync: "Deploy",
           syncLabel: "Deploy to {{tool}}",
+          notDetectedReason: "{{tool}} is not detected on this computer \u2014 install it to deploy here.",
+          notDetectedState: "{{state}} \u00b7 install it to deploy here",
           removed: "Removed from {{tool}}",
           undo: "Undo",
           undoLabel: "Undo \u2014 enable on {{tool}} again",

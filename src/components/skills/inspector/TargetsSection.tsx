@@ -6,15 +6,20 @@ import { Segmented, SegmentedItem } from "@/components/ui/segmented";
 import type { SkillActions } from "../../../hooks/useSkillActions";
 import { usePersistedPreference } from "../../../hooks/usePersistedPreference";
 import { inspectorTargetsViewPreference } from "../../../lib/preferences";
-import { stripMarkName, type StripMark, type SyncedStrip } from "../../../lib/skillPresentation";
+import {
+  stripMarkName,
+  targetActions,
+  type OfferedTargetAction,
+  type StripMark,
+  type SyncedStrip,
+  type TargetAction,
+} from "../../../lib/skillPresentation";
 import StripMarkIcon from "../StripMarkIcon";
 import type { ManagedSkill } from "../types";
 import InspectorSection from "./InspectorSection";
 
 /** How long "Removed from {Tool} · Undo" stays after a pair-grain Disable. */
 export const UNDO_WINDOW_MS = 5000;
-
-type TargetAction = "retry" | "disable" | "enable" | "sync";
 
 type TargetsSectionProps = {
   skill: ManagedSkill;
@@ -24,31 +29,6 @@ type TargetsSectionProps = {
   blockedReason: string | null;
   t: TFunction;
 };
-
-/**
- * What a Tool's row offers, by its mark (D22): a failed / missing / stale
- * copy is retried from the central copy (a folder in the way raises the one
- * overwrite ask) and can be disabled; a live copy disabled; a disabled pair
- * enabled; a Tool without a copy synced. A skill off everywhere, or whose
- * central copy is gone, offers nothing here — Health carries its repair.
- */
-function targetActions(mark: StripMark, skillOff: boolean, centralMissing: boolean): TargetAction[] {
-  if (skillOff || centralMissing) return [];
-  switch (mark.state) {
-    case "failed":
-    case "missing":
-    case "stale":
-      return ["retry", "disable"];
-    case "synced":
-      return ["disable"];
-    case "disabled":
-      return ["enable"];
-    case "not_synced":
-      return ["sync"];
-    case "broken":
-      return [];
-  }
-}
 
 /** A mark's state in words, without its Tool (the row names the Tool). */
 const STATE_KEY: Record<StripMark["nameKey"], string> = {
@@ -82,6 +62,10 @@ export default function TargetsSection({ skill, strip, actions, blockedReason, t
   const [view, setView] = usePersistedPreference(inspectorTargetsViewPreference);
   const [removed, setRemoved] = useState<{ skillId: string; tool: string } | null>(null);
   const busy = blockedReason !== null;
+  // A verb refused in place states its reason (held: focusable, and its
+  // activation says why), never a round trip that fails (BACKLOG #72).
+  const refusalReason = (offered: OfferedTargetAction, mark: StripMark) =>
+    offered.refusal === "not_detected" ? t("inspector.targets.notDetectedReason", { tool: mark.label }) : null;
   const skillOff = skill.disabled_at !== null;
   const centralMissing = skill.unlocatable === "central_missing";
   const byTool = new Map(skill.targets.map((target) => [target.tool, target]));
@@ -168,7 +152,8 @@ export default function TargetsSection({ skill, strip, actions, blockedReason, t
         <ul className="m-0 flex list-none flex-col p-0">
           {strip.marks.map((mark) => {
             const mode = mark.state === "not_synced" ? null : modeLabel(mark.tool);
-            const offered = targetActions(mark, skillOff, centralMissing);
+            const offered = targetActions(mark, skill);
+            const refused = offered.some((entry) => entry.refusal !== null);
             const troubled = mark.state === "failed" || mark.state === "missing" || mark.state === "broken";
             const toolLabel = mark.detected ? mark.label : t("strip.notDetected", { name: mark.label });
             return (
@@ -185,7 +170,9 @@ export default function TargetsSection({ skill, strip, actions, blockedReason, t
                     </span>
                   ) : (
                     <span className={cn("text-xs", troubled ? "text-failed" : "text-muted-foreground")}>
-                      {t(STATE_KEY[mark.nameKey])}
+                      {refused
+                        ? t("inspector.targets.notDetectedState", { state: t(STATE_KEY[mark.nameKey]) })
+                        : t(STATE_KEY[mark.nameKey])}
                     </span>
                   )}
                 </div>
@@ -193,10 +180,11 @@ export default function TargetsSection({ skill, strip, actions, blockedReason, t
                   {/* Keyed by position: a row's first control stays the same
                       element as it changes role (Disable → Undo → Enable,
                       Retry → Disable), so focus stays on it (D21). */}
-                  {(undoTool === mark.tool ? (["undo"] as const) : offered).map((action, index) =>
-                    action === "undo" ? (
-                      undoButton(mark.tool, mark.label, index, mark.tool)
-                    ) : (
+                  {(undoTool === mark.tool ? (["undo"] as const) : offered).map((entry, index) => {
+                    if (entry === "undo") return undoButton(mark.tool, mark.label, index, mark.tool);
+                    const { action } = entry;
+                    const reason = blockedReason ?? refusalReason(entry, mark);
+                    return (
                       <Button
                         key={index}
                         size="sm"
@@ -204,16 +192,16 @@ export default function TargetsSection({ skill, strip, actions, blockedReason, t
                         data-target-action={index === 0 ? mark.tool : undefined}
                         aria-label={t(ACTION_LABEL[action].long, { tool: mark.label })}
                         aria-describedby={action === "retry" ? `retry-hint-${skill.id}` : undefined}
-                        disabled={busy}
+                        disabled={reason !== null}
                         focusableWhenDisabled
-                        aria-description={blockedReason ?? undefined}
-                        title={blockedReason ?? t(ACTION_LABEL[action].long, { tool: mark.label })}
+                        aria-description={reason ?? undefined}
+                        title={reason ?? t(ACTION_LABEL[action].long, { tool: mark.label })}
                         onClick={() => void act(action, mark.tool)}
                       >
                         {t(ACTION_LABEL[action].short)}
                       </Button>
-                    ),
-                  )}
+                    );
+                  })}
                 </div>
               </li>
             );
@@ -224,7 +212,10 @@ export default function TargetsSection({ skill, strip, actions, blockedReason, t
           <p className="m-0 text-xs text-muted-foreground">{t("inspector.targets.gridHint")}</p>
           <ul className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-1.5 p-0">
             {strip.marks.map((mark) => {
-              const [primary] = targetActions(mark, skillOff, centralMissing);
+              const [offered] = targetActions(mark, skill);
+              const primary = offered?.action;
+              const refusal = offered ? refusalReason(offered, mark) : null;
+              const reason = blockedReason ?? refusal;
               const name = stripMarkName(mark, t);
               return (
                 <li key={mark.tool} className="flex">
@@ -236,10 +227,10 @@ export default function TargetsSection({ skill, strip, actions, blockedReason, t
                     aria-label={
                       primary ? t("inspector.targets.gridAction", { state: name, action: t(ACTION_LABEL[primary].short) }) : name
                     }
-                    title={blockedReason ?? name}
-                    disabled={busy || !primary}
-                    focusableWhenDisabled={busy}
-                    aria-description={blockedReason ?? undefined}
+                    title={reason ?? name}
+                    disabled={reason !== null || !primary}
+                    focusableWhenDisabled={reason !== null}
+                    aria-description={reason ?? undefined}
                     onClick={() => primary && void act(primary, mark.tool)}
                   >
                     <StripMarkIcon state={mark.state} />

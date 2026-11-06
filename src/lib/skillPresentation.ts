@@ -1121,6 +1121,55 @@ export function stripMarkName(mark: StripMark, t: Translate): string {
   return t(STRIP_MARK_NAME_KEY[mark.nameKey], { tool });
 }
 
+/** A verb the inspector's Deployments row offers on one harness. */
+export type TargetAction = "retry" | "disable" | "enable" | "sync";
+
+/**
+ * One offered verb, and why it is refused in place (null = it runs):
+ * `not_detected` — the verb writes to a harness detection no longer sees,
+ * which the backend skips (`TOOL_NOT_INSTALLED`), so the row says so
+ * instead of sending it (BACKLOG #72).
+ */
+export type OfferedTargetAction = { action: TargetAction; refusal: "not_detected" | null };
+
+/** The verbs that write to the harness (a sync underneath). Disable only removes. */
+const WRITES_TO_HARNESS: ReadonlySet<TargetAction> = new Set(["retry", "enable", "sync"]);
+
+/**
+ * What a harness's row offers, by its mark (D22): a failed / missing / stale
+ * copy is retried from the central copy (a folder in the way raises the one
+ * overwrite ask) and can be disabled; a live copy disabled; a disabled pair
+ * enabled; a harness without a copy deployed. A skill off everywhere, or whose
+ * central copy is gone, offers nothing here — Health carries its repair. On a
+ * harness that is not detected, every verb that writes to it is refused.
+ */
+export function targetActions(
+  mark: Pick<StripMark, "state" | "detected">,
+  skill: Pick<SkillHealthFields, "disabled_at" | "unlocatable">,
+): OfferedTargetAction[] {
+  if (skill.disabled_at !== null || skill.unlocatable === "central_missing") return [];
+  const actions: TargetAction[] = (() => {
+    switch (mark.state) {
+      case "failed":
+      case "missing":
+      case "stale":
+        return ["retry", "disable"];
+      case "synced":
+        return ["disable"];
+      case "disabled":
+        return ["enable"];
+      case "not_synced":
+        return ["sync"];
+      case "broken":
+        return [];
+    }
+  })();
+  return actions.map((action) => ({
+    action,
+    refusal: !mark.detected && WRITES_TO_HARNESS.has(action) ? "not_detected" : null,
+  }));
+}
+
 /** A skill has an issue when its loudest health row is failed or stale. */
 export function skillHasIssues(skill: SkillHealthFields): boolean {
   return problemRank(skill) > 0;

@@ -24,6 +24,7 @@ import {
   importedSourceLine,
   libraryExceptions,
   problemRank,
+  targetActions,
   SKILL_FILTERS,
   syncedStrip,
   INDIVIDUAL_GROUP_KEY,
@@ -1031,6 +1032,47 @@ describe("My Skills folds (ticket 11)", () => {
       expect([all.synced, all.total, all.complete]).toEqual([3, 3, true]);
       const none = syncedStrip(base, [], context);
       expect([none.total, none.complete]).toEqual([0, false]);
+    });
+  });
+
+  // D22 + BACKLOG #72: what the inspector's Deployments row offers per mark;
+  // a write to a harness detection no longer sees is refused in place.
+  describe("targetActions", () => {
+    const offered = (fields: Partial<Fields>, tool = "cursor", detected = true) => {
+      const mark = { ...syncedStrip({ ...base, ...fields }, TOOLS, context).marks.find((m) => m.tool === tool)!, detected };
+      return targetActions(mark, { disabled_at: fields.disabled_at ?? null, unlocatable: fields.unlocatable ?? null });
+    };
+
+    it.each([
+      ["failed", [row("cursor", "error")], ["retry", "disable"]],
+      ["missing", [row("cursor", "missing")], ["retry", "disable"]],
+      ["stale", [row("cursor", "stale")], ["retry", "disable"]],
+      ["synced", [row("cursor", "synced")], ["disable"]],
+      ["disabled", [row("cursor", "disabled")], ["enable"]],
+      ["not deployed", [], ["sync"]],
+    ] as const)("%s offers %j, none refused on a detected harness", (_, targets, actions) => {
+      const answer = offered({ targets: [...targets] });
+      expect(answer.map((a) => a.action)).toEqual(actions);
+      expect(answer.every((a) => a.refusal === null)).toBe(true);
+    });
+
+    it("refuses Deploy, Retry and Enable on a harness that is not detected; Disable stays", () => {
+      expect(offered({ targets: [] }, "cursor", false)).toEqual([{ action: "sync", refusal: "not_detected" }]);
+      expect(offered({ targets: [row("cursor", "error")] }, "cursor", false)).toEqual([
+        { action: "retry", refusal: "not_detected" },
+        { action: "disable", refusal: null },
+      ]);
+      expect(offered({ targets: [row("cursor", "disabled")] }, "cursor", false)).toEqual([
+        { action: "enable", refusal: "not_detected" },
+      ]);
+      expect(offered({ targets: [row("cursor", "synced")] }, "cursor", false)).toEqual([
+        { action: "disable", refusal: null },
+      ]);
+    });
+
+    it("offers nothing for a skill off everywhere or without its central copy", () => {
+      expect(offered({ disabled_at: 3, targets: [row("cursor", "disabled")] })).toEqual([]);
+      expect(offered({ unlocatable: "central_missing", targets: [row("cursor", "synced")] })).toEqual([]);
     });
   });
 
