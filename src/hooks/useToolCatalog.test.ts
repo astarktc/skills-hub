@@ -112,6 +112,28 @@ describe("useToolCatalog", () => {
     expect(result.current.projectToolStatus).toBeNull();
   });
 
+  // round 20 ticket 05 rows: a cross-read warning can name a reader-only
+  // harness (fx), so its label is in the map too — never in `tools`.
+  it("labels the reader-only harnesses listed under an entry, without making them tools", async () => {
+    const withReader: ToolStatusDto = {
+      ...GLOBAL,
+      tools: [
+        {
+          ...toolInfo("agents"),
+          readers: [{ key: "zed", label: "ZED", installed: true, duplicate_readers: null }],
+        },
+        ...GLOBAL.tools,
+      ],
+    };
+    mockInvoke.mockImplementation((command) =>
+      command === "getToolStatus" ? Promise.resolve(withReader) : Promise.reject(new Error(`unexpected ${command}`)),
+    );
+    const { result } = renderHook(() => useToolCatalog({ t }));
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+    expect(result.current.toolLabelById.zed).toBe("ZED");
+    expect(result.current.tools.some((tool) => tool.id === "zed")).toBe(false);
+  });
+
   it("reads the project tool entries on demand, and their labels join the label map", async () => {
     stubBackend();
     const { result } = renderHook(() => useToolCatalog({ t }));

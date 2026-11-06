@@ -124,7 +124,10 @@ than re-tagging.
   optional**: `None` keeps the harness out of `project_tool_entries` and every project-scope admission
   (`project_adapter_by_key`) and its README cell reads `—`. A harness that reads `~/.agents/skills` and has no
   folder of its own is a **reader-only harness**: one `ReaderOnlyHarness` literal in `READER_ONLY_HARNESSES` (key,
-  label, detect dirs, the group it reads) — never a `ToolId`, never a target; the catalogs list it under its group's
+  label, detect dirs, its own `skills_dirs` (never deployed to — only so `reader_installed_in` applies the
+  skills-only-footprint rule), the `group` it reads, its `reads` facts — restated in `every_reader_only_row_restates_its_brief_read_facts`,
+  its pairs resolved with the group entry's folder as its own and carried on `ReaderHarnessDto.duplicate_readers`) — never
+  a `ToolId`, never a target; the catalogs list it under its group's
   entry (`ToolInfoDto.readers`) and absorb it into the project group's roster, whose "(N harnesses)" count the
   frontend derives (`projectToolLabel`). Only `as_key`'s exhaustive match is compiler-enforced; registry
   completeness is test-enforced, and so is the README table: `the_readme_table_lists_every_registry_row` parses it
@@ -479,8 +482,8 @@ than re-tagging.
 
 - Never hand-edit version numbers (use `version:set`).
 - Never special-case a tool by name in sync code. Copy-vs-symlink is decided only by the registry capability
-  `supports_symlink` (`sync_dir_for_tool_with_overwrite`, `core/sync_engine.rs`); every current entry is
-  `true` (Cursor was copy-only until Cursor 2.5 fixed `~/.cursor/skills` symlink discovery — flipped in v-next
+  `supports_symlink` (`sync_dir_for_tool_with_overwrite`, `core/sync_engine.rs`); every current entry but Deep
+  Agents Code is `true` (it rejects a link resolving outside its skill roots, spec round 20 Q29; Cursor was copy-only until Cursor 2.5 fixed `~/.cursor/skills` symlink discovery — flipped in v-next
   ticket 38; the flag is the revert lever if a tool regresses). A capability describes **one entry**: a virtual
   group's capability is its own registry fact, not the AND of its constituents (decision: v-next ticket 36).
 - Never commit `.claude/`, `.agents/`, `.pi/`, `.mcp.json`, or `docs/conversation-logs/` (all gitignored). `.scratch/` **is**

@@ -1417,6 +1417,13 @@ export type ReaderHarnessDto = {
 	key: string,
 	label: string,
 	installed: boolean,
+	/**
+	 *  Its cross-read pairs, resolved with the entry it is listed under as
+	 *  its deploy dir: set when that entry and one of `keys` both deployed
+	 *  would show it a skill twice (or worse — `behaviour`). `null` without a
+	 *  pair or while undetected.
+	 */
+	duplicate_readers: DuplicateReadsDto | null,
 };
 
 export type RefreshPhaseDto = "acquiring" | "applying";

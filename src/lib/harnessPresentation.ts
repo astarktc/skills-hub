@@ -17,23 +17,55 @@ type Translate = (key: string, opts?: Record<string, unknown>) => string;
  * One cross-read: `reader` also reads `other`'s deploy dir, so a skill deployed to both shows up twice in it.
  * `folder` (present only when `other` shares its skills dir with another selected harness) is every selected
  * harness deploying to that one folder, `other` included — the backend's `shared_with`, never re-derived.
+ * `via` is set for a reader-only harness (fx): the entry it is listed under, whose folder it reads as its own
+ * deploy dir — the switch that, with `other`'s, makes the pair. `among` is set instead when that entry is not
+ * selected: the reader-only harness reads two or more selected folders (`other` one of them), so a skill deployed
+ * to more than one of them is a duplicate in it all the same (round 20 rows review — fx loads none).
  */
-export type DuplicatePair = { reader: string; other: string; behaviour: DuplicateBehaviour; folder?: string[] };
+export type DuplicatePair = {
+  reader: string;
+  other: string;
+  behaviour: DuplicateBehaviour;
+  folder?: string[];
+  via?: string;
+  among?: true;
+};
 
-/** Every cross-read pair whose two harnesses are both in `selected`, in catalog then backend order. */
+/**
+ * Every cross-read pair whose two deploy dirs are both selected, in catalog then backend order: an entry's own
+ * pairs (the entry and `other` selected), then those of its reader-only harnesses (the entry they are listed
+ * under and `other` selected — a reader has no switch of its own).
+ */
 export function duplicatePairs(tools: readonly ToolInfoDto[], selected: ReadonlySet<string>): DuplicatePair[] {
   const sharedWith = new Map(tools.map((tool) => [tool.key, tool.shared_with]));
-  return tools.flatMap((tool) => {
-    const reads = tool.duplicate_readers;
-    if (!reads || !selected.has(tool.key)) return [];
+  const pairsOf = (
+    reader: string,
+    reads: ToolInfoDto["duplicate_readers"],
+    via?: string,
+  ): DuplicatePair[] => {
+    if (!reads) return [];
     return reads.keys
       .filter((other) => selected.has(other))
       .map((other) => {
         const folder = (sharedWith.get(other) ?? [other]).filter((key) => selected.has(key));
-        const pair: DuplicatePair = { reader: tool.key, other, behaviour: reads.behaviour };
+        const pair: DuplicatePair = { reader, other, behaviour: reads.behaviour };
         if (folder.length > 1) pair.folder = folder;
+        if (via) pair.via = via;
         return pair;
       });
+  };
+  /** A reader-only harness whose entry is unselected: its reads among the selected folders, when two or more. */
+  const amongPairs = (reader: ReaderHarnessDto): DuplicatePair[] => {
+    const pairs = pairsOf(reader.key, reader.duplicate_readers);
+    if (byFolder(pairs).length < 2) return [];
+    return pairs.map((pair) => ({ ...pair, among: true as const }));
+  };
+  return tools.flatMap((tool) => {
+    if (!selected.has(tool.key)) return tool.readers.filter((reader) => reader.installed).flatMap(amongPairs);
+    return [
+      ...pairsOf(tool.key, tool.duplicate_readers),
+      ...tool.readers.flatMap((reader) => pairsOf(reader.key, reader.duplicate_readers, tool.key)),
+    ];
   });
 }
 
@@ -48,9 +80,9 @@ function byFolder(pairs: readonly DuplicatePair[]): DuplicatePair[] {
   });
 }
 
-/** The pairs `key` takes part in, as the reader or as the one read. */
+/** The pairs `key` takes part in: as the reader, as the one read, or as the entry a reader-only harness reads. */
 export function pairsInvolving(pairs: readonly DuplicatePair[], key: string): DuplicatePair[] {
-  return pairs.filter((pair) => pair.reader === key || pair.other === key);
+  return pairs.filter((pair) => pair.reader === key || pair.other === key || pair.via === key);
 }
 
 /** A duplicate's consequence, gravest first: invocation breaks › a conflict is flagged › it shows twice. */
@@ -94,6 +126,18 @@ function readBySentence(consequence: Consequence, opts: Record<string, unknown>,
   }
 }
 
+/** "R reads the A and B folders — a skill deployed to more than one of them …": a reader-only harness, entry unselected. */
+function amongSentence(consequence: Consequence, opts: Record<string, unknown>, t: Translate): string {
+  switch (consequence) {
+    case "loadsNone":
+      return t("settingsDialog.harnesses.duplicates.among.loadsNone", opts);
+    case "flagsConflict":
+      return t("settingsDialog.harnesses.duplicates.among.flagsConflict", opts);
+    case "showsTwice":
+      return t("settingsDialog.harnesses.duplicates.among.showsTwice", opts);
+  }
+}
+
 /** "A", "A and B", "A, B and C". */
 function listOf(names: readonly string[], t: Translate): string {
   if (names.length <= 1) return names.join("");
@@ -104,8 +148,9 @@ function listOf(names: readonly string[], t: Translate): string {
  * The warning line about `subject` (its Harnesses row, or the Deploy-now ask
  * when turning it on), or null when no pair in `pairs` involves it. At most
  * one sentence for what the subject reads — every folder it also reads,
- * named once — then one per consequence for the harnesses reading the
- * subject's folder, gravest first. The consequence follows the reader's
+ * named once — then one per reader-only harness reading the subject's folder
+ * as its own (fx under `.agents/skills`: what it also reads), then one per
+ * consequence for the harnesses reading the subject's folder, gravest first. The consequence follows the reader's
  * duplicate behaviour: invocation breaks (`loads_none`), a conflict is
  * flagged (`flags_conflict`), otherwise it shows twice.
  */
@@ -116,13 +161,14 @@ export function duplicateWarning(
   t: Translate,
 ): string | null {
   const sentences: string[] = [];
-  const reads = byFolder(pairs.filter((pair) => pair.reader === subject));
-  if (reads.length > 0) {
+  const readsOf = (reader: string, readerPairs: readonly DuplicatePair[]) => {
+    const reads = byFolder(readerPairs);
+    if (reads.length === 0) return;
     sentences.push(
       readsSentence(
         consequenceOf(reads[0].behaviour),
         {
-          reader: labelOf(subject),
+          reader: labelOf(reader),
           harnesses: listOf(
             reads.map((pair) => (pair.folder ?? [pair.other]).map(labelOf).join(" / ")),
             t,
@@ -132,8 +178,38 @@ export function duplicateWarning(
         t,
       ),
     );
+  };
+  readsOf(
+    subject,
+    pairs.filter((pair) => pair.reader === subject),
+  );
+  // The reader-only harnesses reading the subject's folder as their own: what each of them also reads.
+  const viaReaders = [...new Set(pairs.filter((pair) => pair.via === subject).map((pair) => pair.reader))];
+  for (const reader of viaReaders) {
+    readsOf(
+      reader,
+      pairs.filter((pair) => pair.via === subject && pair.reader === reader),
+    );
   }
-  const readBy = pairs.filter((pair) => pair.other === subject);
+  // A reader-only harness reading several selected folders, the subject's among them (its entry unselected).
+  const amongReaders = [...new Set(pairs.filter((pair) => pair.among && pair.other === subject).map((pair) => pair.reader))];
+  for (const reader of amongReaders) {
+    const reads = byFolder(pairs.filter((pair) => pair.among && pair.reader === reader));
+    sentences.push(
+      amongSentence(
+        consequenceOf(reads[0].behaviour),
+        {
+          reader: labelOf(reader),
+          harnesses: listOf(
+            reads.map((pair) => (pair.folder ?? [pair.other]).map(labelOf).join(" / ")),
+            t,
+          ),
+        },
+        t,
+      ),
+    );
+  }
+  const readBy = pairs.filter((pair) => pair.other === subject && !pair.among);
   for (const consequence of CONSEQUENCES) {
     const readers = readBy.filter((pair) => consequenceOf(pair.behaviour) === consequence);
     if (readers.length === 0) continue;

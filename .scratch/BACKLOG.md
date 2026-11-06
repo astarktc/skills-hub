@@ -5,7 +5,7 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#116**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#117**.
 
 Round 19 closed 2026-11-05 (`archive/round19/spec.md` § Closure — 2026-11-05); every line it carried was re-derived from
 the code that day (`archive/round19/closure/extract-{A..G}.md`).
@@ -125,6 +125,11 @@ code before scheduling.)
   keep `name` / `updated` / `added` / `issues` values). Source: 1.3.3 L4 review.
 - **#115 The bulk Enable confirmation shows a stale project count for a moment** after a Disable, until project
   placements reload (pre-existing; seen in 1.3.3 L4's fixture checks). Source: 1.3.3 L4 report.
+- **#116 The cross-read warning ignores an installed but unselected reader.** Cursor, installed and not selected,
+  still sees two copies when Claude Code and Codex are both selected: it reads both folders. Spec Q6 requires the
+  reader itself to be selected (`catalog::pairs_of`). The round-20 rows review fixed only the reader-only case (fx,
+  `among` pairs). Generalising it belongs to #109's "a Deployment is a folder; harnesses are its readers" model. Decide
+  how loud it may be: Firebender, Warp and Kimchi read many folders. Source: `reviews/round20-rows-review.md` § Disposition 3.
 - **#111 Registry drift check.** A scheduled workflow (like `update-featured-skills.yml`) diffs `vercel-labs/skills`'
   `src/agents.ts`, the ACP registry (`agentclientprotocol/registry`) and the upstream fork's registry against
   `TOOL_ADAPTERS`, and opens an issue on a new or changed row — replacing manual audits like this session's. Operator

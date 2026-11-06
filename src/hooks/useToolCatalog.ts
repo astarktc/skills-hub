@@ -52,14 +52,19 @@ export function useToolCatalog({ t }: { t: TranslateFn }) {
     [t, toolInfos],
   );
 
-  /** Tool key → display label, over the global and the project entries. */
+  /**
+   * Tool key → display label, over the global and the project entries and the
+   * reader-only harnesses listed under them (a cross-read warning can name one).
+   */
   const toolLabelById = useMemo(() => {
     const out: Record<string, string> = {};
     for (const info of projectToolStatus?.tools ?? [])
       out[info.key] = t(`tools.${info.key}`, { defaultValue: info.label });
+    for (const reader of toolInfos.flatMap((info) => info.readers))
+      out[reader.key] = t(`tools.${reader.key}`, { defaultValue: reader.label });
     for (const tool of tools) out[tool.id] = tool.label;
     return out;
-  }, [projectToolStatus, t, tools]);
+  }, [projectToolStatus, t, toolInfos, tools]);
 
   const installedToolIds = useMemo(
     () => toolStatus?.installed ?? [],

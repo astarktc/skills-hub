@@ -52,6 +52,17 @@ fn path_resolution_joins_adapter_dirs_onto_home() {
 /// exactly these paths, on every OS (no production row carries an override).
 #[test]
 fn every_existing_row_resolves_to_the_paths_it_always_has() {
+    // `HostRoots::under_home` puts roaming app data at `~/AppData/Roaming`.
+    const REASONIX_SKILLS: &str = if cfg!(windows) {
+        "AppData/Roaming/reasonix/skills"
+    } else {
+        ".reasonix/skills"
+    };
+    const REASONIX_DETECT: &str = if cfg!(windows) {
+        "AppData/Roaming/reasonix"
+    } else {
+        ".reasonix"
+    };
     #[allow(clippy::type_complexity)]
     let expected: &[(&str, &str, &[&str], &[&str])] = &[
         ("agents_skills", ".agents/skills", &[], &[".agents"]),
@@ -129,6 +140,68 @@ fn every_existing_row_resolves_to_the_paths_it_always_has() {
         ),
         ("moltbot", ".moltbot/skills", &[], &[".moltbot"]),
         ("hermes-agent", ".hermes/skills", &[], &[".hermes"]),
+        // round 20 ticket 05 rows
+        ("deepseek_harness", ".dsh/skills", &[], &[".dsh"]),
+        ("zcode", ".zcode/skills", &[], &[".zcode"]),
+        ("codewhale", ".codewhale/skills", &[], &[".codewhale"]),
+        ("workbuddy", ".workbuddy/skills", &[], &[".workbuddy"]),
+        // round 20 ticket 07 rows
+        ("letta_code", ".letta/skills", &[], &[".letta"]),
+        ("muse_code", ".config/muse/skills", &[], &[".config/muse"]),
+        (
+            "poolside",
+            ".config/poolside/skills",
+            &[],
+            &[".config/poolside"],
+        ),
+        ("dirac", ".dirac/skills", &[], &[".dirac"]),
+        ("code_studio", ".codestudio/skills", &[], &[".codestudio"]),
+        (
+            "codearts_agent",
+            ".codeartsdoer/skills",
+            &[],
+            &[".codeartsdoer"],
+        ),
+        ("qoder_cn", ".lingma/skills", &[], &[".lingma"]),
+        ("qoder_cn_cli", ".qoder-cn/skills", &[], &[".qoder-cn"]),
+        (
+            "kimchi",
+            ".config/kimchi/harness/skills",
+            &[],
+            &[".config/kimchi"],
+        ),
+        ("astrbot", ".astrbot/data/skills", &[], &[".astrbot"]),
+        ("oh_my_pi", ".omp/agent/skills", &[], &[".omp"]),
+        ("stakpak", ".stakpak/skills", &[], &[".stakpak"]),
+        // round 20 ticket 06 rows (new, so "always" is their first form;
+        // Reasonix resolves under `%APPDATA%` on Windows)
+        ("grok_build", ".grok/skills", &[], &[".grok"]),
+        (
+            "deep_agents_code",
+            ".deepagents/agent/skills",
+            &[],
+            &[".deepagents"],
+        ),
+        ("reasonix", REASONIX_SKILLS, &[], &[REASONIX_DETECT]),
+        (
+            "cortex_code",
+            ".snowflake/cortex/skills",
+            &[],
+            &[".snowflake/cortex"],
+        ),
+        ("rovo_dev", ".rovodev/skills", &[], &[".rovodev"]),
+        ("ibm_bob", ".bob/skills", &[], &[".bob"]),
+        ("forgecode", ".forge/skills", &[], &[".forge"]),
+        ("firebender", ".firebender/skills", &[], &[".firebender"]),
+        ("minimax_code", ".minimax/skills", &[], &[".minimax"]),
+        (
+            "posit_assistant",
+            ".posit/assistant/skills",
+            &[],
+            &[".posit/assistant"],
+        ),
+        ("aider_desk", ".aider-desk/skills", &[], &[".aider-desk"]),
+        ("autohand_code", ".autohand/skills", &[], &[".autohand"]),
     ];
     assert_eq!(
         expected.len(),
@@ -256,19 +329,126 @@ fn a_registry_path_displays_under_tilde_only_when_it_lies_under_home() {
     );
 }
 
-/// No production row uses an override yet (Reasonix, ticket 06, is the
-/// first), and every default root is home: a row moving off home is a
-/// deliberate registry edit that updates this pin.
+/// Every default root is home, and the only per-OS overrides are Reasonix's
+/// (round 20 ticket 06, the first production consumer): its skills and its
+/// config root live under `%APPDATA%\reasonix` on Windows. A row moving off
+/// home, or a second override, is a deliberate registry edit that updates
+/// this pin.
 #[test]
-fn every_production_path_is_home_rooted_without_overrides() {
+fn every_production_path_is_home_rooted_and_only_reasonix_overrides() {
+    let reasonix_overrides: [(&str, &[OsOverride]); 2] = [
+        (
+            ".reasonix/skills",
+            &[OsOverride {
+                os: HostOs::Windows,
+                root: HostRoot::RoamingAppData,
+                rel: "reasonix/skills",
+            }],
+        ),
+        (
+            ".reasonix",
+            &[OsOverride {
+                os: HostOs::Windows,
+                root: HostRoot::RoamingAppData,
+                rel: "reasonix",
+            }],
+        ),
+    ];
     for adapter in default_tool_adapters() {
         let mut paths = vec![adapter.skills_dir];
         paths.extend(adapter.former_skills_dirs.iter().copied());
         paths.extend(adapter.detect_dirs.iter().copied());
         for path in paths {
             assert_eq!(path.root, HostRoot::Home, "{}: {path:?}", adapter.key());
-            assert!(path.overrides.is_empty(), "{}: {path:?}", adapter.key());
+            if adapter.key() == "reasonix" {
+                let expected = reasonix_overrides
+                    .iter()
+                    .find(|(rel, _)| *rel == path.rel)
+                    .map(|(_, overrides)| *overrides);
+                assert_eq!(Some(path.overrides), expected, "reasonix: {path:?}");
+            } else {
+                assert!(path.overrides.is_empty(), "{}: {path:?}", adapter.key());
+            }
         }
+    }
+}
+
+/// Reasonix's documented home (`docs/SKILLS.md`, brief T27) is `~/.reasonix`
+/// on macOS/Linux and `%APPDATA%\reasonix` on Windows: both its skills dir
+/// and its detect dir follow it, resolved against substituted roots.
+#[test]
+fn reasonix_lives_under_roaming_app_data_on_windows_only() {
+    let base = tempfile::tempdir().unwrap();
+    let roots = distinct_roots(base.path());
+    let reasonix = adapter_by_key("reasonix").expect("reasonix row");
+    let roaming = base.path().join("roaming").join("reasonix");
+    let home = base.path().join("home").join(".reasonix");
+
+    assert_eq!(
+        reasonix.skills_dir.resolve_for(HostOs::Windows, &roots),
+        roaming.join("skills")
+    );
+    assert_eq!(
+        reasonix.detect_dirs[0].resolve_for(HostOs::Windows, &roots),
+        roaming
+    );
+    for elsewhere in [HostOs::MacOs, HostOs::Linux] {
+        assert_eq!(
+            reasonix.skills_dir.resolve_for(elsewhere, &roots),
+            home.join("skills"),
+            "{elsewhere:?}"
+        );
+        assert_eq!(
+            reasonix.detect_dirs[0].resolve_for(elsewhere, &roots),
+            home,
+            "{elsewhere:?}"
+        );
+    }
+
+    // On this host: installed where its config root lives, deployed beside it.
+    let here = if cfg!(windows) { &roaming } else { &home };
+    assert!(!is_installed_in(&roots, reasonix));
+    mark_installed_in(&roots, reasonix);
+    assert!(is_installed_in(&roots, reasonix));
+    assert_eq!(skills_dir_in(&roots, reasonix), here.join("skills"));
+    assert_eq!(detect_dirs_in(&roots, reasonix), vec![here.clone()]);
+}
+
+/// Brief I4 detect-dir hazards for the round 20 ticket 06 rows (spec:
+/// binding): a harness is detected only by its own config root, never by a
+/// parent another product shares. ForgeCode is also never detected by its
+/// legacy un-dotted `~/forge`: Forge keeps reading `~/forge/skills` while
+/// that directory exists (`forge_config` `resolve_base_path`), so detecting it
+/// would deploy into a folder it does not read; Posit Assistant likewise never
+/// by its pre-rename `~/.positai` (an old release reads `~/.positai/skills`).
+#[test]
+fn new_rows_are_never_detected_by_a_shared_or_unread_root() {
+    let forbidden = [
+        ("cortex_code", ".snowflake"),
+        ("posit_assistant", ".posit"),
+        ("posit_assistant", ".positai"),
+        ("forgecode", "forge"),
+    ];
+    for (key, rel) in forbidden {
+        let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("{key}"));
+        assert!(
+            adapter.detect_dirs.iter().all(|dir| dir.rel != rel),
+            "{key} must never be detected by `{rel}`"
+        );
+    }
+    // A shared parent alone is not the harness.
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    fs::create_dir_all(home.path().join(".snowflake")).unwrap();
+    fs::write(home.path().join(".snowflake/config.toml"), b"").unwrap();
+    fs::create_dir_all(home.path().join(".posit/connect")).unwrap();
+    fs::create_dir_all(home.path().join("forge/skills")).unwrap();
+    fs::create_dir_all(home.path().join(".positai/skills")).unwrap();
+    for key in ["cortex_code", "posit_assistant", "forgecode"] {
+        assert!(
+            !is_installed_in(&roots, adapter_by_key(key).unwrap()),
+            "{key} detected by a root that is not its own"
+        );
     }
 }
 
@@ -667,8 +847,8 @@ fn scan_tool_dir_admits_only_valid_manifests_and_reports_the_rest() {
 
 /// Every Tool's project-scope dir, as a table: the registry is the only
 /// source, so this pins the mapping against accidental edits. `None` means
-/// the harness reads no project skills dir (no shipped row yet; the shape is
-/// proven by `a_harness_without_a_project_dir_has_no_project_scope`).
+/// the harness reads no project skills dir (WorkBuddy, AstrBot; the shape is proven by
+/// `a_harness_without_a_project_dir_has_no_project_scope`).
 #[test]
 fn project_relative_skills_dir_for_every_tool() {
     let expected: &[(&str, Option<&str>)] = &[
@@ -717,6 +897,37 @@ fn project_relative_skills_dir_for_every_tool() {
         ("windsurf", Some(".windsurf/skills")),
         ("moltbot", Some(".moltbot/skills")),
         ("hermes-agent", Some(".hermes/skills")),
+        // round 20 ticket 05 rows
+        ("deepseek_harness", Some(".dsh/skills")),
+        ("zcode", Some(".zcode/skills")),
+        ("codewhale", Some(".codewhale/skills")),
+        ("workbuddy", None),
+        // round 20 ticket 07 rows
+        ("letta_code", Some(".agents/skills")),
+        ("muse_code", Some(".agents/skills")),
+        ("poolside", Some(".agents/skills")),
+        ("dirac", Some(".agents/skills")),
+        ("code_studio", Some(".codestudio/skills")),
+        ("codearts_agent", Some(".codeartsdoer/skills")),
+        ("qoder_cn", Some(".lingma/skills")),
+        ("qoder_cn_cli", Some(".qoder/skills")),
+        ("kimchi", Some(".kimchi/skills")),
+        ("astrbot", None),
+        ("oh_my_pi", Some(".omp/skills")),
+        ("stakpak", Some(".stakpak/skills")),
+        // round 20 ticket 06 rows
+        ("grok_build", Some(".grok/skills")),
+        ("deep_agents_code", Some(".deepagents/skills")),
+        ("reasonix", Some(".reasonix/skills")),
+        ("cortex_code", Some(".cortex/skills")),
+        ("rovo_dev", Some(".rovodev/skills")),
+        ("ibm_bob", Some(".bob/skills")),
+        ("forgecode", Some(".forge/skills")),
+        ("firebender", Some(".firebender/skills")),
+        ("minimax_code", Some(".minimax/skills")),
+        ("posit_assistant", Some(".posit/assistant/skills")),
+        ("aider_desk", Some(".aider-desk/skills")),
+        ("autohand_code", Some(".autohand/skills")),
     ];
     assert_eq!(
         expected.len(),
@@ -770,7 +981,7 @@ fn a_harness_without_a_project_dir_has_no_project_scope() {
 }
 
 #[test]
-fn agents_standard_group_has_nine_constituents_and_one_entry() {
+fn agents_standard_group_lists_its_constituents_and_one_entry() {
     let members: Vec<&str> = constituents_of(VirtualGroup::AgentsStandard)
         .map(|a| a.key())
         .collect();
@@ -786,6 +997,11 @@ fn agents_standard_group_has_nine_constituents_and_one_entry() {
             "cline",
             "gemini_cli",
             "github_copilot",
+            // round 20 ticket 07 rows
+            "letta_code",
+            "muse_code",
+            "poolside",
+            "dirac",
         ]
     );
     for a in constituents_of(VirtualGroup::AgentsStandard) {
@@ -805,17 +1021,19 @@ fn agents_standard_group_has_nine_constituents_and_one_entry() {
     );
 }
 
-/// Every registry entry can take a symlinked skills dir (Cursor was the last
-/// copy-only entry; flipped in v-next ticket 38). Pinned so a regression to
-/// copy mode is a deliberate registry edit, not drift.
+/// Every registry entry but Deep Agents Code can take a symlinked skills dir
+/// (Cursor was copy-only until v-next ticket 38). Deep Agents Code rejects a
+/// skill whose resolved path leaves its skill roots (brief I8, T8), and a
+/// Skills Hub link resolves into the central repo, so it deploys by copy
+/// (spec Q29). Pinned so a change of mode is a deliberate registry edit.
 #[test]
-fn every_adapter_supports_symlink() {
+fn only_deep_agents_code_deploys_by_copy() {
     let no_symlink: Vec<&str> = default_tool_adapters()
         .iter()
         .filter(|a| !a.supports_symlink)
         .map(|a| a.key())
         .collect();
-    assert!(no_symlink.is_empty(), "copy-only entries: {no_symlink:?}");
+    assert_eq!(no_symlink, vec!["deep_agents_code"], "copy-only entries");
 }
 
 /// Keys are unique across both registry tables: a reader-only harness's key
@@ -1127,6 +1345,11 @@ fn every_row_restates_its_brief_read_facts() {
     const U: SharedRead = Unknown;
     const ALL_UNKNOWN: [SharedRead; 2] = [U, U];
     const CLI_ONLY: M = M::Conditional("Antigravity CLI only");
+    // Kimchi reads each agent's home folder only when the project has none of
+    // that agent's own (project-local first, home the fallback): never a
+    // by-default read, so never a warning pair.
+    const KIMCHI_FALLBACK: &str = "only when the project has no folder of its own";
+    const KIMCHI_FALLBACK_READ: M = M::Conditional(KIMCHI_FALLBACK);
     let expected: &[Row] = &[
         (
             "agents_skills",
@@ -1562,6 +1785,279 @@ fn every_row_restates_its_brief_read_facts() {
             D::Shadows,
             &[],
         ),
+        // round 20 ticket 05 rows
+        (
+            "deepseek_harness",
+            "DeepSeek Harness (The four #92 rows)",
+            [Yes, No],
+            [Yes, No],
+            P::Own,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "zcode",
+            "ZCode (The four #92 rows)",
+            [Yes, No],
+            [Yes, No],
+            P::Own,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "codewhale",
+            "Codewhale (The four #92 rows)",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Own,
+            D::Shadows,
+            &[(".deepseek/skills", M::Default)],
+        ),
+        (
+            "workbuddy",
+            "WorkBuddy (The four #92 rows, LIKELY)",
+            ALL_UNKNOWN,
+            ALL_UNKNOWN,
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        // round 20 ticket 07 rows
+        (
+            "letta_code",
+            "Letta Code (extra)",
+            [No, No],
+            [Yes, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "muse_code",
+            "addendum: Muse Code",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Unknown,
+            D::Unknown,
+            &[(".codex/skills", M::Default)],
+        ),
+        (
+            "poolside",
+            "addendum: Poolside",
+            [Yes, U],
+            [Yes, U],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "dirac",
+            "addendum: Dirac",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Shared,
+            D::Shadows,
+            &[(".ai/skills", M::Default)],
+        ),
+        (
+            "code_studio",
+            "Code Studio",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Unknown,
+            D::Unknown,
+            &[(".copilot/skills", M::Default)],
+        ),
+        (
+            "codearts_agent",
+            "CodeArts Agent",
+            [No, No],
+            [No, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "qoder_cn",
+            "Qoder CN (IDE, ex-Lingma)",
+            [No, No],
+            [No, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "qoder_cn_cli",
+            "Qoder CN CLI",
+            [No, No],
+            [No, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "kimchi",
+            "Kimchi (optional)",
+            [Conditional(KIMCHI_FALLBACK), OptIn],
+            [Yes, OptIn],
+            P::Unknown,
+            D::Shadows,
+            &[
+                (".pi/agent/skills", M::Default),
+                (".codex/skills", KIMCHI_FALLBACK_READ),
+                (".cursor/skills", KIMCHI_FALLBACK_READ),
+                (".warp/skills", KIMCHI_FALLBACK_READ),
+                (".factory/skills", KIMCHI_FALLBACK_READ),
+                (".gemini/skills", KIMCHI_FALLBACK_READ),
+                (".copilot/skills", KIMCHI_FALLBACK_READ),
+                (".github/skills", KIMCHI_FALLBACK_READ),
+            ],
+        ),
+        (
+            "astrbot",
+            "AstrBot (optional)",
+            [No, No],
+            [No, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "oh_my_pi",
+            "oh-my-pi (extra)",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Own,
+            D::Shadows,
+            &[
+                (".agent/skills", M::Default),
+                (".codex/skills", M::Default),
+                (".config/opencode/skills", M::Default),
+                (".pi/agent/skills", M::Unknown),
+            ],
+        ),
+        (
+            "stakpak",
+            "addendum: Stakpak",
+            [No, No],
+            [No, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        // round 20 ticket 06 rows: brief § Part 2 "Recommended Part 1 additions"
+        (
+            "grok_build",
+            "Grok Build",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Own,
+            D::Shadows,
+            &[(".cursor/skills", M::Default)],
+        ),
+        (
+            "deep_agents_code",
+            "Deep Agents Code",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Shared,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "reasonix",
+            "Reasonix",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Unknown,
+            D::Unknown,
+            &[(".agent/skills", M::Default)],
+        ),
+        (
+            "cortex_code",
+            "Cortex Code",
+            [No, Yes],
+            [No, Yes],
+            P::Both,
+            D::FlagsConflict,
+            &[],
+        ),
+        (
+            "rovo_dev",
+            "Rovo Dev",
+            [Yes, No],
+            [Yes, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "ibm_bob",
+            "IBM Bob",
+            [No, No],
+            [No, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "forgecode",
+            "ForgeCode",
+            [Yes, No],
+            [No, No],
+            P::Shared,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "firebender",
+            "Firebender",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Unknown,
+            D::ShowsAll,
+            &[
+                (".codex/skills", M::Default),
+                (".cursor/skills", M::Default),
+                (".goose/skills", M::Default),
+            ],
+        ),
+        (
+            "minimax_code",
+            "MiniMax Code",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Shared,
+            D::Shadows,
+            &[(".codex/skills", M::Default)],
+        ),
+        (
+            "posit_assistant",
+            "Posit Assistant",
+            [Yes, No],
+            [Yes, No],
+            P::Own,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "aider_desk",
+            "AiderDesk",
+            [No, No],
+            [No, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "autohand_code",
+            "Autohand Code CLI",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Own,
+            D::Shadows,
+            &[(".codex/skills", M::Default), (".agent/skills", M::Default)],
+        ),
     ];
     let keys: Vec<&str> = default_tool_adapters().iter().map(|a| a.key()).collect();
     assert_eq!(
@@ -1615,6 +2111,404 @@ fn no_agents_group_member_ignores_the_project_agents_folder() {
             SharedRead::No,
             "{} is an AGENTS-group member but does not read <project>/.agents/skills",
             member.key()
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// round 20 ticket 05 rows: the reader-only harnesses
+// ---------------------------------------------------------------------------
+
+fn reader(key: &str) -> &'static crate::core::tool_adapters::ReaderOnlyHarness {
+    reader_only_harnesses()
+        .into_iter()
+        .find(|reader| reader.key == key)
+        .unwrap_or_else(|| panic!("reader {key}"))
+}
+
+/// The brief-snapshot table for the reader-only rows: each row's group,
+/// default detect dirs and read facts, restated from brief § Part 2
+/// "Recommended Part 1 additions" or the addendum's § Shared-dir reads.
+/// LIKELY and UNKNOWN cells are `Unknown`; precedence the brief calls "n/a"
+/// (a harness whose only user dir is the shared one) is `Unknown` too.
+#[test]
+fn every_reader_only_row_restates_its_brief_read_facts() {
+    use crate::core::tool_adapters::reads::{
+        DuplicateBehaviour as D, Precedence as P, ReadMode as M, SharedRead, SharedRead::*,
+    };
+    type Row = (
+        &'static str,            // registry key
+        &'static str,            // brief row
+        &'static [&'static str], // detect dirs (default root, home-relative)
+        [SharedRead; 2],         // global: ~/.agents, ~/.claude
+        [SharedRead; 2],         // project: .agents, .claude
+        P,
+        D,
+        &'static [(&'static str, M)], // also_reads (home-relative)
+    );
+    const U: SharedRead = Unknown;
+    let expected: &[Row] = &[
+        (
+            "warp",
+            "Warp (AGENTS)",
+            &[".warp", ".config/warp-terminal"],
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Both,
+            D::ShowsAll,
+            &[
+                (".warp/skills", M::Default),
+                (".codex/skills", M::Default),
+                (".cursor/skills", M::Default),
+                (".gemini/skills", M::Default),
+                (".copilot/skills", M::Default),
+                (".factory/skills", M::Default),
+                (".github/skills", M::Default),
+                (".opencode/skills", M::Default),
+            ],
+        ),
+        (
+            "zed",
+            "Zed (AGENTS)",
+            &[".config/zed"],
+            [Yes, No],
+            [Yes, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "dexto",
+            "Dexto (AGENTS)",
+            &[".dexto"],
+            [Yes, No],
+            [Yes, No],
+            P::Unknown,
+            D::Unknown,
+            &[(".dexto/skills", M::Default)],
+        ),
+        (
+            "fx",
+            "fx (AGENTS)",
+            &[".fx"],
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Both,
+            D::LoadsNone,
+            &[
+                (".fx/skills", M::Default),
+                (".config/opencode/skills", M::Default),
+                (".codex/skills", M::Default),
+                (".claw/skills", M::Default),
+            ],
+        ),
+        (
+            "sarvam_code",
+            "Sarvam Code (AGENTS, LIKELY)",
+            &[".sarvam"],
+            [U, U],
+            [U, U],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "vt_code",
+            "VT Code (extra); addendum VT Code",
+            &[".config/vtcode", ".vtcode"],
+            [Yes, No],
+            [Yes, No],
+            P::Shared,
+            D::Shadows,
+            &[(".vtcode/skills", M::Default)],
+        ),
+        (
+            "dimcode",
+            "addendum DimCode",
+            &[".dimcode"],
+            [Yes, No],
+            [Yes, No],
+            P::Own,
+            D::Shadows,
+            &[(".dimcode/v2/skills", M::Default)],
+        ),
+        (
+            "crow_cli",
+            "addendum crow-cli",
+            &[".agents/crow"],
+            [Yes, No],
+            [Yes, Yes],
+            P::Unknown,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "corust_agent",
+            "addendum Corust Agent",
+            &[".corust-agent"],
+            [Yes, U],
+            [Yes, U],
+            P::Unknown,
+            D::Shadows,
+            &[(".corust-agent/skills", M::Default)],
+        ),
+    ];
+    let keys: Vec<&str> = reader_only_harnesses().iter().map(|r| r.key).collect();
+    assert_eq!(
+        expected.iter().map(|row| row.0).collect::<Vec<_>>(),
+        keys,
+        "the snapshot covers every reader-only row, in registry order"
+    );
+    for (key, brief_row, detect, global, project, precedence, duplicates, also_reads) in expected {
+        let row = reader(key);
+        let at = format!("{key} (brief row: {brief_row})");
+        assert_eq!(row.group, VirtualGroup::AgentsStandard, "{at}: group");
+        assert_eq!(
+            row.detect_dirs.iter().map(|d| d.rel).collect::<Vec<_>>(),
+            detect.to_vec(),
+            "{at}: detect dirs"
+        );
+        let facts = row.reads;
+        assert_eq!(
+            [facts.global.agents, facts.global.claude],
+            *global,
+            "{at}: global reads"
+        );
+        assert_eq!(
+            [facts.project.agents, facts.project.claude],
+            *project,
+            "{at}: project reads"
+        );
+        assert_eq!(facts.precedence, *precedence, "{at}: precedence");
+        assert_eq!(facts.duplicates, *duplicates, "{at}: duplicate behaviour");
+        let actual: Vec<(&str, M)> = facts
+            .also_reads
+            .iter()
+            .map(|a| {
+                assert_eq!(
+                    a.dir.root,
+                    HostRoot::Home,
+                    "{at}: also_reads are home-rooted"
+                );
+                assert!(a.dir.overrides.is_empty(), "{at}: no per-OS also_reads");
+                (a.dir.rel, a.mode)
+            })
+            .collect();
+        assert_eq!(actual, also_reads.to_vec(), "{at}: also_reads");
+    }
+}
+
+/// Facts vs `group` for reader-only members too (spec Q17): a harness absorbed
+/// into the AGENTS group's project roster must not ignore
+/// `<project>/.agents/skills`.
+#[test]
+fn no_reader_only_member_ignores_the_project_agents_folder() {
+    use crate::core::tool_adapters::reads::SharedRead;
+    for reader in reader_only_harnesses() {
+        assert_ne!(
+            reader.reads.project.agents,
+            SharedRead::No,
+            "{} is a reader-only AGENTS member but does not read <project>/.agents/skills",
+            reader.key
+        );
+    }
+}
+
+/// A reader-only harness is detected by its own config root, never by the
+/// shared folder it reads (`~/.agents`, `~/.agents/skills`, `~/.claude`):
+/// that folder's presence says nothing about the harness. crow-cli's root
+/// `~/.agents/crow` is its own folder inside `~/.agents`.
+#[test]
+fn a_reader_only_harness_is_detected_by_its_own_root_never_a_shared_folder() {
+    let shared = [".agents", ".agents/skills", ".claude", ".claude/skills"];
+    for reader in reader_only_harnesses() {
+        assert!(
+            !reader.detect_dirs.is_empty(),
+            "{} has no detect dir",
+            reader.key
+        );
+        for dir in reader.detect_dirs {
+            for os in [HostOs::MacOs, HostOs::Linux, HostOs::Windows] {
+                let (root, rel) = dir.effective(os);
+                assert!(
+                    !(root == HostRoot::Home && shared.contains(&rel)),
+                    "{}: detected by the shared folder {rel} on {os:?}",
+                    reader.key
+                );
+            }
+        }
+    }
+}
+
+/// Zed's config root on Windows is `%APPDATA%\Zed` (brief I7), the roaming
+/// root's `Zed`; elsewhere `~/.config/zed`. Its skills folder stays
+/// `~/.agents/skills` everywhere — it has no folder of its own.
+#[test]
+fn zeds_windows_detect_root_is_under_roaming_app_data() {
+    let base = tempfile::tempdir().unwrap();
+    let roots = distinct_roots(base.path());
+    let zed = reader("zed");
+    assert_eq!(zed.detect_dirs.len(), 1);
+    assert_eq!(
+        zed.detect_dirs[0].resolve_for(HostOs::Windows, &roots),
+        base.path().join("roaming").join("Zed")
+    );
+    for elsewhere in [HostOs::MacOs, HostOs::Linux] {
+        assert_eq!(
+            zed.detect_dirs[0].resolve_for(elsewhere, &roots),
+            base.path().join("home").join(".config").join("zed"),
+            "{elsewhere:?}"
+        );
+    }
+}
+
+/// Zed installed on this host — whatever the OS — marks the `.agents/skills`
+/// entry installed through its effective detect root.
+#[test]
+fn a_detected_zed_is_found_under_its_effective_root_on_this_host() {
+    let base = tempfile::tempdir().unwrap();
+    let roots = distinct_roots(base.path());
+    let zed = reader("zed");
+    assert!(!crate::core::tool_adapters::reader_installed_in(
+        &roots, zed
+    ));
+    crate::core::tool_adapters::mark_reader_installed_in(&roots, zed);
+    assert!(crate::core::tool_adapters::reader_installed_in(&roots, zed));
+    let expected = if cfg!(windows) {
+        base.path().join("roaming").join("Zed")
+    } else {
+        base.path().join("home").join(".config").join("zed")
+    };
+    assert!(expected.is_dir(), "created at {expected:?}");
+    assert!(is_installed_in(
+        &roots,
+        adapter_by_key("agents_skills").unwrap()
+    ));
+}
+
+/// Warp's documented config root per OS (brief T80): `~/.warp` on macOS,
+/// `~/.config/warp-terminal` on Linux, `%LOCALAPPDATA%\warp\Warp` on
+/// Windows — with `~/.warp` (MCP config, bundled skills) on every OS.
+#[test]
+fn warps_detect_roots_follow_its_documented_layout() {
+    let base = tempfile::tempdir().unwrap();
+    let roots = distinct_roots(base.path());
+    let home = base.path().join("home");
+    let resolved = |os: HostOs| {
+        reader("warp")
+            .detect_dirs
+            .iter()
+            .map(|d| d.resolve_for(os, &roots))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        resolved(HostOs::Windows),
+        vec![
+            home.join(".warp"),
+            base.path().join("local").join("warp").join("Warp")
+        ]
+    );
+    assert_eq!(
+        resolved(HostOs::Linux),
+        vec![
+            home.join(".warp"),
+            home.join(".config").join("warp-terminal")
+        ]
+    );
+    assert_eq!(resolved(HostOs::MacOs)[0], home.join(".warp"));
+}
+
+/// VT Code's config dir per OS (`VtCodePaths`, addendum P12) and its legacy
+/// home `~/.vtcode`.
+#[test]
+fn vt_codes_detect_roots_follow_its_platform_config_dir() {
+    let base = tempfile::tempdir().unwrap();
+    let roots = distinct_roots(base.path());
+    let home = base.path().join("home");
+    let resolved = |os: HostOs| {
+        reader("vt_code")
+            .detect_dirs
+            .iter()
+            .map(|d| d.resolve_for(os, &roots))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        resolved(HostOs::MacOs),
+        vec![
+            base.path().join("local").join("com.vinhnx.vtcode"),
+            home.join(".vtcode")
+        ]
+    );
+    assert_eq!(
+        resolved(HostOs::Windows),
+        vec![
+            base.path().join("roaming").join("vinhnx").join("vtcode"),
+            home.join(".vtcode")
+        ]
+    );
+    assert_eq!(
+        resolved(HostOs::Linux),
+        vec![home.join(".config").join("vtcode"), home.join(".vtcode")]
+    );
+}
+
+/// Codewhale's legacy `~/.deepseek` is a read fallback, too generic to mean
+/// Codewhale (B02 I13): it never detects the row.
+#[test]
+fn codewhale_is_never_detected_by_the_legacy_deepseek_root() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    let codewhale = adapter_by_key("codewhale").unwrap();
+    fs::create_dir_all(home.path().join(".deepseek/skills/x")).unwrap();
+    fs::write(home.path().join(".deepseek/config.toml"), b"").unwrap();
+    assert!(!is_installed_in(&roots, codewhale));
+    mark_installed_in(&roots, codewhale);
+    assert!(is_installed_in(&roots, codewhale));
+}
+
+/// A reader-only harness is installedness-checked like an adapter: a detect
+/// dir holding nothing but the path down to one of the harness's own (or
+/// legacy) skills folders is what a skill deployer leaves behind, not the
+/// harness (round 20 rows review, P1). Each such reader is probed alone in its
+/// own home, with only `<skills folder>/x` on disk: neither the reader nor the
+/// AGENTS group it reads may count as installed.
+#[test]
+fn a_skills_only_footprint_never_detects_a_reader_only_harness() {
+    use crate::core::tool_adapters::reader_installed_in;
+    let footprints = [
+        ("warp", ".warp/skills"),
+        ("dexto", ".dexto/skills"),
+        ("fx", ".fx/skills"),
+        ("vt_code", ".vtcode/skills"),
+        ("dimcode", ".dimcode/v2/skills"),
+        ("corust_agent", ".corust-agent/skills"),
+    ];
+    let agents = adapter_by_key(ToolId::AgentsStandard.as_key()).unwrap();
+    for (key, skills) in footprints {
+        let home = tempfile::tempdir().unwrap();
+        let roots = HostRoots::under_home(home.path());
+        fs::create_dir_all(home.path().join(skills).join("x")).unwrap();
+        let reader = reader_only_harnesses()
+            .into_iter()
+            .find(|r| r.key == key)
+            .unwrap_or_else(|| panic!("{key}"));
+        assert!(
+            !reader_installed_in(&roots, reader),
+            "{key} detected by a skills-only footprint"
+        );
+        assert!(
+            !is_installed_in(&roots, agents),
+            "{key}'s footprint made the AGENTS group installed"
+        );
+        // Anything beside the skills path is the harness itself.
+        fs::write(
+            home.path().join(skills).parent().unwrap().join("config"),
+            b"",
+        )
+        .unwrap();
+        assert!(
+            reader_installed_in(&roots, reader),
+            "{key} with a config beside its skills"
         );
     }
 }

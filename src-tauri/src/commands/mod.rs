@@ -52,7 +52,7 @@ use crate::core::skills_search::{
     search_skills_online as search_skills_online_core, OnlineSkillResult,
 };
 use crate::core::sync_status::{SyncMode, SyncStatus};
-use crate::core::tool_adapters::catalog::GlobalPlacement;
+use crate::core::tool_adapters::catalog::{DuplicateReads, GlobalPlacement};
 use crate::core::tool_adapters::reads::DuplicateBehaviour;
 use crate::core::tool_adapters::{
     global_tool_entries, installed_keys, project_tool_entries, ToolCatalogEntry,
@@ -170,6 +170,20 @@ pub struct ReaderHarnessDto {
     pub key: String,
     pub label: String,
     pub installed: bool,
+    /// Its cross-read pairs, resolved with the entry it is listed under as
+    /// its deploy dir: set when that entry and one of `keys` both deployed
+    /// would show it a skill twice (or worse — `behaviour`). `null` without a
+    /// pair or while undetected.
+    pub duplicate_readers: Option<DuplicateReadsDto>,
+}
+
+impl From<DuplicateReads> for DuplicateReadsDto {
+    fn from(reads: DuplicateReads) -> Self {
+        DuplicateReadsDto {
+            keys: reads.keys.iter().map(|k| k.to_string()).collect(),
+            behaviour: reads.behaviour,
+        }
+    }
 }
 
 /// A global tool's registry placement (the Settings → Harnesses row).
@@ -217,13 +231,11 @@ impl From<ToolCatalogEntry> for ToolInfoDto {
                     key: reader.key.to_string(),
                     label: reader.label.to_string(),
                     installed: reader.installed,
+                    duplicate_readers: reader.duplicate_readers.map(DuplicateReadsDto::from),
                 })
                 .collect(),
             placement: entry.placement.map(ToolPlacementDto::from),
-            duplicate_readers: entry.duplicate_readers.map(|reads| DuplicateReadsDto {
-                keys: reads.keys.iter().map(|k| k.to_string()).collect(),
-                behaviour: reads.behaviour,
-            }),
+            duplicate_readers: entry.duplicate_readers.map(DuplicateReadsDto::from),
         }
     }
 }

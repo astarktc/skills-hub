@@ -154,6 +154,15 @@ describe("rich", () => {
     expect((await handlers.listProjects()).map((p) => p.name)).toEqual(["skills-hub", "quartermaster", "agent-skills"]);
   });
 
+  // Round 20 rows review (P3): the registry's copy-only capability reaches the fixture's placement, so a
+  // fixture-driven check sees Deep Agents Code deploy as a copy (the one `supports_symlink: false` row).
+  it("carries each harness's link-vs-copy capability", async () => {
+    const { handlers } = backendFor("rich");
+    const status = await handlers.getToolStatus();
+    const copyOnly = status.tools.filter((tool) => tool.placement?.supports_symlink === false).map((tool) => tool.key);
+    expect(copyOnly).toEqual(["deep_agents_code"]);
+  });
+
   // Round 20 ticket 01: reader-only harnesses are listed under the
   // `.agents/skills` entry with their detected state, never as entries, never
   // installed keys, and are absorbed into the project group's roster.
@@ -161,16 +170,23 @@ describe("rich", () => {
     const { handlers } = backendFor("rich");
     const status = await handlers.getToolStatus();
     const agents = status.tools.find((tool) => tool.key === "agents_skills");
-    expect(agents?.readers).toEqual([
-      { key: "zed", label: "Zed", installed: true },
-      { key: "warp", label: "Warp", installed: false },
+    expect(agents?.readers.map((reader) => [reader.key, reader.installed])).toEqual([
+      ["warp", false],
+      ["zed", true],
+      ["dexto", false],
+      ["fx", true],
+      ["sarvam_code", false],
+      ["vt_code", false],
+      ["dimcode", false],
+      ["crow_cli", false],
+      ["corust_agent", false],
     ]);
     expect(status.tools.some((tool) => tool.key === "zed")).toBe(false);
     expect(status.installed).not.toContain("zed");
     expect(status.tools.filter((tool) => tool.key !== "agents_skills").every((tool) => tool.readers.length === 0)).toBe(true);
     const project = await handlers.getProjectToolStatus();
     const group = project.tools.find((tool) => tool.key === "agents_skills");
-    expect(group?.constituents.slice(-2)).toEqual(["Zed", "Warp"]);
+    expect(group?.constituents.slice(-2)).toEqual(["crow-cli", "Corust Agent"]);
   });
 
   // Ticket 31 (D41): the listing carries each skill's projects, derived from
@@ -1877,6 +1893,23 @@ describe("registry", () => {
     const selected = state.settings.global_selected_tools ?? [];
     expect(selected).toEqual(expect.arrayContaining(["cursor", "claude_code", "codex"]));
     expect(selected).not.toContain("agents_skills");
+  });
+
+  // round 20 ticket 05 rows: a detected reader-only harness carries its pairs
+  // on its reader entry; an undetected one carries none.
+  it("answers fx's pairs on its reader entry, and none for an undetected reader", async () => {
+    const { handlers } = backendFor("registry");
+    const status = await handlers.getToolStatus();
+    const readers = status.tools.find((tool) => tool.key === "agents_skills")!.readers;
+    expect(readers.find((reader) => reader.key === "fx")?.duplicate_readers).toEqual({
+      keys: ["claude_code", "codex", "opencode"],
+      behaviour: "loads_none",
+    });
+    expect(readers.find((reader) => reader.key === "warp")?.duplicate_readers).toBeNull();
+    expect(status.tools.find((tool) => tool.key === "codewhale")?.duplicate_readers).toEqual({
+      keys: ["agents_skills", "claude_code"],
+      behaviour: "shadows",
+    });
   });
 });
 
