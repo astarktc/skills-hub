@@ -12,6 +12,7 @@ use crate::core::{
     content_identity::{self, Source},
     errors::CommandError,
     mutation_guard,
+    removal_fence::ProtectedLibrary,
     skill_store::{SkillStore, TargetTransition},
     sync_engine::{self, SyncOutcome},
     sync_status::{SyncMode, SyncStatus},
@@ -130,6 +131,7 @@ pub(crate) fn sync_skill_into_root(
         Source::Managed { store, skill_id },
         &target,
         overwrite,
+        &ProtectedLibrary::recorded(store),
     )
     .map_err(|err| classify_sync_error(err, adapter, tool_root, &target))?;
 

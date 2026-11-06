@@ -866,3 +866,66 @@ fn sync_skills_to_tools_writes_under_temp_home_and_reports_unknown_tools() {
         home.join(".claude/skills/skill-1")
     );
 }
+
+/// BACKLOG #107: the folder an overwrite replaces must not lie inside the
+/// central library. Here a Tool's skills dir is a link onto *another*
+/// Managed skill's directory, so the target in `alpha`'s way is a real
+/// folder inside `beta`'s central copy: the forced overwrite is refused with
+/// the typed refusal and `beta`'s bytes survive.
+#[cfg(unix)]
+#[test]
+fn an_overwrite_never_removes_a_folder_inside_the_central_library() {
+    use crate::core::errors::{CommandError, RemovalRefusal};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = make_store(dir.path());
+    let central = dir.path().join("central");
+    let alpha = make_skill_dir(&central, "alpha", "# Alpha");
+    let beta = make_skill_dir(&central, "beta", "# Beta");
+    let nested = make_skill_dir(&beta, "alpha", "# Beta's bundled alpha");
+    for (id, path) in [("alpha", &alpha), ("beta", &beta)] {
+        seed_skill(&store, id);
+        let mut skill = store.get_skill_by_id(id).unwrap().unwrap();
+        skill.central_path = path.to_string_lossy().into_owned();
+        store.upsert_skill(&skill).unwrap();
+    }
+    let tool_root = dir.path().join("tools").join("claude");
+    fs::create_dir_all(tool_root.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&beta, &tool_root).unwrap();
+
+    let adapter = claude();
+    let err = sync_skill_into_root(
+        &store,
+        adapter,
+        &tool_root,
+        &alpha,
+        "alpha",
+        "alpha",
+        &OverwritePolicy {
+            overwrite: true,
+            overwrite_if_same_content: false,
+        },
+        std::slice::from_ref(&adapter),
+        1000,
+    )
+    .expect_err("the overwrite must be refused");
+
+    assert!(
+        matches!(
+            CommandError::from(err),
+            CommandError::RemovalRefused {
+                reason: RemovalRefusal::CentralLibrary,
+                ..
+            }
+        ),
+        "refused with the typed central-library reason"
+    );
+    assert_eq!(
+        fs::read_to_string(nested.join("SKILL.md")).unwrap(),
+        "# Beta's bundled alpha"
+    );
+    assert!(store
+        .get_skill_target("alpha", "claude_code")
+        .unwrap()
+        .is_none());
+}

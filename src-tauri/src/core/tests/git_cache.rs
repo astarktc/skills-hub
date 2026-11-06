@@ -264,6 +264,48 @@ fn corrupt_cache_dir_is_rebuilt_once() {
     );
 }
 
+/// The 1.3.2 re-check's R1 counterexample (BACKLOG #107): the cache root is a
+/// link to a directory outside the cache, which holds a real folder named
+/// like the entry. The failed fetch's clean-retry must not delete that folder
+/// through the aliased root: the retry is refused with the typed refusal and
+/// the outside bytes survive.
+#[cfg(unix)]
+#[test]
+fn a_clean_retry_never_deletes_through_an_aliased_cache_root() {
+    use crate::core::errors::RemovalRefusal;
+
+    let repo = fixture_repo();
+    let cache = tempfile::tempdir().expect("tempdir");
+    let outside = tempfile::tempdir().expect("tempdir");
+    let url = url_of(repo.path());
+    let key = repo_cache_key(&CacheKeyInputs {
+        clone_url: &url,
+        branch: None,
+    });
+    std::os::unix::fs::symlink(outside.path(), cache_root(cache.path())).expect("alias root");
+    let victim = outside.path().join(&key);
+    fs::create_dir_all(victim.join(".git")).expect("a real folder with .git");
+    fs::write(victim.join("keep"), "user data").expect("write");
+
+    let err = fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS))
+        .expect_err("the clean retry is refused");
+
+    assert!(
+        matches!(
+            err.downcast_ref::<SignalError>(),
+            Some(SignalError::RemovalRefused {
+                reason: RemovalRefusal::ResolvesElsewhere,
+                ..
+            })
+        ),
+        "{err:#}"
+    );
+    assert_eq!(
+        fs::read_to_string(victim.join("keep")).expect("outside bytes survive"),
+        "user data"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Cancellation
 // ---------------------------------------------------------------------------

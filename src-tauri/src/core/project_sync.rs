@@ -7,6 +7,7 @@ use crate::core::{
     artifact_removal, content_identity,
     errors::{CommandError, SignalError},
     mutation_guard, project_ops,
+    removal_fence::ProtectedLibrary,
     skill_store::{
         AssignmentTransition, ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore,
     },
@@ -142,6 +143,7 @@ pub(crate) fn sync_assignment_target(
         &target,
         ctx.overwrite,
         ctx.project_path,
+        &ProtectedLibrary::recorded(ctx.store),
     )?;
 
     let hash = if outcome.mode_used.can_drift() {

@@ -1,6 +1,7 @@
 use super::*;
 use crate::core::errors::SignalError;
 use crate::core::global_sync::GlobalSyncError;
+use crate::core::removal_fence::{Fence, ProtectedLibrary};
 use crate::core::sync_engine::remove_path_any;
 #[test]
 fn git_repoint_refusal_crosses_the_wire_as_a_typed_error() {
@@ -228,15 +229,19 @@ fn remove_path_any_handles_file_dir_and_missing() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("f.txt");
     std::fs::write(&file, b"1").unwrap();
-    remove_path_any(&file).unwrap();
+    remove_path_any(&file, &Fence::new(&ProtectedLibrary::unrecorded())).unwrap();
     assert!(!file.exists());
 
     let sub = dir.path().join("d");
     std::fs::create_dir_all(&sub).unwrap();
-    remove_path_any(&sub).unwrap();
+    remove_path_any(&sub, &Fence::new(&ProtectedLibrary::unrecorded())).unwrap();
     assert!(!sub.exists());
 
-    remove_path_any(&dir.path().join("missing")).unwrap();
+    remove_path_any(
+        &dir.path().join("missing"),
+        &Fence::new(&ProtectedLibrary::unrecorded()),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -250,7 +255,7 @@ fn remove_path_any_removes_symlink_only() {
     let link = dir.path().join("link");
     symlink(&target, &link).unwrap();
 
-    remove_path_any(&link).unwrap();
+    remove_path_any(&link, &Fence::new(&ProtectedLibrary::unrecorded())).unwrap();
     assert!(!link.exists());
     assert!(target.exists());
 }

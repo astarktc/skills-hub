@@ -388,6 +388,18 @@ path: string;
 /**  Which read failed, diagnostics only. */
 detail: string } |
 /**
+ *  A removal was refused at physical admission: `path` physically names
+ *  `resolved`, which is in the central library or outside the directory
+ *  the removal claims. Nothing was touched.
+ */
+{ code: "REMOVAL_REFUSED";
+/**  The path the removal was asked to act on. */
+path: string;
+/**  Where that path physically leads (parent resolved, leaf not). */
+resolved: string;
+/**  In the central library, or outside the claimed directory. */
+reason: RemovalRefusal } |
+/**
  *  An Update replayed the operator's invocation Edit onto new upstream
  *  bytes whose own invocation mode disagrees with both the Edit's base
  *  and its override: the Edit was kept and needs review. Settled by
@@ -1178,6 +1190,23 @@ export type RefreshSkipReason =
  *  is no Restore-like repair here — retrying the Delete is.
  */
 { kind: "delete_incomplete" };
+
+/**
+ *  Why physical admission refused a removal (the backend classifies; the
+ *  frontend owns the copy). Owned by `core::removal_fence`.
+ */
+export type RemovalRefusal =
+/**
+ *  The entry physically is, lies inside, or contains the central library
+ *  (a Managed skill's central copy or the folder holding them) — reached
+ *  through an aliased folder on the way.
+ */
+"centralLibrary" |
+/**
+ *  The entry physically lies outside the directory the removal claims to
+ *  act in (an aliased folder on the way leads elsewhere).
+ */
+"resolvesElsewhere";
 
 export type RemovalReport = {
 	targets: RemovalTargetOutcome[],
