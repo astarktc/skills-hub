@@ -808,11 +808,14 @@ pub(crate) fn remove_superseded_artifact_unlocked(
 /// behind as Unlocatable keeps its record, so its folder stays protected),
 /// and claimed to lie inside the folder that held the copy — an aliased
 /// folder on the way that leads elsewhere is refused. The old Library root
-/// itself is never named here, so it and anything unrecorded in it stay.
+/// `former_root` is never removed, nor anything holding it: a record that
+/// names the root itself (or a folder around it) as a copy is refused
+/// (`CentralLibrary`), so the root and anything unrecorded in it stay.
 /// Presence follows the module rule. Unlocked internal seam.
 pub(crate) fn remove_former_central_copy_unlocked(
     store: &SkillStore,
     central_dir: &Path,
+    former_root: &Path,
     former_copy: &Path,
 ) -> Result<()> {
     let Some(holder) = former_copy.parent().filter(|_| former_copy.is_absolute()) else {
@@ -821,6 +824,20 @@ pub(crate) fn remove_former_central_copy_unlocked(
             former_copy
         );
     };
+    // A link is removed as itself and never reaches its referent; a real
+    // folder must not be, or hold, the old root.
+    let is_link = std::fs::symlink_metadata(former_copy).is_ok_and(|m| m.file_type().is_symlink());
+    if !is_link {
+        if let (Ok(copy), Ok(root)) = (former_copy.canonicalize(), former_root.canonicalize()) {
+            if root.starts_with(&copy) {
+                anyhow::bail!(SignalError::RemovalRefused {
+                    path: former_copy.to_string_lossy().into_owned(),
+                    resolved: copy.to_string_lossy().into_owned(),
+                    reason: crate::core::errors::RemovalRefusal::CentralLibrary,
+                });
+            }
+        }
+    }
     if is_present(former_copy) {
         let claim = [holder.to_path_buf()];
         let library = ProtectedLibrary::new(store, central_dir);

@@ -944,7 +944,9 @@ fn clean_phase(
             });
             continue;
         }
-        if let Err(err) = remove_former_central_copy_unlocked(store, dest, &m.old) {
+        if let Err(err) =
+            remove_former_central_copy_unlocked(store, dest, &paths.central_dir, &m.old)
+        {
             log::warn!("[library move] old copy {:?} kept: {err:#}", m.old);
             kept.push(LeftBehind {
                 path: m.old.to_string_lossy().into_owned(),

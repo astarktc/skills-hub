@@ -594,6 +594,31 @@ fn the_clean_removes_a_linked_old_copy_as_itself_only() {
     assert!(left_behind(&report, LeftBehindReason::RemovalFailed).is_empty());
 }
 
+/// A record that names the Library folder itself as a copy (a corrupt
+/// layout) moves its bytes, but the old root is never removed.
+#[test]
+fn the_old_root_is_never_removed_even_when_a_record_names_it() {
+    let mut f = fixture(&[]);
+    let alpha = f.install("alpha");
+    let root = f.paths.central_dir.clone();
+    fs::write(root.join("unrecorded.txt"), "keep").unwrap();
+    let mut record = f.store.get_skill_by_id(&alpha).unwrap().unwrap();
+    record.central_path = root.to_string_lossy().into_owned();
+    f.store.upsert_skill(&record).unwrap();
+
+    let report = f.run();
+
+    assert_eq!(
+        fs::read_to_string(root.join("unrecorded.txt")).unwrap(),
+        "keep"
+    );
+    assert!(root.join("alpha/SKILL.md").is_file());
+    assert_eq!(
+        left_behind(&report, LeftBehindReason::RemovalFailed),
+        vec![root.clone()]
+    );
+}
+
 #[test]
 fn a_disabled_skill_is_moved_and_its_rows_skipped() {
     let mut f = fixture(&["claude_code"]);
