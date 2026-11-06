@@ -64,7 +64,11 @@ type ProjectToolsModalProps = {
   t: TFunction;
 };
 
-const ProjectToolsModalInner = ({
+/**
+ * The dialog's body: mounted with the popup each time it opens, so the
+ * selection starts from the saved baseline (or the installed tools) again.
+ */
+const ProjectToolsBody = ({
   loading,
   blockedReason = null,
   toolStatus,
@@ -72,9 +76,8 @@ const ProjectToolsModalInner = ({
   labels,
   onConfirm,
   onRequestClose,
-  progress,
   t,
-}: Omit<ProjectToolsModalProps, "open">) => {
+}: Omit<ProjectToolsModalProps, "open" | "progress">) => {
   const [selectedTools, setSelectedTools] = useState<Set<string>>(() =>
     buildInitialSelection(toolStatus, savedSelection),
   );
@@ -110,77 +113,83 @@ const ProjectToolsModalInner = ({
   };
 
   return (
-    <Dialog
-      open
-      onOpenChange={(next) => {
-        if (!next) onRequestClose();
-      }}
-    >
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{labels.title}</DialogTitle>
-          <DialogDescription>{labels.description}</DialogDescription>
-        </DialogHeader>
-        <DialogBody>
-          <Field className="flex-row items-center gap-2">
-            <Checkbox checked={detectedOnly} onCheckedChange={(checked) => setDetectedOnly(checked)} />
-            <FieldLabel>{t("toolConfigDetectedOnly")}</FieldLabel>
-          </Field>
-          <FieldSet>
-            <FieldLegend className="sr-only">{labels.title}</FieldLegend>
-            <ul className="m-0 flex max-h-80 list-none flex-col gap-1 overflow-y-auto p-0">
-              {tools.map((tool) => (
-                <li key={tool.key}>
-                  <Field className="flex-row items-start gap-2 py-1">
-                    <Checkbox
-                      className="mt-0.5"
-                      checked={selectedTools.has(tool.key)}
-                      onCheckedChange={() => handleToggle(tool.key)}
-                    />
-                    <div className="flex min-w-0 flex-col gap-0.5">
-                      <span className="flex items-center gap-2">
-                        <FieldLabel>{tool.label}</FieldLabel>
-                        {installed.includes(tool.key) ? (
-                          <Badge tone="ok">{t("status.installed")}</Badge>
-                        ) : (
-                          // A selected tool detection no longer sees: visible so it can be unticked.
-                          <Badge>{t("toolNotDetected")}</Badge>
-                        )}
-                      </span>
-                      {tool.constituents.length > 0 ? (
-                        <FieldDescription>{tool.constituents.join(", ")}</FieldDescription>
-                      ) : null}
-                    </div>
-                  </Field>
-                </li>
-              ))}
-            </ul>
-          </FieldSet>
-        </DialogBody>
-        <DialogFooter>
-          <Button onClick={onRequestClose} disabled={loading}>
-            {t("cancel")}
-          </Button>
-          <Button
-            variant="solid"
-            tone="accent"
-            onClick={() => void handleConfirm()}
-            disabled={loading || blockedReason !== null}
-            focusableWhenDisabled
-            title={blockedReason ?? undefined}
-          >
-            {labels.confirmLabel}
-          </Button>
-        </DialogFooter>
-        {progress}
-      </DialogContent>
-    </Dialog>
+    <>
+      <DialogHeader>
+        <DialogTitle>{labels.title}</DialogTitle>
+        <DialogDescription>{labels.description}</DialogDescription>
+      </DialogHeader>
+      <DialogBody>
+        <Field className="flex-row items-center gap-2">
+          <Checkbox checked={detectedOnly} onCheckedChange={(checked) => setDetectedOnly(checked)} />
+          <FieldLabel>{t("toolConfigDetectedOnly")}</FieldLabel>
+        </Field>
+        <FieldSet>
+          <FieldLegend className="sr-only">{labels.title}</FieldLegend>
+          <ul className="m-0 flex max-h-80 list-none flex-col gap-1 overflow-y-auto p-0">
+            {tools.map((tool) => (
+              <li key={tool.key}>
+                <Field className="flex-row items-start gap-2 py-1">
+                  <Checkbox
+                    className="mt-0.5"
+                    checked={selectedTools.has(tool.key)}
+                    onCheckedChange={() => handleToggle(tool.key)}
+                  />
+                  <div className="flex min-w-0 flex-col gap-0.5">
+                    <span className="flex items-center gap-2">
+                      <FieldLabel>{tool.label}</FieldLabel>
+                      {installed.includes(tool.key) ? (
+                        <Badge tone="ok">{t("status.installed")}</Badge>
+                      ) : (
+                        // A selected tool detection no longer sees: visible so it can be unticked.
+                        <Badge>{t("toolNotDetected")}</Badge>
+                      )}
+                    </span>
+                    {tool.constituents.length > 0 ? (
+                      <FieldDescription>{tool.constituents.join(", ")}</FieldDescription>
+                    ) : null}
+                  </div>
+                </Field>
+              </li>
+            ))}
+          </ul>
+        </FieldSet>
+      </DialogBody>
+      <DialogFooter>
+        <Button onClick={onRequestClose} disabled={loading}>
+          {t("cancel")}
+        </Button>
+        <Button
+          variant="solid"
+          tone="accent"
+          onClick={() => void handleConfirm()}
+          disabled={loading || blockedReason !== null}
+          focusableWhenDisabled
+          title={blockedReason ?? undefined}
+        >
+          {labels.confirmLabel}
+        </Button>
+      </DialogFooter>
+    </>
   );
 };
 
-const ProjectToolsModal = ({ open, ...rest }: ProjectToolsModalProps) => {
-  if (!open) return null;
-  return <ProjectToolsModalInner {...rest} />;
-};
+/**
+ * The shell stays mounted for the page's life and only `open` toggles
+ * (#97): a conditionally mounted dialog unmounts before it can return focus
+ * to the control that opened it.
+ */
+const ProjectToolsModal = ({ open, progress, ...rest }: ProjectToolsModalProps) => (
+  <Dialog
+    open={open}
+    onOpenChange={(next) => {
+      if (!next) rest.onRequestClose();
+    }}
+  >
+    <DialogContent>
+      <ProjectToolsBody {...rest} />
+      {progress}
+    </DialogContent>
+  </Dialog>
+);
 
 export default memo(ProjectToolsModal);
