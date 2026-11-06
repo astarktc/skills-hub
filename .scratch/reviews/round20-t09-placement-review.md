@@ -100,3 +100,83 @@ ignored). The adversarial probes failed as described above.
 ## Disposition (orchestrator, 2026-11-06)
 
 All four findings go to a fresh fix child on the PR branch. Re-review after the fix.
+
+---
+
+# Round 2: re-review of fix pass 1 (`4824ef6`)
+
+- **Reviewer:** GPT-6 Astra (high), 2026-11-06. The first attempt was stopped by OpenAI's content filter; the retry ran
+  with neutral wording.
+- **Verdict:** **BLOCK**.
+
+## Round-1 findings
+
+| # | Status | Evidence |
+|---|---|---|
+| 1 | Partly fixed, still open | Rows naming independent paths are separated now, and both round-1 reproductions pass. Two new routes to unowned ownership remain (findings 5 and 6); finding 7 is a side effect of the fix. |
+| 2 | Closed | `useSyncOrchestration.ts:768–784` toggles the whole folder; tests at `useSyncOrchestration.test.ts:1174–1273` cover on and off for either member, before and after migration. |
+| 3 | Closed for rows naming the same artifact | `project_sync.rs:206–217` (`deploy_adapter` resolved through placement); `propagation.rs:412–422`. The Deep Agents Code test switch is correct: a group's capability stays its own registry fact (`placement.rs:328–340`, `tests/placement.rs:244–264`). |
+| 4 | Closed for current reports | `artifact_removal.rs:175–193`, `reportOutcome.ts:397–427` and `:704–722`. Old stored reports are finding 8. |
+
+## New findings
+
+### 5. P1: equal inodes don't prove that two names are one Deployment
+
+`removal_fence.rs:917–922` treats two present paths as the same artifact whenever their inodes match, and that grouping
+grants overwrite permission and settlement (`project_sync.rs:913–917`, `:954–963`). Two different names can be hard
+links to the same symlink inode.
+
+Reproduced:
+1. Make `current` a link into the Library, then hard-link it as `previous`.
+2. Seed an owned `trae/current` row and a never-synced `trae_cn/previous` row.
+3. Resync. Only `current` is replaced, yet `previous` is marked owned and synced.
+4. Unassign. The never-written `previous` link is deleted.
+
+### 6. P1: grouping two absent paths lends overwrite permission to whatever appears there later
+
+Absent paths are grouped by parent and leaf name before the write (`removal_fence.rs:923–934`,
+`propagation.rs:209–214`), and a sibling's ownership becomes an unconditional overwrite flag (`propagation.rs:259–280`;
+`sync_engine.rs:191–205`). When a foreign folder appears at that path after the grouping, it is replaced with Library
+bytes (reproduced with a deterministic interleaving). Two spellings naming one empty slot at observation time is not
+evidence that a later occupant is ours.
+
+### 7. P2: Enable silently deletes an independent disabled record whose folder still exists
+
+`project_sync.rs:1028–1037` deletes every disabled independent assignment, before the driver's sync succeeds. A
+disabled row can be a never-owned Keep marker over an existing foreign folder. Reproduced: the old folder still
+exists, the record is gone, and nothing reports it. This contradicts ticket 09's boundary that collapsing legacy rows
+belongs to the redeploy.
+
+### 8. P2: a required `RowRef.folder_key` drops stored 1.3.4 Library-move reports
+
+`artifact_removal.rs:147–164`, `library_move.rs:244–250` and `:476–485`: a 1.3.4 report fails with `missing field
+'folder_key'` and is dropped. A bare `#[serde(default)]` is wrong: it yields `""` and makes the TypeScript field
+`folder_key?: string`. Instead, add a narrow decoder for stored reports that fills the key from scope + tool, keep the
+field required on the wire, and add a stored 1.3.4 report fixture that includes Amp and Kimi rows.
+
+## The implementer's open items
+
+- **(a) Independent stale copies wait for ticket 10:** acceptable, but finding 7 must not erase the records the
+  redeploy will need.
+- **(b) Stored reports:** must fix (finding 8).
+- **(c) My Skills dots:** out of scope; ticket 13 owns them.
+
+**Gate on the branch:** `npm run check` and `cargo test --all` passed (1,398 frontend tests; 1,061 Rust tests, 1
+ignored), with no binding drift. Four probe assertions failed, matching findings 5–8.
+
+## Disposition (orchestrator, 2026-11-06)
+
+Fix pass 1 inferred ownership from physical identity. That is the wrong direction: physical identity may make the app
+more cautious, but it must never grant ownership. Fix pass 2 removes the inference instead of patching it:
+
+- **Driver row.** The folder's driver is chosen among its rows, preferring a row that owns its artifact, so overwrite
+  permission is always the driver's own and is never lent by a sibling.
+- **Shared settlement.** After a successful write, settlement extends only to rows whose recorded `target_path` is
+  byte-identical to the path just written. That path is now the app's artifact, so recording those rows as its owners
+  is true.
+- **Everything else is independent.** Aliases, hard links and absent-slot matches are independent rows, left untouched
+  for the redeploy (tickets 10 and 11). `same_artifact` may still narrow a decision (refuse, de-duplicate a display) but
+  never widens one.
+- **Enable** leaves independent rows as they are. The folder's enabled or disabled state is read from the driver and
+  its byte-identical siblings only.
+- **Stored reports:** add the compatibility decoder from finding 8.
