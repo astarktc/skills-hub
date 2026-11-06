@@ -47,3 +47,5 @@ back with evidence, not forced.
   mounted at the entry itself on macOS). Round 4 dispatched on `t3/removal-fence-round4`.
 - `main` regression from the L2 review fix: `synchronous = FULL` pushed hosted-Windows SQLite contention past the 5 s
   busy timeout; `b8a530b` raises it to 30 s (two green hosted-Windows runs, PR #10).
+- L1 merged (`401d3e5`) after round 4; the round-4 re-check (Sol, high) found nothing and judged no ordinary layout
+  over-refused. All five lanes are on `main`; next, the final Astra review of `v1.3.2..main`.

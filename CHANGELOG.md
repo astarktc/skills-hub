@@ -15,12 +15,14 @@ and reporting problems found in the 1.3 think-aloud.
   reported success. Every removal — Delete, Disable, removing a skill from a project, replacing a folder on overwrite,
   Import's removal of originals, and the git cache's cleanup — now checks the folder it would actually delete, not the
   path as written. It refuses anything inside the Library or outside the folder it claims to be in, including when a
-  name differs only in letter case. A refused removal says which path resolved where.
-- **A removal blocked by permissions says what to check** — ownership, a read-only folder, or another app holding it
-  — and that Retry will fail the same way until that is fixed, instead of showing the raw "Permission denied".
+  name differs only in letter case, and it never deletes across a mounted filesystem or disk image at or inside the
+  folder. A refused removal says which path resolved where.
+- **A removal blocked by permissions says what to check** — ownership, a read-only folder or volume, or another app
+  holding it — and that Retry will fail the same way until that is fixed, instead of showing the raw "Permission
+  denied".
 - **Refresh and other simultaneous work no longer fail with "database is locked" on slow disks**, notably on Windows.
   The database now uses write-ahead logging; it is converted once on first launch, with its data intact, and every
-  write is still flushed to disk before it is reported done.
+  write is still flushed to disk before it is reported done. A call waits up to 30 s for its turn instead of 5 s.
 - **Opening a project that finds a deployed copy missing or out of date updates My Skills right away** — the row's
   mark, the Issues count and the inspector — instead of after a later reload.
 - **Disabling a harness where the skill was never deployed says so** ("{skill} stays off {harness} — it was not
@@ -55,7 +57,10 @@ and reporting problems found in the 1.3 think-aloud.
 ### Internal
 
 - `core/removal_fence.rs` admits every destructive operation by physical identity (the parent resolved, a leaf link
-  never followed), with the configured Library and the app cache directory passed in from the command seam.
+  never followed), with the configured Library and the app cache directory passed in from the command seam. A
+  directory removal walks its subtree first and refuses a mount at or inside it (device comparison everywhere, plus
+  `/proc/self/mountinfo` on Linux, failing closed when that table cannot be read). Known limit: a path or mount changed
+  by another process between the check and the removal.
 - The store runs WAL with `synchronous = FULL`; legacy-database migration backs up a database and its sidecars as
   one unit. The SQLite contention test runs on Windows CI again.
 - Test hardening: the secure-delete test is sensitive to its pragma, guard-polling tests no longer flake under load,

@@ -14,7 +14,7 @@ the code that day (`archive/round19/closure/extract-{A..G}.md`).
 
 1. **1.3.3, a hygiene patch** — a solid base before roadmap features (`.scratch/release-1.3.3/spec.md`). Merged and
    removed from this file: #63 #68 #72 #73 #74 (its pointer; persistence is #53's) #75 #90 #95 #96 #97 #98 #99 #100
-   #101 #102 (dark theme only — the README embeds one image per screen) #103 #104 #106. In review: #107 #76 #105 (L1).
+   #101 #102 (dark theme only — the README embeds one image per screen) #103 #104 #106 #107 #76 #105.
 2. **Round 20**: #92 then #110, beside #91 (they touch different files); #108; #109 and #84 (both need the
    project defaults/overrides pattern); then #70, #85/#86, #93, #87.
 
@@ -23,17 +23,6 @@ Harness research behind #92 and #108–#110: `docs/design-inputs/2026-11-05-harn
 
 ## Now — evidence of unfinished work is strong
 
-- **#107 Removal can delete the central library through an aliased parent (P0-class, pre-existing; first in 1.3.3).**
-  `sync_engine::remove_path_any` (`:421`) deletes a *real* leaf at its resolved physical location when a parent is a
-  symlink/junction. With a parent aliased onto the central repo, the 1.3.2 review's differential probe deleted the
-  central skill on 1.3.1 and 1.3.2 alike (`.scratch/reviews/1.3.2-patch-review.md` :115–151, :226). A leaf *link* is safe.
-  The same flaw sits in the git cache's error-retry `remove_dir_all` (`git_cache.rs:281`; review R1, :257–271) and in
-  every destructive path fenced only by the lexical `tool_adapters::ensure_path_within_tool_dirs`: Import's original
-  removal (`onboarding_import.rs:720`), `sync_engine`'s overwrite replacement, artifact removal. Fix shape (review :136):
-  admit by physical entry identity (canonical parent + leaf, never resolving a leaf link), an explicit protected-central
-  boundary, and source/destination identity checks. A blanket `remove_dir` or canonicalise-and-delete is not a fix.
-  Extracted from #88 (operator 2026-11-05: urgent). Source: as cited; `archive/round19/review/ticket-34-backend-audit-3.md`
-  F14–F15.
 - **#92 Registry structure for the wider roster (registry truth without relocation), rebuilt from `main`.** What every new
   row (#110) needs, and the facts #109 reads. Cut it fresh from `main`; branch `t3/registry-truth-pass` (`9d282d4`) is
   reference only — never cherry-pick its 44 files. Scope:
@@ -167,9 +156,6 @@ code before scheduling.)
   only on project rows. **Decided (operator 2026-11-05): yes** — a read-only presence probe where the library is listed,
   status written through `try_serialized` like the project reconcile. Source: `archive/round19/review/ticket-34-backend-audit-3.md`
   F14 note; `archive/round19/closure/extract-F.md` F7.
-- **#105 `derive_name_from_repo_url` splits only on `/`.** A Windows-style `file://C:\…` URL makes the derived skill name an
-  absolute path (seen only through a test fixture in 1.3.2's Windows work). Guard it: split on both separators, or
-  refuse a name that is not a plain leaf. Source: 1.3.2 implementer report, 2026-11-05.
 - **#112 The matrix's whole-cell hit area makes un-assign misclicks likelier.** Since 1.3.0 (ticket 17) the whole cell
   (36 px × ≥144 px) toggles, and it is the same area hovered to read the state word; in 1.2.x only the 18 px checkbox
   did. 1.3.3's 5 s Undo (#75) mitigates; shrinking or splitting the hit area is a design call. Source: 1.3.3 L5 report.
@@ -204,13 +190,6 @@ code before scheduling.)
   the ⌘K palette's selection verbs are My Skills-only, and the bulk rail cannot exist on Projects. Decide whether the
   matrix should have a selection (checked rows → bulk assign / unassign / resync through the door) and, if so, build
   it with #85's keymap. Source: ticket 23 Result "Deliberately left", 2026-11-02.
-- **#76 A removal's permission failure has no next step.** "Permission denied (os error 13)" comes with Retry and
-  Reveal but no explanation of what to check (ownership, read-only, a process holding it) or that Retry will fail the
-  same way. Removal failures classify as `OTHER` with the raw io text (`core/artifact_removal.rs:621`); the shape is a
-  typed removal-permission variant (Rust + binding + `describeCommandError` branch), as global sync has
-  (`TOOL_NOT_WRITABLE`). (The "Removed from … lacks the project" bullet was struck at round 19's closure: both sides
-  carry "· project" since `56da8d9`, `reportOutcome.ts:1475–1503`, pinned by `reportOutcome.test.ts:2196`.) Source:
-  `archive/round19/issues/18-operator-think-aloud.md` § Findings (P2·Q10).
 - **#66 One multi-skill delete command (round 19 ticket 13)** — `delete_managed_skill` takes one skill; the bulk rail's Remove loops it inside one `runAction` (failures collected, one `RemovalReport` fold — the rail's report dialog counts "N of M not deleted"). Add `delete_managed_skills(ids)` under one `serialized` section answering one report so a whole-command failure mid-batch still carries the settled rows (same class as #64 (1)). Source: ticket 13 Result "Delete batch shape".
 - **#65 Inspector metadata the wire does not carry (round 19 ticket 12, audit I9)** — three D15/D18/D22 clauses shipped honestly degraded because `ManagedSkillDto` / `SkillTargetDto` lack the fields: (1) a **typed settled error per target row** (`last_error` classified as `CommandError` where it settles, exported through specta, folded once by `skillHealth`) so a target row can read "permission denied" / "Overwrite and retry" instead of state words — today the inspector's Retry raises the ask from its fresh report and the row shows product-state copy only; (2) the **recorded git ref/SHA** on the skill (the store has it; the DTO does not) for the Upstream section's revision line (also #62's input); (3) a **detached-origin path** kept on Detach so the provenance line can read "Detached from ~/…" (today Detach clears source metadata and the line reads "No upstream — Refresh skips it"). Never hand-mirror these in TS; each is derive + `cargo test` + shim re-export. Source: `archive/round19/review/ticket-12-audit.md` § I9; ticket 12 Result "BACKLOG follow-ups".
 - **#64 Four accepted command-API compromises from round 19 ticket 09** — each ships in 1.3.0 under one outer lifecycle action with one ask/fold/run, but falls short of one-command-per-operator-action: (1) project assign/unassign over several skills is one `bulk_assign_skill` / `bulk_unassign_skill` per skill → a multi-skill command that still carries settled partial reports when a later skill fails whole-command; (2) Deploy all is Enable then first sync, two commands over disjoint partitions (no atomic cross-partition promise) → a combined backend surface; (3) a successfully answered project collision row is dropped from the Update/Edit report (`resolve_project_collisions` returns no sync mode; folds count only failures, views are re-read) → a lossless typed settled-target representation before any consumer treats the array as a complete audit; (4) the Enable retry re-runs the whole scope with overrides (it reselects only still-disabled rows) → a pair-exact answered-pair Enable API, keeping the tests that unrelated completed pairs stay untouched. Source: `archive/round19/review/ticket-09-review.md` § Re-review ("Four command-API compromises").
