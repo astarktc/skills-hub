@@ -549,3 +549,20 @@ Carried into the spec body (from #108/#109's BACKLOG text, not re-grilled):
 - the release-smoke line (a real machine's first-launch move checked with `ls -la` over old and new folders);
 - #88's residue: preview copy ("would move N"), the shadowed-own-copy flag, Import near-misses under the preference,
   the layout read once per operation, and onboarding's reader roster for shared or aliased dirs.
+
+### After the prototype (2026-11-06)
+
+The A/B/C prototype is on the throwaway branch `proto/waveb-harness-cards` (`7e0380f`); its run notes and trade-offs are
+in `.scratch/round20/prototype-harnesses.md` on that branch. The T3 Code study is
+`docs/design-inputs/2026-11-06-t3code-project-defaults-and-overrides.md` (`6855499`).
+
+- **Q30 — Turning the preference off asks which harnesses get their own folder.** Its confirmation lists every
+  installed harness that is currently served by an on folder, each one ticked. You untick the ones you don't want, and
+  the own-folder cards switch on to match. No per-harness record is kept underneath the cards. The prototype showed
+  why this is needed: C remembers folders, not harnesses, so on the operator's machine an automatic rule wrote 6
+  folders instead of 3.
+- **Q31 — Calmer cards.**
+  - A card's title is its folder ("Shared folder — `~/.agents/skills`", "Claude Code — `~/.claude/skills`"), with
+    "Serves …" underneath, so a title never changes when harnesses regroup.
+  - "Also seen by" lists names only. Every duplicate consequence lives in the pane's single "Seen twice (N)" section.
+  - A card turns amber only for a harness whose invocation breaks (fx `LoadsNone`).
