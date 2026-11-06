@@ -82,6 +82,11 @@ export const TOOL_REGISTRY: readonly FixtureTool[] = [
   // Fixture-only stand-in for a harness with no project skills dir until the
   // real WorkBuddy row lands (round 20 ticket 05).
   { key: "workbuddy", label: "WorkBuddy", globalDir: ".workbuddy/skills", projectDir: null, grouped: false },
+  // round 20 ticket 07 rows
+  { key: "letta_code", label: "Letta Code", globalDir: ".letta/skills", projectDir: ".agents/skills", grouped: true },
+  { key: "muse_code", label: "Muse Code", globalDir: ".config/muse/skills", projectDir: ".agents/skills", grouped: true },
+  { key: "poolside", label: "Poolside", globalDir: ".config/poolside/skills", projectDir: ".agents/skills", grouped: true },
+  { key: "dirac", label: "Dirac", globalDir: ".dirac/skills", projectDir: ".agents/skills", grouped: true },
 ];
 
 /**
@@ -116,4 +121,8 @@ export const DUPLICATE_READS: Readonly<Record<string, { keys: readonly string[];
   github_copilot: { keys: ["agents_skills"], behaviour: "unknown" },
   droid: { keys: ["agents_skills"], behaviour: "shadows" },
   windsurf: { keys: ["agents_skills", "github_copilot"], behaviour: "unknown" },
+  // round 20 ticket 07 rows
+  muse_code: { keys: ["agents_skills", "claude_code", "codex"], behaviour: "unknown" },
+  poolside: { keys: ["agents_skills"], behaviour: "unknown" },
+  dirac: { keys: ["agents_skills", "claude_code"], behaviour: "shadows" },
 };

@@ -129,6 +129,16 @@ fn every_existing_row_resolves_to_the_paths_it_always_has() {
         ),
         ("moltbot", ".moltbot/skills", &[], &[".moltbot"]),
         ("hermes-agent", ".hermes/skills", &[], &[".hermes"]),
+        // round 20 ticket 07 rows
+        ("letta_code", ".letta/skills", &[], &[".letta"]),
+        ("muse_code", ".config/muse/skills", &[], &[".config/muse"]),
+        (
+            "poolside",
+            ".config/poolside/skills",
+            &[],
+            &[".config/poolside"],
+        ),
+        ("dirac", ".dirac/skills", &[], &[".dirac"]),
     ];
     assert_eq!(
         expected.len(),
@@ -717,6 +727,11 @@ fn project_relative_skills_dir_for_every_tool() {
         ("windsurf", Some(".windsurf/skills")),
         ("moltbot", Some(".moltbot/skills")),
         ("hermes-agent", Some(".hermes/skills")),
+        // round 20 ticket 07 rows
+        ("letta_code", Some(".agents/skills")),
+        ("muse_code", Some(".agents/skills")),
+        ("poolside", Some(".agents/skills")),
+        ("dirac", Some(".agents/skills")),
     ];
     assert_eq!(
         expected.len(),
@@ -770,7 +785,7 @@ fn a_harness_without_a_project_dir_has_no_project_scope() {
 }
 
 #[test]
-fn agents_standard_group_has_nine_constituents_and_one_entry() {
+fn agents_standard_group_lists_its_constituents_and_one_entry() {
     let members: Vec<&str> = constituents_of(VirtualGroup::AgentsStandard)
         .map(|a| a.key())
         .collect();
@@ -786,6 +801,11 @@ fn agents_standard_group_has_nine_constituents_and_one_entry() {
             "cline",
             "gemini_cli",
             "github_copilot",
+            // round 20 ticket 07 rows
+            "letta_code",
+            "muse_code",
+            "poolside",
+            "dirac",
         ]
     );
     for a in constituents_of(VirtualGroup::AgentsStandard) {
@@ -1561,6 +1581,43 @@ fn every_row_restates_its_brief_read_facts() {
             P::Own,
             D::Shadows,
             &[],
+        ),
+        // round 20 ticket 07 rows
+        (
+            "letta_code",
+            "Letta Code (extra)",
+            [No, No],
+            [Yes, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "muse_code",
+            "addendum: Muse Code",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Unknown,
+            D::Unknown,
+            &[(".codex/skills", M::Default)],
+        ),
+        (
+            "poolside",
+            "addendum: Poolside",
+            [Yes, U],
+            [Yes, U],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "dirac",
+            "addendum: Dirac",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Shared,
+            D::Shadows,
+            &[(".ai/skills", M::Default)],
         ),
     ];
     let keys: Vec<&str> = default_tool_adapters().iter().map(|a| a.key()).collect();

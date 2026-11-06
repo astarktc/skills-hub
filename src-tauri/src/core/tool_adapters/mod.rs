@@ -62,6 +62,11 @@ pub enum ToolId {
     Windsurf,
     Moltbot,
     HermesAgent,
+    // round 20 ticket 07 rows
+    LettaCode,
+    MuseCode,
+    Poolside,
+    Dirac,
 }
 
 impl ToolId {
@@ -112,6 +117,11 @@ impl ToolId {
             ToolId::Windsurf => "windsurf",
             ToolId::Moltbot => "moltbot",
             ToolId::HermesAgent => "hermes-agent",
+            // round 20 ticket 07 rows
+            ToolId::LettaCode => "letta_code",
+            ToolId::MuseCode => "muse_code",
+            ToolId::Poolside => "poolside",
+            ToolId::Dirac => "dirac",
         }
     }
 }
@@ -1488,6 +1498,130 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
             precedence: Precedence::Own,
             duplicates: DuplicateBehaviour::Shadows,
             also_reads: &[],
+        },
+    },
+    // round 20 ticket 07 rows
+    ToolAdapter {
+        id: ToolId::LettaCode,
+        display_name: "Letta Code",
+        // Computer-scoped skills: docs.letta.com/configuration/skills (brief T40,
+        // re-fetched 2026-11-06). `~/.letta` holds `settings.json` (the config root).
+        // Its only project skills dir is `.agents/skills`, so it joins the group.
+        skills_dir: home(".letta/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".letta")],
+        project_skills_dir: Some(".agents/skills"),
+        group: Some(VirtualGroup::AgentsStandard),
+        supports_symlink: true,
+        // Read facts: brief § Part 2, row "Letta Code (extra)".
+        // VERIFIED T40: no global shared folder; project `.agents/skills` only.
+        // Agent-memory skills live in the agent's own MemFS, not modelled.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::MuseCode,
+        display_name: "Muse Code",
+        // `$XDG_CONFIG_HOME/muse/skills`, default `~/.config/muse/skills` (addendum
+        // P1, re-fetched 2026-11-06); `XDG_CONFIG_HOME` is not honoured, and the
+        // Windows default is UNKNOWN. `~/.config/muse` holds `settings.json` (P2).
+        skills_dir: home(".config/muse/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".config/muse")],
+        project_skills_dir: Some(".agents/skills"),
+        group: Some(VirtualGroup::AgentsStandard),
+        supports_symlink: true,
+        // Read facts: addendum § Shared-dir reads, row "Muse Code".
+        // VERIFIED P1. The "foreign personal roots" (`~/.claude/skills`,
+        // `$CODEX_HOME/skills` falling back to `~/.codex/skills`) are on by default; a
+        // user preference or rollout gate can turn them off. Collisions undocumented.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[AlsoRead {
+                dir: home(".codex/skills"),
+                mode: ReadMode::Default,
+            }],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::Poolside,
+        display_name: "Poolside",
+        // The `pool` CLI: docs.poolside.ai/skills (addendum P3, re-fetched
+        // 2026-11-06). `~/.config/poolside` holds `settings.yaml` (P5).
+        skills_dir: home(".config/poolside/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".config/poolside")],
+        project_skills_dir: Some(".agents/skills"),
+        group: Some(VirtualGroup::AgentsStandard),
+        supports_symlink: true,
+        // Read facts: addendum § Shared-dir reads, row "Poolside".
+        // VERIFIED P3–P4 (`~/.agents/skills` since 1.0.11). It "also scans
+        // directories used by other tools", unnamed: `.claude` stays Unknown.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Unknown,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Unknown,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::Dirac,
+        // A Cline fork, but its own product with its own `~/.dirac` root: never an
+        // alias of the `cline` row (addendum § Summary 5).
+        display_name: "Dirac",
+        // `getDiracHomePath()` = `~/.dirac`, no env override for skills (addendum
+        // P6–P8, re-read at master 2026-11-06).
+        skills_dir: home(".dirac/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".dirac")],
+        project_skills_dir: Some(".agents/skills"),
+        group: Some(VirtualGroup::AgentsStandard),
+        supports_symlink: true,
+        // Read facts: addendum § Shared-dir reads, row "Dirac".
+        // VERIFIED P6–P7: the dedupe iterates backwards, so `~/.ai` > `~/.claude` >
+        // `~/.agents` > `~/.dirac` — the shared copy wins, silently.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Shared,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[AlsoRead {
+                dir: home(".ai/skills"),
+                mode: ReadMode::Default,
+            }],
         },
     },
 ];

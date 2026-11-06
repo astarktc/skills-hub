@@ -78,6 +78,10 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 | `windsurf` | Devin (Windsurf) | `.codeium/windsurf/skills` | `.windsurf/skills` | `.codeium/windsurf` |
 | `moltbot` | MoltBot | `.moltbot/skills` | `.moltbot/skills` | `.moltbot` |
 | `hermes-agent` | Hermes Agent | `.hermes/skills` | `.hermes/skills` | `.hermes` |
+| `letta_code` | Letta Code | `.letta/skills` | `.agents/skills` | `.letta` |
+| `muse_code` | Muse Code | `.config/muse/skills` | `.agents/skills` | `.config/muse` |
+| `poolside` | Poolside | `.config/poolside/skills` | `.agents/skills` | `.config/poolside` |
+| `dirac` | Dirac | `.dirac/skills` | `.agents/skills` | `.dirac` |
 
 `agents_skills` is scope-dependent. **Globally** it is a plain, independently selectable target: it
 manages `~/.agents/skills` and nothing else — Cursor still reads `~/.cursor/skills`, Codex still reads

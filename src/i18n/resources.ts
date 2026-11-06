@@ -411,6 +411,11 @@ export const resources = {
         droid: "Droid",
         windsurf: "Devin (Windsurf)",
         moltbot: "MoltBot",
+        // round 20 ticket 07 rows
+        letta_code: "Letta Code",
+        muse_code: "Muse Code",
+        poolside: "Poolside",
+        dirac: "Dirac",
       },
       unsyncNothingPlanned:
         "Nothing was removed — no deployment could be located for this request",

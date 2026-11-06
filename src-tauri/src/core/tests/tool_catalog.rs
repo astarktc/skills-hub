@@ -76,6 +76,11 @@ fn the_group_roster_is_carried_at_project_scope_only() {
             "Cline",
             "Gemini CLI",
             "GitHub Copilot",
+            // round 20 ticket 07 rows
+            "Letta Code",
+            "Muse Code",
+            "Poolside",
+            "Dirac",
         ]
     );
 }
@@ -190,7 +195,7 @@ fn project_catalog_absorbs_constituents_into_the_virtual_group() {
         );
         assert!(agents.constituents.contains(&a.display_name));
     }
-    assert_eq!(agents.constituents.len(), 9);
+    assert_eq!(agents.constituents.len(), 13);
     // Real tools keep no constituents.
     assert!(entry(&entries, "claude_code").constituents.is_empty());
 }
