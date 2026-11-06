@@ -379,3 +379,6 @@ The operator keeps one skill Library and deploys it to many harnesses. Three thi
   dispatched.
 - 02 dispatched after 01's merge.
 - 02 merged `efaf49a` (PR #14); Astra fix-then-ship, 3 findings fixed by the orchestrator. 05 dispatched.
+- 05 merged as `9c66a8e` (PR #17) and 07 as `d954846` (PR #15); they ran in parallel, and the orchestrator merged them
+  keeping both appended blocks. 06 is still running. The combined row review follows. 03 is in round 4 (both round-3
+  reviews were fix-then-ship).

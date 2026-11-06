@@ -1,6 +1,6 @@
 # 05: Rows I — the promised four and the reader-only members
 
-Status: ready-for-agent
+Status: done — 9c66a8e
 
 **Blocked by:** 02 (facts and warning). The rows carry facts, and the reader-only rows need 01's kind.
 
@@ -46,3 +46,32 @@ Take each row's keys, detect dirs and project dirs from its brief row. Round 19'
 - [ ] `npm run version:check && npm run check` passes.
 
 ## Comments
+
+- 2026-11-06 (implementer, branch `t3/rows-promised-four-and-readers`, draft PR #17): all criteria built; gate passes.
+  Re-verification (all fetched 2026-11-06):
+  - DSH T72, ZCode T73, Codewhale T74, Warp T22, Zed T23 (+ `crates/paths` for the config dir), Dexto T34 and fx T35
+    hold as the brief says.
+  - VT Code P10–P12 holds at the same SHA, 86902fc.
+  - crow-cli P15 holds on `main`.
+  - Corust Agent P17 holds: strings from the v0.6.0 binary, still its latest release.
+  - DimCode P13 holds: strings from the 0.5.24 bundle, still the latest version.
+  - WorkBuddy: still secondary-only, and the vendor doc names no path.
+  - Sarvam Code: the T37 teardown confirms `~/.sarvam/config.toml` but names no `.agents` path. It ships low-confidence
+    with every fact `Unknown`.
+
+  Deviations:
+  - Warp: the brief's "Linux/Windows roots UNKNOWN" is resolved from docs.warp.dev/terminal/settings/file-locations,
+    now brief source T80. Detect dirs are `~/.warp` (every OS) plus `~/.config/warp-terminal`, with a Windows override
+    to `%LOCALAPPDATA%\warp\Warp`.
+  - VT Code: detected by its platform config dir as well as `~/.vtcode`. The source gives it per OS: macOS
+    `LocalAppData/com.vinhnx.vtcode`, Windows `%APPDATA%\vinhnx\vtcode`, Linux `~/.config/vtcode`.
+  - Keys for the reader rows: `warp`, `zed`, `dexto`, `fx`, `sarvam_code`, `vt_code`, `dimcode`, `crow_cli`,
+    `corust_agent`.
+
+  Shape:
+  - `ReaderOnlyHarness` now has `group: VirtualGroup` (renamed from `reads`) and `reads: ReadFacts`.
+  - Pairs are carried on `ReaderHarnessDto.duplicate_readers`.
+  - The frontend `DuplicatePair.via` names the group entry, so the pair warns on the `.agents/skills` row, on the
+    other harness's row and in the Deploy ask.
+  - Reader labels join `toolLabelById`.
+- 2026-11-06 (orchestrator): merged as `9c66a8e` (PR #17) after CI went green. The combined adversarial row review for 05–07 follows once 06 lands.
