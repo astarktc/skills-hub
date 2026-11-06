@@ -654,45 +654,6 @@ impl SkillStore {
         })
     }
 
-    /// Delete a settings row that held a secret so its bytes leave the
-    /// database file, not just the table. Deleting an absent key is a no-op
-    /// (the compaction still runs).
-    ///
-    /// A plain `DELETE` only unlinks the row: its content stays in the freed
-    /// page until reused, and earlier values of the row (previous upserts)
-    /// may sit in freelist pages. So, on this one connection:
-    /// `secure_delete = ON` zeroes the deleted content
-    /// (<https://www.sqlite.org/pragma.html#pragma_secure_delete>), then
-    /// `VACUUM` rebuilds the file so no freed page keeps a historical copy
-    /// (<https://www.sqlite.org/lang_vacuum.html>). The store runs in WAL mode
-    /// (`enable_wal`), so the WAL is then checkpointed and truncated too; a
-    /// database still in the rollback journal has no WAL, and SQLite deletes
-    /// its journal at commit.
-    ///
-    /// Limits: this cannot reach copies outside the live file — backups,
-    /// APFS / Time Machine snapshots, other legacy-identifier database copies,
-    /// or flash-storage remnants.
-    ///
-    /// Any failure is an error. When the DELETE succeeded but the compaction
-    /// failed, the row is already gone (and its live bytes zeroed) — only
-    /// historical copies may remain, until the retry below.
-    ///
-    /// Retry signal: the DELETE and a non-secret marker row
-    /// `<key>.cleanup_pending` = `1` commit in one transaction, and the marker
-    /// is removed only after the compaction succeeded. A compaction that fails
-    /// (busy database, disk error, a WAL checkpoint that could not finish)
-    /// leaves the marker, so [`Self::finish_pending_secure_cleanup`] — run at
-    /// startup and by every token Save/Remove — completes it later even
-    /// though the row is gone. Plaintext is never restored to obtain a retry.
-    /// Delete a settings row that holds no secret (a secret goes through
-    /// [`Self::delete_setting_securely`]).
-    pub(super) fn delete_setting(&self, key: &str) -> Result<()> {
-        self.with_conn(|conn| {
-            conn.execute("DELETE FROM settings WHERE key = ?1", params![key])?;
-            Ok(())
-        })
-    }
-
     /// Raw settings-table adapter; see [`SkillStore::get_setting`]. Delete
     /// the rows `delete` and upsert the rows `set` in one transaction (no
     /// secret: a secret goes through [`Self::delete_setting_securely`]).
@@ -734,6 +695,36 @@ impl SkillStore {
         })
     }
 
+    /// Delete a settings row that held a secret so its bytes leave the
+    /// database file, not just the table. Deleting an absent key is a no-op
+    /// (the compaction still runs).
+    ///
+    /// A plain `DELETE` only unlinks the row: its content stays in the freed
+    /// page until reused, and earlier values of the row (previous upserts)
+    /// may sit in freelist pages. So, on this one connection:
+    /// `secure_delete = ON` zeroes the deleted content
+    /// (<https://www.sqlite.org/pragma.html#pragma_secure_delete>), then
+    /// `VACUUM` rebuilds the file so no freed page keeps a historical copy
+    /// (<https://www.sqlite.org/lang_vacuum.html>). The store runs in WAL mode
+    /// (`enable_wal`), so the WAL is then checkpointed and truncated too; a
+    /// database still in the rollback journal has no WAL, and SQLite deletes
+    /// its journal at commit.
+    ///
+    /// Limits: this cannot reach copies outside the live file — backups,
+    /// APFS / Time Machine snapshots, other legacy-identifier database copies,
+    /// or flash-storage remnants.
+    ///
+    /// Any failure is an error. When the DELETE succeeded but the compaction
+    /// failed, the row is already gone (and its live bytes zeroed) — only
+    /// historical copies may remain, until the retry below.
+    ///
+    /// Retry signal: the DELETE and a non-secret marker row
+    /// `<key>.cleanup_pending` = `1` commit in one transaction, and the marker
+    /// is removed only after the compaction succeeded. A compaction that fails
+    /// (busy database, disk error, a WAL checkpoint that could not finish)
+    /// leaves the marker, so [`Self::finish_pending_secure_cleanup`] — run at
+    /// startup and by every token Save/Remove — completes it later even
+    /// though the row is gone. Plaintext is never restored to obtain a retry.
     pub(super) fn delete_setting_securely(&self, key: &str) -> Result<()> {
         self.with_conn(|conn| {
             // Per connection; set before the transaction so it is in force

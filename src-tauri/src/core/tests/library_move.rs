@@ -1904,7 +1904,7 @@ fn review_aside_missing_destination_restores_last_copy() {
     let item = report
         .left_behind
         .iter()
-        .find(|item| PathBuf::from(&item.path) == old)
+        .find(|item| Path::new(&item.path) == old)
         .unwrap_or_else(|| panic!("{old:?} reported: {:?}", report.left_behind));
     assert_eq!(item.reason, LeftBehindReason::DestinationMissing);
     assert_eq!(item.skill_id.as_deref(), Some(id.as_str()));
@@ -1982,7 +1982,7 @@ fn a_stale_journal_puts_a_set_aside_copy_back() {
     assert!(report
         .left_behind
         .iter()
-        .any(|item| PathBuf::from(&item.path) == old
+        .any(|item| Path::new(&item.path) == old
             && item.reason == LeftBehindReason::StaleJournal
             && item.skill_id.as_deref() == Some(id.as_str())));
 }
