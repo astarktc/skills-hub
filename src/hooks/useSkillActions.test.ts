@@ -155,7 +155,7 @@ function setup(options: { skills?: ManagedSkill[]; sharedDir?: boolean; effectiv
   const projects = {
     assignToProject: vi.fn(async (): Promise<ProjectSyncReport> => ({ items: [], skipped_projects: [] })),
     unassignFromProject: vi.fn(async () => EMPTY_REMOVAL),
-    refreshView: vi.fn(async (_projectId: string) => true),
+    refreshView: vi.fn<(projectId: string) => Promise<boolean>>(async () => true),
     projects: [] as ProjectDto[],
   };
   return { skills, sync, projects };

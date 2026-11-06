@@ -163,7 +163,7 @@ function keyPieces(node: ts.Expression): Array<string | null> {
 }
 
 /** Where a literal's value goes once `?:` / `??` / `||` / `&&` / parentheses / `as` are climbed out of. */
-function useSite(node: ts.Node): [ts.Node, ts.Node | undefined] {
+function valueSite(node: ts.Node): [ts.Node, ts.Node | undefined] {
   let child: ts.Node = node;
   let parent = node.parent;
   while (
@@ -219,7 +219,7 @@ function translationReads(files: readonly SourceFileText[], forwarders = KEY_FOR
             );
         }
       } else if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && KEY_SHAPED.test(node.text)) {
-        const [child, parent] = useSite(node);
+        const [child, parent] = valueSite(node);
         if (isHandOff(child, parent, forwarders)) keys.add(node.text);
       }
       ts.forEachChild(node, visit);
