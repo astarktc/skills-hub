@@ -30,3 +30,6 @@ back with evidence, not forced.
 ## Status
 
 - L1–L5: dispatched 2026-11-05.
+- L3 merged (`f0c4a96`): Sol review fix-then-merge, one P2 (HTML scan not quote-aware) fixed by the orchestrator.
+- L4 merged (`8f69777`): Sol review fix-then-merge, three P2s — two Enable-copy accuracy bugs fixed by the orchestrator;
+  "Problems first is not persisted" declined: sort was never persisted (pre-existing `useState`), outside #72.
