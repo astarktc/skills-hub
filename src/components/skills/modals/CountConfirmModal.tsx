@@ -5,7 +5,9 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import type { CountVerb } from "../../../hooks/useSurfaceState";
 import {
+  disableConfirmLines,
   disableCounts,
+  enableConfirmLines,
   enableCounts,
   syncCounts,
   updateCounts,
@@ -36,8 +38,8 @@ type CountConfirmModalProps = {
 /**
  * A wide verb's count-bearing confirmation (D8; the bulk rail): what the
  * verb will touch, counted by the pure folds in `lib/bulkCounts.ts` before
- * it runs — "Disable 60 skills on 7 Tools — 412 Sync targets are removed and
- * kept disabled; …". Focus opens on Cancel (the answer is large even when it
+ * it runs — "Removes 412 global deployments from 7 harnesses. Turns off 9
+ * project deployments." (the sentences are `bulkCounts`' too). Focus opens on Cancel (the answer is large even when it
  * is not destructive). Sync to Tools carries its Tool pick here, the counts
  * following the pick.
  */
@@ -73,9 +75,6 @@ export default function CountConfirmModal({
   }, [loadPlacementViews, open, readsProjects]);
 
   const n = (key: "skills" | "tools" | "targets" | "assignments", count: number) => t(`bulk.count.${key}`, { count });
-  // The assignment count once the placements are read; until then the words alone.
-  const assignmentsPhrase = (count: number | null) =>
-    count === null ? t("bulk.confirm.someAssignments") : n("assignments", count);
 
   let title = "";
   let confirmLabel = "";
@@ -87,30 +86,12 @@ export default function CountConfirmModal({
     const counts = disableCounts(skills, assignmentsOf);
     title = t("bulk.confirm.disable.title", { count: counts.skills });
     confirmLabel = t("bulk.confirm.disable.confirm");
-    lines.push(
-      t(counts.assignments === 0 ? "bulk.confirm.disable.bodyNoAssignments" : "bulk.confirm.disable.body", {
-        skills: n("skills", counts.skills),
-        tools: n("tools", counts.tools),
-        targets: n("targets", counts.targets),
-        assignments: assignmentsPhrase(counts.assignments),
-      }),
-    );
-    if (counts.assignments === null) lines.push(t("bulk.confirm.readingProjects"));
-    if (counts.alreadyDisabled > 0) lines.push(t("bulk.confirm.disable.already", { count: counts.alreadyDisabled }));
+    lines.push(...disableConfirmLines(counts, t));
   } else if (verb === "enable") {
     const counts = enableCounts(skills, assignmentsOf);
     title = t("bulk.confirm.enable.title", { count: counts.skills });
     confirmLabel = t("bulk.confirm.enable.confirm");
-    lines.push(
-      t(counts.assignments === 0 ? "bulk.confirm.enable.bodyNoAssignments" : "bulk.confirm.enable.body", {
-        skills: n("skills", counts.skills),
-        tools: n("tools", counts.tools),
-        targets: n("targets", counts.targets),
-        assignments: assignmentsPhrase(counts.assignments),
-      }),
-    );
-    if (counts.assignments === null) lines.push(t("bulk.confirm.readingProjects"));
-    if (counts.alreadyEnabled > 0) lines.push(t("bulk.confirm.enable.already", { count: counts.alreadyEnabled }));
+    lines.push(...enableConfirmLines(counts, t));
   } else if (verb === "update") {
     const counts = updateCounts(skills);
     title = t("bulk.confirm.update.title", { count: counts.skills });

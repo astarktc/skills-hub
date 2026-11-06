@@ -3,7 +3,9 @@ import type { ManagedSkillDto as ManagedSkill, SkillTargetDto } from "../binding
 import {
   deleteScope,
   deleteTotals,
+  disableConfirmLines,
   disableCounts,
+  enableConfirmLines,
   enableCounts,
   harnessArrivals,
   syncCounts,
@@ -72,6 +74,7 @@ describe("disableCounts", () => {
       tools: 3, // claude, cursor, codex
       targets: 3, // a:claude, a:cursor, b:codex
       assignments: 2, // a:claude (synced), b:codex (error)
+      assigned: 3, // every assignment row, a:pi (already disabled) included
     });
   });
 
@@ -95,6 +98,62 @@ describe("enableCounts", () => {
       targets: 3,
       assignments: 1, // a: pi disabled
     });
+  });
+});
+
+// BACKLOG #73: what the Disable / Enable confirmations say, case by case
+// (the numbers stay disableCounts' / enableCounts').
+describe("the Disable / Enable confirmation sentences", () => {
+  const t = (key: string, opts?: Record<string, unknown>) => (opts ? `${key} ${JSON.stringify(opts)}` : key);
+  const disable = { skills: 3, alreadyDisabled: 0, tools: 2, targets: 4, assignments: 2, assigned: 2 };
+  const enable = { skills: 3, alreadyEnabled: 0, tools: 2, targets: 4, assignments: 2 };
+  const harness = 'bulk.confirm.disable.removes {"targets":"bulk.count.targets {\\"count\\":4}","tools":"bulk.count.tools {\\"count\\":2}"}';
+  const stays = 'bulk.confirm.disable.stays {"count":3}';
+
+  it("Disable: what leaves the harnesses, what turns off in projects, then that the skills stay, off", () => {
+    expect(disableConfirmLines(disable, t)).toEqual([
+      `${harness} bulk.confirm.disable.turnsOff {"assignments":"bulk.count.assignments {\\"count\\":2}"}`,
+      stays,
+    ]);
+  });
+
+  it("Disable with no project assignment says so; with every one already off says that", () => {
+    expect(disableConfirmLines({ ...disable, assignments: 0, assigned: 0 }, t)[0]).toBe(
+      `${harness} bulk.confirm.disable.noAssignments {"count":3}`,
+    );
+    expect(disableConfirmLines({ ...disable, assignments: 0, assigned: 2 }, t)[0]).toBe(
+      `${harness} bulk.confirm.disable.assignmentsAlreadyOff {"count":3}`,
+    );
+  });
+
+  it("Disable with nothing deployed globally, and while the projects are unread", () => {
+    expect(disableConfirmLines({ ...disable, targets: 0, tools: 0, assignments: 0, assigned: 0 }, t)[0]).toBe(
+      'bulk.confirm.disable.notDeployed {"count":3} bulk.confirm.disable.noAssignments {"count":3}',
+    );
+    expect(disableConfirmLines({ ...disable, assignments: null, assigned: null, alreadyDisabled: 1 }, t)).toEqual([
+      harness,
+      "bulk.confirm.readingProjects",
+      stays,
+      'bulk.confirm.disable.already {"count":1}',
+    ]);
+  });
+
+  it("Enable: what is redeployed, globally and in projects, each part only when it has a count", () => {
+    const targets = '"targets":"bulk.count.targets {\\"count\\":4}","tools":"bulk.count.tools {\\"count\\":2}"';
+    const assignments = '"assignments":"bulk.count.assignments {\\"count\\":2}"';
+    expect(enableConfirmLines(enable, t)).toEqual([`bulk.confirm.enable.redeploysBoth {${targets},${assignments}}`]);
+    expect(enableConfirmLines({ ...enable, assignments: 0 }, t)).toEqual([`bulk.confirm.enable.redeploysGlobal {${targets}}`]);
+    expect(enableConfirmLines({ ...enable, targets: 0, tools: 0 }, t)).toEqual([
+      `bulk.confirm.enable.redeploysProjects {${assignments}}`,
+    ]);
+    expect(enableConfirmLines({ ...enable, targets: 0, tools: 0, assignments: 0 }, t)).toEqual([
+      'bulk.confirm.enable.nothingToRedeploy {"count":3}',
+    ]);
+    expect(enableConfirmLines({ ...enable, assignments: null, alreadyEnabled: 2 }, t)).toEqual([
+      `bulk.confirm.enable.redeploysGlobal {${targets}}`,
+      "bulk.confirm.readingProjects",
+      'bulk.confirm.enable.already {"count":2}',
+    ]);
   });
 });
 

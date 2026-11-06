@@ -895,12 +895,20 @@ export const resources = {
         },
         confirm: {
           readingProjects: "Reading project deployments\u2026",
-          someAssignments: "project deployments",
           disable: {
             title_one: "Disable {{count}} skill on all harnesses?",
             title_other: "Disable {{count}} skills on all harnesses?",
-            body: "Disable {{skills}} on {{tools}} \u2014 {{targets}} are removed and kept disabled; {{assignments}} for these skills are disabled too. Updates will not re-add them.",
-            bodyNoAssignments: "Disable {{skills}} on {{tools}} \u2014 {{targets}} are removed and kept disabled; no project deployment changes. Updates will not re-add them.",
+            // The sentences `disableConfirmLines` picks (BACKLOG #73).
+            removes: "Removes {{targets}} from {{tools}}.",
+            notDeployed_one: "It is not deployed to any harness.",
+            notDeployed_other: "None of these skills is deployed to a harness.",
+            turnsOff: "Turns off {{assignments}}.",
+            noAssignments_one: "It is not deployed to any project.",
+            noAssignments_other: "None of these skills is deployed to a project.",
+            assignmentsAlreadyOff_one: "Its project deployments are already off.",
+            assignmentsAlreadyOff_other: "Their project deployments are already off.",
+            stays_one: "The skill stays in your library, switched off: updates won't redeploy it until you enable it.",
+            stays_other: "The skills stay in your library, switched off: updates won't redeploy them until you enable them.",
             already_one: "{{count}} of them is already off everywhere.",
             already_other: "{{count}} of them are already off everywhere.",
             confirm: "Disable on all harnesses",
@@ -908,10 +916,14 @@ export const resources = {
           enable: {
             title_one: "Enable {{count}} skill?",
             title_other: "Enable {{count}} skills?",
-            body: "Enable {{skills}} \u2014 {{targets}} on {{tools}} and {{assignments}} are deployed again, a first deploy each.",
-            bodyNoAssignments: "Enable {{skills}} \u2014 {{targets}} on {{tools}} are deployed again, a first deploy each.",
-            already_one: "{{count}} of them has nothing disabled.",
-            already_other: "{{count}} of them have nothing disabled.",
+            // The sentences `enableConfirmLines` picks (BACKLOG #73).
+            redeploysBoth: "Redeploys {{targets}} on {{tools}} and {{assignments}}.",
+            redeploysGlobal: "Redeploys {{targets}} on {{tools}}.",
+            redeploysProjects: "Redeploys {{assignments}}.",
+            nothingToRedeploy_one: "It switches back on. It was not deployed anywhere, so nothing is redeployed.",
+            nothingToRedeploy_other: "They switch back on. They were not deployed anywhere, so nothing is redeployed.",
+            already_one: "{{count}} of them is already on; nothing changes for it.",
+            already_other: "{{count}} of them are already on; nothing changes for them.",
             confirm: "Enable",
           },
           update: {

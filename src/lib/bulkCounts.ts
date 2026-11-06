@@ -18,6 +18,10 @@
  *   with no deployment there yet (`harnessArrivals`).
  * - **Delete**: the Tools and projects that carry each skill, the Edits that
  *   go with it, and whether Skills Hub's copy is the only one.
+ *
+ * Disable's and Enable's confirmations also take their sentences from here
+ * (`disableConfirmLines`, `enableConfirmLines`): which sentence a count calls
+ * for — a zero, an unread placement — is decided beside the count.
  */
 
 import type { ManagedSkillDto as ManagedSkill, ProjectSkillAssignmentDto, SkillTargetDto } from "../bindings";
@@ -63,6 +67,12 @@ export type DisableCounts = {
   targets: number;
   /** Project assignments disabled; null while the placements are unread. */
   assignments: number | null;
+  /**
+   * Every project assignment of the selection, already disabled ones
+   * included — so a zero `assignments` can tell "assigned nowhere" from
+   * "already off"; null while unread.
+   */
+  assigned: number | null;
 };
 
 /** Disable on all Tools, at skill grain, over the selection. */
@@ -82,6 +92,7 @@ export function disableCounts(skills: readonly ManagedSkill[], assignmentsOf: As
     tools: tools.size,
     targets,
     assignments: countAssignments(skills, assignmentsOf, (status) => status !== "disabled"),
+    assigned: countAssignments(skills, assignmentsOf, () => true),
   };
 }
 
@@ -117,6 +128,69 @@ export function enableCounts(skills: readonly ManagedSkill[], assignmentsOf: Ass
     targets,
     assignments: countAssignments(skills, assignmentsOf, (status) => status === "disabled"),
   };
+}
+
+/** The translate function the sentence folds take (i18next's `t` fits). */
+type Translate = (key: string, opts?: Record<string, unknown>) => string;
+
+const phrase = (t: Translate, unit: "skills" | "tools" | "targets" | "assignments", count: number) =>
+  t(`bulk.count.${unit}`, { count });
+
+/**
+ * The Disable confirmation's sentences (BACKLOG #73), in order: what leaves
+ * the harnesses and what turns off in projects (one line), "Reading project
+ * deployments…" while the placements are unread, that the skills stay in
+ * the library switched off, and how many are off already. A zero says what
+ * it means — not deployed anywhere, assigned to no project, or every project
+ * deployment already off — instead of a "0 …" count.
+ */
+export function disableConfirmLines(counts: DisableCounts, t: Translate): string[] {
+  const { skills, targets, tools, assignments, assigned } = counts;
+  const harnesses =
+    targets > 0
+      ? t("bulk.confirm.disable.removes", { targets: phrase(t, "targets", targets), tools: phrase(t, "tools", tools) })
+      : t("bulk.confirm.disable.notDeployed", { count: skills });
+  const projects =
+    assignments === null
+      ? null
+      : assignments > 0
+        ? t("bulk.confirm.disable.turnsOff", { assignments: phrase(t, "assignments", assignments) })
+        : assigned === 0
+          ? t("bulk.confirm.disable.noAssignments", { count: skills })
+          : t("bulk.confirm.disable.assignmentsAlreadyOff", { count: skills });
+  return [
+    projects ? `${harnesses} ${projects}` : harnesses,
+    ...(assignments === null ? [t("bulk.confirm.readingProjects")] : []),
+    t("bulk.confirm.disable.stays", { count: skills }),
+    ...(counts.alreadyDisabled > 0 ? [t("bulk.confirm.disable.already", { count: counts.alreadyDisabled })] : []),
+  ];
+}
+
+/**
+ * The Enable confirmation's sentences (BACKLOG #73): what is redeployed —
+ * globally, in projects, both, or nothing (the skills only switch back on) —
+ * "Reading project deployments…" while the placements are unread, and how
+ * many change nothing.
+ */
+export function enableConfirmLines(counts: EnableCounts, t: Translate): string[] {
+  const { skills, targets, tools, assignments } = counts;
+  const global = { targets: phrase(t, "targets", targets), tools: phrase(t, "tools", tools) };
+  const inProjects = (assignments ?? 0) > 0;
+  const redeploys =
+    targets > 0 && inProjects
+      ? t("bulk.confirm.enable.redeploysBoth", { ...global, assignments: phrase(t, "assignments", assignments ?? 0) })
+      : targets > 0
+        ? t("bulk.confirm.enable.redeploysGlobal", global)
+        : inProjects
+          ? t("bulk.confirm.enable.redeploysProjects", { assignments: phrase(t, "assignments", assignments ?? 0) })
+          : assignments === null
+            ? null
+            : t("bulk.confirm.enable.nothingToRedeploy", { count: skills });
+  return [
+    ...(redeploys ? [redeploys] : []),
+    ...(assignments === null ? [t("bulk.confirm.readingProjects")] : []),
+    ...(counts.alreadyEnabled > 0 ? [t("bulk.confirm.enable.already", { count: counts.alreadyEnabled })] : []),
+  ];
 }
 
 export type SyncCounts = {
