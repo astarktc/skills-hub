@@ -1603,6 +1603,14 @@ export function createFixtureBackend(
     return keys.length > 0 ? { keys, behaviour: reads.behaviour } : null;
   };
 
+  // The same rule for a detected reader-only harness, its deploy dir being the
+  // `.agents/skills` entry's (Rust `catalog::pairs_of`).
+  const readerDuplicateReads = (reader: (typeof READER_REGISTRY)[number]): ToolInfoDto["duplicate_readers"] => {
+    if (!reader.duplicates || !reader.detected) return null;
+    const keys = reader.duplicates.keys.filter((other) => isInstalled(other));
+    return keys.length > 0 ? { keys, behaviour: reader.duplicates.behaviour } : null;
+  };
+
   const toolStatus = (): ToolStatusDto => {
     const installed = TOOL_REGISTRY.filter((t) => isInstalled(t.key)).map((t) => t.key);
     const newly = installed.filter((k) => !state.seenTools.includes(k));
@@ -1616,7 +1624,12 @@ export function createFixtureBackend(
         constituents: [],
         readers:
           t.key === VIRTUAL_GROUP_KEY
-            ? READER_REGISTRY.map((r) => ({ key: r.key, label: r.label, installed: r.detected }))
+            ? READER_REGISTRY.map((r) => ({
+                key: r.key,
+                label: r.label,
+                installed: r.detected,
+                duplicate_readers: readerDuplicateReads(r),
+              }))
             : [],
         placement: {
           skills_dir: `~/${t.globalDir}`,
