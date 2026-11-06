@@ -29,12 +29,12 @@
 //!
 //! Not run at launch since 1.3.2 (BACKLOG #89): its path comparisons are
 //! lexical, so a Tool skills root that is a directory alias can make it
-//! delete central skill bytes. The redesign (BACKLOG #88) reuses this module.
+//! delete central skill bytes. The redesign (BACKLOG #108) reuses this module.
 
-// Unwired until BACKLOG #88: nothing outside the tests calls the pass.
+// Unwired until BACKLOG #108: nothing outside the tests calls the pass.
 #![cfg_attr(
     not(test),
-    allow(dead_code, reason = "unwired from launch until BACKLOG #88")
+    allow(dead_code, reason = "unwired from launch until BACKLOG #108")
 )]
 
 use std::path::{Path, PathBuf};
@@ -63,7 +63,7 @@ pub struct RelocationSummary {
 /// Mutation entry point: serialised against every other Sync-target mutation.
 #[allow(
     dead_code,
-    reason = "the launch entry point, unwired until BACKLOG #88; tests drive relocate_unlocked"
+    reason = "the launch entry point, unwired until BACKLOG #108; tests drive relocate_unlocked"
 )]
 pub fn relocate_former_global_targets(
     store: &SkillStore,

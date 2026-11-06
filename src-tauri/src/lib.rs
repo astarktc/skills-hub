@@ -174,7 +174,7 @@ pub fn run() {
             // deliberately not run (1.3.2, BACKLOG #89): it compares paths
             // lexically, so a Tool skills root that is a directory alias can
             // make it delete central skill bytes. It returns with the
-            // relocation redesign (BACKLOG #88), which reuses the module and
+            // relocation redesign (BACKLOG #108), which reuses the module and
             // the registry's `former_relative_skills_dirs`.
             app.manage(store.clone());
             app.manage(Arc::new(CancelToken::new()));

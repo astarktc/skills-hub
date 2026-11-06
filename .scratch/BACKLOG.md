@@ -5,28 +5,106 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#107**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#112**.
 
 Round 19 closed 2026-11-05 (`archive/round19/spec.md` § Closure — 2026-11-05); every line it carried was re-derived from
-the code that day (`archive/round19/closure/extract-{A..G}.md`). The next effort is **round 20**: candidates #92 (first),
-#91, #88, #70, #85/#86, #93, #84, #87.
+the code that day (`archive/round19/closure/extract-{A..G}.md`).
+
+**Order (operator 2026-11-05):**
+
+1. **1.3.3, a hygiene patch** — a solid base before roadmap features. #107 first, then tier 1 (#106 #105 #103 #95 #68
+   #63 #100 #102, #74's pointer) and tier 2 (#96 #97 #98 #90 #99 #101 #104 #73 #72 #76 #75).
+2. **Round 20**: #92 then #110, beside #91 (they touch different files); #108; #109 and #84 (both need the
+   project defaults/overrides pattern); then #70, #85/#86, #93, #87.
+
+Harness research behind #92 and #108–#110: `docs/design-inputs/2026-11-05-harness-candidates-and-shared-dir-reads.md` and
+`docs/design-inputs/2026-11-05-harness-candidates-acp-addendum.md`.
 
 ## Now — evidence of unfinished work is strong
 
-- **#92 Registry truth without relocation (ticket 34's non-moving half), rebuilt from `main`.** Ticket 34 (parked,
-  branch `t3/registry-truth-pass` — one commit `9d282d4`, falling behind `main`) also carried work that moves no
-  existing deployment; nothing else owns it, and CHANGELOG 1.3.1 announced the four new harnesses "held for 1.3.2"
-  (1.3.2's notes move them to the release that ships this). Scope: the four rows DeepSeek Harness, ZCode, Codewhale,
-  WorkBuddy (WorkBuddy's `project_relative_skills_dir` becomes an `Option` — the one structural change) + README rows +
-  the table test; the `reads_agents_standard_globally` / `also_reads` registry facts with the brief-snapshot test; the
-  cross-read warning in the Harnesses pane and the deploy confirmation (no auto-deselect; Kimi's legacy-only
-  cross-reads must not over-warn); Xum's display label (`tool_adapters/mod.rs:478` still "Mux"); the Windsurf
-  `.config/devin/skills` candidate (held — verify first); **retire Clawdbot and MoltBot, keep OpenClaw** (operator
-  2026-11-05 — the branch retired OpenClaw too by a literal reading; a stored retired-key row is tolerated as an unknown
-  key, `issues/34` :125–131); a fixture `registry` scenario. Cut it fresh from `main` — never cherry-pick the 44-file
-  branch. Absorbs #45 and #40's detection half. Round 20's first ticket (operator 2026-11-05). Source:
-  `archive/round19/issues/34-registry-truth-and-agents-dir-preference.md:30–64, :116`;
+- **#107 Removal can delete the central library through an aliased parent (P0-class, pre-existing; first in 1.3.3).**
+  `sync_engine::remove_path_any` (`:421`) deletes a *real* leaf at its resolved physical location when a parent is a
+  symlink/junction. With a parent aliased onto the central repo, the 1.3.2 review's differential probe deleted the
+  central skill on 1.3.1 and 1.3.2 alike (`.scratch/reviews/1.3.2-patch-review.md` :115–151, :226). A leaf *link* is safe.
+  The same flaw sits in the git cache's error-retry `remove_dir_all` (`git_cache.rs:281`; review R1, :257–271) and in
+  every destructive path fenced only by the lexical `tool_adapters::ensure_path_within_tool_dirs`: Import's original
+  removal (`onboarding_import.rs:720`), `sync_engine`'s overwrite replacement, artifact removal. Fix shape (review :136):
+  admit by physical entry identity (canonical parent + leaf, never resolving a leaf link), an explicit protected-central
+  boundary, and source/destination identity checks. A blanket `remove_dir` or canonicalise-and-delete is not a fix.
+  Extracted from #88 (operator 2026-11-05: urgent). Source: as cited; `archive/round19/review/ticket-34-backend-audit-3.md`
+  F14–F15.
+- **#92 Registry structure for the wider roster (registry truth without relocation), rebuilt from `main`.** What every new
+  row (#110) needs, and the facts #109 reads. Cut it fresh from `main`; branch `t3/registry-truth-pass` (`9d282d4`) is
+  reference only — never cherry-pick its 44 files. Scope:
+  - **Per-OS dirs.** Devin, Reasonix and Zed resolve under `%APPDATA%` on Windows, Crush also reads `%LOCALAPPDATA%`; the
+    registry knows only home-relative paths. Decide whether documented home overrides (`KIMI_CODE_HOME`, `DSH_HOME`,
+    `GROK_HOME`, …) are honoured — AGENTS.md's "core never resolves roots from the environment" rule applies.
+  - **An optional project dir** (WorkBuddy, Hermes and others have none).
+  - **Shared-folder facts per harness** from the 2026-11-05 brief's Part 2: reads `~/.agents/skills` / `~/.claude/skills`
+    (default / opt-in / no / unknown), precedence, duplicate hazard (fx loads neither copy; Cortex Code flags a conflict),
+    plus `also_reads` cross-reads — pinned by a brief-snapshot test.
+  - **The cross-read warning** in the Harnesses pane and the deploy confirmation (no auto-deselect; Kimi's legacy-only
+    cross-reads must not over-warn).
+  - **Undetected harnesses collapse by default** in the Harnesses pane (operator 2026-11-05).
+  - **Label and detect fixes that move no deployment:** Xum's label (`tool_adapters/mod.rs:478` still "Mux"); Windsurf
+    relabelled Devin (Devin CLI reads `~/.codeium/windsurf/skills`); Antigravity CLI's `.gemini/antigravity-cli` detect
+    dir; Zenflow as a Zencoder alias; QwenPaw's label and `.qwenpaw` detect dir (its dir move is #108).
+  - A fixture `registry` scenario; README table; the table test.
+  Absorbs #45 and #40's detection half. Source: `docs/design-inputs/2026-11-05-harness-candidates-and-shared-dir-reads.md`
+  § Part 2, § Implications; `archive/round19/issues/34-registry-truth-and-agents-dir-preference.md:30–64, :116`;
   `archive/round19/closure/extract-F.md` F8.
+- **#110 New harness rows (operator 2026-11-05: every recommended row, the optional ones included).** Blocked by #92.
+  Each row re-verified against its brief source when added; README rows; the table test; the AGENTS group label's count.
+  - **Own rows:** DeepSeek Harness, ZCode, Codewhale, WorkBuddy (promised by CHANGELOG 1.3.1); Grok Build, Deep Agents
+    Code (copy by default — it rejects symlinks resolving outside its skill dirs; see #84), Reasonix, Cortex Code, Rovo
+    Dev, IBM Bob, ForgeCode, Firebender, MiniMax Code, Posit Assistant, AiderDesk, Autohand Code CLI, Code Studio,
+    CodeArts Agent, Qoder CN (IDE, ex-Lingma), Qoder CN CLI, Kimchi, AstrBot, oh-my-pi, Letta Code; Muse Code, Poolside,
+    Dirac, Stakpak (ACP addendum; Muse Code, Poolside and Dirac also join the AGENTS group at project scope).
+  - **AGENTS-group members only** (no own deploy target): Warp, Zed, Dexto, fx, Sarvam Code, VT Code, DimCode,
+    crow-cli, Corust Agent.
+  - Skipped by the briefs (each with its reason there): Codemaker, inference.sh, Jazz, Loaf, Moxby, Ona, Terramind,
+    Tinycloud, Tabnine CLI, Eve, PromptScript, Replit, fast-agent, siGit Code, Minion Code, Harn, Nova, GLM Agent,
+    Agoragentic. ZeroClaw and nanobot (per-workspace skills dirs) need their own look.
+  Source: both 2026-11-05 briefs.
+- **#108 Redeploy: deploy to the new place, then undeploy the old (operator 2026-11-05).** One mechanism for every change
+  of where or how a Deployment lives: the shared-folder preference (#109), registry dir corrections, retired keys and
+  copy ↔ link switches (#84). Rules:
+  - **Deploy first, then remove** — a crash leaves at most a duplicate, never a missing skill, and a rerun completes it.
+  - **Remove the old copy only when byte-identical** to the library; a differing copy (local edits) goes to the one
+    overwrite ask (D12).
+  - Removal goes through `artifact_removal`, so **#107 lands first**.
+  - An old copy that fails to remove is reported as the duplicate it leaves ("shows twice in Cursor");
+    `RELOCATION_PENDING` / `relocation.incomplete` surface through `reportOutcome` (the fold skips every non-failed
+    status today).
+  Corrections it carries: Codex, Goose, OpenHands → `~/.agents/skills` globally; Antigravity → `~/.gemini/config/skills`;
+  Kimi → `~/.kimi-code/skills` (never blindly: `.config/agents` is Amp's and Crush's too); Kilo → `~/.kilo/skills`; Xum →
+  `~/.xum/skills`; Zencoder → `~/.agents/skills` (`.zencoder/skills` is deprecated); Copaw → QwenPaw (`~/.qwenpaw`);
+  **Clawdbot and MoltBot retired into OpenClaw**, OpenClaw kept (a stored retired-key row is tolerated as an unknown key,
+  `archive/round19/issues/34-…md:125–131`). Also: onboarding scans former dirs (`~/.codex/skills`) for import; the launch
+  pass returns as this mechanism (disabled in 1.3.2, `lib.rs` ~:172); acceptance tests are audit 3's F14–F16 (aliased
+  roots, a destination aliased onto the central repo, Keep over a copy with local-only edits); a release-smoke line — a
+  real machine's first-launch move checked with `ls -la` over the old and new dirs. Source: this session;
+  `archive/round19/review/ticket-34-backend-audit-3.md` § F15; `archive/round19/closure/extract-F.md` F9–F19,
+  `extract-E.md` E18.
+- **#109 Shared-folder preference (operator 2026-11-05; supersedes the former #83).** A Settings toggle — use shared
+  skills folders when a harness can read them — and a dropdown for a harness that reads both: `.agents` (default) or
+  `.claude`. Each harness is served by exactly one folder, chosen from #92's facts; a harness reading neither keeps its
+  own. Off = every harness's own folder, which for Codex is `~/.agents/skills` and for Claude Code `~/.claude/skills`.
+  Applied through #108. Downstream:
+  - **A Deployment is a folder; harnesses are its readers.** My Skills rows show one dot per folder (`.agents`,
+    `.claude`, plus own-folder dots); the inspector groups detected harnesses under the folder serving them.
+  - **Disable on a shared folder is per folder**, and its copy names every reader it affects. One reader cannot be
+    excluded while another harness needs the folder — say so rather than pretend.
+  - **Unavoidable duplicates**: a skill sent to a `.claude`-only harness (Claude Code) and an `.agents`-only one (Codex)
+    sits in both, and every harness reading both sees two (still fewer than today: Cursor can see four). Mark it where
+    it hurts (fx, Cortex Code).
+  - **Project scope** gets the same model with a per-project override; the defaults/overrides UI is designed once with
+    #84 — study T3 Code's project defaults and per-project overrides in the spec phase (operator 2026-11-05).
+  - Carries #88's preference residue: the offer dialog, preview copy ("would move N"), the shadowed-own-copy flag,
+    Import near-misses under the preference (a renamed / symlinked identical original), the layout read once per
+    operation (composites re-read it today), onboarding's reader roster for shared / aliased dirs.
+  Blocked by #92 and #108. Source: this session; `docs/design-inputs/2026-11-05-harness-candidates-and-shared-dir-reads.md`
+  § Part 2, § Implications; `archive/round19/issues/34-…md:440–466`.
 - **#91 Changing the library folder is unguarded, non-atomic and strands every link.** Settings → General → Browse…
   writes `central_repo_path` outside `runAction` (`src/hooks/useSettingsState.ts:214–228`); the backend
   (`commands/mod.rs` `update_setting` → `core/settings.rs:490–505` → `core/central_repo.rs:19–55` `move_central_repo`)
@@ -38,30 +116,10 @@ the code that day (`archive/round19/closure/extract-{A..G}.md`). The next effort
   all-or-nothing (or resumable with truthful status) and followed by re-pointing every owned Deployment. Pre-existing
   (not a round-19 regression); designed in round 20 (operator 2026-11-05). Source: `archive/round19/review/ticket-20-audit.md:161`;
   `archive/round19/closure/extract-E.md` E1–E2.
-- **#88 Relocation redesign: alias-aware artifact identity in every seam, resumable moves with truthful status.** Ticket 34's
-  backend half (branch `t3/registry-truth-pass`, three audit/fix rounds, parked 2026-11-04) showed that moving a live
-  deployment between dirs needs one physical identity (canonical parent + leaf, never the link's referent) applied by
-  relocation, cleanup, rollback, Keep, `sync_engine`'s overwrite **and** Import's original removal
-  (`onboarding_import.rs:719–720, 740–748`, fenced only by the lexical `tool_adapters::ensure_path_within_tool_dirs`),
-  and `sync_engine::remove_path_any` itself (a *real* leaf under a parent aliased onto the central repo is deleted at
-  its physical location — reproduced on 1.3.1 and 1.3.2 by the 1.3.2 review's differential probe; a leaf *link* is safe),
-  and the git clone cache's error-retry `remove_dir_all` (`git_cache.rs` ~:306–308: lexically confined to
-  `<cache_dir>/skills-hub-git-cache/<sha256>`, not physically — a symlinked cache ancestor redirects it; 1.3.2 re-check R1),
-  plus a move that survives a crash at any boundary without an unowned artifact or a `synced` row at a missing path.
-  Audit 3's F14–F16 are the acceptance tests (aliased source/destination roots; a destination aliased onto the central
-  repo; Keep over a copy with local-only edits) — re-express F15's against the launch pass too, then **re-enable the
-  launch pass** (disabled in 1.3.2 — the retired #89, `lib.rs` ~:172). Owns: the dir corrections that move deployments (Codex/Goose/OpenHands
-  joining the AGENTS group globally; Antigravity, Kilo, Xum, Kimi); the #83 preference — its accept path **and** its UI
-  half (the offer dialog, preview copy that says "would attempt to move N", the hide-harness-specific sub-setting, the
-  shadowed-own-copy flag, the Disable-of-one-reader-disables-all copy for a shared dir); `RELOCATION_PENDING` /
-  `relocation.incomplete` surfaced by `reportOutcome` (the fold skips every non-failed status today); Import near-misses
-  under the preference (a renamed / symlinked identical original); the layout read once per operation (composites
-  re-read the preference); onboarding's physical-path exclusion and reader roster for shared/aliased dirs, and scanning
-  former dirs (`~/.codex/skills`) for import; a release-smoke line — a real machine's first-launch move checked with
-  `ls -la` over the old and new dirs. Source: `archive/round19/review/ticket-34-backend-audit-3.md` § F15;
-  `archive/round19/issues/34-…md:440–466`; `archive/round19/closure/extract-F.md` F9–F19, `extract-E.md` E18.
-
-(Retired: #89 — the lexical launch relocation pass is no longer called (1.3.2, PR #5, `fc277aa`); re-enabling it is #88's.
+(Retired: #88 — split 2026-11-05 (operator): physical identity in every destructive seam, onboarding's physical-path
+exclusion included → #107; resumable moves, dir corrections, the launch pass, F14–F16 and the smoke line → #108; the
+#83 preference and its UI → #109. #89 — the lexical launch relocation pass is no longer called (1.3.2, PR #5,
+`fc277aa`); re-enabling it is #108's.
 Absorbed: #79 → round 19 ticket 29, #71 → 33, #78 → 30, #80 #81 #82 → 31 — all shipped; #67 #45 #83 and #40's detection
 half → ticket 34, superseded 2026-11-04 → #88 (relocation, the preference) and #92 (registry facts, rows, warning).)
 
@@ -86,6 +144,14 @@ half → ticket 34, superseded 2026-11-04 → #88 (relocation, the preference) a
 to Future efforts. #42 (overwrite ask on `TARGET_EXISTS`) was absorbed by `archive/round17/spec.md` D3 / `archive/round17/issues/03`. Items #43–#60
 were seeded 2026-09-24 from the upstream/field survey in `docs/design-inputs/` — each carries its § pointer; re-verify against the
 code before scheduling.)
+
+- **#84 Link vs copy, chosen by the operator at every level (operator 2026-11-05: important; unparked).** Today
+  copy-vs-link is the registry's `supports_symlink` alone (every entry `true`; Cursor's history shows a harness can
+  regress). Default link everywhere; overrides at global scope, project scope, per project and per harness — most
+  specific wins (harness › project › scope › default). A registry `supports_symlink: false` always copies, and the link
+  choice shows disabled with its reason (Deep Agents Code, #110). Sync code stays name-blind: the setting is read as a
+  capability. Changing a level re-deploys existing Deployments through #108 (identical-or-ask). The per-project UI
+  shares #109's defaults/overrides pattern. Source: grill 2026-11-02 (Q18); this session.
 
 ## Later — real, not urgent
 
@@ -166,17 +232,21 @@ code before scheduling.)
 - **#105 `derive_name_from_repo_url` splits only on `/`.** A Windows-style `file://C:\…` URL makes the derived skill name an
   absolute path (seen only through a test fixture in 1.3.2's Windows work). Guard it: split on both separators, or
   refuse a name that is not a plain leaf. Source: 1.3.2 implementer report, 2026-11-05.
+- **#111 Registry drift check.** A scheduled workflow (like `update-featured-skills.yml`) diffs `vercel-labs/skills`'
+  `src/agents.ts`, the ACP registry (`agentclientprotocol/registry`) and the upstream fork's registry against
+  `TOOL_ADAPTERS`, and opens an issue on a new or changed row — replacing manual audits like this session's. Operator
+  2026-11-05: worth designing. Source: this session.
 - **#106 An update-check failure shows the updater plugin's raw English.** Settings → Updates printed "None of the
   fallback platforms `["windows-x86_64-nsis", "windows-x86_64"]` were found in the response `platforms` object" (operator,
   Windows, 2026-11-05 — the feed lacked Windows; fixed in the release workflow). `useAppUpdate`'s check shows the
   rejection text as-is; give it one copy line ("Couldn't check for updates — download the latest release from GitHub",
   with the link) and keep the raw text as detail. Source: operator screenshot, 2026-11-05.
-- **#87 Project-scope relocation for corrected harness dirs.** Blocked by #88: `main` still has Kilo global *and*
+- **#87 Project-scope relocation for corrected harness dirs.** Blocked by #108: `main` still has Kilo global *and*
   project `.kilocode/skills` (`tool_adapters/mod.rs:636, :639`) and Xum both `.mux/skills` (`:480, :483`) — ticket 34
-  never merged. When #88 corrects the global dirs, the project dirs still need a project relocation pass (per project,
+  never merged. When #108 corrects the global dirs, the project dirs still need a project relocation pass (per project,
   under the guard, same byte-identical-replace rule, reported in the project view) before they flip; the same pass
   covers Goose / OpenHands project `.agents/skills` and project assignments under a retired key (clawdbot / moltbot —
-  #92 retires them). Source: `archive/round19/review/ticket-34-backend-audit.md` § F8,
+  #108 retires them). Likely becomes #108's project-scope leg. Source: `archive/round19/review/ticket-34-backend-audit.md` § F8,
   `docs/design-inputs/2026-11-02-harness-global-skills-dirs.md` I6/I7.
 - **#85 Projects matrix keyboard model (ticket 17 audit N1, carried by ticket 23).** The matrix is a plain Tab walk:
   127 Tab presses from the first to the last cell of the 25-skill fixture matrix (`archive/round19/review/ticket-17-audit.md`
@@ -200,10 +270,10 @@ code before scheduling.)
   project's copy is removed), with no confirmation and no Undo (`useProjectActions.ts:173–178`). The inspector's targets
   list has a 5 s Undo (D21, `TargetsSection.tsx:115–142`); the matrix should match. Check whether ticket 17's larger
   cell hit area made misclicks likelier. Source: `archive/round19/issues/18-operator-think-aloud.md` § Findings (P6·Q1).
-- **#74 Notifications after a relaunch.** Asked "tomorrow morning, how would you find today's failures?", the operator
-  said he'd use the Notifications history. That history is session memory only (`useNotificationHistory.ts:8–14`), so
-  the panel is empty after a relaunch. This reopens #21 (dropped by name in round 16) with operator evidence: persist
-  the last N runs, or have the empty panel point at "View N skills with issues". (The vanishing run toast was explained
+- **#74 Notifications after a relaunch — the empty-panel pointer (1.3.3).** Asked "tomorrow morning, how would you find
+  today's failures?", the operator said he'd use the Notifications history. That history is session memory only
+  (`useNotificationHistory.ts:8–14`), so the panel is empty after a relaunch. Now: the empty panel points at "View N
+  skills with issues" (health is stored). Persisting runs moved to #53's unattended-runs effort (operator 2026-11-05). (The vanishing run toast was explained
   at round 19's closure — a failure-tone run toast was a 5 s `warning`, `reportOutcome.ts:97–98` — and 1.3.2 makes it
   persist, operator 2026-11-05.) Source: `archive/round19/issues/18-operator-think-aloud.md` § Findings (P2·Q7).
 - **#73 Bulk confirmation copy.** Ticket 32 changed the words, not the shapes:
@@ -248,11 +318,6 @@ code before scheduling.)
 
 ## Parked — needs a product decision before it is work
 
-- **#84 Per-harness "copy instead of link" override.** Today copy-vs-symlink is the registry's `supports_symlink`
-  alone (every entry `true`; Cursor's history shows a harness can regress). An operator-facing per-harness override in
-  the Harnesses pane (D47's per-harness rows) would let a user work around a regression without a release; sync code
-  stays name-blind (the override is read as a capability, never a name test). Decide whether it is worth a setting
-  before any harness regresses again (round 20 candidate). Source: grill 2026-11-02 (Q18 discussion).
 - **#77 Re-point renames to the upstream name by default.** Change source to a folder with a different skill name keeps
   the managed name and takes the new bytes. The operator wants *"it rename by default or give me a choice … the
   renaming should be default for sure"* (an upstream rename). A rename moves every target folder (global and project)
@@ -283,7 +348,7 @@ code before scheduling.)
 - **#41 Repo scan finds both a Codex and a Claude Code variant of one skill** — keep both, collapse, or
   something else; needs analysis, likely absorbs part of #40. Source: operator, 2026-09-22.
 - **#53 Scheduled `Refresh (all)`** via the OS scheduler — port upstream's `system_scheduler.rs` builders; needs a headless entry and
-  a cross-process lock (Mutation guard is process-wide only). Not upstream's `auto_update.rs`. Operator evidence (round 19 think-aloud, P7): he assumes his morning starts after an automatic schedule has refreshed (since D34 an Update deploys nothing new, so a schedule adds no Deployments). Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §B3, §E6.
+  a cross-process lock (Mutation guard is process-wide only). Not upstream's `auto_update.rs`. Operator evidence (round 19 think-aloud, P7): he assumes his morning starts after an automatic schedule has refreshed (since D34 an Update deploys nothing new, so a schedule adds no Deployments). **Unattended runs (operator 2026-11-05):** designed with #74's persistence half — a backend-written run log (each run's raw report plus action metadata, retention-bounded, folded by the frontend on load), the only record a run with no window open can leave, and what the Notifications panel reads after a relaunch. Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §B3, §E6.
 - **#54 `skillshub` CLI (or MCP) on the Rust core, sharing the DB** — sessions, the session-end audit and a Mac over SSH act without
   the GUI. Grill first: changes what the app is. Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §C3.
 - **#55 Declarative library manifest — sync the roster, not the bytes** (sources, tool selection, project assignments, Edits;

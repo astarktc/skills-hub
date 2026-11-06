@@ -739,10 +739,10 @@ fn settle_row_as_error(store: &SkillStore, row: &RowRef, error: &str) -> Result<
 /// internal seam.
 ///
 /// Only Target relocation calls it, and relocation is not run at launch
-/// since 1.3.2 (BACKLOG #89); its tests still drive it until #88 rewires it.
+/// since 1.3.2 (BACKLOG #89); its tests still drive it until #108 rewires it.
 #[cfg_attr(
     not(test),
-    allow(dead_code, reason = "relocation is unwired until BACKLOG #88")
+    allow(dead_code, reason = "relocation is unwired until BACKLOG #108")
 )]
 pub(crate) fn remove_superseded_artifact_unlocked(
     home: &Path,
