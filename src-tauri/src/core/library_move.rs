@@ -302,7 +302,7 @@ pub fn preview_library_move(
         destination: dest.to_string_lossy().into_owned(),
         skills: locatable.len() as u32,
         missing: missing.len() as u32,
-        cloud_sync: cloud_sync_of(&paths.home, dest),
+        cloud_sync: cloud_sync_of(&paths.roots.home, dest),
     })
 }
 
@@ -591,8 +591,8 @@ fn admit(
     }
 
     for adapter in default_tool_adapters() {
-        for dir in std::iter::once(skills_dir_in(&paths.home, adapter))
-            .chain(former_skills_dirs_in(&paths.home, adapter))
+        for dir in std::iter::once(skills_dir_in(&paths.roots, adapter))
+            .chain(former_skills_dirs_in(&paths.roots, adapter))
         {
             if physical_dest.starts_with(physical(&dir)) {
                 return Err(refuse(
@@ -606,7 +606,9 @@ fn admit(
     for project in store.list_projects()? {
         let root = Path::new(&project.path);
         for adapter in default_tool_adapters() {
-            let dir = project_skills_dir_in(root, adapter);
+            let Some(dir) = project_skills_dir_in(root, adapter) else {
+                continue;
+            };
             if physical_dest.starts_with(physical(&dir)) {
                 return Err(refuse(
                     LibraryDestinationRefusal::InsideProjectDir,
@@ -727,8 +729,8 @@ fn admit_physically(
         ));
     }
     for adapter in default_tool_adapters() {
-        for dir in std::iter::once(skills_dir_in(&paths.home, adapter))
-            .chain(former_skills_dirs_in(&paths.home, adapter))
+        for dir in std::iter::once(skills_dir_in(&paths.roots, adapter))
+            .chain(former_skills_dirs_in(&paths.roots, adapter))
         {
             if at.within(&Place::of(&dir)?) {
                 return Err(refuse(
@@ -741,7 +743,9 @@ fn admit_physically(
     for project in store.list_projects()? {
         let root = Path::new(&project.path);
         for adapter in default_tool_adapters() {
-            let dir = project_skills_dir_in(root, adapter);
+            let Some(dir) = project_skills_dir_in(root, adapter) else {
+                continue;
+            };
             if at.within(&Place::of(&dir)?) {
                 return Err(refuse(
                     LibraryDestinationRefusal::InsideProjectDir,

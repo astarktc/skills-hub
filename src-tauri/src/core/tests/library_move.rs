@@ -8,6 +8,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::core::environment::HostRoots;
 use crate::core::errors::{LibraryDestinationRefusal, SignalError};
 use crate::core::global_sync::{sync_skills_to_tools, BatchPolicy, BatchSkill};
 use crate::core::installer::{install_local_skill, InstallerPaths};
@@ -33,7 +34,7 @@ struct Fixture {
 
 impl Fixture {
     fn home(&self) -> &Path {
-        &self.paths.home
+        &self.paths.roots.home
     }
     fn dest(&self) -> PathBuf {
         self.dir.path().join("new-library")
@@ -65,7 +66,7 @@ impl Fixture {
     fn sync(&self, id: &str, tools: &[&str]) {
         let skill = self.store.get_skill_by_id(id).unwrap().unwrap();
         let outcomes = sync_skills_to_tools(
-            self.home(),
+            &self.paths.roots,
             &self.store,
             &self.paths.central_dir,
             &[BatchSkill {
@@ -134,13 +135,13 @@ fn fixture(tools: &[&str]) -> Fixture {
     let store = SkillStore::new(dir.path().join("test.db"));
     store.ensure_schema().expect("schema");
     let paths = InstallerPaths {
-        home: dir.path().join("home"),
+        roots: HostRoots::under_home(&dir.path().join("home")),
         central_dir: central_repo_of(&store),
         cache_dir: dir.path().join("cache"),
     };
-    fs::create_dir_all(&paths.home).unwrap();
+    fs::create_dir_all(&paths.roots.home).unwrap();
     for tool in tools {
-        mark_installed_in(&paths.home, adapter_by_key(tool).expect("adapter"));
+        mark_installed_in(&paths.roots, adapter_by_key(tool).expect("adapter"));
     }
     Fixture {
         dir,
@@ -635,7 +636,7 @@ fn a_disabled_skill_is_moved_and_its_rows_skipped() {
     crate::core::skill_disable::disable_targets(
         &f.store,
         &f.paths.central_dir,
-        f.home(),
+        &f.paths.roots,
         &crate::core::skill_disable::DisableScope::Skill {
             skill_id: alpha.clone(),
         },
@@ -1076,7 +1077,7 @@ fn crash_move(
 /// Library is the setting's value now.
 fn paths_now(f: &Fixture) -> InstallerPaths {
     InstallerPaths {
-        home: f.paths.home.clone(),
+        roots: f.paths.roots.clone(),
         central_dir: resolve_central_repo_path(&f.store, f.home()).unwrap(),
         cache_dir: f.paths.cache_dir.clone(),
     }
