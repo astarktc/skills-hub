@@ -1059,3 +1059,38 @@ fn nix_is_root() -> bool {
         .map(|out| String::from_utf8_lossy(&out.stdout).trim() == "0")
         .unwrap_or(false)
 }
+
+/// A reader-only harness mints no target row: even a detected one is not a
+/// key the batch can deploy to.
+#[test]
+fn a_reader_only_harness_mints_no_target_row() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let home = dir.path().join("home");
+    let roots = HostRoots::under_home(&home);
+    let reader = crate::core::tool_adapters::test_overrides::sample_reader();
+    crate::core::tool_adapters::mark_reader_installed_in(&roots, reader);
+    let store = make_store(dir.path());
+    seed_skill(&store, "skill-1");
+    let source = make_skill_dir(dir.path(), "central-a", "# A");
+
+    let outcomes = sync_skills_to_tools(
+        &roots,
+        &store,
+        &central_repo_of(&store),
+        &[batch_skill("skill-1", "skill-1", &source)],
+        &[reader.key.to_string()],
+        &BatchPolicy {
+            overwrite: false,
+            overwrite_if_same_content: false,
+            overrides: vec![],
+        },
+        42,
+        |_| {},
+    );
+
+    assert!(matches!(
+        outcomes.as_slice(),
+        [o] if o.tool_key == reader.key && matches!(o.status, BatchTargetStatus::Failed { .. })
+    ));
+    assert!(store.list_skill_targets("skill-1").unwrap().is_empty());
+}

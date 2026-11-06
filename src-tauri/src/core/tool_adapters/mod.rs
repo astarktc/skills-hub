@@ -8,7 +8,9 @@ use crate::core::skill_discovery::{manifest_validity, InvalidManifestReason};
 
 pub mod catalog;
 
-pub use catalog::{global_tool_entries, installed_keys, project_tool_entries, ToolCatalogEntry};
+pub use catalog::{
+    global_tool_entries, installed_keys, project_tool_entries, ReaderEntry, ToolCatalogEntry,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolId {
@@ -781,6 +783,66 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
     },
 ];
 
+/// A **reader-only harness** (CONTEXT term): a harness Skills Hub detects
+/// and lists but never deploys to. It reads a virtual group's shared folder —
+/// `~/.agents/skills` globally, `<project>/.agents/skills` at project scope —
+/// and has no skills folder of its own. It lives in its own table, apart from
+/// `TOOL_ADAPTERS`, so no target path can reach it: `adapter_by_key` never
+/// answers its key, so it is never selectable, never saved in a selection,
+/// never in the installed set the new-harness ask diffs, and mints no row.
+/// The catalogs list it as a reader of its group's entry
+/// ([`ToolCatalogEntry::readers`]) and, at project scope, absorb it into the
+/// group's roster.
+#[derive(Clone, Debug)]
+pub struct ReaderOnlyHarness {
+    /// Stable key, unique across both registry tables. Never stored.
+    pub key: &'static str,
+    pub display_name: &'static str,
+    /// Directories any one of whose presence marks the harness installed.
+    pub detect_dirs: &'static [RegistryPath],
+    /// The group whose shared folder it reads.
+    pub reads: VirtualGroup,
+}
+
+/// The reader-only harnesses, in presentation order. Empty until the first
+/// real row lands (round 20 ticket 05); tests add rows per thread
+/// (`test_overrides::sample_reader`).
+static READER_ONLY_HARNESSES: &[ReaderOnlyHarness] = &[];
+
+/// Every reader-only harness, in registry order (plus, in tests, the calling
+/// thread's test-only rows).
+pub fn reader_only_harnesses() -> Vec<&'static ReaderOnlyHarness> {
+    #[allow(unused_mut, reason = "only tests append rows")]
+    let mut rows: Vec<&'static ReaderOnlyHarness> = READER_ONLY_HARNESSES.iter().collect();
+    #[cfg(test)]
+    rows.extend(test_overrides::readers());
+    rows
+}
+
+/// The reader-only harnesses reading `group`'s folder, in registry order.
+pub fn readers_of(group: VirtualGroup) -> Vec<&'static ReaderOnlyHarness> {
+    reader_only_harnesses()
+        .into_iter()
+        .filter(|reader| reader.reads == group)
+        .collect()
+}
+
+/// Whether a reader-only harness is installed: any of its detect dirs exists.
+/// It has no skills dir, so there is no skills-only footprint to discount.
+pub fn reader_installed_in(roots: &HostRoots, reader: &ReaderOnlyHarness) -> bool {
+    reader
+        .detect_dirs
+        .iter()
+        .any(|dir| dir.resolve(roots).exists())
+}
+
+/// Test-only: install a reader-only harness the way the harness does (its
+/// first detect dir), the reader counterpart of [`mark_installed_in`].
+#[cfg(test)]
+pub fn mark_reader_installed_in(roots: &HostRoots, reader: &ReaderOnlyHarness) {
+    std::fs::create_dir_all(reader.detect_dirs[0].resolve(roots)).expect("create detect dir");
+}
+
 /// Every known tool adapter, in registry (presentation) order.
 pub fn default_tool_adapters() -> &'static [ToolAdapter] {
     TOOL_ADAPTERS
@@ -842,11 +904,36 @@ pub fn project_adapter_by_key(key: &str) -> Option<&'static ToolAdapter> {
 /// — and leaked to `'static` to match the registry's borrow contract.
 #[cfg(test)]
 pub mod test_overrides {
-    use super::ToolAdapter;
+    use super::{ReaderOnlyHarness, RegistryPath, ToolAdapter, VirtualGroup};
     use std::cell::RefCell;
 
     thread_local! {
         static OVERRIDES: RefCell<Vec<&'static ToolAdapter>> = const { RefCell::new(Vec::new()) };
+        static READERS: RefCell<Vec<&'static ReaderOnlyHarness>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Add a test-only reader-only harness for the calling thread.
+    pub fn add_reader(reader: ReaderOnlyHarness) -> &'static ReaderOnlyHarness {
+        let leaked: &'static ReaderOnlyHarness = Box::leak(Box::new(reader));
+        READERS.with(|r| r.borrow_mut().push(leaked));
+        leaked
+    }
+
+    const SAMPLE_READER_DETECT: &[RegistryPath] = &[RegistryPath::home(".test-reader")];
+
+    /// The test-only reader-only row that proves the shape before any real
+    /// one ships: it reads the AGENTS folder and is detected by `~/.test-reader`.
+    pub fn sample_reader() -> &'static ReaderOnlyHarness {
+        add_reader(ReaderOnlyHarness {
+            key: "test_reader",
+            display_name: "Test Reader",
+            detect_dirs: SAMPLE_READER_DETECT,
+            reads: VirtualGroup::AgentsStandard,
+        })
+    }
+
+    pub(super) fn readers() -> Vec<&'static ReaderOnlyHarness> {
+        READERS.with(|r| r.borrow().clone())
     }
 
     /// Shadow the registry entry with `adapter.key()` for the calling thread

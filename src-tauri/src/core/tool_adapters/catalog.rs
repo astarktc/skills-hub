@@ -6,8 +6,8 @@
 //! so it is testable against a temp home.
 
 use super::{
-    adapters_sharing_skills_dir, catalog_rows, constituents_of, is_installed_in, HostRoots,
-    ToolAdapter,
+    adapters_sharing_skills_dir, catalog_rows, constituents_of, is_installed_in,
+    reader_installed_in, readers_of, HostRoots, ToolAdapter,
 };
 
 /// One row of a tool list, with every backend-owned fact already resolved.
@@ -26,13 +26,26 @@ pub struct ToolCatalogEntry {
     /// (for display); grouping always reads this list, never the path.
     pub shared_with: Vec<&'static str>,
     /// Display names of the constituent tools absorbed into this entry when
-    /// it is a virtual group; empty for real tools.
+    /// it is a virtual group — its reader-only harnesses included, after its
+    /// adapters — at project scope only; empty for real tools and globally.
     pub constituents: Vec<&'static str>,
+    /// The reader-only harnesses reading this entry's folder, with their
+    /// detected state — a virtual group's entry in the global catalog only
+    /// (at project scope they are absorbed into `constituents`).
+    pub readers: Vec<ReaderEntry>,
     /// Where this Tool lives on the operator's machine and how Skills Hub
     /// deploys into it — the global catalog only (`None` in the project
     /// catalog, whose dirs are project-relative and whose detection is a
     /// group's union).
     pub placement: Option<GlobalPlacement>,
+}
+
+/// One reader-only harness listed under the entry whose folder it reads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReaderEntry {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub installed: bool,
 }
 
 /// A global catalog entry's placement facts, straight from the registry,
@@ -70,6 +83,19 @@ pub fn global_tool_entries(roots: &HostRoots) -> Vec<ToolCatalogEntry> {
                 .map(ToolAdapter::key)
                 .collect(),
             constituents: vec![],
+            readers: adapter
+                .as_virtual_group()
+                .map(|group| {
+                    readers_of(group)
+                        .into_iter()
+                        .map(|reader| ReaderEntry {
+                            key: reader.key,
+                            label: reader.display_name,
+                            installed: reader_installed_in(roots, reader),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
             placement: Some(GlobalPlacement {
                 skills_dir: adapter.skills_dir.display(roots),
                 detect_dirs: adapter
@@ -98,9 +124,15 @@ pub fn project_tool_entries(roots: &HostRoots) -> Vec<ToolCatalogEntry> {
             let (installed, constituents) = match adapter.as_virtual_group() {
                 Some(group) => {
                     let members: Vec<&'static ToolAdapter> = constituents_of(group).collect();
+                    let readers = readers_of(group);
                     (
-                        members.iter().any(|a| is_installed_in(roots, a)),
-                        members.iter().map(|a| a.display_name).collect(),
+                        members.iter().any(|a| is_installed_in(roots, a))
+                            || readers.iter().any(|r| reader_installed_in(roots, r)),
+                        members
+                            .iter()
+                            .map(|a| a.display_name)
+                            .chain(readers.iter().map(|r| r.display_name))
+                            .collect(),
                     )
                 }
                 None => (is_installed_in(roots, adapter), vec![]),
@@ -115,6 +147,7 @@ pub fn project_tool_entries(roots: &HostRoots) -> Vec<ToolCatalogEntry> {
                     .map(|a| a.key())
                     .collect(),
                 constituents,
+                readers: vec![],
                 placement: None,
             }
         })

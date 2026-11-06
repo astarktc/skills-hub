@@ -1408,3 +1408,29 @@ fn setting_update_deserializes_adjacently_tagged() {
         serde_json::from_str(r#"{"key":"central_repo_path","value":"/tmp/x"}"#).unwrap();
     assert!(matches!(u, SettingUpdate::CentralRepoPath(p) if p == "/tmp/x"));
 }
+
+/// A reader-only harness is never a selectable target: a saved selection
+/// naming one is refused like any key the registry cannot deploy to.
+#[test]
+fn apply_global_tool_config_refuses_a_reader_only_harness() {
+    let (dir, store) = make_store();
+    let reader = crate::core::tool_adapters::test_overrides::sample_reader();
+
+    let err = apply_setting(
+        &store,
+        &MemoryStore::new(),
+        dir.path(),
+        SettingUpdate::GlobalToolConfig {
+            selected_tools: vec![reader.key.to_string()],
+            scan_selected_only: false,
+        },
+    )
+    .expect_err("a reader-only harness is not a target");
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::UnknownTool {
+            tool: reader.key.to_string()
+        })
+    );
+    assert_eq!(store.get_setting("global_selected_tools_v1").unwrap(), None);
+}

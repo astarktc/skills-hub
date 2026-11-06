@@ -5,8 +5,9 @@ use crate::core::errors::SignalError;
 use crate::core::tool_adapters::{
     adapter_by_key, adapters_sharing_skills_dir, constituents_of, default_tool_adapters,
     detect_dirs_in, ensure_path_within_tool_dirs, former_skills_dirs_in, is_installed_in,
-    mark_installed_in, project_adapter_by_key, project_skills_dir_in, scan_tool_dir, skills_dir_in,
-    test_overrides, tool_holding_path, ToolAdapter, ToolId, VirtualGroup,
+    mark_installed_in, project_adapter_by_key, project_skills_dir_in, reader_only_harnesses,
+    scan_tool_dir, skills_dir_in, test_overrides, tool_holding_path, ToolAdapter, ToolId,
+    VirtualGroup,
 };
 use crate::core::tool_adapters::{OsOverride, RegistryPath};
 
@@ -811,9 +812,12 @@ fn every_adapter_supports_symlink() {
     assert!(no_symlink.is_empty(), "copy-only entries: {no_symlink:?}");
 }
 
+/// Keys are unique across both registry tables: a reader-only harness's key
+/// must never shadow (or be shadowed by) an adapter's.
 #[test]
 fn registry_keys_are_unique() {
     let mut keys: Vec<&str> = default_tool_adapters().iter().map(|a| a.key()).collect();
+    keys.extend(reader_only_harnesses().iter().map(|r| r.key));
     let n = keys.len();
     keys.sort_unstable();
     keys.dedup();

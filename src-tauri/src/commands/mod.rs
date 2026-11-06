@@ -131,12 +131,26 @@ pub struct ToolInfoDto {
     /// it from `placement.skills_dir` (see `ToolCatalogEntry`).
     pub shared_with: Vec<String>,
     /// Display labels of the constituent tools absorbed into this entry when
-    /// it is a virtual group (project-scope AgentsStandard); empty for real
-    /// tools. The backend owns group membership; the frontend only presents it.
+    /// it is a virtual group (project-scope AgentsStandard) — its reader-only
+    /// harnesses included; empty for real tools. The backend owns group
+    /// membership; the frontend only presents it (its count is the group
+    /// label's "(N harnesses)").
     pub constituents: Vec<String>,
+    /// The reader-only harnesses reading this entry's folder, with their
+    /// detected state — the global `.agents/skills` entry only; empty
+    /// elsewhere. Never selectable: they have no folder of their own.
+    pub readers: Vec<ReaderHarnessDto>,
     /// Where the tool lives and how it is deployed to — the global list only;
     /// `null` in the project list (see `ToolCatalogEntry::placement`).
     pub placement: Option<ToolPlacementDto>,
+}
+
+/// A reader-only harness listed under the entry whose folder it reads.
+#[derive(Debug, Serialize, Type)]
+pub struct ReaderHarnessDto {
+    pub key: String,
+    pub label: String,
+    pub installed: bool,
 }
 
 /// A global tool's registry placement (the Settings → Harnesses row).
@@ -177,6 +191,15 @@ impl From<ToolCatalogEntry> for ToolInfoDto {
             installed: entry.installed,
             shared_with: entry.shared_with.iter().map(|k| k.to_string()).collect(),
             constituents: entry.constituents.iter().map(|k| k.to_string()).collect(),
+            readers: entry
+                .readers
+                .into_iter()
+                .map(|reader| ReaderHarnessDto {
+                    key: reader.key.to_string(),
+                    label: reader.label.to_string(),
+                    installed: reader.installed,
+                })
+                .collect(),
             placement: entry.placement.map(ToolPlacementDto::from),
         }
     }

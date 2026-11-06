@@ -1207,3 +1207,30 @@ fn project_view_raises_typed_not_found_for_unknown_project() {
         })
     );
 }
+
+/// A reader-only harness is absorbed into the AGENTS group at project scope:
+/// it is never a project Tool of its own.
+#[test]
+fn configure_tools_refuses_a_reader_only_harness() {
+    let (dir, store) = make_store();
+    let project_dir = dir.path().join("proj");
+    fs::create_dir_all(&project_dir).unwrap();
+    let project = register_dir_project(&store, &project_dir);
+    let reader = crate::core::tool_adapters::test_overrides::sample_reader();
+
+    let err = project_ops::configure_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &strs(&[reader.key]),
+        None,
+    )
+    .expect_err("a reader-only harness is not a project Tool");
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::UnknownTool {
+            tool: reader.key.to_string(),
+        })
+    );
+    assert!(store.list_project_tools(&project.id).unwrap().is_empty());
+}

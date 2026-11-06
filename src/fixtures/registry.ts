@@ -15,6 +15,19 @@ export type FixtureTool = {
   grouped: boolean;
 };
 
+/**
+ * A reader-only harness (`READER_ONLY_HARNESSES` in the registry): detected
+ * and listed under the `.agents/skills` entry, never a target. Fixture-only
+ * rows until the real ones land (round 20 ticket 05); `detected` stands in
+ * for its detect dirs.
+ */
+export type FixtureReader = { key: string; label: string; detected: boolean };
+
+export const READER_REGISTRY: readonly FixtureReader[] = [
+  { key: "zed", label: "Zed", detected: true },
+  { key: "warp", label: "Warp", detected: false },
+];
+
 /** Registry key of the one virtual group entry (project scope). */
 export const VIRTUAL_GROUP_KEY = "agents_skills";
 

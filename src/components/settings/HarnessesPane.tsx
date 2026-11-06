@@ -38,7 +38,10 @@ type HarnessesPaneProps = {
  * (and the harnesses sharing it), how it is deployed to (the registry's
  * capability), the folders it is detected by, and — for a selected harness
  * this computer does not have — why it is listed and "Remove from
- * selection". The Import scan scope is its own section: it decides what
+ * selection". A folder read by reader-only harnesses (`.agents/skills`)
+ * lists them under its row — "Read by", each detected or not, with no
+ * switch: they have no folder of their own, so deploying to the folder is
+ * deploying to them. The Import scan scope is its own section: it decides what
  * Import reviews, never where skills go. Auto-deploy's state shows here,
  * where it acts (D49).
  */
@@ -223,6 +226,27 @@ function HarnessRow({
           />
         </span>
       </div>
+      {tool.readers.length > 0 ? (
+        <div className="flex flex-col gap-1 pr-3 pb-2 pl-10">
+          <span id={`${detailsId}-readers`} className="text-xs text-muted-foreground">
+            {t("settingsDialog.harnesses.readBy")}
+          </span>
+          <ul aria-labelledby={`${detailsId}-readers`} className="m-0 flex list-none flex-col gap-1 p-0">
+            {tool.readers.map((reader) => (
+              <li
+                key={reader.key}
+                data-harness-reader={reader.key}
+                className="flex items-center justify-between gap-3 text-sm text-foreground"
+              >
+                <span className="truncate">{t(`tools.${reader.key}`, { defaultValue: reader.label })}</span>
+                <Badge variant={reader.installed ? "soft" : "outline"} tone="neutral">
+                  {reader.installed ? t("settingsDialog.harnesses.detected") : t("settingsDialog.harnesses.notDetected")}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {expanded ? (
         <div id={detailsId} className="flex flex-col gap-3 border-t border-border px-10 py-3">
           {placement ? (

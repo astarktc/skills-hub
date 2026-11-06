@@ -3,7 +3,8 @@ use std::path::Path;
 use crate::core::environment::HostRoots;
 use crate::core::tool_adapters::{
     adapter_by_key, constituents_of, default_tool_adapters, global_tool_entries, installed_keys,
-    mark_installed_in, project_tool_entries, skills_dir_in, ToolCatalogEntry, ToolId, VirtualGroup,
+    mark_installed_in, mark_reader_installed_in, project_tool_entries, skills_dir_in,
+    test_overrides, ReaderEntry, ToolCatalogEntry, ToolId, VirtualGroup,
 };
 
 fn install(home: &Path, key: &str) {
@@ -266,4 +267,76 @@ fn only_the_global_catalog_carries_placement_straight_from_the_registry() {
     assert!(project_tool_entries(&HostRoots::under_home(home.path()))
         .iter()
         .all(|entry| entry.placement.is_none()));
+}
+
+// ---------------------------------------------------------------------------
+// Reader-only harnesses (round 20 ticket 01)
+// ---------------------------------------------------------------------------
+
+/// A reader-only harness reads the `.agents/skills` entry's folder and has
+/// no folder of its own: it is listed as a reader of that entry, with its
+/// detected state, and is never an entry — never selectable, never in the
+/// installed set the new-harness ask diffs, never resolvable as a target.
+#[test]
+fn a_reader_only_harness_is_listed_under_the_agents_entry_never_as_a_target() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    let reader = test_overrides::sample_reader();
+    let agents_key = ToolId::AgentsStandard.as_key();
+
+    let entries = global_tool_entries(&roots);
+    assert!(entries.iter().all(|e| e.key != reader.key), "not an entry");
+    assert_eq!(
+        entry(&entries, agents_key).readers,
+        vec![ReaderEntry {
+            key: reader.key,
+            label: reader.display_name,
+            installed: false,
+        }]
+    );
+    assert!(
+        entries
+            .iter()
+            .filter(|e| e.key != agents_key)
+            .all(|e| e.readers.is_empty()),
+        "only the group entry has readers"
+    );
+
+    mark_reader_installed_in(&roots, reader);
+    let entries = global_tool_entries(&roots);
+    assert!(entry(&entries, agents_key).readers[0].installed, "detected");
+    assert!(
+        !installed_keys(&entries).contains(&reader.key.to_string()),
+        "never in the installed set the new-harness ask diffs"
+    );
+    assert!(adapter_by_key(reader.key).is_none(), "never a target");
+}
+
+/// At project scope the AGENTS group absorbs its reader-only members like its
+/// constituents: they join its roster (the "(N harnesses)" count) and its
+/// installedness, and are never entries of their own.
+#[test]
+fn the_project_agents_group_absorbs_reader_only_harnesses() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    let reader = test_overrides::sample_reader();
+    let agents_key = ToolId::AgentsStandard.as_key();
+
+    let project = project_tool_entries(&roots);
+    let agents = entry(&project, agents_key);
+    assert_eq!(agents.constituents.last(), Some(&reader.display_name));
+    assert_eq!(
+        agents.constituents.len(),
+        constituents_of(VirtualGroup::AgentsStandard).count() + 1
+    );
+    assert!(!agents.installed);
+    assert!(agents.readers.is_empty(), "absorbed, not listed apart");
+    assert!(project.iter().all(|e| e.key != reader.key));
+
+    mark_reader_installed_in(&roots, reader);
+    let project = project_tool_entries(&roots);
+    assert!(
+        entry(&project, agents_key).installed,
+        "a detected reader makes the project folder worth deploying to"
+    );
 }

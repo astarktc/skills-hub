@@ -1632,6 +1632,7 @@ export const resources = {
           link: "A link to the Library copy (a copy where the system refuses links)",
           copy: "A copy of the Library copy",
           detectedBy: "Detected by",
+          readBy: "Read by (harnesses with no folder of their own)",
           undetectedSelected: "Selected, but not detected on this computer: every deploy skips it, and the Deployments strip shows it hollow. Remove it unless you are about to install it.",
           remove: "Remove from selection",
           noMatches: "No harness is detected on this computer. Turn off \u201cShow detected harnesses only\u201d to choose one anyway.",

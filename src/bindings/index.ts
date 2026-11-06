@@ -1167,6 +1167,13 @@ export type PropagationStatus = { status: "synced"; mode_used: SyncMode } | { st
  */
 { status: "failed"; error: CommandError; first_deploy: boolean };
 
+/**  A reader-only harness listed under the entry whose folder it reads. */
+export type ReaderHarnessDto = {
+	key: string,
+	label: string,
+	installed: boolean,
+};
+
 export type RefreshPhaseDto = "acquiring" | "applying";
 
 /**  Progress tick streamed before each per-skill step of each Refresh phase. */
@@ -1590,10 +1597,18 @@ export type ToolInfoDto = {
 	shared_with: string[],
 	/**
 	 *  Display labels of the constituent tools absorbed into this entry when
-	 *  it is a virtual group (project-scope AgentsStandard); empty for real
-	 *  tools. The backend owns group membership; the frontend only presents it.
+	 *  it is a virtual group (project-scope AgentsStandard) — its reader-only
+	 *  harnesses included; empty for real tools. The backend owns group
+	 *  membership; the frontend only presents it (its count is the group
+	 *  label's "(N harnesses)").
 	 */
 	constituents: string[],
+	/**
+	 *  The reader-only harnesses reading this entry's folder, with their
+	 *  detected state — the global `.agents/skills` entry only; empty
+	 *  elsewhere. Never selectable: they have no folder of their own.
+	 */
+	readers: ReaderHarnessDto[],
 	/**
 	 *  Where the tool lives and how it is deployed to — the global list only;
 	 *  `null` in the project list (see `ToolCatalogEntry::placement`).
