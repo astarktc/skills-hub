@@ -132,7 +132,7 @@ pub enum RemovalScope {
 }
 
 /// Where a row lives — the two tables that record Sync targets.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(tag = "scope", rename_all = "snake_case")]
 pub enum RowRef {
     /// A `skill_targets` row (global scope).

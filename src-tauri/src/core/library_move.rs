@@ -66,7 +66,7 @@ use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::artifact_removal::{
@@ -155,7 +155,7 @@ pub enum LibraryMovePhase {
 }
 
 /// What the move did, per skill, per Deployment, and what it left.
-#[derive(Debug, Serialize, Type)]
+#[derive(Debug, Serialize, Deserialize, Type)]
 pub struct LibraryMoveReport {
     /// The Library folder before the move.
     pub from: String,
@@ -171,14 +171,14 @@ pub struct LibraryMoveReport {
     pub left_behind: Vec<LeftBehind>,
 }
 
-#[derive(Debug, Serialize, Type)]
+#[derive(Debug, Serialize, Deserialize, Type)]
 pub struct SkillMoveOutcome {
     pub skill_id: String,
     pub name: String,
     pub status: SkillMoveStatus,
 }
 
-#[derive(Debug, Serialize, Type)]
+#[derive(Debug, Serialize, Deserialize, Type)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum SkillMoveStatus {
     Moved {
@@ -196,7 +196,7 @@ pub enum SkillMoveStatus {
 }
 
 /// Why a locatable skill was kept where it is.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SkillKept {
     /// Something in its copy cannot be relocated faithfully: `entry` (the
@@ -212,7 +212,7 @@ pub enum SkillKept {
 }
 
 /// Why an entry cannot be relocated faithfully.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum UnrelocatableCause {
     /// An absolute link into the old Library (its own copy included): after
@@ -229,14 +229,14 @@ pub enum UnrelocatableCause {
     HardlinkOutside,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum SkillMoveSkip {
     /// Unlocatable: the central copy is gone; the record keeps its path.
     Missing,
 }
 
-#[derive(Debug, Serialize, Type)]
+#[derive(Debug, Serialize, Deserialize, Type)]
 pub struct RelinkOutcome {
     pub skill_id: String,
     pub name: String,
@@ -245,7 +245,7 @@ pub struct RelinkOutcome {
     pub status: RelinkStatus,
 }
 
-#[derive(Debug, Serialize, Type)]
+#[derive(Debug, Serialize, Deserialize, Type)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum RelinkStatus {
     /// Re-made into the new copy (`mode` as the engine wrote it).
@@ -258,14 +258,14 @@ pub enum RelinkStatus {
     Failed { error: CommandError },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum RelinkUnchanged {
     /// A copy-mode Deployment: its bytes do not follow the Library.
     Copy,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum RelinkSkip {
     /// Nothing at the path reaches the old copy through a link of ours
@@ -276,7 +276,7 @@ pub enum RelinkSkip {
     Disabled,
 }
 
-#[derive(Debug, Serialize, Type)]
+#[derive(Debug, Serialize, Deserialize, Type)]
 pub struct LeftBehind {
     pub path: String,
     pub reason: LeftBehindReason,
@@ -287,7 +287,7 @@ pub struct LeftBehind {
     pub error: Option<CommandError>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum LeftBehindReason {
     /// The old Library folder itself — never removed.
@@ -417,6 +417,7 @@ pub fn move_library(
             &moved,
             Vec::new(),
             now,
+            Settler::Move,
             &mut on_progress,
         )?;
         report
@@ -465,6 +466,22 @@ pub fn resume_library_move(
     mutation_guard::serialized(|| resume_unlocked(store, central_dir, now, &mut |_| {}))
 }
 
+/// The report of the last interrupted move a resume finished, handed out
+/// once: taking it removes it. `None` when no resume settled since the last
+/// take. A stored report that cannot be read is dropped and logged.
+pub fn take_resumed_library_move(store: &SkillStore) -> Result<Option<LibraryMoveReport>> {
+    let Some(raw) = settings::take_resumed_library_move(store)? else {
+        return Ok(None);
+    };
+    match serde_json::from_str(&raw) {
+        Ok(report) => Ok(Some(report)),
+        Err(err) => {
+            log::warn!("[library move] dropped an unreadable resumed-move report: {err}");
+            Ok(None)
+        }
+    }
+}
+
 /// What a switched move still owes: the Library folders on either side and,
 /// per moved skill, its old and new copy by path and by physical identity.
 /// Written in the switch's own transaction (`settings::switch_library`),
@@ -504,7 +521,7 @@ fn resume_unlocked(
             log::warn!(
                 "[library move] dropped the unreadable journal of an interrupted move; nothing was removed: {err}"
             );
-            settings::finish_library_move(store)?;
+            settings::finish_library_move(store, None)?;
             return Ok(None);
         }
     };
@@ -551,14 +568,15 @@ fn resume_unlocked(
                 left_behind.extend(left(entry, LeftBehindReason::StaleJournal));
             }
         }
-        settings::finish_library_move(store)?;
-        return Ok(Some(LibraryMoveReport {
+        let report = LibraryMoveReport {
             from: journal.from,
             to: journal.to,
             skills: Vec::new(),
             deployments: Vec::new(),
             left_behind,
-        }));
+        };
+        finish(store, &report, Settler::Resume)?;
+        return Ok(Some(report));
     }
 
     let mut moved = Vec::with_capacity(journal.moves.len());
@@ -600,7 +618,38 @@ fn resume_unlocked(
             new_id: entry.new_id,
         });
     }
-    settle(store, &from, &to, &moved, left_behind, now, on_progress).map(Some)
+    settle(
+        store,
+        &from,
+        &to,
+        &moved,
+        left_behind,
+        now,
+        Settler::Resume,
+        on_progress,
+    )
+    .map(Some)
+}
+
+/// Who settles a switched move — what becomes of its report.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Settler {
+    /// The move itself: its report is its command's answer.
+    Move,
+    /// A resume (at startup, or first thing by the next move): nobody asked
+    /// for its report, so it is recorded for the frontend to take once
+    /// ([`take_resumed_library_move`]).
+    Resume,
+}
+
+/// Drop a settled move's journal; a resume records its report in the same
+/// transaction.
+fn finish(store: &SkillStore, report: &LibraryMoveReport, by: Settler) -> Result<()> {
+    let resumed = match by {
+        Settler::Move => None,
+        Settler::Resume => Some(serde_json::to_string(report)?),
+    };
+    settings::finish_library_move(store, resumed.as_deref())
 }
 
 /// After the switch: Re-point, Clean, then drop the journal. Answers the
@@ -614,14 +663,12 @@ fn settle(
     moved: &[Moved],
     left: Vec<LeftBehind>,
     now: i64,
+    by: Settler,
     on_progress: &mut impl FnMut(LibraryMoveProgress),
 ) -> Result<LibraryMoveReport> {
     let deployments = relink_phase(store, new_root, moved, now, on_progress)?;
     let left_behind = clean_phase(store, old_root, new_root, moved, left, on_progress)?;
-    #[cfg(test)]
-    test_seams::before_journal_clear();
-    settings::finish_library_move(store)?;
-    Ok(LibraryMoveReport {
+    let report = LibraryMoveReport {
         from: old_root.to_string_lossy().into_owned(),
         to: new_root.to_string_lossy().into_owned(),
         skills: moved
@@ -637,7 +684,11 @@ fn settle(
             .collect(),
         deployments,
         left_behind,
-    })
+    };
+    #[cfg(test)]
+    test_seams::before_journal_clear();
+    finish(store, &report, by)?;
+    Ok(report)
 }
 
 fn log_resumed(report: &LibraryMoveReport) {

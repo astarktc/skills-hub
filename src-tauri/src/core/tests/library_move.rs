@@ -1986,3 +1986,64 @@ fn a_stale_journal_puts_a_set_aside_copy_back() {
             && item.reason == LeftBehindReason::StaleJournal
             && item.skill_id.as_deref() == Some(id.as_str())));
 }
+
+/// S3: what a resume did reaches the operator. The resume persists its
+/// report (in the step that drops the journal); the frontend takes it once.
+/// A move's own report is its command's answer and is never persisted.
+#[test]
+fn a_resumed_moves_report_is_persisted_and_handed_out_once() {
+    use crate::core::library_move::{
+        resume_library_move, take_resumed_library_move, LibraryMovePhase,
+    };
+    let (f, _, _) = crash_fixture();
+    assert!(
+        take_resumed_library_move(&f.store).unwrap().is_none(),
+        "nothing resumed yet"
+    );
+    assert!(crash_move(&f, &f.dest(), LibraryMovePhase::Cleaning, 0));
+
+    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
+        .expect("resume")
+        .expect("a move is pending");
+
+    let taken = take_resumed_library_move(&f.store)
+        .expect("take")
+        .expect("the resume's report is handed out");
+    assert_eq!(
+        serde_json::to_value(&taken).unwrap(),
+        serde_json::to_value(&report).unwrap()
+    );
+    assert!(
+        take_resumed_library_move(&f.store).unwrap().is_none(),
+        "handed out once"
+    );
+
+    // The next move resumes nothing and persists nothing.
+    move_library(
+        &f.store,
+        &paths_now(&f),
+        &f.dir.path().join("third-library"),
+        NOW + 3,
+        |_| {},
+    )
+    .expect("move");
+    assert!(take_resumed_library_move(&f.store).unwrap().is_none());
+}
+
+/// S3: a move that first finishes an interrupted one persists that resume's
+/// report too — its own report is the command's answer.
+#[test]
+fn a_move_that_resumes_another_hands_out_the_resumed_report() {
+    use crate::core::library_move::{take_resumed_library_move, LibraryMovePhase};
+    let (f, _, _) = crash_fixture();
+    assert!(crash_move(&f, &f.dest(), LibraryMovePhase::Relinking, 0));
+    let third = f.dir.path().join("third-library");
+
+    move_library(&f.store, &paths_now(&f), &third, NOW + 2, |_| {}).expect("move");
+
+    let resumed = take_resumed_library_move(&f.store)
+        .unwrap()
+        .expect("the resumed move's report");
+    assert_eq!(PathBuf::from(&resumed.to), f.dest());
+    assert!(!resumed.deployments.is_empty());
+}

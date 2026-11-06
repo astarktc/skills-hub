@@ -49,6 +49,9 @@ mod keys {
     /// Move Library folder's journal of a switched move whose Re-point and
     /// Clean have not settled yet (`core::library_move` owns its format).
     pub const LIBRARY_MOVE_JOURNAL: &str = "library_move_journal";
+    /// The report of the last interrupted Library move a resume finished,
+    /// until the frontend takes it (`core::library_move` owns its format).
+    pub const LIBRARY_MOVE_RESUMED: &str = "library_move_resumed_report";
 }
 
 /// Default central repo dir name under `fallback_root`.
@@ -513,9 +516,22 @@ pub(crate) fn pending_library_move(store: &SkillStore) -> Result<Option<String>>
     store.get_setting(keys::LIBRARY_MOVE_JOURNAL)
 }
 
-/// The switched Library move's Re-point and Clean settled: drop its journal.
-pub(crate) fn finish_library_move(store: &SkillStore) -> Result<()> {
-    store.delete_setting(keys::LIBRARY_MOVE_JOURNAL)
+/// The switched Library move's Re-point and Clean settled: drop its journal
+/// — and, for a move a resume finished, record its report (`resumed`) in
+/// the same transaction, so what the resume did is never lost between the
+/// two.
+pub(crate) fn finish_library_move(store: &SkillStore, resumed: Option<&str>) -> Result<()> {
+    let record: Vec<(&str, &str)> = resumed
+        .map(|report| (keys::LIBRARY_MOVE_RESUMED, report))
+        .into_iter()
+        .collect();
+    store.write_settings(&[keys::LIBRARY_MOVE_JOURNAL], &record)
+}
+
+/// The report of a resumed Library move (see [`finish_library_move`]),
+/// taken — read and removed in one transaction — if one is stored.
+pub(crate) fn take_resumed_library_move(store: &SkillStore) -> Result<Option<String>> {
+    store.take_setting(keys::LIBRARY_MOVE_RESUMED)
 }
 
 /// Test seam: overwrite a pending Library move's journal with `raw`, as an

@@ -25,6 +25,29 @@ export const commands = {
 	 *  settlement; streams progress. Not cancellable.
 	 */
 	moveLibrary: (destination: string, onProgress: Channel<LibraryMoveProgress>) => __TAURI_INVOKE<LibraryMoveResultDto>("move_library", { destination, onProgress }),
+	/**
+	 *  The report of an interrupted Library move a resume finished (at startup,
+	 *  or first thing by a later move), handed out once: taking it removes it.
+	 *  `null` when none is waiting.
+	 */
+	takeResumedLibraryMove: () => __TAURI_INVOKE<{
+	/**  The Library folder before the move. */
+	from: string,
+	/**  The Library folder now (the setting's new value). */
+	to: string,
+	skills: SkillMoveOutcome[],
+	/**
+	 *  Every owned Deployment of a moved skill, one per path (a shared
+	 *  skills dir is one artifact with several rows).
+	 */
+	deployments: RelinkOutcome[],
+	/**
+	 *  What stays in the old place: the old root, anything unrecorded in it,
+	 *  and an old copy kept because it is still reached or could not be
+	 *  removed.
+	 */
+	left_behind: LeftBehind[],
+} | null>("take_resumed_library_move"),
 	getToolStatus: () => __TAURI_INVOKE<ToolStatusDto>("get_tool_status"),
 	getProjectToolStatus: () => __TAURI_INVOKE<ToolStatusDto>("get_project_tool_status"),
 	clearGitCacheNow: () => __TAURI_INVOKE<number>("clear_git_cache_now"),

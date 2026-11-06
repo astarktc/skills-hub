@@ -26,6 +26,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::update_setting,
             commands::preview_library_move,
             commands::move_library,
+            commands::take_resumed_library_move,
             commands::get_tool_status,
             commands::get_project_tool_status,
             commands::clear_git_cache_now,
@@ -159,6 +160,8 @@ pub fn run() {
                 },
             ) {
                 Ok(None) => {}
+                // Its report is recorded for the frontend, which takes it once
+                // (`take_resumed_library_move`) and tells the operator.
                 Ok(Some(_)) => log::info!("finished an interrupted Library move"),
                 Err(err) => log::warn!(
                     "finishing an interrupted Library move failed; retried next launch \

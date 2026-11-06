@@ -489,6 +489,23 @@ pub async fn move_library(
     .map_err(CommandError::from_anyhow)
 }
 
+/// The report of an interrupted Library move a resume finished (at startup,
+/// or first thing by a later move), handed out once: taking it removes it.
+/// `null` when none is waiting.
+#[tauri::command]
+#[specta::specta]
+pub async fn take_resumed_library_move(
+    store: State<'_, SkillStore>,
+) -> Result<Option<LibraryMoveReport>, CommandError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::core::library_move::take_resumed_library_move(&store)
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
 /// `move_library`'s answer: its report and the catalog read after it.
 #[derive(Debug, Serialize, Type)]
 pub struct LibraryMoveResultDto {

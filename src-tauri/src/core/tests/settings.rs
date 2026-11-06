@@ -1305,7 +1305,7 @@ fn switch_library_flips_records_and_the_setting_together() {
         Some("{\"journal\":1}"),
         "the journal lands with the switch"
     );
-    crate::core::settings::finish_library_move(&store).unwrap();
+    crate::core::settings::finish_library_move(&store, None).unwrap();
     assert_eq!(
         crate::core::settings::pending_library_move(&store).unwrap(),
         None

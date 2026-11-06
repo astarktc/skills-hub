@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use tauri::Manager;
 
 use super::errors::SignalError;
@@ -690,6 +690,47 @@ impl SkillStore {
         self.with_conn(|conn| {
             conn.execute("DELETE FROM settings WHERE key = ?1", params![key])?;
             Ok(())
+        })
+    }
+
+    /// Raw settings-table adapter; see [`SkillStore::get_setting`]. Delete
+    /// the rows `delete` and upsert the rows `set` in one transaction (no
+    /// secret: a secret goes through [`Self::delete_setting_securely`]).
+    pub(super) fn write_settings(&self, delete: &[&str], set: &[(&str, &str)]) -> Result<()> {
+        self.with_conn(|conn| {
+            let tx = conn.unchecked_transaction()?;
+            for key in delete {
+                tx.execute("DELETE FROM settings WHERE key = ?1", params![key])?;
+            }
+            for (key, value) in set {
+                tx.execute(
+                    "INSERT INTO settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![key, value],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+    }
+
+    /// Raw settings-table adapter; see [`SkillStore::get_setting`]. Read a
+    /// row and delete it in one transaction: a value taken is taken once.
+    pub(super) fn take_setting(&self, key: &str) -> Result<Option<String>> {
+        self.with_conn(|conn| {
+            let tx = conn.unchecked_transaction()?;
+            let value = tx
+                .query_row(
+                    "SELECT value FROM settings WHERE key = ?1",
+                    params![key],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            if value.is_some() {
+                tx.execute("DELETE FROM settings WHERE key = ?1", params![key])?;
+            }
+            tx.commit()?;
+            Ok(value)
         })
     }
 
