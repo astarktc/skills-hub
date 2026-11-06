@@ -32,6 +32,7 @@ import UpdateDialog from "./components/shared/UpdateDialog";
 import SettingsDialog from "./components/settings/SettingsDialog";
 import ShortcutsDialog from "./components/settings/ShortcutsDialog";
 import DeployHarnessAsk from "./components/settings/DeployHarnessAsk";
+import MoveLibraryAsk from "./components/settings/MoveLibraryAsk";
 import ProjectsPage from "./components/projects/ProjectsPage";
 import { useProjectState } from "./components/projects/useProjectState";
 import { useAddSkillFlow } from "./hooks/useAddSkillFlow";
@@ -123,11 +124,7 @@ function App() {
   });
   const exploreIsActive = useCallback(() => areaRef.current === "explore", []);
 
-  const settings = useSettingsState({
-    t,
-    reporter,
-    onManagedSkillsChanged: library.loadManagedSkills,
-  });
+  const settings = useSettingsState({ t, reporter, surface, library, projects });
   const explore = useExploreState({
     t,
     reporter,
@@ -572,6 +569,7 @@ function App() {
   const sharedDirAsk = surface.pendingAsk("sharedDir");
   const overwriteAsk = surface.pendingAsk("overwrite");
   const deployHarnessAsk = surface.pendingAsk("deployHarness");
+  const moveLibraryAsk = surface.pendingAsk("moveLibrary");
 
   // A dialog whose own action runs shows the header progress at its foot:
   // the page behind a modal is inert, so its Cancel must be the dialog's.
@@ -831,6 +829,7 @@ function App() {
       />
 
       <DeployHarnessAsk pending={deployHarnessAsk} labelOf={labelOfTool} t={t} />
+      <MoveLibraryAsk pending={moveLibraryAsk} t={t} />
 
       <ShortcutsDialog
         layer={surface.layer("shortcuts")}

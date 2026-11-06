@@ -1631,3 +1631,79 @@ describe("useProjectState holds where one skill is placed", () => {
     expect(placement.rows?.[0].assignments.map((row) => row.tool)).toEqual(["pi"]);
   });
 });
+
+// S2 (round-3 review): a mutation of another world — Move Library folder —
+// re-points this world's Deployments and settles a failed re-link `error`
+// in the database, answering no project view. The world re-reads what it
+// shows so the matrix and the placements never keep a stale "Deployed".
+describe("useProjectState reloadViews (another world moved Deployments)", () => {
+  /** From now on, every read answers its rows settled `error`, as a failed re-link leaves them. */
+  function settleEveryRowError() {
+    const passThrough = mockInvoke.getMockImplementation()!;
+    mockInvoke.mockImplementation((command: CommandName, ...args: unknown[]) =>
+      command === "getProjectView"
+        ? (passThrough(command, ...args) as Promise<ProjectViewDto>).then((view) => ({
+            ...view,
+            assignments: view.assignments.map((row) => ({ ...row, status: "error" as const })),
+          }))
+        : passThrough(command, ...args),
+    );
+  }
+
+  it("re-reads the selected project's matrix and the placement views already read", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["claude_code"]);
+    await act(async () => {
+      await result.current.assignToProject("p1", ["s1"]);
+      await result.current.loadPlacementViews();
+    });
+    expect(result.current.assignments.map((row) => row.status)).toEqual(["synced"]);
+    settleEveryRowError();
+
+    await act(async () => {
+      await result.current.reloadViews();
+    });
+
+    expect(result.current.assignments.map((row) => row.status)).toEqual(["error"]);
+    expect(result.current.placementViews.views.p1?.assignments.map((row) => row.status)).toEqual(["error"]);
+  });
+
+  // Round-4 re-check #2: the move's action holds the `reloadViews` it was handed when Browse ran; the operator may
+  // select another project before it settles. The re-read follows the selection at settlement.
+  it("re-reads the project selected when it runs, not when it was handed out", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["claude_code"]);
+    await act(async () => {
+      await result.current.registerProject("/work/p2", {
+        add_to_gitignore: false,
+        add_to_exclude: false,
+      });
+    });
+    const handedOut = result.current.reloadViews;
+    await act(async () => {
+      await result.current.selectProject("p2");
+    });
+    mockInvoke.mockClear();
+
+    await act(async () => {
+      await handedOut();
+    });
+
+    expect(callsTo("getProjectView")).toEqual([["p2"]]);
+  });
+
+  it("reads no placement views a surface never asked for", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["claude_code"]);
+    await act(async () => {
+      await result.current.assignToProject("p1", ["s1"]);
+    });
+    mockInvoke.mockClear();
+
+    await act(async () => {
+      await result.current.reloadViews();
+    });
+
+    expect(callsTo("getProjectView")).toEqual([["p1"]]);
+  });
+});

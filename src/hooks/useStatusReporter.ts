@@ -283,6 +283,13 @@ export type OutcomeHandlers = {
    * once, as always. A dialog not open now toasts at once.
    */
   resultShownIn?: DialogKind;
+  /**
+   * A run nobody started — settled outside every action (a Library move a
+   * crash interrupted, finished by the startup resume): its history block is
+   * named `label`, and it toasts only when it carries an error or a warning
+   * (a clean one is only recorded).
+   */
+  background?: { label: string };
 };
 
 /** The completion an executed Outcome answers with. */
@@ -561,7 +568,7 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
             ? { kind: headline.kind, title: headline.message, message: headline.detail }
             : null,
           rows,
-          pendingRef.current?.label ?? null,
+          handlers.background?.label ?? pendingRef.current?.label ?? null,
         );
         // ONE toast per run (D11): the headline — or, without one, the first
         // entry's title ("+N more") — and "View report" when there is more
@@ -584,7 +591,10 @@ export function useStatusReporter(t: TranslateFn, door?: ReportDoor): StatusRepo
             }) ?? null;
         };
         const dialog = handlers.resultShownIn;
-        if (dialog && doorRef.current?.isOpen(dialog)) deferredToastRef.current = { dialog, show };
+        const quiet = handlers.background !== undefined && errors.length === 0 && warnings.length === 0;
+        if (quiet) {
+          // Recorded only: nothing to act on, and nobody asked.
+        } else if (dialog && doorRef.current?.isOpen(dialog)) deferredToastRef.current = { dialog, show };
         else show();
       }
       if (outcome.completion.closeModal) handlers.closeModal?.();

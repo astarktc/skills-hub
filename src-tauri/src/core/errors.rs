@@ -145,6 +145,25 @@ pub enum SignalError {
     /// copy. Raised by the removal primitive (`sync_engine::remove_path_any`)
     /// as context over the I/O error, which stays in the chain.
     RemovalPermissionDenied { path: String, detail: String },
+    /// Move Library folder refused its destination before anything was
+    /// written (`reason`); `conflict` names the folder it overlaps (the
+    /// current Library, a harness or project skills dir, the git cache) when
+    /// there is one. Owned by `core::library_move`.
+    LibraryDestinationRefused {
+        path: String,
+        reason: LibraryDestinationRefusal,
+        conflict: Option<String>,
+    },
+    /// Move Library folder could not copy (or verify by Content identity)
+    /// skill `name`'s central copy at `path` into the new folder. Nothing was
+    /// switched: the staged copies were removed and every record and the
+    /// setting are unchanged. `detail` is the diagnostic chain, not user
+    /// copy. Owned by `core::library_move`.
+    LibraryCopyFailed {
+        name: String,
+        path: String,
+        detail: String,
+    },
 }
 
 impl fmt::Display for SignalError {
@@ -262,6 +281,19 @@ impl fmt::Display for SignalError {
             SignalError::RemovalPermissionDenied { path, .. } => {
                 write!(f, "not permitted to remove {path}")
             }
+            SignalError::LibraryDestinationRefused {
+                path,
+                reason,
+                conflict,
+            } => {
+                write!(
+                    f,
+                    "library destination {path} refused ({reason:?}; conflict: {conflict:?})"
+                )
+            }
+            SignalError::LibraryCopyFailed { name, path, detail } => {
+                write!(f, "copying skill {name} from {path} failed: {detail}")
+            }
         }
     }
 }
@@ -330,6 +362,28 @@ pub enum RemovalRefusal {
     /// be read or parsed, so whether a mount lies at or below the entry is
     /// unknown: admission fails closed. `resolved` is the entry.
     MountTableUnreadable,
+}
+
+/// Why Move Library folder refused a destination (the backend classifies;
+/// the frontend owns the copy). Owned by `core::library_move`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum LibraryDestinationRefusal {
+    /// Not an absolute path (or it climbs with `.` / `..`).
+    NotAbsolute,
+    /// It is, lies inside, or contains the current Library (the configured
+    /// folder or a recorded central copy); `conflict` is that folder.
+    OverlapsLibrary,
+    /// It lies inside a harness's global skills dir; `conflict` is the dir.
+    InsideHarnessDir,
+    /// It lies inside a registered project's skills dir; `conflict` is the dir.
+    InsideProjectDir,
+    /// It lies inside the app's git cache; `conflict` is the cache root.
+    InsideGitCache,
+    /// It exists and holds something (or is not a folder).
+    NotEmpty,
+    /// It cannot be created or written to.
+    NotWritable,
 }
 
 /// Structured command failure crossing the IPC seam. `Deserialize` because a
@@ -504,6 +558,25 @@ pub enum CommandError {
         /// The path that could not be removed.
         path: String,
         /// The I/O diagnostic chain, diagnostics only.
+        detail: String,
+    },
+    /// Move Library folder refused its destination before anything was
+    /// written.
+    LibraryDestinationRefused {
+        /// The destination the operator picked.
+        path: String,
+        reason: LibraryDestinationRefusal,
+        /// The folder it overlaps, when there is one.
+        conflict: Option<String>,
+    },
+    /// Move Library folder could not copy or verify one skill; nothing was
+    /// switched and the Library is as it was.
+    LibraryCopyFailed {
+        /// The skill whose copy failed.
+        name: String,
+        /// Its central copy.
+        path: String,
+        /// The diagnostic chain, diagnostics only.
         detail: String,
     },
     /// An Update replayed the operator's invocation Edit onto new upstream
@@ -708,6 +781,18 @@ impl From<SignalError> for CommandError {
             },
             SignalError::RemovalPermissionDenied { path, detail } => {
                 CommandError::RemovalPermissionDenied { path, detail }
+            }
+            SignalError::LibraryDestinationRefused {
+                path,
+                reason,
+                conflict,
+            } => CommandError::LibraryDestinationRefused {
+                path,
+                reason,
+                conflict,
+            },
+            SignalError::LibraryCopyFailed { name, path, detail } => {
+                CommandError::LibraryCopyFailed { name, path, detail }
             }
         }
     }

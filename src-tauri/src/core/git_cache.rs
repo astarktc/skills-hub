@@ -366,6 +366,13 @@ fn hash_key_parts(first: &str, second: Option<&str>, third: Option<&str>) -> Str
 /// The cache root's name under the app cache dir.
 const CACHE_DIR_NAME: &str = "skills-hub-git-cache";
 
+/// The git clone cache's root under the app cache dir `cache_dir` (it may
+/// not exist yet) — for a caller that must keep something out of it (Move
+/// Library folder's admission).
+pub(crate) fn root_in(cache_dir: &Path) -> PathBuf {
+    cache_dir.join(CACHE_DIR_NAME)
+}
+
 /// Ensure the cache root exists and resolve this key's cache dir.
 fn prepare_repo_dir(cache_dir: &Path, key: &str) -> Result<PathBuf> {
     let cache_root = cache_dir.join(CACHE_DIR_NAME);

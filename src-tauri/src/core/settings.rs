@@ -26,7 +26,6 @@ use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use super::central_repo::{ensure_central_repo, move_central_repo};
 use super::credentials::{self, CredentialStore};
 use super::environment::HostRoots;
 use super::errors::SignalError;
@@ -47,6 +46,12 @@ mod keys {
     pub const UI_ZOOM_LEVEL: &str = "ui_zoom_level";
     pub const FEATURED_SKILLS_CACHE: &str = "featured_skills_cache";
     pub const INSTALLED_TOOLS: &str = "installed_tools_v1";
+    /// Move Library folder's journal of a switched move whose Re-point and
+    /// Clean have not settled yet (`core::library_move` owns its format).
+    pub const LIBRARY_MOVE_JOURNAL: &str = "library_move_journal";
+    /// The report of the last interrupted Library move a resume finished,
+    /// until the frontend takes it (`core::library_move` owns its format).
+    pub const LIBRARY_MOVE_RESUMED: &str = "library_move_resumed_report";
 }
 
 /// Default central repo dir name under `fallback_root`.
@@ -145,9 +150,8 @@ pub struct AppSettings {
 #[derive(Debug, Clone, PartialEq, Deserialize, Type)]
 #[serde(tag = "key", content = "value", rename_all = "snake_case")]
 pub enum SettingUpdate {
-    /// Absolute path; `~` expansion happens at the command seam. Moving the
-    /// repo relocates every managed skill directory.
-    CentralRepoPath(String),
+    // The Library folder is not a setting write: Move Library folder
+    // (`core::library_move`) is its only writer, through `switch_library`.
     /// Clamped into `GIT_CACHE_CLEANUP_DAYS_RANGE`.
     GitCacheCleanupDays(i64),
     /// Clamped into `GIT_CACHE_TTL_SECS_RANGE`.
@@ -331,9 +335,6 @@ pub fn apply_setting(
     update: SettingUpdate,
 ) -> Result<AppSettings> {
     match update {
-        SettingUpdate::CentralRepoPath(path) => {
-            set_central_repo_path(store, fallback_root, Path::new(&path))?;
-        }
         SettingUpdate::GitCacheCleanupDays(days) => {
             write_str(
                 store,
@@ -486,23 +487,58 @@ pub fn migrate_github_token_to_credential_store(
     Ok(TokenMigration::Migrated)
 }
 
-/// Point the central repo at `new_base` (must be absolute), creating it and
-/// relocating every managed skill directory when the root actually changes.
-fn set_central_repo_path(store: &SkillStore, fallback_root: &Path, new_base: &Path) -> Result<()> {
-    if !new_base.is_absolute() {
-        anyhow::bail!("storage path must be absolute");
-    }
-    ensure_central_repo(new_base)?;
-
-    let current_base = resolve_central_repo_path(store, fallback_root)?;
-    if current_base != new_base {
-        move_central_repo(store, new_base)?;
-    }
-    write_str(
-        store,
-        keys::CENTRAL_REPO_PATH,
-        new_base.to_string_lossy().as_ref(),
+/// Move Library folder's switch — the one writer of the Library folder
+/// setting: in one transaction, point every moved skill (`(skill_id, new
+/// central_path)`) at its new copy, record `new_root` as the configured
+/// central repo, and record `journal` — what Re-point and Clean still owe —
+/// so a crash after the switch is finished, never forgotten. Either all of
+/// it lands or none of it does.
+pub(crate) fn switch_library(
+    store: &SkillStore,
+    moves: &[(String, String)],
+    new_root: &Path,
+    journal: &str,
+    now: i64,
+) -> Result<()> {
+    store.switch_library_records(
+        moves,
+        &[
+            (keys::CENTRAL_REPO_PATH, new_root.to_string_lossy().as_ref()),
+            (keys::LIBRARY_MOVE_JOURNAL, journal),
+        ],
+        now,
     )
+}
+
+/// The journal of a switched Library move whose Re-point and Clean have not
+/// settled (see [`switch_library`]), if any.
+pub(crate) fn pending_library_move(store: &SkillStore) -> Result<Option<String>> {
+    store.get_setting(keys::LIBRARY_MOVE_JOURNAL)
+}
+
+/// The switched Library move's Re-point and Clean settled: drop its journal
+/// — and, for a move a resume finished, record its report (`resumed`) in
+/// the same transaction, so what the resume did is never lost between the
+/// two.
+pub(crate) fn finish_library_move(store: &SkillStore, resumed: Option<&str>) -> Result<()> {
+    let record: Vec<(&str, &str)> = resumed
+        .map(|report| (keys::LIBRARY_MOVE_RESUMED, report))
+        .into_iter()
+        .collect();
+    store.write_settings(&[keys::LIBRARY_MOVE_JOURNAL], &record)
+}
+
+/// The report of a resumed Library move (see [`finish_library_move`]),
+/// taken — read and removed in one transaction — if one is stored.
+pub(crate) fn take_resumed_library_move(store: &SkillStore) -> Result<Option<String>> {
+    store.take_setting(keys::LIBRARY_MOVE_RESUMED)
+}
+
+/// Test seam: overwrite a pending Library move's journal with `raw`, as an
+/// edited or corrupted database would hold it.
+#[cfg(test)]
+pub(crate) fn overwrite_library_move_journal(store: &SkillStore, raw: &str) -> Result<()> {
+    store.set_setting(keys::LIBRARY_MOVE_JOURNAL, raw)
 }
 
 // ---------------------------------------------------------------------------

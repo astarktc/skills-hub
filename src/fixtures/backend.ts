@@ -17,6 +17,7 @@ import type {
   BatchTargetOutcome,
   BatchTargetStatus,
   CandidateMatch,
+  CloudSync,
   CommandError,
   DisableScope,
   EnableReport,
@@ -34,6 +35,9 @@ import type {
   InstallResult,
   InvocationEditConflict,
   InvocationMode,
+  LibraryDestinationRefusal,
+  LibraryMoveProgress,
+  LibraryMoveResultDto,
   ManagedSkillDto,
   OnboardingGroup,
   OnboardingPlan,
@@ -50,11 +54,14 @@ import type {
   PropagationSkip,
   RefreshProgressDto,
   RefreshReport,
+  RelinkOutcome,
+  RelinkStatus,
   RemovalReport,
   RemovalTargetOutcome,
   RepointTarget,
   RowRef,
   SettingUpdate,
+  SkillMoveOutcome,
   SkillMutationResultDto,
   SkillOutcomeKind,
   SkillRefreshOutcome,
@@ -1561,15 +1568,6 @@ export function createFixtureBackend(
   const applySetting = (update: SettingUpdate): AppSettings => {
     const s = state.settings;
     switch (update.key) {
-      case "central_repo_path": {
-        const next = expandHome(update.value);
-        if (!next.startsWith("/")) fail({ code: "INVALID_PATH", path: update.value, reason: "missing" });
-        for (const skill of state.skills) {
-          skill.dto.central_path = skill.dto.central_path.replace(s.central_repo_path, next);
-        }
-        s.central_repo_path = next;
-        break;
-      }
       case "git_cache_cleanup_days":
         s.git_cache_cleanup_days = clamp(Math.round(update.value), s.bounds.git_cache_cleanup_days);
         break;
@@ -1592,6 +1590,134 @@ export function createFixtureBackend(
         break;
     }
     return clone(s);
+  };
+
+  // -------------------------------------------------------------------------
+  // Move Library folder (Rust `core::library_move`)
+  // -------------------------------------------------------------------------
+
+  /** Folders the fixture's computer already has content in: a move there is refused. */
+  const NON_EMPTY_FOLDERS = [`${HOME}/Documents`, `${HOME}/Desktop`, `${HOME}/Downloads`];
+  const inside = (path: string, dir: string) => path === dir || path.startsWith(`${dir}/`);
+
+  /** Rust `library_move::admit`, over what the fixture can know. */
+  const admitLibraryDestination = (raw: string): string => {
+    const dest = expandHome(raw).replace(/\/+$/, "");
+    const refuse = (reason: LibraryDestinationRefusal, conflict: string | null = null): never =>
+      fail({ code: "LIBRARY_DESTINATION_REFUSED", path: dest, reason, conflict });
+    if (!dest.startsWith("/") || dest.split("/").some((part) => part === "." || part === ".."))
+      refuse("notAbsolute");
+    const central = state.settings.central_repo_path;
+    for (const root of [central, ...state.skills.map((skill) => skill.dto.central_path)]) {
+      if (inside(dest, root) || inside(root, dest)) refuse("overlapsLibrary", root);
+    }
+    for (const tool of TOOL_REGISTRY) {
+      const dir = globalRoot(tool.key);
+      if (inside(dest, dir)) refuse("insideHarnessDir", dir);
+    }
+    for (const project of state.projects) {
+      if (inside(dest, project.path)) refuse("insideProjectDir", project.path);
+    }
+    if (NON_EMPTY_FOLDERS.includes(dest)) refuse("notEmpty");
+    return dest;
+  };
+
+  const cloudSyncOf = (dest: string): CloudSync | null => {
+    const icloud = `${HOME}/Library/Mobile Documents`;
+    if (inside(dest, icloud)) return { provider: "icloud_drive", root: icloud };
+    const storage = `${HOME}/Library/CloudStorage/`;
+    if (dest.startsWith(storage)) {
+      const [first] = dest.slice(storage.length).split("/");
+      return { provider: "cloud_storage", root: `${storage}${first}` };
+    }
+    const [first] = dest.slice(HOME.length + 1).split("/");
+    if (dest.startsWith(`${HOME}/`) && first.startsWith("OneDrive"))
+      return { provider: "one_drive", root: `${HOME}/${first}` };
+    return null;
+  };
+
+  const locatable = (skill: FixtureSkill) => skill.dto.unlocatable !== "central_missing";
+
+  /**
+   * Rust `library_move::move_library`: copy every locatable skill, switch
+   * records and the setting, re-point every live link (a copy is unchanged,
+   * a disabled row skipped, a missing project folder reported), and remove
+   * the old copies — the old folder itself stays.
+   */
+  const moveLibrary = async (
+    destination: string,
+    onProgress: ProgressSink<LibraryMoveProgress>,
+  ): Promise<LibraryMoveResultDto> => {
+    const dest = admitLibraryDestination(destination);
+    const from = state.settings.central_repo_path;
+    const moving = state.skills.filter(locatable);
+    const total = moving.length;
+    for (const [phase, wait] of [["copying", 1], ["relinking", 0.5], ["cleaning", 0.3]] as const) {
+      for (const [done, skill] of moving.entries()) {
+        emit(onProgress, { phase, done, total, name: skill.dto.name });
+        await pause(Math.max(20, Math.min(220, 3000 / Math.max(total, 1))) * wait);
+      }
+    }
+    const skills: SkillMoveOutcome[] = [];
+    const deployments: RelinkOutcome[] = [];
+    for (const skill of state.skills) {
+      if (!locatable(skill)) {
+        skills.push({ skill_id: skill.dto.id, name: skill.dto.name, status: { status: "skipped", reason: "missing" } });
+        continue;
+      }
+      const old = skill.dto.central_path;
+      const next = `${dest}/${basename(old)}`;
+      skill.dto.central_path = next;
+      skills.push({ skill_id: skill.dto.id, name: skill.dto.name, status: { status: "moved", from: old, to: next } });
+      const disabled = skill.dto.disabled_at !== null;
+      for (const target of skill.dto.targets) {
+        if (target.synced_at === null) continue;
+        const status: RelinkStatus =
+          disabled || target.status === "disabled"
+            ? { status: "skipped", reason: "disabled" }
+            : target.mode === "copy"
+              ? { status: "unchanged", reason: "copy" }
+              : { status: "relinked", mode: target.mode };
+        deployments.push({
+          skill_id: skill.dto.id,
+          name: skill.dto.name,
+          path: target.target_path,
+          rows: [{ scope: "global_target", id: `${skill.dto.id}:${target.tool}`, skill_id: skill.dto.id, tool: target.tool }],
+          status,
+        });
+      }
+      for (const project of state.projects) {
+        for (const a of project.assignments) {
+          if (a.skill_id !== skill.dto.id || a.synced_at === null) continue;
+          const status: RelinkStatus =
+            disabled || a.status === "disabled"
+              ? { status: "skipped", reason: "disabled" }
+              : !project.path_exists
+                ? { status: "skipped", reason: "folder_missing" }
+                : a.mode === "copy"
+                  ? { status: "unchanged", reason: "copy" }
+                  : { status: "relinked", mode: a.mode };
+          deployments.push({
+            skill_id: skill.dto.id,
+            name: skill.dto.name,
+            path: assignmentPath(project, a),
+            rows: [{ scope: "assignment", id: a.id, project_id: project.id, skill_id: skill.dto.id, tool: a.tool }],
+            status,
+          });
+        }
+      }
+    }
+    state.settings.central_repo_path = dest;
+    return {
+      report: {
+        from,
+        to: dest,
+        skills,
+        deployments,
+        left_behind: [{ path: from, reason: "old_library", skill_id: null, error: null }],
+      },
+      skills: skillsDto(),
+    };
   };
 
   // Rust `catalog::duplicate_reads`: an installed reader's snapshot pairs,
@@ -1801,6 +1927,21 @@ export function createFixtureBackend(
       await pause(60);
       return applySetting(update);
     },
+    previewLibraryMove: async (destination) => {
+      await pause(120);
+      const dest = admitLibraryDestination(destination);
+      const moving = state.skills.filter(locatable).length;
+      return {
+        destination: dest,
+        skills: moving,
+        missing: state.skills.length - moving,
+        kept: 0,
+        cloud_sync: cloudSyncOf(dest),
+      };
+    },
+    moveLibrary: async (destination, onProgress) => moveLibrary(destination, onProgress),
+    // The fixture's moves never crash, so no resume ever waits to be taken.
+    takeResumedLibraryMove: async () => null,
     getToolStatus: async () => {
       await pause(80);
       return toolStatus();

@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AppSettings,
+  LibraryMoveProgress,
+  LibraryMoveResultDto,
   SettingUpdate,
   SettingsBounds,
 } from "../components/skills/types";
-import { pickFolder, setZoom } from "../lib/platform";
+import { createProgressChannel, pickFolder, setZoom } from "../lib/platform";
+import { libraryMoveOutcome } from "../lib/reportOutcome";
 import { invokeTauri, isTauri } from "../lib/tauri";
+import type { ProjectState } from "../components/projects/useProjectState";
+import type { SkillLibrary } from "./useSkillLibrary";
 import type { StatusReporter, TranslateFn } from "./useStatusReporter";
+import type { SurfaceState } from "./useSurfaceState";
 import { themePreference as storedThemePreference } from "../lib/preferences";
 
 const ZOOM_PRESETS = [0.75, 1, 1.1, 1.25, 1.5, 1.75, 2];
@@ -33,10 +39,33 @@ export type SettingsStateDeps = {
   t: TranslateFn;
   reporter: Pick<
     StatusReporter,
-    "notifyError" | "setSuccessToastMessage" | "notify"
+    | "notifyError"
+    | "setSuccessToastMessage"
+    | "notify"
+    | "runAction"
+    | "reportProgress"
+    | "applyOutcome"
   >;
-  /** Called after the central repo moves so the skill list reloads. */
-  onManagedSkillsChanged: () => Promise<void>;
+  /** The surface module: Move Library folder's confirmation. */
+  surface: Pick<SurfaceState, "ask">;
+  /**
+   * The skills world: the move answers the catalog it settled (`{ report,
+   * skills }`); a move that throws is reconciled by re-reading it.
+   */
+  library: Pick<SkillLibrary, "replaceCatalog" | "loadManagedSkills">;
+  /**
+   * The project world: the move re-points every project link and answers no
+   * project view, so once it settles — resolved or thrown — the world
+   * re-reads what it shows.
+   */
+  projects: Pick<ProjectState, "reloadViews">;
+};
+
+/** The header progress line of each Move Library folder phase. */
+const MOVE_PHASE_KEY: Record<LibraryMoveProgress["phase"], string> = {
+  copying: "libraryMove.phase.copying",
+  relinking: "libraryMove.phase.relinking",
+  cleaning: "libraryMove.phase.cleaning",
 };
 
 /** Clamp into an inclusive `{min,max}` bound; passes through when unknown. */
@@ -58,9 +87,15 @@ function clampTo(
 export function useSettingsState({
   t,
   reporter,
-  onManagedSkillsChanged,
+  surface,
+  library,
+  projects,
 }: SettingsStateDeps) {
-  const { notifyError, setSuccessToastMessage, notify } = reporter;
+  const { notifyError, setSuccessToastMessage, notify, runAction, reportProgress, applyOutcome } =
+    reporter;
+  const { ask } = surface;
+  const { replaceCatalog, loadManagedSkills } = library;
+  const { reloadViews } = projects;
   const [themePreference, setThemePreference] = useState<
     "system" | "light" | "dark"
   >(() => storedThemePreference.read());
@@ -125,9 +160,6 @@ export function useSettingsState({
       const next = await invokeTauri("updateSetting", update);
       setBounds(next.bounds);
       switch (update.key) {
-        case "central_repo_path":
-          setStoragePath(next.central_repo_path);
-          break;
         case "git_cache_cleanup_days":
           setGitCacheCleanupDays(next.git_cache_cleanup_days);
           break;
@@ -186,6 +218,28 @@ export function useSettingsState({
       });
   }, [adoptSettings, notifyError]);
 
+  /**
+   * A Library move a crash interrupted is finished by a resume (at startup,
+   * or first thing by the next move) that nobody watched: take its report —
+   * the backend hands it out once — and record it as one run, toasting only
+   * when it left something to act on.
+   */
+  const takeResumedMove = useCallback(async () => {
+    const report = await invokeTauri("takeResumedLibraryMove");
+    if (!report) return;
+    await applyOutcome(libraryMoveOutcome(report, { t }, { resumed: true }), {
+      background: { label: t("libraryMove.resumedLabel") },
+    });
+  }, [applyOutcome, t]);
+
+  // Once per app (a ref, so StrictMode's second effect run takes nothing).
+  const resumedTaken = useRef(false);
+  useEffect(() => {
+    if (!isTauri || resumedTaken.current) return;
+    resumedTaken.current = true;
+    takeResumedMove().catch(notifyError);
+  }, [notifyError, takeResumedMove]);
+
   useEffect(() => {
     if (!isTauri) return;
     const handler = (e: KeyboardEvent) => {
@@ -211,20 +265,83 @@ export function useSettingsState({
     return () => window.removeEventListener("keydown", handler);
   }, [writeSetting]);
 
+  /**
+   * Browse… → Move Library folder (round 20 #03). The folder pick stays
+   * outside the lifecycle (a pick changes nothing); the backend's preview is
+   * a read under it (it waits its turn, refuses a destination it would
+   * refuse, and states the confirmation's facts — counts and the cloud-sync
+   * warning; the frontend reads no paths). The confirmation asks; only a
+   * confirmed answer runs the move, a mutation under `runAction` (refused
+   * while another runs, header progress, no Cancel — the move is not
+   * cancellable). The skills world replaces its catalog and this world its
+   * displayed folder from the command's own response; the report is folded
+   * once, by `libraryMoveOutcome`. A move that throws may have failed after
+   * its switch, so both are re-read instead (`getSettings`,
+   * `loadManagedSkills`); resolved or thrown, the project world re-reads its
+   * views (a failed project re-link is `error` in the database), and a
+   * resume the move ran first is taken and recorded as its own run.
+   */
   const handlePickStoragePath = useCallback(async () => {
+    let selected: string | undefined;
     try {
-      const [selected] = await pickFolder({ title: t("selectStoragePath") });
-      if (!selected) return;
-      await writeSetting({ key: "central_repo_path", value: selected });
-      await onManagedSkillsChanged();
+      [selected] = await pickFolder({ title: t("selectStoragePath") });
     } catch (err) {
       notifyError(err);
+      return;
     }
+    if (!selected) return;
+    const destination = selected;
+    const preview = await runAction(
+      { read: true, label: t("libraryMove.label") },
+      () => invokeTauri("previewLibraryMove", destination),
+    );
+    if (!preview) return;
+    if ((await ask({ kind: "moveLibrary", preview })) !== "confirmed") return;
+    await runAction(
+      { label: t("libraryMove.label"), activity: t("libraryMove.activity") },
+      async () => {
+        const channel = await createProgressChannel<LibraryMoveProgress>((progress) =>
+          reportProgress({
+            done: progress.done,
+            total: progress.total,
+            message: t(MOVE_PHASE_KEY[progress.phase], { name: progress.name }),
+          }),
+        );
+        let response: LibraryMoveResultDto;
+        try {
+          response = await invokeTauri("moveLibrary", preview.destination, channel);
+        } catch (err) {
+          // It may have failed after its switch: what is on screen is
+          // re-read, never assumed (the thrown error is the report).
+          await Promise.all([
+            invokeTauri("getSettings").then(
+              (next) => setStoragePath(next.central_repo_path),
+              () => {},
+            ),
+            loadManagedSkills(),
+          ]);
+          throw err;
+        } finally {
+          await reloadViews();
+          // A move that first finished an interrupted one: that one's report.
+          await takeResumedMove().catch(() => {});
+        }
+        replaceCatalog(response.skills);
+        setStoragePath(response.report.to);
+        await applyOutcome(libraryMoveOutcome(response.report, { t }));
+      },
+    );
   }, [
+    applyOutcome,
+    ask,
+    loadManagedSkills,
     notifyError,
-    onManagedSkillsChanged,
+    reloadViews,
+    replaceCatalog,
+    reportProgress,
+    runAction,
     t,
-    writeSetting,
+    takeResumedMove,
   ]);
 
   const handleGitCacheCleanupDaysChange = useCallback(

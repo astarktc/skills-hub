@@ -2,6 +2,7 @@ import type { Channel } from "@tauri-apps/api/core";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   commands,
+  type LibraryMoveProgress,
   type ManagedSkillDto,
   type ProjectDto,
   type RefreshProgressDto,
@@ -278,6 +279,50 @@ describe("rich", () => {
     const off = await handlers.toggleProjectSkillAssignment("prj-quartermaster", pdf.id, "claude_code");
     expect(off.kind).toBe("unassigned");
     if (off.kind === "unassigned") expect(off.report.targets[0].status).toEqual({ status: "removed" });
+  });
+});
+
+describe("Move Library folder (round 20 #03)", () => {
+  it("previews, moves every locatable skill, re-points links and answers the catalog", async () => {
+    const { handlers, state } = backendFor("rich");
+    const preview = await handlers.previewLibraryMove("~/Skills Library");
+    expect(preview.destination).toBe("/Users/alex/Skills Library");
+    expect(preview.skills + preview.missing).toBe(60);
+    expect(preview.cloud_sync).toBeNull();
+
+    const progress = sink<{ phase: string }>();
+    const { report, skills } = await handlers.moveLibrary(preview.destination, progress.channel);
+
+    expect(new Set(progress.ticks.map((tick) => tick.phase))).toEqual(new Set(["copying", "relinking", "cleaning"]));
+    expect(report.to).toBe("/Users/alex/Skills Library");
+    expect(state.settings.central_repo_path).toBe("/Users/alex/Skills Library");
+    const movedIds = report.skills.filter((s) => s.status.status === "moved").map((s) => s.skill_id);
+    expect(movedIds).toHaveLength(preview.skills);
+    for (const skill of skills.filter((s) => movedIds.includes(s.id))) {
+      expect(skill.central_path.startsWith("/Users/alex/Skills Library/")).toBe(true);
+    }
+    expect(report.deployments.some((d) => d.status.status === "relinked")).toBe(true);
+    expect(report.left_behind[0]).toMatchObject({ reason: "old_library" });
+  });
+
+  it("refuses a folder that is not empty, and one inside the Library", async () => {
+    const { handlers, state } = backendFor("rich");
+    const before = state.settings.central_repo_path;
+    await expect(handlers.previewLibraryMove("~/Documents")).rejects.toMatchObject({
+      code: "LIBRARY_DESTINATION_REFUSED",
+      reason: "notEmpty",
+    });
+    await expect(handlers.moveLibrary(`${before}/nested`, sink<LibraryMoveProgress>().channel)).rejects.toMatchObject({
+      code: "LIBRARY_DESTINATION_REFUSED",
+      reason: "overlapsLibrary",
+    });
+    expect(state.settings.central_repo_path).toBe(before);
+  });
+
+  it("warns about a cloud-synced folder", async () => {
+    const { handlers } = backendFor("rich");
+    const preview = await handlers.previewLibraryMove("~/Library/Mobile Documents/com~apple~CloudDocs/Skills");
+    expect(preview.cloud_sync).toMatchObject({ provider: "icloud_drive" });
   });
 });
 

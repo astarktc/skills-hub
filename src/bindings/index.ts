@@ -6,11 +6,48 @@ import { invoke as __TAURI_INVOKE, Channel } from "@tauri-apps/api/core";
 export const commands = {
 	getSettings: () => __TAURI_INVOKE<AppSettings>("get_settings"),
 	/**
-	 *  Persist one setting and return the effective snapshot. `~` in a central
-	 *  repo path is expanded here — the only environment-aware step — before
-	 *  the policy layer validates and applies it.
+	 *  Persist one setting and return the effective snapshot. The Library
+	 *  folder is not one of them: `move_library` is its only writer.
 	 */
 	updateSetting: (update: SettingUpdate) => __TAURI_INVOKE<AppSettings>("update_setting", { update }),
+	/**
+	 *  What the Move Library folder confirmation states for `destination`
+	 *  (`~` expanded here): the skill counts and the cloud-sync warning. Refuses
+	 *  a destination exactly as `move_library` would (bar the write probe).
+	 *  Read-only.
+	 */
+	previewLibraryMove: (destination: string) => __TAURI_INVOKE<LibraryMovePreview>("preview_library_move", { destination }),
+	/**
+	 *  Move Library folder: copy every locatable skill to `destination` (`~`
+	 *  expanded here), switch every record and the setting together, re-point
+	 *  every owned linked Deployment and remove the old copies through the
+	 *  removal fence. Answers the report with the catalog read after
+	 *  settlement; streams progress. Not cancellable.
+	 */
+	moveLibrary: (destination: string, onProgress: Channel<LibraryMoveProgress>) => __TAURI_INVOKE<LibraryMoveResultDto>("move_library", { destination, onProgress }),
+	/**
+	 *  The report of an interrupted Library move a resume finished (at startup,
+	 *  or first thing by a later move), handed out once: taking it removes it.
+	 *  `null` when none is waiting.
+	 */
+	takeResumedLibraryMove: () => __TAURI_INVOKE<{
+	/**  The Library folder before the move. */
+	from: string,
+	/**  The Library folder now (the setting's new value). */
+	to: string,
+	skills: SkillMoveOutcome[],
+	/**
+	 *  Every owned Deployment of a moved skill, one per path (a shared
+	 *  skills dir is one artifact with several rows).
+	 */
+	deployments: RelinkOutcome[],
+	/**
+	 *  What stays in the old place: the old root, anything unrecorded in it,
+	 *  and an old copy kept because it is still reached or could not be
+	 *  removed.
+	 */
+	left_behind: LeftBehind[],
+} | null>("take_resumed_library_move"),
 	getToolStatus: () => __TAURI_INVOKE<ToolStatusDto>("get_tool_status"),
 	getProjectToolStatus: () => __TAURI_INVOKE<ToolStatusDto>("get_project_tool_status"),
 	clearGitCacheNow: () => __TAURI_INVOKE<number>("clear_git_cache_now"),
@@ -312,6 +349,27 @@ export type BulkUnassignResultDto = {
 export type CandidateMatch = { kind: "resolved"; subpath: string } | { kind: "ambiguous"; subpaths: string[] } | { kind: "none" };
 
 /**
+ *  A cloud-sync root the destination lies under. Online-only eviction there
+ *  can break harness links, so the confirmation warns (never refuses).
+ */
+export type CloudSync = {
+	provider: CloudSyncProvider,
+	/**  The cloud-sync root the destination is inside. */
+	root: string,
+};
+
+export type CloudSyncProvider =
+/**  `~/Library/Mobile Documents` (iCloud Drive). */
+"icloud_drive" |
+/**
+ *  A File Provider root under `~/Library/CloudStorage` (Dropbox, Google
+ *  Drive, OneDrive on macOS, …); `root` names which.
+ */
+"cloud_storage" |
+/**  A OneDrive root in the home folder (`~/OneDrive`, `~/OneDrive - Org`). */
+"one_drive";
+
+/**
  *  Structured command failure crossing the IPC seam. `Deserialize` because a
  *  settled failure is also stored as this JSON (`skills.last_outcome_error`,
  *  see `core::skill_health`) and read back into the catalog.
@@ -408,6 +466,26 @@ reason: RemovalRefusal } |
 /**  The path that could not be removed. */
 path: string;
 /**  The I/O diagnostic chain, diagnostics only. */
+detail: string } |
+/**
+ *  Move Library folder refused its destination before anything was
+ *  written.
+ */
+{ code: "LIBRARY_DESTINATION_REFUSED";
+/**  The destination the operator picked. */
+path: string; reason: LibraryDestinationRefusal;
+/**  The folder it overlaps, when there is one. */
+conflict: string | null } |
+/**
+ *  Move Library folder could not copy or verify one skill; nothing was
+ *  switched and the Library is as it was.
+ */
+{ code: "LIBRARY_COPY_FAILED";
+/**  The skill whose copy failed. */
+name: string;
+/**  Its central copy. */
+path: string;
+/**  The diagnostic chain, diagnostics only. */
 detail: string } |
 /**
  *  An Update replayed the operator's invocation Edit onto new upstream
@@ -790,6 +868,148 @@ export type InvocationOverride = {
 	mode: InvocationMode,
 	base_mode: InvocationMode,
 	conflict: boolean,
+};
+
+export type LeftBehind = {
+	path: string,
+	reason: LeftBehindReason,
+	/**
+	 *  The skill whose old copy this is (every reason but `old_library` and
+	 *  `unrecorded`).
+	 */
+	skill_id: string | null,
+	/**  Why its removal failed (`removal_failed`). */
+	error: CommandError | null,
+};
+
+export type LeftBehindReason =
+/**  The old Library folder itself — never removed. */
+"old_library" |
+/**  Something in the old Library folder no record names — never removed. */
+"unrecorded" |
+/**
+ *  A moved skill's old copy that a Deployment (of any skill) still
+ *  reaches.
+ */
+"still_linked" |
+/**
+ *  A moved skill's old copy that a skill which stays still records (an
+ *  Unlocatable skill recorded inside it).
+ */
+"still_recorded" |
+/**  A moved skill's old copy whose removal failed or was refused. */
+"removal_failed" |
+/**
+ *  A moved skill's old copy that is not a folder directly inside the old
+ *  Library folder (a split Library): copied and switched, never removed.
+ */
+"outside_library_folder" |
+/**
+ *  A moved skill's old copy that no longer matches its new copy (edited
+ *  after the copy): kept, never removed.
+ */
+"changed_since_copy" |
+/**
+ *  A moved skill's old copy whose new copy is gone, or is not the folder
+ *  the move made: kept — it may be the only copy.
+ */
+"destination_missing" |
+/**
+ *  What is at a moved skill's old path is not the folder the move copied
+ *  (replaced since): never removed.
+ */
+"replaced" |
+/**
+ *  An interrupted move's journal no longer describes the Library (the
+ *  Library folder or the skill's record changed since): nothing of it
+ *  is touched.
+ */
+"stale_journal" |
+/**
+ *  A moved skill's old copy that an interrupted clean had renamed aside
+ *  (into a `.skills-hub-clean-*` folder in the old Library folder) and
+ *  that could not be put back — its old path is taken: kept where it is,
+ *  at `path`, never removed.
+ */
+"set_aside";
+
+/**
+ *  Why Move Library folder refused a destination (the backend classifies;
+ *  the frontend owns the copy). Owned by `core::library_move`.
+ */
+export type LibraryDestinationRefusal =
+/**  Not an absolute path (or it climbs with `.` / `..`). */
+"notAbsolute" |
+/**
+ *  It is, lies inside, or contains the current Library (the configured
+ *  folder or a recorded central copy); `conflict` is that folder.
+ */
+"overlapsLibrary" |
+/**  It lies inside a harness's global skills dir; `conflict` is the dir. */
+"insideHarnessDir" |
+/**  It lies inside a registered project's skills dir; `conflict` is the dir. */
+"insideProjectDir" |
+/**  It lies inside the app's git cache; `conflict` is the cache root. */
+"insideGitCache" |
+/**  It exists and holds something (or is not a folder). */
+"notEmpty" |
+/**  It cannot be created or written to. */
+"notWritable";
+
+export type LibraryMovePhase = "copying" | "relinking" | "cleaning";
+
+/**  What the move confirmation states, answered before anything is written. */
+export type LibraryMovePreview = {
+	/**  The admitted destination, as it will be recorded. */
+	destination: string,
+	/**  Recorded skills whose central copy is there: the ones that move. */
+	skills: number,
+	/**  Unlocatable skills (central copy gone): skipped, never block the move. */
+	missing: number,
+	/**
+	 *  Locatable skills the move keeps where they are (a copy that cannot be
+	 *  relocated faithfully, or one another record shares) — not counted in
+	 *  `skills`.
+	 */
+	kept: number,
+	/**  Set when the destination is under a known cloud-sync root. */
+	cloud_sync: CloudSync | null,
+};
+
+/**  A streamed step of the move. */
+export type LibraryMoveProgress = {
+	phase: LibraryMovePhase,
+	/**  Steps done in this phase before this one. */
+	done: number,
+	total: number,
+	/**  The skill this step is about. */
+	name: string,
+};
+
+/**  What the move did, per skill, per Deployment, and what it left. */
+export type LibraryMoveReport = {
+	/**  The Library folder before the move. */
+	from: string,
+	/**  The Library folder now (the setting's new value). */
+	to: string,
+	skills: SkillMoveOutcome[],
+	/**
+	 *  Every owned Deployment of a moved skill, one per path (a shared
+	 *  skills dir is one artifact with several rows).
+	 */
+	deployments: RelinkOutcome[],
+	/**
+	 *  What stays in the old place: the old root, anything unrecorded in it,
+	 *  and an old copy kept because it is still reached or could not be
+	 *  removed.
+	 */
+	left_behind: LeftBehind[],
+};
+
+/**  `move_library`'s answer: its report and the catalog read after it. */
+export type LibraryMoveResultDto = {
+	report: LibraryMoveReport,
+	skills: ManagedSkillDto[],
 };
 
 export type LocalSkillCandidate = {
@@ -1240,6 +1460,37 @@ export type RefreshSkipReason =
  */
 { kind: "delete_incomplete" };
 
+export type RelinkOutcome = {
+	skill_id: string,
+	name: string,
+	path: string,
+	rows: RowRef[],
+	status: RelinkStatus,
+};
+
+export type RelinkSkip =
+/**
+ *  Nothing at the path reaches the old copy through a link of ours
+ *  (the operator changed it, removed it, or aliased the harness dir).
+ */
+"not_ours" |
+/**  The project's folder is gone; its next resync re-links it. */
+"folder_missing" | "disabled";
+
+export type RelinkStatus =
+/**  Re-made into the new copy (`mode` as the engine wrote it). */
+{ status: "relinked"; mode: SyncMode } |
+/**  Left as it was. */
+{ status: "unchanged"; reason: RelinkUnchanged } |
+/**  Not touched. */
+{ status: "skipped"; reason: RelinkSkip } |
+/**  The re-point failed; its rows are kept `error` (report data). */
+{ status: "failed"; error: CommandError };
+
+export type RelinkUnchanged =
+/**  A copy-mode Deployment: its bytes do not follow the Library. */
+"copy";
+
 /**
  *  Why physical admission refused a removal (the backend classifies; the
  *  frontend owns the copy). Owned by `core::removal_fence`.
@@ -1436,11 +1687,6 @@ export type RowRef =
 
 /**  One setting write, as sent by the frontend: `{ key, value }`. */
 export type SettingUpdate =
-/**
- *  Absolute path; `~` expansion happens at the command seam. Moving the
- *  repo relocates every managed skill directory.
- */
-{ key: "central_repo_path"; value: string } |
 /**  Clamped into `GIT_CACHE_CLEANUP_DAYS_RANGE`. */
 { key: "git_cache_cleanup_days"; value: number } |
 /**  Clamped into `GIT_CACHE_TTL_SECS_RANGE`. */
@@ -1477,6 +1723,37 @@ export type SkillHealth = {
 	/**  When the outcome settled (ms since the epoch). */
 	at: number,
 };
+
+/**  Why a locatable skill was kept where it is. */
+export type SkillKept =
+/**
+ *  Something in its copy cannot be relocated faithfully: `entry` (the
+ *  first one found, as it sits in the old copy) and why.
+ */
+{ kind: "unrelocatable"; entry: string; cause: UnrelocatableCause } |
+/**
+ *  Its recorded copy is physically the same folder as another skill's,
+ *  or holds or lies inside it (`with_skill_id`): the records alias one
+ *  set of bytes, so neither is moved.
+ */
+{ kind: "shared_copy"; with_skill_id: string };
+
+export type SkillMoveOutcome = {
+	skill_id: string,
+	name: string,
+	status: SkillMoveStatus,
+};
+
+export type SkillMoveSkip =
+/**  Unlocatable: the central copy is gone; the record keeps its path. */
+"missing";
+
+export type SkillMoveStatus = { status: "moved"; from: string; to: string } | { status: "skipped"; reason: SkillMoveSkip } |
+/**
+ *  Not moved: its copy stays where it is recorded, untouched, and so do
+ *  its Deployments.
+ */
+{ status: "kept"; reason: SkillKept };
 
 export type SkillMutationResultDto = {
 	report: RefreshReport,
@@ -1685,6 +1962,35 @@ export type UnlocatableState =
 "source_missing" |
 /**  The central copy is not there. */
 "central_missing";
+
+/**  Why an entry cannot be relocated faithfully. */
+export type UnrelocatableCause =
+/**
+ *  An absolute link into the old Library (its own copy included): after
+ *  the move it would still point at the old place.
+ */
+"link_into_old_library" |
+/**
+ *  A relative link that reaches outside the skill's own folder: from the
+ *  new place it would point somewhere else.
+ */
+"link_escapes" |
+/**
+ *  Not a file, folder or link (a FIFO, socket or device): it cannot be
+ *  copied.
+ */
+"special_file" |
+/**
+ *  A file with another name (a hard link) outside the skill's folder:
+ *  the copy would split one file in two.
+ */
+"hardlink_outside" |
+/**
+ *  An entry carrying content the copy cannot reproduce and verify (see
+ *  § What the copy cannot verify): an access-control list or file
+ *  capabilities, or — on Windows — a named data stream.
+ */
+"unverifiable_metadata";
 
 export type UpdateSkip = "skill_gone" | "stale_acquisition";
 

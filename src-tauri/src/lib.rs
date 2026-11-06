@@ -24,6 +24,9 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         .commands(tauri_specta::collect_commands![
             commands::get_settings,
             commands::update_setting,
+            commands::preview_library_move,
+            commands::move_library,
+            commands::take_resumed_library_move,
             commands::get_tool_status,
             commands::get_project_tool_status,
             commands::clear_git_cache_now,
@@ -137,6 +140,32 @@ pub fn run() {
                 Err(err) => log::warn!(
                     "GitHub token migration to the OS credential store failed; \
                      a remaining settings row or cleanup is retried next launch: {:#}",
+                    err
+                ),
+            }
+
+            // Finish a Move Library folder that a crash interrupted after its
+            // switch (its journal is in the database): re-point every link the
+            // journal's old copies still hold and clean them, before any other
+            // action can run. Serialised like every Sync-target mutation; no
+            // journal, no work. The journal is honoured only while the
+            // configured Library is the one it switched to.
+            match commands::resolve_central_repo_path_for_app(app.handle(), &store).and_then(
+                |central| {
+                    core::library_move::resume_library_move(
+                        &store,
+                        &central,
+                        core::clock::now_ms(),
+                    )
+                },
+            ) {
+                Ok(None) => {}
+                // Its report is recorded for the frontend, which takes it once
+                // (`take_resumed_library_move`) and tells the operator.
+                Ok(Some(_)) => log::info!("finished an interrupted Library move"),
+                Err(err) => log::warn!(
+                    "finishing an interrupted Library move failed; retried next launch \
+                     or by the next move: {:#}",
                     err
                 ),
             }

@@ -39,6 +39,13 @@ export type { PropagationSkip } from "../../bindings";
 export type { AppSettings } from "../../bindings";
 export type { SettingUpdate } from "../../bindings";
 export type { SettingsBounds } from "../../bindings";
+export type {
+  LibraryMovePreview,
+  LibraryMoveProgress,
+  LibraryMoveReport,
+  LibraryMoveResultDto,
+  CloudSync,
+} from "../../bindings";
 export type { FeaturedSkillDto } from "../../bindings";
 export type { OnlineSkillDto } from "../../bindings";
 export type { SkillFileEntry } from "../../bindings";

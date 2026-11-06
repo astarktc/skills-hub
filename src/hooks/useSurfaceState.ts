@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { RepointKind } from "../lib/skillPresentation";
 import type { OverwriteChoice, OverwriteRow } from "../lib/overwriteAsk";
 import type { DeleteSettlement } from "../lib/reportOutcome";
+import type { LibraryMovePreview } from "../components/skills/types";
 import type { DuplicatePair } from "../lib/harnessPresentation";
 import {
   legacySettingsLink,
@@ -120,7 +121,9 @@ export type AskRequest =
    * `count` skills to it now? `duplicates`: the cross-read pairs turning it on
    * completes (round 20 ticket 02), repeated as one warning line.
    */
-  | { kind: "deployHarness"; toolKey: string; toolLabel: string; count: number; duplicates: DuplicatePair[] };
+  | { kind: "deployHarness"; toolKey: string; toolLabel: string; count: number; duplicates: DuplicatePair[] }
+  /** Move Library folder (round 20 #03): the backend's preview of the move, to confirm. */
+  | { kind: "moveLibrary"; preview: LibraryMovePreview };
 
 export type AskLayer = AskRequest & { askId: number };
 
@@ -161,7 +164,7 @@ export type SurfaceValue = {
   selection: Readonly<Record<SelectionSurface, ReadonlySet<string>>>;
 };
 
-const ASK_KINDS: ReadonlySet<DialogKind> = new Set(["sharedDir", "overwrite", "deployHarness"]);
+const ASK_KINDS: ReadonlySet<DialogKind> = new Set(["sharedDir", "overwrite", "deployHarness", "moveLibrary"]);
 const isAsk = (layer: DialogLayer): layer is AskLayer => ASK_KINDS.has(layer.kind);
 
 const DEFAULT_ROUTE: Route = { area: "skills", focused: null };

@@ -3,7 +3,7 @@
 // src/bindings/index.ts). All user-facing error copy is composed here
 // via i18n; nothing else in the frontend should inspect command failures.
 
-import type { CommandError, RemovalRefusal } from "./bindings";
+import type { CommandError, LibraryDestinationRefusal, RemovalRefusal } from "./bindings";
 import { INVOCATION_LABEL_KEY, toolLabel } from "./lib/skillPresentation";
 
 type TranslateFn = (key: string, opts?: Record<string, unknown>) => string;
@@ -47,6 +47,8 @@ const COMMAND_ERROR_CODE_MAP = {
   IDENTITY_UNKNOWN: true,
   REMOVAL_REFUSED: true,
   REMOVAL_PERMISSION_DENIED: true,
+  LIBRARY_DESTINATION_REFUSED: true,
+  LIBRARY_COPY_FAILED: true,
   EDIT_CONFLICT: true,
   OTHER: true,
 } as const satisfies Record<CommandError["code"], true>;
@@ -91,6 +93,18 @@ const REMOVAL_REFUSAL_KEYS: Record<RemovalRefusal, string> = {
   containsMount: "errors.removalRefusedContainsMount",
   mountPoint: "errors.removalRefusedMountPoint",
   mountTableUnreadable: "errors.removalRefusedMountTableUnreadable",
+};
+
+// Exhaustive over the generated reason union: a new refusal fails the build
+// until it has copy.
+const LIBRARY_DESTINATION_KEYS: Record<LibraryDestinationRefusal, string> = {
+  notAbsolute: "errors.libraryDestination.notAbsolute",
+  overlapsLibrary: "errors.libraryDestination.overlapsLibrary",
+  insideHarnessDir: "errors.libraryDestination.insideHarnessDir",
+  insideProjectDir: "errors.libraryDestination.insideProjectDir",
+  insideGitCache: "errors.libraryDestination.insideGitCache",
+  notEmpty: "errors.libraryDestination.notEmpty",
+  notWritable: "errors.libraryDestination.notWritable",
 };
 
 const INVALID_PATH_KEYS: Record<string, string> = {
@@ -224,6 +238,14 @@ export function describeCommandError(
       // skill, so it was left in place; the folder is the detail line (the
       // read diagnostic stays in `detail` for the log).
       return withDetail(t("errors.identityUnknown"), e.path);
+    case "LIBRARY_DESTINATION_REFUSED":
+      // Move Library folder refused the folder before writing anything; the
+      // copy says why and names what it overlaps, when there is one.
+      return t(LIBRARY_DESTINATION_KEYS[e.reason], { path: e.path, conflict: e.conflict ?? "" });
+    case "LIBRARY_COPY_FAILED":
+      // Nothing was switched: the Library is as it was. The I/O chain is
+      // the detail line.
+      return withDetail(t("errors.libraryCopyFailed", { name: e.name }), e.detail);
     case "EDIT_CONFLICT":
       // Stored as a skill's health: upstream changed its own invocation
       // setting after the operator overrode it; the override was kept.

@@ -105,7 +105,7 @@ pub fn is_detachable(record: &SkillRecord) -> bool {
 }
 
 /// The typed half of the Detach rule: the central copy must be there to
-/// become the truth. Raised as the same condition `move_central_repo` uses.
+/// become the truth. Raised as `CentralPathMissing`.
 fn require_detachable(record: &SkillRecord) -> Result<()> {
     if !Path::new(&record.central_path).exists() {
         anyhow::bail!(SignalError::CentralPathMissing {
