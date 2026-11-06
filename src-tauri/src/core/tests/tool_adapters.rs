@@ -43,6 +43,111 @@ fn path_resolution_joins_adapter_dirs_onto_home() {
     }
 }
 
+/// Every registry row's resolved global paths — skills dir, former dirs,
+/// detect dirs — as they stood before typed roots (round 20 ticket 01). Typed
+/// roots move no Deployment: each existing row still resolves under home to
+/// exactly these paths, on every OS (no production row carries an override).
+#[test]
+fn every_existing_row_resolves_to_the_paths_it_always_has() {
+    #[allow(clippy::type_complexity)]
+    let expected: &[(&str, &str, &[&str], &[&str])] = &[
+        ("agents_skills", ".agents/skills", &[], &[".agents"]),
+        ("cursor", ".cursor/skills", &[], &[".cursor"]),
+        ("claude_code", ".claude/skills", &[], &[".claude"]),
+        ("codex", ".codex/skills", &[], &[".codex"]),
+        ("opencode", ".config/opencode/skills", &[], &[".config/opencode"]),
+        (
+            "antigravity",
+            ".gemini/antigravity/global_skills",
+            &[],
+            &[".gemini/antigravity"],
+        ),
+        ("amp", ".config/agents/skills", &[], &[".config/amp"]),
+        (
+            "kimi_cli",
+            ".config/agents/skills",
+            &[],
+            &[".kimi-code", ".kimi"],
+        ),
+        (
+            "augment",
+            ".augment/skills",
+            &[".augment/rules"],
+            &[".augment"],
+        ),
+        ("openclaw", ".openclaw/skills", &[], &[".openclaw"]),
+        ("copaw", ".copaw/skill_pool", &[], &[".copaw"]),
+        ("cline", ".cline/skills", &[], &[".cline"]),
+        ("codebuddy", ".codebuddy/skills", &[], &[".codebuddy"]),
+        ("command_code", ".commandcode/skills", &[], &[".commandcode"]),
+        ("continue", ".continue/skills", &[], &[".continue"]),
+        ("crush", ".config/crush/skills", &[], &[".config/crush"]),
+        ("junie", ".junie/skills", &[], &[".junie"]),
+        ("iflow_cli", ".iflow/skills", &[], &[".iflow"]),
+        ("kiro_cli", ".kiro/skills", &[], &[".kiro"]),
+        ("kode", ".kode/skills", &[], &[".kode"]),
+        ("mcpjam", ".mcpjam/skills", &[], &[".mcpjam"]),
+        ("mistral_vibe", ".vibe/skills", &[], &[".vibe"]),
+        ("mux", ".mux/skills", &[], &[".mux"]),
+        ("openclaude", ".openclaude/skills", &[], &[".openclaude"]),
+        ("openhands", ".openhands/skills", &[], &[".openhands"]),
+        ("pi", ".pi/agent/skills", &[], &[".pi"]),
+        ("qoder", ".qoder/skills", &[], &[".qoder"]),
+        ("qoderwork", ".qoderwork/skills", &[], &[".qoderwork"]),
+        ("qwen_code", ".qwen/skills", &[], &[".qwen"]),
+        ("trae", ".trae/skills", &[], &[".trae"]),
+        ("trae_cn", ".trae-cn/skills", &[], &[".trae-cn"]),
+        ("zencoder", ".zencoder/skills", &[], &[".zencoder"]),
+        ("neovate", ".neovate/skills", &[], &[".neovate"]),
+        ("pochi", ".pochi/skills", &[], &[".pochi"]),
+        ("adal", ".adal/skills", &[], &[".adal"]),
+        ("kilo_code", ".kilocode/skills", &[], &[".kilocode"]),
+        ("roo_code", ".roo/skills", &[], &[".roo"]),
+        ("goose", ".config/goose/skills", &[], &[".config/goose"]),
+        ("gemini_cli", ".gemini/skills", &[], &[".gemini"]),
+        ("github_copilot", ".copilot/skills", &[], &[".copilot"]),
+        ("clawdbot", ".clawdbot/skills", &[], &[".clawdbot"]),
+        ("droid", ".factory/skills", &[], &[".factory"]),
+        (
+            "windsurf",
+            ".codeium/windsurf/skills",
+            &[],
+            &[".codeium/windsurf"],
+        ),
+        ("moltbot", ".moltbot/skills", &[], &[".moltbot"]),
+        ("hermes-agent", ".hermes/skills", &[], &[".hermes"]),
+    ];
+    assert_eq!(
+        expected.len(),
+        default_tool_adapters().len(),
+        "table must cover every registered tool"
+    );
+    let home = tempfile::tempdir().unwrap();
+    let under = |rel: &str| {
+        let mut path = home.path().to_path_buf();
+        path.extend(rel.split('/'));
+        path
+    };
+    for (key, skills, former, detect) in expected {
+        let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {key}"));
+        assert_eq!(
+            skills_dir_in(home.path(), adapter),
+            under(skills),
+            "skills dir for {key}"
+        );
+        assert_eq!(
+            former_skills_dirs_in(home.path(), adapter),
+            former.iter().map(|d| under(d)).collect::<Vec<_>>(),
+            "former dirs for {key}"
+        );
+        assert_eq!(
+            detect_dirs_in(home.path(), adapter),
+            detect.iter().map(|d| under(d)).collect::<Vec<_>>(),
+            "detect dirs for {key}"
+        );
+    }
+}
+
 /// #103: the registry's relative dirs are written with `/`; joined onto a
 /// Windows root they must not keep it (`C:\Users\op\.claude/skills` is what
 /// 1.3.1 recorded). Every join spells the whole path with the platform's own
