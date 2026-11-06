@@ -766,9 +766,9 @@ Composed from the primitives and tokens only; no variant was added. Files: `comp
 - **Header row** (48 px + its 1 px hairline: 8 px around 32 px controls): title (`lg`, the `data-surface-heading` focus target) + count (`faint`) · the
   exception summary · a status region reserved for ticket 14's progress · Configure harnesses (`ghost`) · Update
   all (`outline`) · **Add skill** (`solid accent`, the one primary). The summary reads the health fold over the
-  whole library: "N failed deployments" (`failed` text) · "N out of date copies" (`stale` text) · "View N skills with
-  issues" (`ghost accent` Button that presses the Issues chip). Zero parts are dropped; a healthy library shows
-  nothing. A skill has an issue when its loudest fold row is failed or out of date — the Issues chip keeps exactly those.
+  whole library, skills first and each count under its noun (BACKLOG #72): "View N skills with issues" (`ghost accent`
+  Button that presses the Issues chip) · "Deployments:" (`muted-foreground`) "N failed" (`failed` text) · "N out of
+  date" (`stale` text). Zero parts are dropped; a healthy library shows nothing. A skill has an issue when its loudest fold row is failed or out of date — the Issues chip keeps exactly those.
 - **Filter bar** (48 px + hairline, measured ticket 15 — 8 px around the 32 px Segmented and Sort controls; chips and search are 24 px; every bar is a 4 px multiple plus its hairline, rows are 36 px including theirs): search (`Input sm`, labelled "Search skills" through a Field; `/` focuses it, Escape
   clears it; Enter or ↓ moves focus to the first row shown — a rule of the field, the list keymap still ignores
   editables; `autoCorrect` / `autoCapitalize` off and `spellCheck={false}` on every `type="search"` field) · Chips

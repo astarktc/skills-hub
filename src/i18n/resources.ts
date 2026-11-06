@@ -603,12 +603,14 @@ export const resources = {
         count_one: "{{count}} skill",
         count_other: "{{count}} skills",
         summary: {
-          failedTargets_one: "{{count}} failed deployment",
-          failedTargets_other: "{{count}} failed deployments",
-          staleTargets_one: "{{count}} out of date copy",
-          staleTargets_other: "{{count}} out of date copies",
+          // "View 11 skills with issues · Deployments: 7 failed · 2 out of date"
           viewIssues_one: "View {{count}} skill with issues",
           viewIssues_other: "View {{count}} skills with issues",
+          deployments: "Deployments:",
+          failedTargets_one: "{{count}} failed",
+          failedTargets_other: "{{count}} failed",
+          staleTargets_one: "{{count}} out of date",
+          staleTargets_other: "{{count}} out of date",
         },
         updateAll: "Update all",
         searchLabel: "Search skills",

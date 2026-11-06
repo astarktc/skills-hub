@@ -77,8 +77,20 @@ const LibraryHeader = ({
         <span className="text-sm text-faint tabular-nums">{t("library.count", { count: librarySize })}</span>
       </div>
 
+      {/* Skills first, then the deployments behind them under their own
+          noun (BACKLOG #72: "7 failed deployments · View 11 skills" was read
+          as 7 skills — two units side by side, the first number taken). */}
       {skillsWithIssues > 0 && !running ? (
-        <p className="m-0 flex min-w-0 items-center gap-2 text-sm">
+        <p className="m-0 flex min-w-0 flex-wrap items-center gap-x-2 text-sm">
+          <Button variant="ghost" tone="accent" size="sm" onClick={onViewIssues}>
+            {t("library.summary.viewIssues", { count: skillsWithIssues })}
+          </Button>
+          {failedTargets > 0 || staleTargets > 0 ? (
+            <>
+              <span aria-hidden="true" className="text-faint">·</span>
+              <span className="text-muted-foreground">{t("library.summary.deployments")}</span>
+            </>
+          ) : null}
           {failedTargets > 0 ? (
             <span className="text-failed">{t("library.summary.failedTargets", { count: failedTargets })}</span>
           ) : null}
@@ -86,10 +98,6 @@ const LibraryHeader = ({
           {staleTargets > 0 ? (
             <span className="text-stale">{t("library.summary.staleTargets", { count: staleTargets })}</span>
           ) : null}
-          {failedTargets > 0 || staleTargets > 0 ? <span aria-hidden="true" className="text-faint">·</span> : null}
-          <Button variant="ghost" tone="accent" size="sm" onClick={onViewIssues}>
-            {t("library.summary.viewIssues", { count: skillsWithIssues })}
-          </Button>
         </p>
       ) : null}
 
