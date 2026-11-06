@@ -438,17 +438,34 @@ pub(crate) mod test_hooks {
 
 /// The one removal primitive: remove the entry `path` names, admitted by
 /// physical identity against `fence` ([`removal_fence::admit`]) and removed
-/// at that physical location. An absent entry is a successful removal.
+/// at that physical location. An absent entry is a successful removal. A
+/// permission failure — of the removal or of the stat before it — is the
+/// typed `SignalError::RemovalPermissionDenied` over the I/O error.
 pub(crate) fn remove_path_any(path: &Path, fence: &Fence<'_>) -> Result<()> {
-    let (path, ft) = match removal_fence::admit(path, fence)? {
-        Entry::Absent => return Ok(()),
-        Entry::Present {
+    let removed = match removal_fence::admit(path, fence) {
+        Ok(Entry::Absent) => Ok(()),
+        Ok(Entry::Present {
             physical,
             file_type,
-        } => (physical, file_type),
+        }) => remove_entry(&physical, file_type),
+        Err(err) => Err(err),
     };
-    let path = path.as_path();
+    removed.map_err(|err| {
+        if is_permission_denied(&err) {
+            let detail = format!("{err:#}");
+            err.context(SignalError::RemovalPermissionDenied {
+                path: path.to_string_lossy().into_owned(),
+                detail,
+            })
+        } else {
+            err
+        }
+    })
+}
 
+/// Remove an admitted entry at its physical location, by its own (never
+/// followed) file type.
+fn remove_entry(path: &Path, ft: std::fs::FileType) -> Result<()> {
     // A link is removed as itself, never through it. On Windows a directory
     // link — a directory symlink or a junction, which std reports as a
     // symlink — is a directory entry: `remove_file` is refused ("Access is
@@ -472,6 +489,21 @@ pub(crate) fn remove_path_any(path: &Path, fence: &Fence<'_>) -> Result<()> {
     }
     std::fs::remove_file(path).with_context(|| format!("remove file {:?}", path))?;
     Ok(())
+}
+
+/// Whether the OS refused for lack of permission: the `PermissionDenied`
+/// kind, or on Windows `ERROR_ACCESS_DENIED` (5) and `ERROR_SHARING_VIOLATION`
+/// (32, another process holds the file) whatever kind a wrapper reports —
+/// gated to Windows because raw 5 is EIO on Unix.
+fn is_permission_denied(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io_err| {
+                io_err.kind() == std::io::ErrorKind::PermissionDenied
+                    || (cfg!(windows) && matches!(io_err.raw_os_error(), Some(5 | 32)))
+            })
+    })
 }
 
 fn is_same_link(link_path: &Path, target: &Path) -> bool {

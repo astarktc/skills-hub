@@ -400,6 +400,16 @@ resolved: string;
 /**  In the central library, or outside the claimed directory. */
 reason: RemovalRefusal } |
 /**
+ *  The OS refused to remove `path` for lack of permission (ownership,
+ *  read-only, a process holding it); a retry fails the same way until
+ *  that is fixed.
+ */
+{ code: "REMOVAL_PERMISSION_DENIED";
+/**  The path that could not be removed. */
+path: string;
+/**  The I/O diagnostic chain, diagnostics only. */
+detail: string } |
+/**
  *  An Update replayed the operator's invocation Edit onto new upstream
  *  bytes whose own invocation mode disagrees with both the Edit's base
  *  and its override: the Edit was kept and needs review. Settled by
