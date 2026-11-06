@@ -98,7 +98,12 @@ export function disableCounts(skills: readonly ManagedSkill[], assignmentsOf: As
 
 export type EnableCounts = {
   skills: number;
-  /** Skills with nothing disabled at either grain: Enable changes nothing for them. */
+  /**
+   * Skills with nothing disabled at either grain: Enable changes nothing for
+   * them. With placements read, a disabled project assignment counts as
+   * something to enable; without them (`assignmentsOf` null — the rail's and
+   * palette's refusal) only the skill marker and global targets are seen.
+   */
   alreadyEnabled: number;
   /** Distinct Tools that are synced again. */
   tools: number;
@@ -115,7 +120,10 @@ export function enableCounts(skills: readonly ManagedSkill[], assignmentsOf: Ass
   let alreadyEnabled = 0;
   for (const skill of skills) {
     const disabled = skill.targets.filter((target) => target.status === "disabled");
-    if (skill.disabled_at === null && disabled.length === 0) alreadyEnabled++;
+    const disabledAssignment =
+      assignmentsOf?.(skill.id)?.some((project) => project.assignments.some((row) => row.status === "disabled")) ??
+      false;
+    if (skill.disabled_at === null && disabled.length === 0 && !disabledAssignment) alreadyEnabled++;
     for (const target of disabled) {
       targets++;
       tools.add(target.tool);
@@ -189,7 +197,10 @@ export function enableConfirmLines(counts: EnableCounts, t: Translate): string[]
   return [
     ...(redeploys ? [redeploys] : []),
     ...(assignments === null ? [t("bulk.confirm.readingProjects")] : []),
-    ...(counts.alreadyEnabled > 0 ? [t("bulk.confirm.enable.already", { count: counts.alreadyEnabled })] : []),
+    // "Nothing changes" is only true once project placements are read.
+    ...(assignments !== null && counts.alreadyEnabled > 0
+      ? [t("bulk.confirm.enable.already", { count: counts.alreadyEnabled })]
+      : []),
   ];
 }
 

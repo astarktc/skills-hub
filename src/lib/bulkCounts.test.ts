@@ -1,4 +1,6 @@
+import i18next from "i18next";
 import { describe, expect, it } from "vitest";
+import { resources } from "../i18n/resources";
 import type { ManagedSkillDto as ManagedSkill, SkillTargetDto } from "../bindings";
 import {
   deleteScope,
@@ -149,10 +151,36 @@ describe("the Disable / Enable confirmation sentences", () => {
     expect(enableConfirmLines({ ...enable, targets: 0, tools: 0, assignments: 0 }, t)).toEqual([
       'bulk.confirm.enable.nothingToRedeploy {"count":3}',
     ]);
+    // While placements are unread, "nothing changes" is not claimed.
     expect(enableConfirmLines({ ...enable, assignments: null, alreadyEnabled: 2 }, t)).toEqual([
       `bulk.confirm.enable.redeploysGlobal {${targets}}`,
       "bulk.confirm.readingProjects",
+    ]);
+    expect(enableConfirmLines({ ...enable, assignments: 0, alreadyEnabled: 2 }, t)).toEqual([
+      `bulk.confirm.enable.redeploysGlobal {${targets}}`,
       'bulk.confirm.enable.already {"count":2}',
+    ]);
+  });
+
+  // L4 review (Sol): a project-only disabled deployment is something Enable redeploys.
+  it("Enable counts a skill whose only disabled row is a project deployment as changing", async () => {
+    const i18n = i18next.createInstance();
+    await i18n.init({ resources, lng: "en", interpolation: { escapeValue: false } });
+    const en = i18n.t.bind(i18n) as unknown as typeof t;
+    const counts = enableCounts([skill("a", [])], assignmentsOf); // a: pi disabled in quartermaster
+    expect(counts).toMatchObject({ alreadyEnabled: 0, targets: 0, assignments: 1 });
+    expect(enableConfirmLines(counts, en)).toEqual(["Redeploys 1 project deployment."]);
+  });
+
+  // L4 review (Sol): zero redeployments describes the operation, not the skills' history.
+  it("Enable over a mixed selection with nothing to restore says what it does", async () => {
+    const i18n = i18next.createInstance();
+    await i18n.init({ resources, lng: "en", interpolation: { escapeValue: false } });
+    const en = i18n.t.bind(i18n) as unknown as typeof t;
+    const counts = enableCounts([skill("on", [target("cursor")]), skill("off", [], { disabled_at: 5 })], () => []);
+    expect(enableConfirmLines(counts, en)).toEqual([
+      "Switches the skills back on. No deployments need to be restored.",
+      "1 of them is already on; nothing changes for it.",
     ]);
   });
 });
