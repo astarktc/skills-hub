@@ -1,3 +1,4 @@
+use crate::core::removal_fence::central_repo_of;
 use crate::core::sync_status::{ProjectSyncStatus, SyncMode, SyncStatus};
 use std::fs;
 
@@ -295,10 +296,24 @@ fn remove_project_tool_and_artifacts_deletes_assignments_and_artifacts() {
         .unwrap();
 
     // Assign both skills to claude_code
-    project_sync::assign_and_sync(&store, &project, &skill1, "claude_code", now_ms())
-        .expect("assign skill1");
-    project_sync::assign_and_sync(&store, &project, &skill2, "claude_code", now_ms())
-        .expect("assign skill2");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill1,
+        "claude_code",
+        now_ms(),
+    )
+    .expect("assign skill1");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill2,
+        "claude_code",
+        now_ms(),
+    )
+    .expect("assign skill2");
 
     // Verify symlinks exist
     let target1 = project_dir.join(".claude/skills/rtc-skill-1");
@@ -313,8 +328,13 @@ fn remove_project_tool_and_artifacts_deletes_assignments_and_artifacts() {
     );
 
     // Act: remove the tool
-    project_ops::remove_project_tool_and_artifacts(&store, &project.id, "claude_code")
-        .expect("remove_project_tool_and_artifacts should succeed");
+    project_ops::remove_project_tool_and_artifacts(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        "claude_code",
+    )
+    .expect("remove_project_tool_and_artifacts should succeed");
 
     // Assert: symlinks removed
     assert!(
@@ -373,10 +393,24 @@ fn remove_project_tool_and_artifacts_leaves_other_tools_intact() {
         .unwrap();
 
     // Assign skill to both tools
-    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", now_ms())
-        .expect("assign claude_code");
-    project_sync::assign_and_sync(&store, &project, &skill, "cursor", now_ms())
-        .expect("assign cursor");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "claude_code",
+        now_ms(),
+    )
+    .expect("assign claude_code");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "cursor",
+        now_ms(),
+    )
+    .expect("assign cursor");
 
     // Verify both targets exist
     let claude_target = project_dir.join(".claude/skills/multi-tool-skill");
@@ -385,8 +419,13 @@ fn remove_project_tool_and_artifacts_leaves_other_tools_intact() {
     assert!(cursor_target.exists(), "cursor target should exist");
 
     // Act: remove only claude_code
-    project_ops::remove_project_tool_and_artifacts(&store, &project.id, "claude_code")
-        .expect("remove_project_tool_and_artifacts should succeed");
+    project_ops::remove_project_tool_and_artifacts(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        "claude_code",
+    )
+    .expect("remove_project_tool_and_artifacts should succeed");
 
     // Assert: claude_code target removed
     assert!(
@@ -441,8 +480,15 @@ fn remove_project_tool_and_artifacts_handles_missing_skill_gracefully() {
         })
         .unwrap();
 
-    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", now_ms())
-        .expect("assign");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "claude_code",
+        now_ms(),
+    )
+    .expect("assign");
 
     // Delete the skill record from DB to simulate orphan
     store.delete_skill(&skill.id).unwrap();
@@ -454,8 +500,13 @@ fn remove_project_tool_and_artifacts_handles_missing_skill_gracefully() {
     );
 
     // Act: should not panic
-    project_ops::remove_project_tool_and_artifacts(&store, &project.id, "claude_code")
-        .expect("remove_project_tool_and_artifacts should succeed even with orphaned skill");
+    project_ops::remove_project_tool_and_artifacts(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        "claude_code",
+    )
+    .expect("remove_project_tool_and_artifacts should succeed even with orphaned skill");
 
     // Assert: tool row deleted
     let tools = store.list_project_tools(&project.id).unwrap();
@@ -524,7 +575,15 @@ fn setup_pi_assignment(
             tool: "pi".to_string(),
         })
         .unwrap();
-    project_sync::assign_and_sync(store, &project, &skill, "pi", now_ms()).expect("assign");
+    project_sync::assign_and_sync(
+        store,
+        &central_repo_of(store),
+        &project,
+        &skill,
+        "pi",
+        now_ms(),
+    )
+    .expect("assign");
 
     let target = project_sync::resolve_project_sync_target(&project_dir, pi_adapter(), name);
     assert!(
@@ -542,7 +601,8 @@ fn remove_project_and_artifacts_removes_project_scope_target_for_divergent_tool(
     let (project, _skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rpc-pi-skill");
 
     let report =
-        project_ops::remove_project_and_artifacts(&store, &project.id).expect("remove project");
+        project_ops::remove_project_and_artifacts(&store, &central_repo_of(&store), &project.id)
+            .expect("remove project");
 
     assert!(
         target.symlink_metadata().is_err(),
@@ -572,7 +632,8 @@ fn remove_project_and_artifacts_orphan_branch_removes_project_scope_target() {
         "precondition: orphaned assignment row must survive"
     );
 
-    project_ops::remove_project_and_artifacts(&store, &project.id).expect("remove project");
+    project_ops::remove_project_and_artifacts(&store, &central_repo_of(&store), &project.id)
+        .expect("remove project");
 
     assert!(
         target.symlink_metadata().is_err(),
@@ -587,7 +648,13 @@ fn remove_project_tool_and_artifacts_removes_project_scope_target_for_divergent_
     let tmpdir = tempfile::tempdir().expect("tmpdir");
     let (project, _skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rtc-pi-skill");
 
-    project_ops::remove_project_tool_and_artifacts(&store, &project.id, "pi").expect("remove tool");
+    project_ops::remove_project_tool_and_artifacts(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        "pi",
+    )
+    .expect("remove tool");
 
     assert!(
         target.symlink_metadata().is_err(),
@@ -612,7 +679,13 @@ fn remove_project_tool_and_artifacts_orphan_branch_removes_project_scope_target(
         "precondition: orphaned assignment row must survive"
     );
 
-    project_ops::remove_project_tool_and_artifacts(&store, &project.id, "pi").expect("remove tool");
+    project_ops::remove_project_tool_and_artifacts(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        "pi",
+    )
+    .expect("remove tool");
 
     assert!(
         target.symlink_metadata().is_err(),
@@ -650,8 +723,13 @@ fn remove_project_tool_and_artifacts_plans_orphan_rows_from_their_stored_skill_n
         "planned from the row's stored skill name"
     );
 
-    let report = project_ops::remove_project_tool_and_artifacts(&store, &project.id, "pi")
-        .expect("remove tool");
+    let report = project_ops::remove_project_tool_and_artifacts(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        "pi",
+    )
+    .expect("remove tool");
 
     assert!(report.failures().is_empty());
     assert_eq!(report.removed_rows(), 1);
@@ -700,8 +778,13 @@ fn remove_project_tool_and_artifacts_keeps_the_tool_row_when_an_artifact_stays()
         return;
     }
 
-    let report = project_ops::remove_project_tool_and_artifacts(&store, &project.id, "pi")
-        .expect("report, not error");
+    let report = project_ops::remove_project_tool_and_artifacts(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        "pi",
+    )
+    .expect("report, not error");
     unlock_parent(&target);
 
     assert_eq!(report.failures().len(), 1);
@@ -736,6 +819,7 @@ fn configure_tools_applies_the_rest_and_reports_the_removal_failures() {
 
     let removals = project_ops::configure_project_tools(
         &store,
+        &central_repo_of(&store),
         &project.id,
         &["claude_code".to_string()],
         None,
@@ -782,8 +866,9 @@ fn remove_project_and_artifacts_keeps_the_project_when_an_artifact_stays() {
         return;
     }
 
-    let report = project_ops::remove_project_and_artifacts(&store, &project.id)
-        .expect("a stuck artifact is report data, not an error");
+    let report =
+        project_ops::remove_project_and_artifacts(&store, &central_repo_of(&store), &project.id)
+            .expect("a stuck artifact is report data, not an error");
     unlock_parent(&target);
 
     let failures = report.failures();
@@ -857,6 +942,7 @@ fn configure_tools_writes_gitignore_from_the_tools_just_persisted() {
 
     let removals = project_ops::configure_project_tools(
         &store,
+        &central_repo_of(&store),
         &project.id,
         &strs(&["claude_code", "windsurf"]),
         Some(IgnoreUpdateOptions {
@@ -892,6 +978,7 @@ fn configure_tools_diffs_against_persisted_tools_and_rewrites_the_block() {
     let project = register_dir_project(&store, &project_dir);
     project_ops::configure_project_tools(
         &store,
+        &central_repo_of(&store),
         &project.id,
         &strs(&["claude_code", "windsurf"]),
         Some(IgnoreUpdateOptions {
@@ -911,6 +998,7 @@ fn configure_tools_diffs_against_persisted_tools_and_rewrites_the_block() {
     // Drop windsurf, add pi; claude_code stays (same record id, not re-inserted).
     let removals = project_ops::configure_project_tools(
         &store,
+        &central_repo_of(&store),
         &project.id,
         &strs(&["claude_code", "pi"]),
         Some(IgnoreUpdateOptions {
@@ -948,8 +1036,14 @@ fn configure_tools_without_intent_leaves_ignore_files_alone() {
     fs::create_dir_all(&project_dir).unwrap();
     let project = register_dir_project(&store, &project_dir);
 
-    project_ops::configure_project_tools(&store, &project.id, &strs(&["claude_code"]), None)
-        .unwrap();
+    project_ops::configure_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &strs(&["claude_code"]),
+        None,
+    )
+    .unwrap();
 
     assert_eq!(store.list_project_tools(&project.id).unwrap().len(), 1);
     let status = project_ignore_status(&project_dir);
@@ -966,6 +1060,7 @@ fn configure_tools_rejects_unknown_tool_before_writing_anything() {
 
     let err = project_ops::configure_project_tools(
         &store,
+        &central_repo_of(&store),
         &project.id,
         &strs(&["claude_code", "not-a-tool"]),
         Some(IgnoreUpdateOptions {
@@ -987,9 +1082,14 @@ fn configure_tools_rejects_unknown_tool_before_writing_anything() {
 #[test]
 fn configure_tools_raises_typed_not_found_for_unknown_project() {
     let (_dir, store) = make_store();
-    let err =
-        project_ops::configure_project_tools(&store, "missing", &strs(&["claude_code"]), None)
-            .expect_err("must fail");
+    let err = project_ops::configure_project_tools(
+        &store,
+        &central_repo_of(&store),
+        "missing",
+        &strs(&["claude_code"]),
+        None,
+    )
+    .expect_err("must fail");
     assert_eq!(
         err.downcast_ref::<SignalError>(),
         Some(&SignalError::NotFound {
@@ -1061,8 +1161,14 @@ fn view_after_configure_tools_reflects_the_assignment_cascade() {
     let tmpdir = tempfile::tempdir().expect("tmpdir");
     let (project, _skill, target) = setup_pi_assignment(tmpdir.path(), &store, "pv-cascade");
 
-    project_ops::configure_project_tools(&store, &project.id, &strs(&["claude_code"]), None)
-        .expect("configure tools");
+    project_ops::configure_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &strs(&["claude_code"]),
+        None,
+    )
+    .expect("configure tools");
     let view = project_ops::project_view(&store, &project.id).expect("view");
 
     assert!(

@@ -160,13 +160,14 @@ pub(crate) fn propagate_unlocked(
     }
     propagate_global_rows(
         store,
+        &paths.central_dir,
         &paths.home,
         &central_path,
         skill_id,
         now,
         &mut report,
     )?;
-    propagate_project_rows(store, &skill, now, &mut report)?;
+    propagate_project_rows(store, &paths.central_dir, &skill, now, &mut report)?;
     Ok(report)
 }
 
@@ -188,6 +189,7 @@ fn missing_source(central_path: &Path) -> anyhow::Error {
 /// written once and every member row is settled.
 fn propagate_global_rows(
     store: &SkillStore,
+    central_dir: &Path,
     home: &Path,
     central_path: &Path,
     skill_id: &str,
@@ -335,7 +337,7 @@ fn propagate_global_rows(
                 super::content_identity::Source::Managed { store, skill_id },
                 Path::new(&driver.target_path),
                 overwrite,
-                &ProtectedLibrary::recorded(store),
+                &ProtectedLibrary::new(store, central_dir),
             )
         };
 
@@ -477,6 +479,7 @@ fn skipped_global(tool: &str, reason: PropagationSkip) -> PropagationOutcome {
 
 fn propagate_project_rows(
     store: &SkillStore,
+    central_dir: &Path,
     skill: &SkillRecord,
     now: i64,
     report: &mut PropagationReport,
@@ -486,7 +489,7 @@ fn propagate_project_rows(
             project_id: assignment.project_id.clone(),
             tool: assignment.tool.clone(),
         };
-        let status = propagate_one_assignment(store, skill, now, &assignment)?;
+        let status = propagate_one_assignment(store, central_dir, skill, now, &assignment)?;
         report.targets.push(PropagationOutcome { scope, status });
     }
     Ok(())
@@ -499,6 +502,7 @@ fn propagate_project_rows(
 /// Propagation — both travel down in the [`AssignmentSyncContext`].
 fn propagate_one_assignment(
     store: &SkillStore,
+    central_dir: &Path,
     skill: &SkillRecord,
     now: i64,
     assignment: &ProjectSkillAssignmentRecord,
@@ -545,6 +549,7 @@ fn propagate_one_assignment(
     let result = if central_path.is_dir() {
         let ctx = AssignmentSyncContext {
             store,
+            central_dir,
             project_path: &project_path,
             adapter,
             skill,

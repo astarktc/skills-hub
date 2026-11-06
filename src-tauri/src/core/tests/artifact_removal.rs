@@ -3,6 +3,7 @@
 //! settlement rule (rows deleted on success, kept as `error` on failure —
 //! ADR-0002), shared-skills-dir dedupe, and typed per-target report failures.
 
+use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -141,11 +142,15 @@ fn unsync_skill_targets(store: &SkillStore, skill_id: &str) -> anyhow::Result<Re
     let scope = RemovalScope::SkillGlobal {
         skill_id: skill_id.to_string(),
     };
-    execute_unlocked(store, plan(store, &scope)?)
+    execute_unlocked(store, &central_repo_of(store), plan(store, &scope)?)
 }
 
 fn unsync_all_skill_targets(store: &SkillStore) -> anyhow::Result<RemovalReport> {
-    execute_unlocked(store, plan(store, &RemovalScope::EveryGlobalTarget)?)
+    execute_unlocked(
+        store,
+        &central_repo_of(store),
+        plan(store, &RemovalScope::EveryGlobalTarget)?,
+    )
 }
 
 fn unsync_skill_from_tool(
@@ -159,7 +164,7 @@ fn unsync_skill_from_tool(
         tool_key: tool_key.to_string(),
         home: home.to_path_buf(),
     };
-    execute_unlocked(store, plan(store, &scope)?)
+    execute_unlocked(store, &central_repo_of(store), plan(store, &scope)?)
 }
 
 fn make_store(base: &Path) -> SkillStore {
@@ -529,7 +534,7 @@ fn project_skill_scope_plans_every_tool_row_of_one_skill_in_one_project() {
     );
     assert!(planned.skill.is_none(), "the skill itself is not removed");
 
-    let report = execute_unlocked(&store, planned).expect("execute");
+    let report = execute_unlocked(&store, &central_repo_of(&store), planned).expect("execute");
     assert_eq!(report.removed_rows(), 2);
     assert!(!exists_any(&claude) && !exists_any(&pi));
     assert!(
@@ -571,7 +576,7 @@ fn project_skill_scope_keeps_the_stuck_row_and_removes_the_healthy_one() {
         },
     )
     .expect("plan");
-    let report = execute_unlocked(&store, planned).expect("execute");
+    let report = execute_unlocked(&store, &central_repo_of(&store), planned).expect("execute");
     restore_permissions(&bad);
 
     assert_eq!(report.removed_rows(), 1);
@@ -717,7 +722,7 @@ fn removal_of_a_skill_with_no_rows_reports_nothing_and_still_deletes_the_skill()
     let central = make_skill_dir(&tmp.path().join("central"), "solo");
     let skill = seed_skill(&store, "solo", &central);
 
-    let report = remove_skill(&store, &skill.id).expect("remove");
+    let report = remove_skill(&store, &central_repo_of(&store), &skill.id).expect("remove");
 
     assert!(report.targets.is_empty());
     assert_eq!(report.removed_rows(), 0);
@@ -832,7 +837,7 @@ fn a_failed_project_artifact_keeps_its_assignment_row_with_status_error() {
         },
     )
     .expect("plan");
-    let report = execute_unlocked(&store, planned).expect("execute");
+    let report = execute_unlocked(&store, &central_repo_of(&store), planned).expect("execute");
     restore_permissions(&target);
 
     assert_eq!(report.failed_rows(), 1);
@@ -880,7 +885,7 @@ fn a_project_artifact_is_removed_under_its_stored_name_after_the_skill_is_rename
         vec![target.clone()],
         "planned from the stored name"
     );
-    let report = execute_unlocked(&store, planned).expect("execute");
+    let report = execute_unlocked(&store, &central_repo_of(&store), planned).expect("execute");
 
     assert_eq!(report.removed_rows(), 1);
     assert!(!exists_any(&target), "the stored-name artifact is gone");
@@ -985,7 +990,7 @@ fn remove_skill_removes_global_project_central_and_record() {
     let project = seed_project(&store, tmp.path(), "proj");
     let project_target = seed_assignment(&store, &project, &skill, "pi", SyncStatus::Synced);
 
-    let report = remove_skill(&store, &skill.id).expect("remove");
+    let report = remove_skill(&store, &central_repo_of(&store), &skill.id).expect("remove");
 
     assert!(!exists_any(&global));
     assert!(!exists_any(&project_target));
@@ -1011,7 +1016,7 @@ fn remove_skill_cleans_project_artifacts_before_the_cascade() {
     let project = seed_project(&store, tmp.path(), "proj");
     let target = seed_assignment(&store, &project, &skill, "windsurf", SyncStatus::Synced);
 
-    remove_skill(&store, &skill.id).expect("remove");
+    remove_skill(&store, &central_repo_of(&store), &skill.id).expect("remove");
 
     assert!(!exists_any(&target));
     assert!(store
@@ -1037,7 +1042,7 @@ fn remove_skill_with_no_record_sweeps_targets_without_touching_a_central_copy() 
         .unwrap();
     }
 
-    let report = remove_skill(&store, &skill.id).expect("remove");
+    let report = remove_skill(&store, &central_repo_of(&store), &skill.id).expect("remove");
 
     assert!(!exists_any(&global));
     assert!(
@@ -1059,7 +1064,8 @@ fn remove_skill_keeps_the_skill_and_reports_partial_failure() {
         return;
     }
 
-    let report = remove_skill(&store, &skill.id).expect("per-target failure is report data");
+    let report = remove_skill(&store, &central_repo_of(&store), &skill.id)
+        .expect("per-target failure is report data");
     restore_permissions(&bad);
 
     assert!(!report.record_deleted && !report.central_removed);
@@ -1270,7 +1276,8 @@ fn a_real_leaf_under_a_parent_aliased_onto_the_central_repo_is_refused_and_centr
     let target = tool_dir.join("alpha");
     seed_global_target_at(&store, &skill, "claude_code", &target);
 
-    let report = remove_skill(&store, &skill.id).expect("delete settles as report data");
+    let report = remove_skill(&store, &central_repo_of(&store), &skill.id)
+        .expect("delete settles as report data");
 
     assert_central_intact(&central);
     assert!(
@@ -1327,7 +1334,12 @@ fn a_project_artifact_under_a_dir_aliased_onto_the_central_repo_is_refused() {
     let scope = RemovalScope::Project {
         project_id: project.id.clone(),
     };
-    let report = execute_unlocked(&store, plan(&store, &scope).unwrap()).unwrap();
+    let report = execute_unlocked(
+        &store,
+        &central_repo_of(&store),
+        plan(&store, &scope).unwrap(),
+    )
+    .unwrap();
 
     assert_central_intact(&central);
     assert!(
@@ -1383,4 +1395,141 @@ fn a_leaf_link_under_an_aliased_parent_is_removed_and_its_referent_survives() {
         .is_symlink());
     assert_central_intact(&central);
     assert!(store.list_skill_targets(&skill.id).unwrap().is_empty());
+}
+
+/// Review finding 1 (BACKLOG #107): on a case-insensitive volume a recorded
+/// target spelled `ALPHA` under a Tool dir linked onto the central repo is
+/// the central `alpha`. The removal is refused — never `Removed` with the
+/// central bytes gone — and the row is kept `error`. The library here is a
+/// historical one (the configured repo is elsewhere), so the recorded copy's
+/// own physical identity is what refuses it, not the repo's subtree.
+#[cfg(unix)]
+#[test]
+fn a_case_variant_target_under_an_aliased_tool_dir_never_removes_the_central_copy() {
+    use crate::core::errors::RemovalRefusal;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = central_skill_with_nested(tmp.path(), "alpha");
+    if !tmp.path().join("central").join("ALPHA").exists() {
+        eprintln!("case-sensitive volume: the variant names another entry");
+        return;
+    }
+    let skill = seed_skill(&store, "alpha", &central);
+    let tool_dir = tmp.path().join("tools").join("claude_code");
+    fs::create_dir_all(tool_dir.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(tmp.path().join("central"), &tool_dir).unwrap();
+    seed_global_target_at(&store, &skill, "claude_code", &tool_dir.join("ALPHA"));
+    let scope = RemovalScope::SkillGlobal {
+        skill_id: skill.id.clone(),
+    };
+    let configured_elsewhere = tmp.path().join("moved-library");
+
+    let report = execute_unlocked(&store, &configured_elsewhere, plan(&store, &scope).unwrap())
+        .expect("report data");
+
+    assert_central_intact(&central);
+    assert!(
+        matches!(
+            &report.targets[0].status,
+            RemovalTargetStatus::Failed {
+                error: CommandError::RemovalRefused {
+                    reason: RemovalRefusal::CentralLibrary,
+                    ..
+                }
+            }
+        ),
+        "{report}"
+    );
+    let row = store
+        .get_skill_target(&skill.id, "claude_code")
+        .unwrap()
+        .expect("row kept");
+    assert_eq!(row.status, SyncStatus::Error);
+}
+
+/// Review finding 3 (BACKLOG #107): the configured central repo is protected
+/// whole. A recorded target that physically is an *unrecorded* folder of the
+/// repo (an acquisition's staging folder) through a Tool dir linked onto it
+/// is refused; the folder's bytes survive.
+#[cfg(unix)]
+#[test]
+fn an_unrecorded_folder_of_the_central_repo_is_never_removed_through_an_alias() {
+    use crate::core::errors::RemovalRefusal;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central_dir = central_repo_of(&store);
+    let central = central_skill_with_nested(tmp.path(), "alpha");
+    assert_eq!(central.parent(), Some(central_dir.as_path()));
+    let staging = central_dir.join(".staging-acquisition");
+    fs::create_dir_all(&staging).unwrap();
+    fs::write(staging.join("keep"), "acquired bytes").unwrap();
+    let skill = seed_skill(&store, "staging", &central);
+    let tool_dir = tmp.path().join("tools").join("claude_code");
+    fs::create_dir_all(tool_dir.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&central_dir, &tool_dir).unwrap();
+    seed_global_target_at(
+        &store,
+        &skill,
+        "claude_code",
+        &tool_dir.join(".staging-acquisition"),
+    );
+
+    let report = unsync_skill_targets(&store, &skill.id).expect("report data");
+
+    assert_eq!(
+        fs::read_to_string(staging.join("keep")).expect("staging bytes survive"),
+        "acquired bytes"
+    );
+    assert!(
+        matches!(
+            &report.targets[0].status,
+            RemovalTargetStatus::Failed {
+                error: CommandError::RemovalRefused {
+                    reason: RemovalRefusal::CentralLibrary,
+                    ..
+                }
+            }
+        ),
+        "{report}"
+    );
+}
+
+/// Review finding 4 (BACKLOG #76): Delete's last step — the central copy —
+/// failing for lack of permission is the typed `REMOVAL_PERMISSION_DENIED`
+/// naming the copy, like every other removal's, not an untyped `OTHER`. The
+/// skill and its record survive for a retry.
+#[cfg(unix)]
+#[test]
+fn a_central_copy_permission_failure_is_typed() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = central_skill_with_nested(tmp.path(), "alpha");
+    let skill = seed_skill(&store, "alpha", &central);
+    // The copy's own folder read-only: its files cannot be unlinked.
+    fs::set_permissions(&central, fs::Permissions::from_mode(0o555)).unwrap();
+    if fs::remove_file(central.join("SKILL.md")).is_ok() {
+        fs::set_permissions(&central, fs::Permissions::from_mode(0o755)).unwrap();
+        eprintln!("skipped: permissions are not enforced for this user");
+        return;
+    }
+
+    let result = remove_skill(&store, &central_repo_of(&store), &skill.id);
+    fs::set_permissions(&central, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let error = CommandError::from_anyhow(result.expect_err("the copy stays"));
+    match error {
+        CommandError::RemovalPermissionDenied { path, detail } => {
+            assert_eq!(path, central.to_string_lossy());
+            assert!(detail.contains("Permission denied"), "{detail}");
+        }
+        other => panic!("expected the typed permission failure, got {other:?}"),
+    }
+    // What the read-only folder holds directly cannot have gone (deeper
+    // levels may, in the OS's own order).
+    assert!(store.get_skill_by_id(&skill.id).unwrap().is_some());
+    assert!(central.join("SKILL.md").is_file());
 }

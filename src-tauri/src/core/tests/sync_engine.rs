@@ -304,6 +304,66 @@ fn overwrite_refuses_a_target_that_physically_is_its_source() {
     );
 }
 
+/// Review finding 1 (BACKLOG #107), the overwrite's side: on a
+/// case-insensitive volume a target spelled `DEMO` under a Tool dir linked
+/// onto the central repo is the source `demo` itself. Admission compares
+/// physical identity, so the replacement is refused and the source survives —
+/// both the plain overwrite and the library-fenced one.
+#[cfg(unix)]
+#[test]
+fn overwrite_refuses_a_case_variant_of_its_source() {
+    use crate::core::errors::{RemovalRefusal, SignalError};
+    use crate::core::tool_adapters::adapter_by_key;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let central_root = tmp.path().join("central");
+    let source = central_root.join("demo");
+    fs::create_dir_all(source.join("nested")).unwrap();
+    fs::write(source.join("SKILL.md"), b"# demo").unwrap();
+    fs::write(source.join("nested").join("keep"), b"central bytes").unwrap();
+    if !central_root.join("DEMO").exists() {
+        eprintln!("case-sensitive volume: the variant names another entry");
+        return;
+    }
+    let tool_dir = tmp.path().join("tools").join("claude");
+    fs::create_dir_all(tool_dir.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&central_root, &tool_dir).unwrap();
+    let target = tool_dir.join("DEMO");
+    let adapter = adapter_by_key("claude_code").unwrap();
+
+    let refusals = [
+        sync_dir_hybrid_with_overwrite(&source, Source::Directory(&source), &target, true)
+            .unwrap_err(),
+        sync_dir_for_tool_with_overwrite(
+            adapter,
+            &source,
+            Source::Directory(&source),
+            &target,
+            true,
+            &ProtectedLibrary::unrecorded(),
+        )
+        .unwrap_err(),
+    ];
+
+    for err in refusals {
+        assert!(
+            matches!(
+                err.downcast_ref::<SignalError>(),
+                Some(SignalError::RemovalRefused {
+                    reason: RemovalRefusal::CentralLibrary,
+                    ..
+                })
+            ),
+            "{err:#}"
+        );
+    }
+    assert_eq!(fs::read(source.join("SKILL.md")).unwrap(), b"# demo");
+    assert_eq!(
+        fs::read(source.join("nested").join("keep")).unwrap(),
+        b"central bytes"
+    );
+}
+
 /// A link in the way under an aliased parent is still replaced as itself: the
 /// old link goes, its referent's bytes stay.
 #[cfg(unix)]
@@ -568,7 +628,7 @@ mod junction_leg {
         execute_settling_unlocked, execute_unlocked, plan, RemovalScope, Settlement,
     };
     use crate::core::content_identity::{self, Comparison, Source};
-    use crate::core::removal_fence::{Fence, ProtectedLibrary};
+    use crate::core::removal_fence::{central_repo_of, Fence, ProtectedLibrary};
     use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord};
     use crate::core::sync_engine::{
         remove_path_any, sync_dir_hybrid_with_overwrite, try_junction, Occupant, SyncMode,
@@ -839,7 +899,12 @@ mod junction_leg {
         let scope = RemovalScope::SkillGlobal {
             skill_id: skill.id.clone(),
         };
-        let report = execute_unlocked(&store, plan(&store, &scope).unwrap()).unwrap();
+        let report = execute_unlocked(
+            &store,
+            &central_repo_of(&store),
+            plan(&store, &scope).unwrap(),
+        )
+        .unwrap();
 
         assert_eq!(
             (report.removed_rows(), report.failed_rows()),
@@ -861,9 +926,13 @@ mod junction_leg {
         let scope = RemovalScope::SkillGlobal {
             skill_id: skill.id.clone(),
         };
-        let report =
-            execute_settling_unlocked(&store, plan(&store, &scope).unwrap(), Settlement::Disable)
-                .unwrap();
+        let report = execute_settling_unlocked(
+            &store,
+            &central_repo_of(&store),
+            plan(&store, &scope).unwrap(),
+            Settlement::Disable,
+        )
+        .unwrap();
 
         assert_eq!(report.failed_rows(), 0, "{report:?}");
         assert!(fs::symlink_metadata(&target).is_err(), "junction removed");

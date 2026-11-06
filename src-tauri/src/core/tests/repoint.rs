@@ -5,6 +5,7 @@
 //! Every case runs against a temp home / central dir / DB; the git arm uses
 //! an injected `GithubApi` (or a seeded clone cache), never the network.
 
+use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -75,6 +76,7 @@ fn sync_to(f: &Fixture, tool: &str) {
     sync_skills_to_tools(
         &f.paths.home,
         &f.store,
+        &central_repo_of(&f.store),
         &[BatchSkill {
             skill_id: skill.id,
             skill_name: skill.name,
@@ -538,6 +540,7 @@ fn seed_repoint_repository(f: &Fixture, matching_name: bool) {
     let url = repo.path().to_string_lossy();
     let (cached, _) = fetch_through_cache(
         &f.paths.cache_dir,
+        &crate::core::removal_fence::ProtectedLibrary::new(&f.store, &f.paths.central_dir),
         &FetchRequest {
             clone_url: &url,
             branch: None,
@@ -570,6 +573,7 @@ fn git_repoint_root_manifest_stores_no_subpath() {
     git(&["commit", "-q", "-m", "root skill"], repo.path());
     let (cached, _) = fetch_through_cache(
         &f.paths.cache_dir,
+        &crate::core::removal_fence::ProtectedLibrary::new(&f.store, &f.paths.central_dir),
         &FetchRequest {
             clone_url: &repo.path().to_string_lossy(),
             branch: Some("main"),

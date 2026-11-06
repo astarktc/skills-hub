@@ -30,7 +30,9 @@
 //!
 //! The module takes no database handle: freshness is a **value** the caller
 //! resolves (`settings::git_cache_ttl_ms`) and passes as `ttl_ms`, keeping the
-//! shipped `0 = never fresh` semantics.
+//! shipped `0 = never fresh` semantics, and the library the corrupt-entry
+//! retry must spare is a fence value the caller builds
+//! (`removal_fence::ProtectedLibrary`, from the configured central repo).
 //!
 //! The locks are **private to this module** — that is the point of the
 //! boundary, the same shape `mutation_guard.rs` uses for Sync-target
@@ -59,7 +61,7 @@ use super::errors::SignalError;
 use super::git_fetcher::{
     clone_or_pull, clone_or_pull_sparse, reshape_checkout, CHECKOUT_POLICY_VERSION,
 };
-use super::removal_fence::{Claim, Fence, ProtectedLibrary};
+use super::removal_fence::{Claim, Fence, OwnedDir, ProtectedLibrary};
 use super::repo_subpath::normalize_subpath;
 use super::sync_engine::remove_path_any;
 
@@ -185,9 +187,13 @@ impl<'a> FetchRequest<'a> {
 /// and its checkout covers `req.subpath` (widening the working tree in place
 /// first when it does not); otherwise fetches under this key's lock. A fetch
 /// that fails against an existing entry is retried exactly once from a clean
-/// directory, which is how a corrupt cache entry heals.
+/// directory, which is how a corrupt cache entry heals. That clean-up never
+/// reaches `library` and removes the entry only as a direct child of the
+/// cache root reached from `cache_dir` (the trusted boundary the command seam
+/// resolves) through real directories ([`OwnedDir`]).
 pub(crate) fn fetch_through_cache(
     cache_dir: &Path,
+    library: &ProtectedLibrary<'_>,
     req: &FetchRequest,
 ) -> Result<(PathBuf, String)> {
     let started = std::time::Instant::now();
@@ -280,15 +286,10 @@ pub(crate) fn fetch_through_cache(
             }
             // Otherwise assume the entry is unusable and retry once clean.
             // The entry is removed only as a direct child of the cache root
-            // the app owns — a real directory, never an alias leading
-            // elsewhere (`removal_fence`) — and a refusal ends the fetch.
-            let cache_root = repo_dir.parent().unwrap_or(&repo_dir);
-            let library = ProtectedLibrary::unrecorded();
-            remove_path_any(
-                &repo_dir,
-                &Fence::new(&library).claiming(Claim::ChildOfOwned(cache_root)),
-            )
-            .with_context(|| format!("{:#}", err))?;
+            // the app owns — reached from `cache_dir` through real
+            // directories, never an alias leading elsewhere, and never the
+            // library (`removal_fence`) — and a refusal ends the fetch.
+            remove_entry(cache_dir, library, &key).with_context(|| format!("{:#}", err))?;
             fetch_into(&repo_dir, req, &checkout).with_context(|| format!("{:#}", err))?
         }
     };
@@ -362,12 +363,29 @@ fn hash_key_parts(first: &str, second: Option<&str>, third: Option<&str>) -> Str
     hex::encode(hasher.finalize())
 }
 
+/// The cache root's name under the app cache dir.
+const CACHE_DIR_NAME: &str = "skills-hub-git-cache";
+
 /// Ensure the cache root exists and resolve this key's cache dir.
 fn prepare_repo_dir(cache_dir: &Path, key: &str) -> Result<PathBuf> {
-    let cache_root = cache_dir.join("skills-hub-git-cache");
+    let cache_root = cache_dir.join(CACHE_DIR_NAME);
     std::fs::create_dir_all(&cache_root)
         .with_context(|| format!("failed to create cache dir {:?}", cache_root))?;
     Ok(cache_root.join(key))
+}
+
+/// Remove the entry `key` for a clean retry: admitted as a direct child of
+/// the physical cache root [`OwnedDir`] resolves from `cache_dir`, and never
+/// the library. An absent cache root has no entry to remove.
+fn remove_entry(cache_dir: &Path, library: &ProtectedLibrary<'_>, key: &str) -> Result<()> {
+    let relative = Path::new(CACHE_DIR_NAME);
+    let Some(cache_root) = OwnedDir::resolve(cache_dir, relative)? else {
+        return Ok(());
+    };
+    remove_path_any(
+        &cache_root.path().join(key),
+        &Fence::new(library).claiming(Claim::ChildOfOwned(&cache_root)),
+    )
 }
 
 /// Whether the entry directory holds a clone at all.

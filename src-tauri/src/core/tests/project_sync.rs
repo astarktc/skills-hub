@@ -1,3 +1,4 @@
+use crate::core::removal_fence::central_repo_of;
 use crate::core::sync_status::{SyncMode, SyncStatus};
 use std::fs;
 use std::path::Path;
@@ -102,7 +103,14 @@ fn assign_creates_symlink() {
         &skill_dir.to_string_lossy(),
     );
 
-    let result = project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000);
+    let result = project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "claude_code",
+        2000,
+    );
     let record = result.expect("assign_and_sync should succeed");
 
     assert_eq!(record.status, SyncStatus::Synced);
@@ -139,7 +147,14 @@ fn assign_stores_hash_for_copy() {
     );
 
     let tool = copy_only_tool();
-    let result = project_sync::assign_and_sync(&store, &project, &skill, tool, 2000);
+    let result = project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        tool,
+        2000,
+    );
     let record = result.expect("assign_and_sync should succeed");
 
     assert_eq!(record.status, SyncStatus::Synced);
@@ -176,7 +191,14 @@ fn assign_records_error_on_sync_failure() {
         "/nonexistent/path/to/skill",
     );
 
-    let result = project_sync::assign_and_sync(&store, &project, &skill, "cursor", 2000);
+    let result = project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "cursor",
+        2000,
+    );
     let record = result.expect("assign_and_sync should return Ok even on sync failure");
 
     assert_eq!(record.status, SyncStatus::Error);
@@ -200,15 +222,28 @@ fn unassign_removes_symlink() {
     );
 
     // First assign
-    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000)
-        .expect("assign should succeed");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "claude_code",
+        2000,
+    )
+    .expect("assign should succeed");
 
     let target = project_dir.join(".claude/skills/unsync-skill");
     assert!(target.exists(), "target should exist after assign");
 
     // Now unassign
-    project_sync::unassign_and_remove_artifacts(&store, &project, &skill, "claude_code")
-        .expect("unassign should succeed");
+    project_sync::unassign_and_remove_artifacts(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "claude_code",
+    )
+    .expect("unassign should succeed");
 
     assert!(!target.exists(), "target should not exist after unassign");
 
@@ -236,8 +271,15 @@ fn unassign_target_not_found_cleans_db() {
     );
 
     // Assign to create DB record and symlink
-    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000)
-        .expect("assign should succeed");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "claude_code",
+        2000,
+    )
+    .expect("assign should succeed");
 
     // Manually delete the target path (simulates external removal)
     let target = project_dir.join(".claude/skills/ghost-skill");
@@ -251,8 +293,14 @@ fn unassign_target_not_found_cleans_db() {
     );
 
     // Unassign should gracefully clean up the DB record
-    project_sync::unassign_and_remove_artifacts(&store, &project, &skill, "claude_code")
-        .expect("unassign should succeed even when target is gone");
+    project_sync::unassign_and_remove_artifacts(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "claude_code",
+    )
+    .expect("unassign should succeed even when target is gone");
 
     let assignment = store
         .get_project_skill_assignment(&project.id, &skill.id, "claude_code")
@@ -302,17 +350,30 @@ fn unassign_failure_keeps_the_row_as_error_and_reports_the_path() {
         "stuck-skill",
         &skill_dir.to_string_lossy(),
     );
-    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000)
-        .expect("assign should succeed");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "claude_code",
+        2000,
+    )
+    .expect("assign should succeed");
 
     let target = project_dir.join(".claude/skills/stuck-skill");
     if !lock_parent(&target) {
         return; // running as root
     }
 
-    let outcome =
-        project_sync::toggle_skill_assignment(&store, &project.id, &skill.id, "claude_code", 2001)
-            .expect("a stuck artifact is report data");
+    let outcome = project_sync::toggle_skill_assignment(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "claude_code",
+        2001,
+    )
+    .expect("a stuck artifact is report data");
     unlock_parent(&target);
     let project_sync::ToggleOutcome::Unassigned { report } = outcome else {
         panic!("expected unassign report");
@@ -383,16 +444,30 @@ fn resync_updates_all() {
     store.upsert_skill(&skill2).unwrap();
 
     // Assign both skills
-    project_sync::assign_and_sync(&store, &project, &skill1, "claude_code", 2000)
-        .expect("assign skill1");
-    project_sync::assign_and_sync(&store, &project, &skill2, "claude_code", 2000)
-        .expect("assign skill2");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill1,
+        "claude_code",
+        2000,
+    )
+    .expect("assign skill1");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill2,
+        "claude_code",
+        2000,
+    )
+    .expect("assign skill2");
 
     // Modify source of skill1 (add a new file)
     fs::write(skill1_dir.join("extra.txt"), "new content").expect("write extra file");
 
     // Re-sync the project
-    let report = project_sync::resync_project(&store, &project.id, 3000)
+    let report = project_sync::resync_project(&store, &central_repo_of(&store), &project.id, 3000)
         .expect("resync_project should succeed");
 
     assert_eq!(report.synced(), 2, "both assignments should be re-synced");
@@ -447,16 +522,30 @@ fn resync_continues_on_error() {
     store.upsert_skill(&bad_skill).unwrap();
 
     // Assign both; a missing source fails in every sync mode
-    project_sync::assign_and_sync(&store, &project, &skill1, "cursor", 2000)
-        .expect("assign ok-skill");
-    project_sync::assign_and_sync(&store, &project, &bad_skill, "cursor", 2000)
-        .expect("assign bad-skill");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill1,
+        "cursor",
+        2000,
+    )
+    .expect("assign ok-skill");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &bad_skill,
+        "cursor",
+        2000,
+    )
+    .expect("assign bad-skill");
 
     // Delete the source of bad-skill to cause resync failure
     fs::remove_dir_all(&bad_skill_dir).expect("remove bad-skill source");
 
     // Re-sync should continue despite the error on bad-skill
-    let report = project_sync::resync_project(&store, &project.id, 3000)
+    let report = project_sync::resync_project(&store, &central_repo_of(&store), &project.id, 3000)
         .expect("resync_project should succeed overall");
 
     assert_eq!(report.synced(), 1, "one assignment should succeed");
@@ -518,8 +607,15 @@ fn resync_all_multiple_projects() {
         "all-skill-1",
         &skill1_dir.to_string_lossy(),
     );
-    project_sync::assign_and_sync(&store, &project1, &skill1, "claude_code", 2000)
-        .expect("assign to project1");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project1,
+        &skill1,
+        "claude_code",
+        2000,
+    )
+    .expect("assign to project1");
 
     // Project 2
     let skill2_dir = make_skill_dir(tmpdir.path(), "all-skill-2");
@@ -531,11 +627,18 @@ fn resync_all_multiple_projects() {
         "all-skill-2",
         &skill2_dir.to_string_lossy(),
     );
-    project_sync::assign_and_sync(&store, &project2, &skill2, "claude_code", 2000)
-        .expect("assign to project2");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project2,
+        &skill2,
+        "claude_code",
+        2000,
+    )
+    .expect("assign to project2");
 
     // Re-sync all
-    let report = project_sync::resync_all_projects(&store, 3000)
+    let report = project_sync::resync_all_projects(&store, &central_repo_of(&store), 3000)
         .expect("resync_all_projects should succeed");
 
     // One report spanning every project.
@@ -570,7 +673,15 @@ fn resync_all_skips_a_project_whose_folder_is_missing() {
         "live-skill",
         &live_skill_dir.to_string_lossy(),
     );
-    project_sync::assign_and_sync(&store, &live, &live_skill, "claude_code", 2000).unwrap();
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &live,
+        &live_skill,
+        "claude_code",
+        2000,
+    )
+    .unwrap();
 
     let gone_skill_dir = make_skill_dir(tmpdir.path(), "gone-skill");
     let gone_dir = tmpdir.path().join("gone-project");
@@ -581,12 +692,29 @@ fn resync_all_skips_a_project_whose_folder_is_missing() {
         "gone-skill",
         &gone_skill_dir.to_string_lossy(),
     );
-    project_sync::assign_and_sync(&store, &gone, &gone_skill, "claude_code", 2000).unwrap();
-    project_sync::assign_and_sync(&store, &gone, &gone_skill, "pi", 2000).unwrap();
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &gone,
+        &gone_skill,
+        "claude_code",
+        2000,
+    )
+    .unwrap();
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &gone,
+        &gone_skill,
+        "pi",
+        2000,
+    )
+    .unwrap();
     let before = store.list_project_skill_assignments(&gone.id).unwrap();
     fs::remove_dir_all(&gone_dir).unwrap();
 
-    let report = project_sync::resync_all_projects(&store, 3000).expect("resync all");
+    let report = project_sync::resync_all_projects(&store, &central_repo_of(&store), 3000)
+        .expect("resync all");
 
     assert_eq!(
         report.skipped_projects,
@@ -626,11 +754,34 @@ fn resync_assignment_resyncs_one_row() {
         "one-skill",
         &skill_dir.to_string_lossy(),
     );
-    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000).unwrap();
-    project_sync::assign_and_sync(&store, &project, &skill, "pi", 2000).unwrap();
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "claude_code",
+        2000,
+    )
+    .unwrap();
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "pi",
+        2000,
+    )
+    .unwrap();
 
-    let report = project_sync::resync_assignment(&store, &project.id, &skill.id, "pi", 3000)
-        .expect("resync one");
+    let report = project_sync::resync_assignment(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "pi",
+        3000,
+    )
+    .expect("resync one");
     assert_eq!(report.items.len(), 1);
     assert_eq!(report.items[0].tool, "pi");
     assert_eq!(report.synced(), 1);
@@ -645,16 +796,30 @@ fn resync_assignment_resyncs_one_row() {
         "the sibling row is not re-synced"
     );
 
-    let err = project_sync::resync_assignment(&store, &project.id, &skill.id, "cursor", 3000)
-        .expect_err("no such assignment");
+    let err = project_sync::resync_assignment(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "cursor",
+        3000,
+    )
+    .expect_err("no such assignment");
     assert!(matches!(
         crate::core::errors::CommandError::from_anyhow(err),
         crate::core::errors::CommandError::NotFound { .. }
     ));
 
     fs::remove_dir_all(&project_dir).unwrap();
-    let skipped = project_sync::resync_assignment(&store, &project.id, &skill.id, "pi", 4000)
-        .expect("skip, not an error");
+    let skipped = project_sync::resync_assignment(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "pi",
+        4000,
+    )
+    .expect("skip, not an error");
     assert!(skipped.items.is_empty());
     assert_eq!(skipped.skipped_projects.len(), 1);
     assert!(!project_dir.exists());
@@ -678,8 +843,15 @@ fn staleness_detected_for_copy() {
 
     // copy mode stores content_hash
     let tool = copy_only_tool();
-    project_sync::assign_and_sync(&store, &project, &skill, tool, 2000)
-        .expect("assign should succeed");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        tool,
+        2000,
+    )
+    .expect("assign should succeed");
 
     // Verify initial status is synced
     let before = store
@@ -723,8 +895,15 @@ fn staleness_skipped_for_symlink() {
     );
 
     // claude_code uses symlink mode
-    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000)
-        .expect("assign should succeed");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "claude_code",
+        2000,
+    )
+    .expect("assign should succeed");
 
     // Modify source
     fs::write(skill_dir.join("new-file.txt"), "changed content").expect("write new file");
@@ -756,8 +935,15 @@ fn missing_status_when_source_absent() {
     );
 
     let tool = copy_only_tool();
-    project_sync::assign_and_sync(&store, &project, &skill, tool, 2000)
-        .expect("assign should succeed");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        tool,
+        2000,
+    )
+    .expect("assign should succeed");
 
     // Delete source directory entirely
     fs::remove_dir_all(&skill_dir).expect("remove source");
@@ -813,8 +999,15 @@ fn global_and_project_sync_independent() {
     store.upsert_skill_target(&global_target).unwrap();
 
     // Project sync: assign to project (project dir path)
-    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000)
-        .expect("assign should succeed");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "claude_code",
+        2000,
+    )
+    .expect("assign should succeed");
 
     // Verify both exist independently
     let global_targets = store.list_skill_targets(&skill.id).unwrap();
@@ -829,8 +1022,14 @@ fn global_and_project_sync_independent() {
     assert_eq!(project_assignments[0].project_id, project.id);
 
     // Remove project assignment -- global should remain
-    project_sync::unassign_and_remove_artifacts(&store, &project, &skill, "claude_code")
-        .expect("unassign should succeed");
+    project_sync::unassign_and_remove_artifacts(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "claude_code",
+    )
+    .expect("unassign should succeed");
 
     let global_after = store.list_skill_targets(&skill.id).unwrap();
     assert_eq!(global_after.len(), 1, "global target still exists");
@@ -856,8 +1055,15 @@ fn missing_status_when_target_absent() {
     );
 
     // claude_code uses symlink mode
-    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000)
-        .expect("assign should succeed");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "claude_code",
+        2000,
+    )
+    .expect("assign should succeed");
 
     // Verify target exists
     let target = project_dir.join(".claude/skills/target-gone-skill");
@@ -909,8 +1115,15 @@ fn missing_status_recovers_when_source_restored() {
     );
 
     let tool = copy_only_tool();
-    let record = project_sync::assign_and_sync(&store, &project, &skill, tool, 2000)
-        .expect("assign should succeed");
+    let record = project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        tool,
+        2000,
+    )
+    .expect("assign should succeed");
     assert_eq!(record.status, SyncStatus::Synced);
 
     // Delete source directory -> should become missing
@@ -970,8 +1183,15 @@ fn missing_status_source_and_target_both_absent() {
     );
 
     let tool = copy_only_tool();
-    project_sync::assign_and_sync(&store, &project, &skill, tool, 2000)
-        .expect("assign should succeed");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        tool,
+        2000,
+    )
+    .expect("assign should succeed");
 
     // Delete both source and target
     fs::remove_dir_all(&skill_dir).expect("remove source");
@@ -1035,6 +1255,7 @@ fn fanout_assigns_every_tool_in_caller_order() {
 
     let report = assign_skill_to_tools(
         &store,
+        &central_repo_of(&store),
         &project,
         &skill,
         &keys(&["claude_code", "cursor"]),
@@ -1077,11 +1298,19 @@ fn fanout_reports_already_assigned_as_data_and_does_not_duplicate() {
         "dedupe-skill",
         &skill_dir.to_string_lossy(),
     );
-    let existing =
-        project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000).unwrap();
+    let existing = project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "claude_code",
+        2000,
+    )
+    .unwrap();
 
     let report = assign_skill_to_tools(
         &store,
+        &central_repo_of(&store),
         &project,
         &skill,
         &keys(&["claude_code", "cursor"]),
@@ -1127,6 +1356,7 @@ fn fanout_isolates_an_unknown_tool_and_continues() {
 
     let report = assign_skill_to_tools(
         &store,
+        &central_repo_of(&store),
         &project,
         &skill,
         &keys(&["claude_code", "no-such-tool", "cursor"]),
@@ -1181,7 +1411,15 @@ fn fanout_reports_a_sync_failure_with_the_kept_error_row() {
     );
     fs::remove_dir_all(&skill_dir).unwrap();
 
-    let report = assign_skill_to_tools(&store, &project, &skill, &keys(&["cursor"]), 3000).unwrap();
+    let report = assign_skill_to_tools(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        &keys(&["cursor"]),
+        3000,
+    )
+    .unwrap();
 
     let row = store
         .get_project_skill_assignment(&project.id, &skill.id, "cursor")
@@ -1234,8 +1472,15 @@ fn fanout_propagates_a_refused_settlement_instead_of_reporting_it_settled() {
     fs::remove_dir_all(&skill_dir).unwrap();
     refuse_error_settlement(&store);
 
-    let err = assign_skill_to_tools(&store, &project, &skill, &keys(&["cursor"]), 3000)
-        .expect_err("a refused settlement is a store failure");
+    let err = assign_skill_to_tools(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        &keys(&["cursor"]),
+        3000,
+    )
+    .expect_err("a refused settlement is a store failure");
 
     let chain = format!("{err:#}");
     assert!(chain.contains("settle assignment"), "{chain}");
@@ -1267,13 +1512,20 @@ fn resync_propagates_a_refused_settlement_instead_of_reporting_it_settled() {
         "resync-unsettled",
         &skill_dir.to_string_lossy(),
     );
-    let synced =
-        project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 1000).unwrap();
+    let synced = project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "claude_code",
+        1000,
+    )
+    .unwrap();
     assert_eq!(synced.status, SyncStatus::Synced);
     fs::remove_dir_all(&skill_dir).unwrap();
     refuse_error_settlement(&store);
 
-    let err = project_sync::resync_project(&store, &project.id, 2000)
+    let err = project_sync::resync_project(&store, &central_repo_of(&store), &project.id, 2000)
         .expect_err("a refused settlement is a store failure");
 
     let chain = format!("{err:#}");
@@ -1364,8 +1616,14 @@ fn project_fanout_uses_persisted_project_tools() {
     );
     add_tools(&store, &project, &["claude_code", "pi"]);
 
-    let report =
-        assign_skill_to_project_tools(&store, &project.id, &skill.id, 3000).expect("fan-out");
+    let report = assign_skill_to_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        3000,
+    )
+    .expect("fan-out");
 
     let mut tool_keys: Vec<&str> = report.items.iter().map(|o| o.tool.as_str()).collect();
     tool_keys.sort();
@@ -1397,8 +1655,14 @@ fn project_fanout_raises_typed_not_found_for_project_and_skill() {
         &skill_dir.to_string_lossy(),
     );
 
-    let err = assign_skill_to_project_tools(&store, "missing-project", &skill.id, 1)
-        .expect_err("project must be missing");
+    let err = assign_skill_to_project_tools(
+        &store,
+        &central_repo_of(&store),
+        "missing-project",
+        &skill.id,
+        1,
+    )
+    .expect_err("project must be missing");
     assert_eq!(
         err.downcast_ref::<SignalError>(),
         Some(&SignalError::NotFound {
@@ -1407,8 +1671,14 @@ fn project_fanout_raises_typed_not_found_for_project_and_skill() {
         })
     );
 
-    let err = assign_skill_to_project_tools(&store, &project.id, "missing-skill", 1)
-        .expect_err("skill must be missing");
+    let err = assign_skill_to_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        "missing-skill",
+        1,
+    )
+    .expect_err("skill must be missing");
     assert_eq!(
         err.downcast_ref::<SignalError>(),
         Some(&SignalError::NotFound {
@@ -1432,9 +1702,15 @@ fn single_tool_assign_reports_one_item_and_raises_assignment_exists_on_repeat() 
         &skill_dir.to_string_lossy(),
     );
 
-    let report =
-        assign_skill_to_project_tool_unlocked(&store, &project.id, &skill.id, "claude_code", 3000)
-            .expect("first assign");
+    let report = assign_skill_to_project_tool_unlocked(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "claude_code",
+        3000,
+    )
+    .expect("first assign");
     assert_eq!(report.items.len(), 1);
     assert!(matches!(
         report.items[0].status,
@@ -1442,9 +1718,15 @@ fn single_tool_assign_reports_one_item_and_raises_assignment_exists_on_repeat() 
     ));
     assert_eq!(report.items[0].tool, "claude_code");
 
-    let err =
-        assign_skill_to_project_tool_unlocked(&store, &project.id, &skill.id, "claude_code", 3001)
-            .expect_err("second assign must fail");
+    let err = assign_skill_to_project_tool_unlocked(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "claude_code",
+        3001,
+    )
+    .expect_err("second assign must fail");
     assert_eq!(
         err.downcast_ref::<SignalError>(),
         Some(&SignalError::AssignmentExists {
@@ -1456,9 +1738,15 @@ fn single_tool_assign_reports_one_item_and_raises_assignment_exists_on_repeat() 
 
     // A batch of one: an unknown tool is report data with no row, not an
     // error of the whole operation.
-    let report =
-        assign_skill_to_project_tool_unlocked(&store, &project.id, &skill.id, "no-such-tool", 3002)
-            .expect("an unknown tool is report data");
+    let report = assign_skill_to_project_tool_unlocked(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "no-such-tool",
+        3002,
+    )
+    .expect("an unknown tool is report data");
     assert_eq!(report.items[0].assignment_id, None);
     assert!(matches!(
         &report.items[0].status,
@@ -1480,8 +1768,15 @@ fn assign_and_sync_raises_typed_unknown_tool() {
         &skill_dir.to_string_lossy(),
     );
 
-    let err = project_sync::assign_and_sync(&store, &project, &skill, "not-a-tool", 2000)
-        .expect_err("unknown tool must fail");
+    let err = project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "not-a-tool",
+        2000,
+    )
+    .expect_err("unknown tool must fail");
     assert_eq!(
         err.downcast_ref::<SignalError>(),
         Some(&SignalError::UnknownTool {
@@ -1493,7 +1788,8 @@ fn assign_and_sync_raises_typed_unknown_tool() {
 #[test]
 fn resync_project_raises_typed_not_found_for_unknown_project() {
     let (_db_dir, store) = make_store();
-    let err = match project_sync::resync_project(&store, "missing", 4000) {
+    let err = match project_sync::resync_project(&store, &central_repo_of(&store), "missing", 4000)
+    {
         Ok(_) => panic!("unknown project must fail"),
         Err(err) => err,
     };
@@ -1530,8 +1826,15 @@ fn toggle_assigns_then_unassigns_from_the_stored_state() {
     let adapter = crate::core::tool_adapters::adapter_by_key("claude_code").expect("adapter");
     let target = resolve_project_sync_target(&project_dir, adapter, "toggle-skill");
 
-    let first = toggle_skill_assignment(&store, &project.id, &skill.id, "claude_code", 4000)
-        .expect("first toggle");
+    let first = toggle_skill_assignment(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "claude_code",
+        4000,
+    )
+    .expect("first toggle");
     let ToggleOutcome::Assigned { report } = first else {
         panic!("expected assign report");
     };
@@ -1549,8 +1852,15 @@ fn toggle_assigns_then_unassigns_from_the_stored_state() {
         1
     );
 
-    let second = toggle_skill_assignment(&store, &project.id, &skill.id, "claude_code", 4001)
-        .expect("second toggle");
+    let second = toggle_skill_assignment(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "claude_code",
+        4001,
+    )
+    .expect("second toggle");
     let ToggleOutcome::Unassigned { report } = second else {
         panic!("expected unassign report");
     };
@@ -1572,8 +1882,15 @@ fn toggle_raises_typed_not_found_for_unknown_project() {
     use crate::core::project_sync::toggle_skill_assignment;
 
     let (_db_dir, store) = make_store();
-    let err = toggle_skill_assignment(&store, "missing", "skill", "claude_code", 1)
-        .expect_err("must fail");
+    let err = toggle_skill_assignment(
+        &store,
+        &central_repo_of(&store),
+        "missing",
+        "skill",
+        "claude_code",
+        1,
+    )
+    .expect_err("must fail");
     assert_eq!(
         err.downcast_ref::<crate::core::errors::SignalError>(),
         Some(&crate::core::errors::SignalError::NotFound {
@@ -1604,8 +1921,9 @@ fn assign_copy_then_rename_skill(
         &skill_dir.to_string_lossy(),
     );
     let tool = copy_only_tool();
-    let record = project_sync::assign_and_sync(store, &project, &skill, tool, 2000)
-        .expect("assign should succeed");
+    let record =
+        project_sync::assign_and_sync(store, &central_repo_of(store), &project, &skill, tool, 2000)
+            .expect("assign should succeed");
     assert_eq!(record.status, SyncStatus::Synced);
     let adapter = crate::core::tool_adapters::adapter_by_key(tool).expect("adapter");
     let target = project_sync::resolve_project_sync_target(&project_dir, adapter, "named-skill");
@@ -1628,7 +1946,8 @@ fn resync_rematerialises_the_artifact_under_its_stored_name_after_a_rename() {
     )
     .expect("change the central copy");
 
-    let report = project_sync::resync_project(&store, &project.id, 3000).expect("resync");
+    let report = project_sync::resync_project(&store, &central_repo_of(&store), &project.id, 3000)
+        .expect("resync");
 
     assert_eq!(report.synced(), 1, "{report}");
     assert_eq!(
@@ -1688,8 +2007,15 @@ fn toggle_on_reports_a_sync_failure_with_the_kept_row() {
     );
     fs::remove_dir_all(&skill_dir).unwrap();
 
-    let outcome = toggle_skill_assignment(&store, &project.id, &skill.id, "claude_code", 5000)
-        .expect("a sync failure is report data");
+    let outcome = toggle_skill_assignment(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "claude_code",
+        5000,
+    )
+    .expect("a sync failure is report data");
     let ToggleOutcome::Assigned { report } = outcome else {
         panic!("expected the assign direction");
     };
@@ -1733,11 +2059,28 @@ fn unassign_skill_from_project_clears_every_tool_of_that_skill_only() {
     other.central_path = other_dir.to_string_lossy().to_string();
     store.upsert_skill(&other).unwrap();
     add_tools(&store, &project, &["claude_code", "cursor"]);
-    let assigned = assign_skill_to_project_tools(&store, &project.id, &skill.id, 3000).unwrap();
+    let assigned = assign_skill_to_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        3000,
+    )
+    .unwrap();
     assert_eq!(assigned.synced(), 2);
-    project_sync::assign_and_sync(&store, &project, &other, "claude_code", 3000).unwrap();
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &other,
+        "claude_code",
+        3000,
+    )
+    .unwrap();
 
-    let report = unassign_skill_from_project(&store, &project.id, &skill.id).expect("unassign");
+    let report =
+        unassign_skill_from_project(&store, &central_repo_of(&store), &project.id, &skill.id)
+            .expect("unassign");
 
     assert_eq!(report.removed_rows(), 2);
     assert_eq!(report.failed_rows(), 0);
@@ -1756,7 +2099,9 @@ fn unassign_skill_from_project_clears_every_tool_of_that_skill_only() {
     assert!(store.get_skill_by_id(&skill.id).unwrap().is_some());
 
     // Nothing left to unassign: an empty report, not an error.
-    let again = unassign_skill_from_project(&store, &project.id, &skill.id).expect("again");
+    let again =
+        unassign_skill_from_project(&store, &central_repo_of(&store), &project.id, &skill.id)
+            .expect("again");
     assert!(again.targets.is_empty());
 }
 
@@ -1776,8 +2121,13 @@ fn unassign_skill_from_project_raises_typed_not_found() {
         &skill_dir.to_string_lossy(),
     );
 
-    let err = unassign_skill_from_project(&store, "missing-project", &skill.id)
-        .expect_err("project must be missing");
+    let err = unassign_skill_from_project(
+        &store,
+        &central_repo_of(&store),
+        "missing-project",
+        &skill.id,
+    )
+    .expect_err("project must be missing");
     assert_eq!(
         err.downcast_ref::<SignalError>(),
         Some(&SignalError::NotFound {
@@ -1785,8 +2135,13 @@ fn unassign_skill_from_project_raises_typed_not_found() {
             id: "missing-project".to_string(),
         })
     );
-    let err = unassign_skill_from_project(&store, &project.id, "missing-skill")
-        .expect_err("skill must be missing");
+    let err = unassign_skill_from_project(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        "missing-skill",
+    )
+    .expect_err("skill must be missing");
     assert_eq!(
         err.downcast_ref::<SignalError>(),
         Some(&SignalError::NotFound {
@@ -1856,8 +2211,14 @@ fn bulk_assign_into_a_missing_project_folder_skips_the_project() {
     let (project, skill, project_dir) = missing_folder_fixture(tmpdir.path(), &store, "bulk");
     fs::remove_dir_all(&project_dir).unwrap();
 
-    let report = project_sync::assign_skill_to_project_tools(&store, &project.id, &skill.id, 2000)
-        .expect("a skip, not an error");
+    let report = project_sync::assign_skill_to_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        2000,
+    )
+    .expect("a skip, not an error");
 
     folder_missing_only(&report, &project.id);
     assert!(!project_dir.exists(), "the missing folder is not recreated");
@@ -1874,9 +2235,15 @@ fn toggle_on_into_a_missing_project_folder_skips_the_project() {
     let (project, skill, project_dir) = missing_folder_fixture(tmpdir.path(), &store, "toggle");
     fs::remove_dir_all(&project_dir).unwrap();
 
-    let outcome =
-        project_sync::toggle_skill_assignment(&store, &project.id, &skill.id, "claude_code", 2000)
-            .expect("a skip, not an error");
+    let outcome = project_sync::toggle_skill_assignment(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "claude_code",
+        2000,
+    )
+    .expect("a skip, not an error");
 
     match outcome {
         project_sync::ToggleOutcome::Assigned { report } => {
@@ -1897,8 +2264,15 @@ fn colliding_row(store: &SkillStore, project: &ProjectRecord, skill: &SkillRecor
     let occupant = dir.join(".claude/skills").join(&skill.name);
     fs::create_dir_all(&occupant).unwrap();
     fs::write(occupant.join("SKILL.md"), "someone else's").unwrap();
-    project_sync::toggle_skill_assignment(store, &project.id, &skill.id, "claude_code", 2000)
-        .unwrap();
+    project_sync::toggle_skill_assignment(
+        store,
+        &central_repo_of(store),
+        &project.id,
+        &skill.id,
+        "claude_code",
+        2000,
+    )
+    .unwrap();
     let row = store
         .get_project_skill_assignment(&project.id, &skill.id, "claude_code")
         .unwrap()
@@ -1922,6 +2296,7 @@ fn collision_answers_into_a_missing_project_folder_skip_the_project() {
 
         let report = project_sync::resolve_collisions(
             &store,
+            &central_repo_of(&store),
             &[project_sync::AssignmentDecision {
                 project_id: project.id.clone(),
                 skill_id: skill.id.clone(),
@@ -1947,6 +2322,7 @@ fn answer(
 ) -> project_sync::ProjectSyncReport {
     project_sync::resolve_collisions(
         store,
+        &central_repo_of(store),
         &[project_sync::AssignmentDecision {
             project_id: project.id.clone(),
             skill_id: skill_id.to_string(),
@@ -1969,7 +2345,15 @@ fn a_collision_answer_for_an_owned_row_is_already_assigned_and_changes_nothing()
         let (_db_dir, store) = make_store();
         let tmpdir = tempfile::tempdir().unwrap();
         let (project, skill, project_dir) = missing_folder_fixture(tmpdir.path(), &store, "owned");
-        project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000).unwrap();
+        project_sync::assign_and_sync(
+            &store,
+            &central_repo_of(&store),
+            &project,
+            &skill,
+            "claude_code",
+            2000,
+        )
+        .unwrap();
         let artifact = project_dir.join(".claude/skills").join(&skill.name);
         let before = row_snapshot(&store, &project.id);
         assert_eq!(before[0].1, SyncStatus::Synced);
@@ -2117,14 +2501,22 @@ fn enable_first_sync_into_a_missing_project_folder_skips_the_project() {
     let tmpdir = tempfile::tempdir().unwrap();
     let (gone, skill, gone_dir) = missing_folder_fixture(tmpdir.path(), &store, "enable");
     colliding_row(&store, &gone, &skill, &gone_dir);
-    project_sync::toggle_skill_assignment(&store, &gone.id, &skill.id, "pi", 2000).unwrap();
+    project_sync::toggle_skill_assignment(
+        &store,
+        &central_repo_of(&store),
+        &gone.id,
+        &skill.id,
+        "pi",
+        2000,
+    )
+    .unwrap();
     let rows = store.list_project_skill_assignments(&gone.id).unwrap();
     assert_eq!(rows.len(), 2);
     let before = row_snapshot(&store, &gone.id);
     fs::remove_dir_all(&gone_dir).unwrap();
 
     let report = crate::core::mutation_guard::serialized(|| {
-        project_sync::first_sync_assignments_unlocked(&store, &rows, 3000)
+        project_sync::first_sync_assignments_unlocked(&store, &central_repo_of(&store), &rows, 3000)
     })
     .expect("a skip, not an error");
 
@@ -2139,15 +2531,30 @@ fn the_target_write_seam_refuses_a_missing_project_root() {
     let (_db_dir, store) = make_store();
     let tmpdir = tempfile::tempdir().unwrap();
     let (project, skill, project_dir) = missing_folder_fixture(tmpdir.path(), &store, "seam");
-    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000).unwrap();
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "claude_code",
+        2000,
+    )
+    .unwrap();
     let row = store
         .get_project_skill_assignment(&project.id, &skill.id, "claude_code")
         .unwrap()
         .unwrap();
     fs::remove_dir_all(&project_dir).unwrap();
 
-    let err = project_sync::sync_single_assignment(&store, &project, &row, true, 3000)
-        .expect_err("refused");
+    let err = project_sync::sync_single_assignment(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &row,
+        true,
+        3000,
+    )
+    .expect_err("refused");
     assert_eq!(
         err.downcast_ref::<SignalError>(),
         Some(&SignalError::InvalidPath {
@@ -2167,8 +2574,14 @@ fn a_project_path_that_is_a_file_is_a_missing_folder() {
     fs::remove_dir_all(&project_dir).unwrap();
     fs::write(&project_dir, "not a folder").unwrap();
 
-    let report = project_sync::assign_skill_to_project_tools(&store, &project.id, &skill.id, 2000)
-        .expect("a skip");
+    let report = project_sync::assign_skill_to_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        2000,
+    )
+    .expect("a skip");
 
     folder_missing_only(&report, &project.id);
     assert_eq!(fs::read_to_string(&project_dir).unwrap(), "not a folder");
@@ -2189,23 +2602,57 @@ fn removal_still_works_for_a_missing_project_folder() {
         ..skill.clone()
     };
     store.upsert_skill(&other).unwrap();
-    project_sync::assign_skill_to_project_tools(&store, &project.id, &skill.id, 2000).unwrap();
-    project_sync::toggle_skill_assignment(&store, &project.id, &skill.id, "pi", 2000).unwrap();
-    project_sync::assign_skill_to_project_tools(&store, &project.id, &other.id, 2000).unwrap();
+    project_sync::assign_skill_to_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        2000,
+    )
+    .unwrap();
+    project_sync::toggle_skill_assignment(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "pi",
+        2000,
+    )
+    .unwrap();
+    project_sync::assign_skill_to_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &other.id,
+        2000,
+    )
+    .unwrap();
     assert_eq!(row_snapshot(&store, &project.id).len(), 3);
     fs::remove_dir_all(&project_dir).unwrap();
 
     // Toggle-off of an existing row is the unassign arm, not a sync.
-    match project_sync::toggle_skill_assignment(&store, &project.id, &skill.id, "pi", 3000)
-        .expect("toggle off")
+    match project_sync::toggle_skill_assignment(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "pi",
+        3000,
+    )
+    .expect("toggle off")
     {
         project_sync::ToggleOutcome::Unassigned { report } => {
             assert!(report.failures().is_empty(), "{report}")
         }
         other => panic!("expected the unassign arm, got {other:?}"),
     }
-    let report = project_sync::unassign_skill_from_project(&store, &project.id, &skill.id)
-        .expect("unassign");
+    let report = project_sync::unassign_skill_from_project(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+    )
+    .expect("unassign");
     assert!(report.failures().is_empty(), "{report}");
     assert_eq!(
         row_snapshot(&store, &project.id).len(),
@@ -2213,8 +2660,12 @@ fn removal_still_works_for_a_missing_project_folder() {
         "only the other skill's row"
     );
 
-    let removed = crate::core::project_ops::remove_project_and_artifacts(&store, &project.id)
-        .expect("remove project");
+    let removed = crate::core::project_ops::remove_project_and_artifacts(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+    )
+    .expect("remove project");
     assert!(removed.failures().is_empty(), "{removed}");
     assert!(store.get_project_by_id(&project.id).unwrap().is_none());
     assert!(!project_dir.exists(), "nothing recreated by the cleanup");
@@ -2252,7 +2703,15 @@ fn a_project_root_that_vanishes_at_parent_creation_is_not_recreated() {
                 }
             }
         });
-        let report = assign_skill_to_tools(&store, &project, &skill, &keys(&[tool]), 3000).unwrap();
+        let report = assign_skill_to_tools(
+            &store,
+            &central_repo_of(&store),
+            &project,
+            &skill,
+            &keys(&[tool]),
+            3000,
+        )
+        .unwrap();
 
         assert!(moved_dir.is_dir(), "{tool}: the hook really moved the root");
         assert!(
@@ -2310,8 +2769,15 @@ fn a_listing_says_whether_its_reconcile_pass_rewrote_a_status() {
         "rewrite-skill",
         &skill_dir.to_string_lossy(),
     );
-    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", 2000)
-        .expect("assign should succeed");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "claude_code",
+        2000,
+    )
+    .expect("assign should succeed");
 
     let settled = reconciled_listing(&store, &project.id);
     assert_eq!(settled.assignments[0].status, SyncStatus::Synced);

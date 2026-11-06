@@ -213,10 +213,20 @@ pub fn run() {
                 if cleanup_days > 0 {
                     let max_age =
                         std::time::Duration::from_secs(cleanup_days as u64 * 24 * 60 * 60);
-                    let removed =
-                        core::cache_cleanup::cleanup_git_cache_dirs(&handle, max_age).unwrap_or(0);
-                    if removed > 0 {
-                        log::info!("cleaned up {} git cache dirs", removed);
+                    // The library the age-out must spare is resolved here,
+                    // at the wiring tier; without it nothing is reclaimed.
+                    match commands::resolve_central_repo_path_for_app(&handle, &store_for_cleanup)
+                        .and_then(|central| {
+                            core::cache_cleanup::cleanup_git_cache_dirs(
+                                &handle,
+                                &store_for_cleanup,
+                                &central,
+                                max_age,
+                            )
+                        }) {
+                        Ok(0) => {}
+                        Ok(removed) => log::info!("cleaned up {} git cache dirs", removed),
+                        Err(err) => log::warn!("git cache cleanup skipped: {:#}", err),
                     }
                 }
 

@@ -58,6 +58,7 @@ use super::github_download::{
     download_github_directory, fetch_branch_sha, fetch_matching_refs, parse_github_repo,
     GithubApiError,
 };
+use super::removal_fence::ProtectedLibrary;
 use super::repo_subpath::{normalize_subpath, require_plain_subpath, LinkChain};
 use super::skill_discovery::{discover_skills, DiscoveredSkill};
 use super::skill_matching::{match_skill_candidate, SkillMatch};
@@ -130,6 +131,8 @@ pub struct AcquireRequest<'a> {
     pub dest: &'a Path,
     /// App cache root; the git clone cache lives under it.
     pub cache_dir: &'a Path,
+    /// The library the cache's clean retry must never reach.
+    pub library: &'a ProtectedLibrary<'a>,
     /// Git-cache freshness window, resolved by the caller
     /// (`settings::git_cache_ttl_ms`).
     pub ttl_ms: i64,
@@ -452,6 +455,7 @@ fn clone_path(req: &ResolvedRequest, known_subpath: Option<&str>) -> Result<Acqu
 fn fetch_repo(req: &ResolvedRequest, subpath: Option<&str>) -> Result<(PathBuf, String)> {
     fetch_through_cache(
         req.request.cache_dir,
+        req.request.library,
         &FetchRequest {
             clone_url: &req.source.clone_url,
             branch: req.source.branch.as_deref(),

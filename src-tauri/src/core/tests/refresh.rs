@@ -4,6 +4,7 @@
 //! Every case runs against a temp home / central dir / DB; installedness is
 //! faked by creating a Tool's detect dir under the temp home.
 
+use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -245,6 +246,7 @@ fn refresh_all_with_auto_sync_on_creates_no_deployment() {
     sync_skills_to_tools(
         &f.paths.home,
         &f.store,
+        &central_repo_of(&f.store),
         &[BatchSkill {
             skill_id: skill.id.clone(),
             skill_name: skill.name.clone(),
@@ -326,6 +328,7 @@ fn a_delete_incomplete_skill_is_skipped_by_refresh_all_and_by_a_named_update() {
     crate::core::global_sync::sync_skills_to_tools(
         &f.paths.home,
         &f.store,
+        &central_repo_of(&f.store),
         &[crate::core::global_sync::BatchSkill {
             skill_id: skill.id.clone(),
             skill_name: skill.name.clone(),
@@ -483,6 +486,7 @@ fn refresh_all_reports_delete_incomplete_before_unlocatable_and_never_for_a_non_
         crate::core::global_sync::sync_skills_to_tools(
             &f.paths.home,
             &f.store,
+            &central_repo_of(&f.store),
             &[crate::core::global_sync::BatchSkill {
                 skill_id: skill.id.clone(),
                 skill_name: skill.name.clone(),

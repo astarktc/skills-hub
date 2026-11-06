@@ -1,3 +1,4 @@
+use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -218,8 +219,15 @@ fn fixture(name: &str) -> Fixture {
     };
     store.upsert_skill(&skill).expect("upsert skill");
 
-    project_sync::assign_and_sync(&store, &project, &skill, "claude_code", now)
-        .expect("assign should succeed");
+    project_sync::assign_and_sync(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        "claude_code",
+        now,
+    )
+    .expect("assign should succeed");
 
     Fixture {
         _db_dir: db_dir,
@@ -240,8 +248,15 @@ fn toggle_skill_assignment_is_serialized() {
     let project_id = f.project.id.clone();
     let skill_id = f.skill.id.clone();
     assert_serialized("toggle_skill_assignment", move || {
-        project_sync::toggle_skill_assignment(&store, &project_id, &skill_id, "claude_code", 4000)
-            .expect("toggle");
+        project_sync::toggle_skill_assignment(
+            &store,
+            &central_repo_of(&store),
+            &project_id,
+            &skill_id,
+            "claude_code",
+            4000,
+        )
+        .expect("toggle");
     });
 }
 
@@ -251,7 +266,8 @@ fn resync_project_is_serialized() {
     let store = f.store.clone();
     let project_id = f.project.id.clone();
     assert_serialized("resync_project", move || {
-        project_sync::resync_project(&store, &project_id, 4000).expect("resync");
+        project_sync::resync_project(&store, &central_repo_of(&store), &project_id, 4000)
+            .expect("resync");
     });
 }
 
@@ -263,8 +279,13 @@ fn unassign_skill_from_project_is_serialized() {
     let project_id = f.project.id.clone();
     let skill_id = f.skill.id.clone();
     assert_serialized("unassign_skill_from_project", move || {
-        project_sync::unassign_skill_from_project(&store, &project_id, &skill_id)
-            .expect("bulk unassign");
+        project_sync::unassign_skill_from_project(
+            &store,
+            &central_repo_of(&store),
+            &project_id,
+            &skill_id,
+        )
+        .expect("bulk unassign");
     });
 }
 
@@ -274,7 +295,8 @@ fn deleting_a_managed_skill_is_serialized() {
     let store = f.store.clone();
     let skill_id = f.skill.id.clone();
     assert_serialized("remove_skill", move || {
-        artifact_removal::remove_skill(&store, &skill_id).expect("remove skill");
+        artifact_removal::remove_skill(&store, &central_repo_of(&store), &skill_id)
+            .expect("remove skill");
     });
 }
 
@@ -304,6 +326,7 @@ fn configuring_project_tools_is_serialized() {
     assert_serialized("configure_project_tools", move || {
         project_ops::configure_project_tools(
             &store,
+            &central_repo_of(&store),
             &project_id,
             &["claude_code".to_string()],
             None,
@@ -327,6 +350,7 @@ fn global_sync_batch_is_serialized() {
         let _ = global_sync::sync_skills_to_tools(
             &home,
             &store,
+            &central_repo_of(&store),
             &skills,
             &["claude_code".to_string()],
             &global_sync::BatchPolicy::default(),
@@ -406,7 +430,14 @@ fn disable_enable_entry_points_are_serialized() {
     assert_serialized_observing(
         "disable_targets",
         move || {
-            disable_targets(&store, &run_home, &run_scope, 5000).expect("disable");
+            disable_targets(
+                &store,
+                &central_repo_of(&store),
+                &run_home,
+                &run_scope,
+                5000,
+            )
+            .expect("disable");
         },
         || {
             assert!(artifact.symlink_metadata().is_ok(), "not removed yet");
@@ -420,7 +451,14 @@ fn disable_enable_entry_points_are_serialized() {
     assert_serialized_observing(
         "enable_targets",
         move || {
-            enable_targets(&store, &run_home, &run_scope, 6000).expect("enable");
+            enable_targets(
+                &store,
+                &central_repo_of(&store),
+                &run_home,
+                &run_scope,
+                6000,
+            )
+            .expect("enable");
         },
         || {
             assert!(artifact.symlink_metadata().is_err(), "not synced yet");
@@ -444,8 +482,15 @@ fn make_drifted_copy_assignment(f: &Fixture) -> (&'static str, String) {
     adapter.supports_symlink = false;
     let tool = crate::core::tool_adapters::test_overrides::shadow(adapter).key();
 
-    let record = project_sync::assign_and_sync(&f.store, &f.project, &f.skill, tool, 2000)
-        .expect("assign copy-mode");
+    let record = project_sync::assign_and_sync(
+        &f.store,
+        &central_repo_of(&f.store),
+        &f.project,
+        &f.skill,
+        tool,
+        2000,
+    )
+    .expect("assign copy-mode");
     assert_eq!(record.status, SyncStatus::Synced);
     fs::write(f.skill_dir.join("drift.txt"), "changed").expect("write drift");
     crate::core::content_identity::record(&f.store, &mut f.skill.clone()).unwrap();

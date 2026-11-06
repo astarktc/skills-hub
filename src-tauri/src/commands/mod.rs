@@ -242,9 +242,19 @@ pub async fn get_onboarding_plan(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn clear_git_cache_now(app: tauri::AppHandle) -> Result<usize, CommandError> {
+pub async fn clear_git_cache_now(
+    app: tauri::AppHandle,
+    store: State<'_, SkillStore>,
+) -> Result<usize, CommandError> {
+    let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        cleanup_git_cache_dirs(&app, std::time::Duration::from_secs(0))
+        let central_dir = resolve_central_repo_path_for_app(&app, &store)?;
+        cleanup_git_cache_dirs(
+            &app,
+            &store,
+            &central_dir,
+            std::time::Duration::from_secs(0),
+        )
     })
     .await
     .map_err(CommandError::internal)?
@@ -533,6 +543,7 @@ pub struct SyncProgressDto {
 #[tauri::command]
 #[specta::specta]
 pub async fn sync_skills_to_tools(
+    app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     skills: Vec<BatchSyncSkillDto>,
     tools: Vec<String>,
@@ -541,6 +552,7 @@ pub async fn sync_skills_to_tools(
 ) -> Result<Vec<BatchTargetOutcome>, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let central_dir = resolve_central_repo_path_for_app(&app, &store)?;
         let batch_skills: Vec<BatchSkill> = skills
             .into_iter()
             .map(|s| BatchSkill {
@@ -563,6 +575,7 @@ pub async fn sync_skills_to_tools(
         let outcomes = crate::core::global_sync::sync_skills_to_tools(
             &home,
             &store,
+            &central_dir,
             &batch_skills,
             &tools,
             &batch_policy,
@@ -591,13 +604,15 @@ pub async fn sync_skills_to_tools(
 #[tauri::command]
 #[specta::specta]
 pub async fn disable_skill_targets(
+    app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     scope: DisableScope,
 ) -> Result<RemovalReport, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let central_dir = resolve_central_repo_path_for_app(&app, &store)?;
         let home = home_dir()?;
-        crate::core::skill_disable::disable_targets(&store, &home, &scope, now_ms())
+        crate::core::skill_disable::disable_targets(&store, &central_dir, &home, &scope, now_ms())
     })
     .await
     .map_err(CommandError::internal)?
@@ -611,16 +626,25 @@ pub async fn disable_skill_targets(
 #[tauri::command]
 #[specta::specta]
 pub async fn enable_skill_targets(
+    app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     scope: DisableScope,
     overrides: Vec<BatchSyncOverrideDto>,
 ) -> Result<EnableReport, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let central_dir = resolve_central_repo_path_for_app(&app, &store)?;
         let home = home_dir()?;
         let overrides: Vec<BatchOverride> =
             overrides.into_iter().map(BatchOverride::from).collect();
-        crate::core::skill_disable::enable_targets_with(&store, &home, &scope, &overrides, now_ms())
+        crate::core::skill_disable::enable_targets_with(
+            &store,
+            &central_dir,
+            &home,
+            &scope,
+            &overrides,
+            now_ms(),
+        )
     })
     .await
     .map_err(CommandError::internal)?
@@ -1084,12 +1108,14 @@ pub async fn set_skill_invocation_override(
 #[specta::specta]
 #[allow(non_snake_case)]
 pub async fn delete_managed_skill(
+    app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     skillId: String,
 ) -> Result<RemovalReport, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let report = crate::core::artifact_removal::remove_skill(&store, &skillId)?;
+        let central_dir = resolve_central_repo_path_for_app(&app, &store)?;
+        let report = crate::core::artifact_removal::remove_skill(&store, &central_dir, &skillId)?;
         log::debug!("[delete_managed_skill] {}", report);
         Ok::<_, anyhow::Error>(report)
     })

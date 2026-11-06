@@ -96,6 +96,7 @@ pub struct OverwritePolicy {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sync_skill_into_root(
     store: &SkillStore,
+    central_dir: &Path,
     adapter: &ToolAdapter,
     tool_root: &Path,
     source: &Path,
@@ -131,7 +132,7 @@ pub(crate) fn sync_skill_into_root(
         Source::Managed { store, skill_id },
         &target,
         overwrite,
-        &ProtectedLibrary::recorded(store),
+        &ProtectedLibrary::new(store, central_dir),
     )
     .map_err(|err| classify_sync_error(err, adapter, tool_root, &target))?;
 
@@ -334,6 +335,7 @@ pub fn plan_batch_tool_targets(
 /// through an entry point that has already taken the mutation guard.
 pub(crate) fn sync_skills_to_planned_tools(
     store: &SkillStore,
+    central_dir: &Path,
     skills: &[BatchSkill],
     targets: &[PlannedToolTarget],
     policy: &BatchPolicy,
@@ -440,6 +442,7 @@ pub(crate) fn sync_skills_to_planned_tools(
 
             let status = match sync_skill_into_root(
                 store,
+                central_dir,
                 target.adapter,
                 &target.root,
                 &skill.source_path,
@@ -591,9 +594,11 @@ impl DisabledGate {
 /// outcomes per skill; the function itself never errors.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
+#[allow(clippy::too_many_arguments)]
 pub fn sync_skills_to_tools(
     home: &Path,
     store: &SkillStore,
+    central_dir: &Path,
     skills: &[BatchSkill],
     tool_keys: &[String],
     policy: &BatchPolicy,
@@ -601,7 +606,16 @@ pub fn sync_skills_to_tools(
     on_progress: impl FnMut(BatchProgress),
 ) -> Vec<BatchTargetOutcome> {
     mutation_guard::serialized(|| {
-        sync_skills_to_tools_unlocked(home, store, skills, tool_keys, policy, now, on_progress)
+        sync_skills_to_tools_unlocked(
+            home,
+            store,
+            central_dir,
+            skills,
+            tool_keys,
+            policy,
+            now,
+            on_progress,
+        )
     })
 }
 
@@ -609,6 +623,7 @@ pub fn sync_skills_to_tools(
 pub(crate) fn sync_skills_to_tools_unlocked(
     home: &Path,
     store: &SkillStore,
+    central_dir: &Path,
     skills: &[BatchSkill],
     tool_keys: &[String],
     policy: &BatchPolicy,
@@ -638,6 +653,7 @@ pub(crate) fn sync_skills_to_tools_unlocked(
     }
     outcomes.extend(sync_skills_to_planned_tools(
         store,
+        central_dir,
         skills,
         &targets,
         policy,

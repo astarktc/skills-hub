@@ -13,6 +13,7 @@ use super::{
 use crate::core::cancel_token::CancelToken;
 use crate::core::errors::SignalError;
 use crate::core::git_fetcher::CHECKOUT_POLICY_VERSION;
+use crate::core::removal_fence::ProtectedLibrary;
 
 /// A long TTL: any cached clone written during a test is still fresh.
 const FRESH_TTL_MS: i64 = 10 * 60 * 1000;
@@ -176,13 +177,21 @@ fn fetch_within_ttl_serves_the_cached_head() {
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (dir_a, head_a) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("first fetch");
+    let (dir_a, head_a) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect("first fetch");
 
     commit_more(repo.path(), "second.txt");
 
-    let (dir_b, head_b) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("second fetch");
+    let (dir_b, head_b) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect("second fetch");
 
     assert_eq!(dir_a, dir_b);
     assert_eq!(head_a, head_b, "a fresh cache entry must not refetch");
@@ -196,10 +205,19 @@ fn fetch_with_zero_ttl_always_refetches() {
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (_dir, head_a) = fetch_through_cache(cache.path(), &request(&url, 0)).expect("first fetch");
+    let (_dir, head_a) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, 0),
+    )
+    .expect("first fetch");
     commit_more(repo.path(), "second.txt");
-    let (_dir, head_b) =
-        fetch_through_cache(cache.path(), &request(&url, 0)).expect("second fetch");
+    let (_dir, head_b) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, 0),
+    )
+    .expect("second fetch");
 
     assert_ne!(head_a, head_b, "ttl 0 must never serve a cached head");
 }
@@ -211,8 +229,12 @@ fn fetch_past_the_ttl_boundary_refetches() {
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (repo_dir, head_a) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("first fetch");
+    let (repo_dir, head_a) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect("first fetch");
 
     // Age the metadata past the window rather than sleeping through it.
     let meta_path = repo_dir.join(".skills-hub-cache.json");
@@ -224,8 +246,12 @@ fn fetch_past_the_ttl_boundary_refetches() {
 
     commit_more(repo.path(), "second.txt");
 
-    let (_dir, head_b) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("second fetch");
+    let (_dir, head_b) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect("second fetch");
     assert_ne!(head_a, head_b, "an expired entry must refetch");
 }
 
@@ -249,8 +275,12 @@ fn corrupt_cache_dir_is_rebuilt_once() {
     fs::create_dir_all(&repo_dir).expect("create corrupt dir");
     fs::write(repo_dir.join("garbage.txt"), "not a repo").expect("write garbage");
 
-    let (dir, head) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("fetch rebuilds");
+    let (dir, head) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect("fetch rebuilds");
 
     assert_eq!(dir, repo_dir);
     assert!(
@@ -287,8 +317,12 @@ fn a_clean_retry_never_deletes_through_an_aliased_cache_root() {
     fs::create_dir_all(victim.join(".git")).expect("a real folder with .git");
     fs::write(victim.join("keep"), "user data").expect("write");
 
-    let err = fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS))
-        .expect_err("the clean retry is refused");
+    let err = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect_err("the clean retry is refused");
 
     assert!(
         matches!(
@@ -303,6 +337,93 @@ fn a_clean_retry_never_deletes_through_an_aliased_cache_root() {
     assert_eq!(
         fs::read_to_string(victim.join("keep")).expect("outside bytes survive"),
         "user data"
+    );
+}
+
+/// The refusal `reason` a fetch ended with.
+fn refusal_of(err: &anyhow::Error) -> Option<crate::core::errors::RemovalRefusal> {
+    match err.downcast_ref::<SignalError>() {
+        Some(SignalError::RemovalRefused { reason, .. }) => Some(*reason),
+        _ => None,
+    }
+}
+
+/// Review finding 2 (BACKLOG #107): the aliased level is the app cache dir
+/// itself (`cache -> outside`) and `skills-hub-git-cache` below it is a real
+/// folder. Ownership is anchored at the app cache dir, so the clean retry is
+/// still refused and the outside bytes survive.
+#[cfg(unix)]
+#[test]
+fn a_clean_retry_never_deletes_through_an_aliased_app_cache_dir() {
+    use crate::core::errors::RemovalRefusal;
+
+    let repo = fixture_repo();
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let url = url_of(repo.path());
+    let key = repo_cache_key(&CacheKeyInputs {
+        clone_url: &url,
+        branch: None,
+    });
+    let outside = tmp.path().join("outside");
+    let victim = cache_root(&outside).join(&key);
+    fs::create_dir_all(victim.join(".git")).expect("a real folder with .git");
+    fs::write(victim.join("keep"), "outside bytes").expect("write");
+    let cache = tmp.path().join("cache");
+    std::os::unix::fs::symlink(&outside, &cache).expect("alias the app cache dir");
+
+    let err = fetch_through_cache(
+        &cache,
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect_err("the clean retry is refused");
+
+    assert_eq!(
+        refusal_of(&err),
+        Some(RemovalRefusal::ResolvesElsewhere),
+        "{err:#}"
+    );
+    assert_eq!(
+        fs::read_to_string(victim.join("keep")).expect("outside bytes survive"),
+        "outside bytes"
+    );
+}
+
+/// Review finding 3 (BACKLOG #107): a central repo configured inside a cache
+/// entry (an old checkout reused as the library) is never wiped by that
+/// entry's clean retry — the retry is refused and the skill survives.
+#[test]
+fn a_clean_retry_never_deletes_the_configured_library() {
+    use crate::core::errors::RemovalRefusal;
+    use crate::core::skill_store::SkillStore;
+
+    let repo = fixture_repo();
+    let cache = tempfile::tempdir().expect("tempdir");
+    let url = url_of(repo.path());
+    let key = repo_cache_key(&CacheKeyInputs {
+        clone_url: &url,
+        branch: None,
+    });
+    let library_dir = cache_root(cache.path()).join(&key);
+    fs::create_dir_all(library_dir.join(".git")).expect("a broken clone");
+    fs::create_dir_all(library_dir.join("alpha")).expect("mkdir");
+    fs::write(library_dir.join("alpha/SKILL.md"), "managed").expect("write");
+    let db = tempfile::tempdir().expect("tempdir");
+    let store = SkillStore::new(db.path().join("test.db"));
+    store.ensure_schema().expect("schema");
+    let library = ProtectedLibrary::new(&store, &library_dir);
+
+    let err = fetch_through_cache(cache.path(), &library, &request(&url, FRESH_TTL_MS))
+        .expect_err("the clean retry is refused");
+
+    assert_eq!(
+        refusal_of(&err),
+        Some(RemovalRefusal::CentralLibrary),
+        "{err:#}"
+    );
+    assert_eq!(
+        fs::read_to_string(library_dir.join("alpha/SKILL.md")).expect("the library survives"),
+        "managed"
     );
 }
 
@@ -322,6 +443,7 @@ fn cancelled_fetch_leaves_no_fresh_entry() {
     token.cancel();
     let err = fetch_through_cache(
         cache.path(),
+        &ProtectedLibrary::unrecorded(),
         &FetchRequest {
             cancel: Some(&token),
             ..request(&url, FRESH_TTL_MS)
@@ -344,8 +466,12 @@ fn cancelled_fetch_leaves_no_fresh_entry() {
     );
 
     // And the cache still works afterwards.
-    let (_dir, head) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("later fetch");
+    let (_dir, head) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect("later fetch");
     assert!(!head.is_empty());
 }
 
@@ -410,10 +536,20 @@ fn concurrent_fetches_of_different_repos_both_succeed() {
 
     std::thread::scope(|scope| {
         let one = scope.spawn(|| {
-            fetch_through_cache(&cache_path, &request(&url_a, FRESH_TTL_MS)).expect("fetch a")
+            fetch_through_cache(
+                &cache_path,
+                &ProtectedLibrary::unrecorded(),
+                &request(&url_a, FRESH_TTL_MS),
+            )
+            .expect("fetch a")
         });
         let two = scope.spawn(|| {
-            fetch_through_cache(&cache_path, &request(&url_b, FRESH_TTL_MS)).expect("fetch b")
+            fetch_through_cache(
+                &cache_path,
+                &ProtectedLibrary::unrecorded(),
+                &request(&url_b, FRESH_TTL_MS),
+            )
+            .expect("fetch b")
         });
         let (dir_a, _) = one.join().expect("thread a");
         let (dir_b, _) = two.join().expect("thread b");
@@ -462,13 +598,18 @@ fn a_full_entry_serves_a_later_subpath_request() {
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (listing_dir, listing_head) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("listing fetch");
+    let (listing_dir, listing_head) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect("listing fetch");
 
     commit_more(repo.path(), "after-listing.txt");
 
     let (install_dir, install_head) = fetch_through_cache(
         cache.path(),
+        &ProtectedLibrary::unrecorded(),
         &FetchRequest {
             subpath: Some("skills/a"),
             ..request(&url, FRESH_TTL_MS)
@@ -500,6 +641,7 @@ fn a_sparse_entry_does_not_serve_a_later_full_request() {
 
     let (sparse_dir, _) = fetch_through_cache(
         cache.path(),
+        &ProtectedLibrary::unrecorded(),
         &FetchRequest {
             subpath: Some("skills/a"),
             ..request(&url, FRESH_TTL_MS)
@@ -512,8 +654,12 @@ fn a_sparse_entry_does_not_serve_a_later_full_request() {
         "precondition: the sparse entry holds only skills/a"
     );
 
-    let (listing_dir, _) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("listing fetch");
+    let (listing_dir, _) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect("listing fetch");
 
     assert_eq!(listing_dir, sparse_dir, "still one entry per repository");
     assert!(
@@ -534,6 +680,7 @@ fn widening_does_not_renew_freshness() {
 
     let (repo_dir, head_a) = fetch_through_cache(
         cache.path(),
+        &ProtectedLibrary::unrecorded(),
         &FetchRequest {
             subpath: Some("skills/a"),
             ..request(&url, FRESH_TTL_MS)
@@ -544,8 +691,12 @@ fn widening_does_not_renew_freshness() {
     set_entry_fetch_time(&repo_dir, halfway);
     commit_more(repo.path(), "after-sparse.txt");
 
-    let (_dir, head_b) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("listing fetch");
+    let (_dir, head_b) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect("listing fetch");
 
     assert_eq!(
         head_a, head_b,
@@ -570,10 +721,18 @@ fn a_second_install_after_ttl_expiry_fetches_again() {
         ..request(&url, FRESH_TTL_MS)
     };
 
-    let (repo_dir, listing_head) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("listing fetch");
-    let (_dir, install_head) =
-        fetch_through_cache(cache.path(), &install("skills/a")).expect("first install");
+    let (repo_dir, listing_head) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect("listing fetch");
+    let (_dir, install_head) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &install("skills/a"),
+    )
+    .expect("first install");
     assert_eq!(
         install_head, listing_head,
         "the first install is a cache hit"
@@ -582,8 +741,12 @@ fn a_second_install_after_ttl_expiry_fetches_again() {
     age_entry_past_ttl(&repo_dir);
     commit_more(repo.path(), "after-install.txt");
 
-    let (later_dir, later_head) =
-        fetch_through_cache(cache.path(), &install("skills/a")).expect("second install");
+    let (later_dir, later_head) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &install("skills/a"),
+    )
+    .expect("second install");
     assert_eq!(later_dir, repo_dir, "the entry is refreshed in place");
     assert_ne!(
         later_head, listing_head,
@@ -627,8 +790,18 @@ fn a_second_subpath_widens_the_entry_without_removing_the_first() {
         ..request(&url, FRESH_TTL_MS)
     };
 
-    let (dir_a, head_a) = fetch_through_cache(cache.path(), &install("skills/a")).expect("a");
-    let (dir_b, head_b) = fetch_through_cache(cache.path(), &install("skills/b")).expect("b");
+    let (dir_a, head_a) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &install("skills/a"),
+    )
+    .expect("a");
+    let (dir_b, head_b) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &install("skills/b"),
+    )
+    .expect("b");
 
     assert_eq!(dir_a, dir_b, "one entry per repository");
     assert_eq!(head_a, head_b, "the fresh head is served, not refetched");
@@ -646,7 +819,12 @@ fn a_second_subpath_widens_the_entry_without_removing_the_first() {
     );
 
     // And now both are covered: a third request for either is a plain hit.
-    let (_, head_again) = fetch_through_cache(cache.path(), &install("skills/a")).expect("a again");
+    let (_, head_again) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &install("skills/a"),
+    )
+    .expect("a again");
     assert_eq!(head_again, head_a);
 }
 
@@ -664,11 +842,19 @@ fn the_cache_record_and_the_sparse_pattern_normalise_a_subpath_identically() {
         ..request(&url, FRESH_TTL_MS)
     };
 
-    let (repo_dir, head_a) =
-        fetch_through_cache(cache.path(), &install("/skills/a/")).expect("first spelling");
+    let (repo_dir, head_a) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &install("/skills/a/"),
+    )
+    .expect("first spelling");
     commit_more(repo.path(), "after-first.txt");
-    let (_dir, head_b) =
-        fetch_through_cache(cache.path(), &install("skills/./a")).expect("second spelling");
+    let (_dir, head_b) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &install("skills/./a"),
+    )
+    .expect("second spelling");
 
     assert_eq!(
         head_a, head_b,
@@ -712,13 +898,18 @@ fn a_clone_without_a_record_is_refetched_full_never_narrowed() {
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (repo_dir, _) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("listing fetch");
+    let (repo_dir, _) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect("listing fetch");
     let meta_path = repo_dir.join(".skills-hub-cache.json");
     fs::remove_file(&meta_path).expect("drop the sidecar");
 
     let (dir, _) = fetch_through_cache(
         cache.path(),
+        &ProtectedLibrary::unrecorded(),
         &FetchRequest {
             subpath: Some("skills/a"),
             ..request(&url, FRESH_TTL_MS)
@@ -745,12 +936,17 @@ fn a_clone_with_an_unparseable_record_is_refetched_full_never_narrowed() {
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (repo_dir, _) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("listing fetch");
+    let (repo_dir, _) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect("listing fetch");
     fs::write(repo_dir.join(".skills-hub-cache.json"), "{not json").expect("corrupt the sidecar");
 
     let (dir, _) = fetch_through_cache(
         cache.path(),
+        &ProtectedLibrary::unrecorded(),
         &FetchRequest {
             subpath: Some("skills/a"),
             ..request(&url, FRESH_TTL_MS)
@@ -775,14 +971,22 @@ fn a_failed_record_write_does_not_fail_the_fetch() {
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (repo_dir, _) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("first fetch");
+    let (repo_dir, _) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect("first fetch");
     let meta_path = repo_dir.join(".skills-hub-cache.json");
     fs::remove_file(&meta_path).expect("drop the sidecar");
     fs::create_dir(&meta_path).expect("block the sidecar path");
 
-    let (dir, head) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("fetch succeeds");
+    let (dir, head) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect("fetch succeeds");
     assert_eq!(dir, repo_dir);
     assert!(!head.is_empty());
     assert!(dir.join("SKILL.md").exists(), "the bytes landed");
@@ -834,8 +1038,12 @@ fn a_pre_policy_entry_is_neither_served_nor_touched() {
     fs::write(old_entry.join("SKILL.md"), crlf).expect("crlf bytes");
     let old_index = fs::read(old_entry.join(".git/index")).expect("old index");
 
-    let (dir, head) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("fetch");
+    let (dir, head) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect("fetch");
 
     assert_eq!(dir, cache_root(cache.path()).join(repo_cache_key(&inputs)));
     assert_ne!(dir, old_entry, "the pre-policy entry is never served");
@@ -875,8 +1083,12 @@ fn a_legacy_record_without_a_checkout_shape_reads_as_full() {
     let cache = tempfile::tempdir().expect("tempdir");
     let url = url_of(repo.path());
 
-    let (repo_dir, head_a) =
-        fetch_through_cache(cache.path(), &request(&url, FRESH_TTL_MS)).expect("listing fetch");
+    let (repo_dir, head_a) = fetch_through_cache(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        &request(&url, FRESH_TTL_MS),
+    )
+    .expect("listing fetch");
 
     // Rewrite the record in the pre-shape format.
     let meta_path = repo_dir.join(".skills-hub-cache.json");
@@ -889,6 +1101,7 @@ fn a_legacy_record_without_a_checkout_shape_reads_as_full() {
 
     let (_dir, head_b) = fetch_through_cache(
         cache.path(),
+        &ProtectedLibrary::unrecorded(),
         &FetchRequest {
             subpath: Some("skills/a"),
             ..request(&url, FRESH_TTL_MS)
