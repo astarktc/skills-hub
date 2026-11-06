@@ -520,7 +520,6 @@ fn copy_phase(
     on_progress: &mut impl FnMut(LibraryMoveProgress),
 ) -> Result<Vec<Moved>> {
     let total = locatable.len() as u32;
-    let mut taken: HashSet<std::ffi::OsString> = HashSet::new();
     let mut moved: Vec<Moved> = Vec::with_capacity(locatable.len());
     for (done, skill) in locatable.into_iter().enumerate() {
         on_progress(LibraryMoveProgress {
@@ -530,12 +529,16 @@ fn copy_phase(
             name: skill.name.clone(),
         });
         let old = PathBuf::from(&skill.central_path);
-        let new = dest.join(unique_name(&old, &skill, &mut taken));
-        if let Err(err) = copy_verified(&old, &new) {
+        let reserved = reserve(dest, &old, &skill);
+        if let Err(err) = reserved
+            .as_ref()
+            .map_err(|err| anyhow::anyhow!("{err:#}"))
+            .and_then(|new| copy_verified(&old, new))
+        {
             let staged = moved
                 .iter()
                 .map(|m| m.new.as_path())
-                .chain(std::iter::once(new.as_path()));
+                .chain(reserved.as_deref().ok());
             let cleanup = rollback(store, paths, dest, staged);
             let detail = match cleanup {
                 Some(problem) => format!("{err:#}; {problem}"),
@@ -547,6 +550,7 @@ fn copy_phase(
                 detail,
             });
         }
+        let new = reserved?;
         let old_physical = old.canonicalize().unwrap_or_else(|_| old.clone());
         moved.push(Moved {
             skill,
@@ -558,26 +562,32 @@ fn copy_phase(
     Ok(moved)
 }
 
-/// The folder name a copy takes in the new Library: its current one, made
-/// unique among this move's copies (a split Library may repeat a name).
-fn unique_name(
-    old: &Path,
-    skill: &SkillRecord,
-    taken: &mut HashSet<std::ffi::OsString>,
-) -> std::ffi::OsString {
+/// Reserve the folder a copy takes in the new Library: its current name, or
+/// `<name>-2`, `<name>-3`, … when that is taken. Taken is the destination
+/// filesystem's answer — an exclusive `create_dir` that reports
+/// `AlreadyExists` — never a comparison of spellings: on a case-insensitive
+/// volume `alpha` and `ALPHA` (a split Library may hold both) are one folder.
+/// The reserved folder is new and empty; a copy never merges into another.
+fn reserve(dest: &Path, old: &Path, skill: &SkillRecord) -> Result<PathBuf> {
     let base = old
         .file_name()
         .map(|name| name.to_os_string())
         .unwrap_or_else(|| skill.id.clone().into());
-    let mut candidate = base.clone();
-    let mut n = 2;
-    while !taken.insert(candidate.clone()) {
-        let mut next = base.clone();
-        next.push(format!("-{n}"));
-        candidate = next;
-        n += 1;
+    for n in 1u32.. {
+        let mut candidate = base.clone();
+        if n > 1 {
+            candidate.push(format!("-{n}"));
+        }
+        let path = dest.join(&candidate);
+        match std::fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => {
+                return Err(anyhow::Error::new(err).context(format!("create {:?}", path)))
+            }
+        }
     }
-    candidate
+    unreachable!("a free folder name exists")
 }
 
 /// Copy `old` to `new` (never `.git`, never an internal link) and prove the

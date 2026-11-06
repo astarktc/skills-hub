@@ -764,3 +764,54 @@ fn the_move_is_serialized_with_other_mutations() {
     let finished = Instant::now();
     assert!(finished >= released_at.join().unwrap());
 }
+
+// ---------------------------------------------------------------------------
+// Round-2 regressions (review `.scratch/reviews/round20-t03-move-library-review.md`)
+// ---------------------------------------------------------------------------
+
+/// Whether the temp volume folds case (APFS / NTFS default): `a` and `A`
+/// name one entry.
+fn case_insensitive_volume(dir: &Path) -> bool {
+    let probe = dir.join("case-probe");
+    fs::write(&probe, "x").unwrap();
+    let folded = dir.join("CASE-PROBE").exists();
+    fs::remove_file(&probe).unwrap();
+    folded
+}
+
+/// Review #1: two recorded copies whose folder names differ only by case
+/// (a split Library) each land in a folder of their own — on a
+/// case-insensitive volume the second never merges into the first.
+#[test]
+fn case_colliding_copy_names_preserve_both_skills() {
+    let mut f = fixture(&[]);
+    let alpha = f.install("alpha");
+    let beta = f.install("beta");
+    // Split Library: beta's copy lives elsewhere, in a folder named ALPHA.
+    let split = f.dir.path().join("split");
+    fs::create_dir_all(&split).unwrap();
+    let beta_old = split.join("ALPHA");
+    fs::rename(f.central(&beta), &beta_old).unwrap();
+    let mut record = f.store.get_skill_by_id(&beta).unwrap().unwrap();
+    record.central_path = beta_old.to_string_lossy().into_owned();
+    f.store.upsert_skill(&record).unwrap();
+
+    f.run();
+
+    let (alpha_new, beta_new) = (f.central(&alpha), f.central(&beta));
+    assert!(alpha_new.starts_with(f.dest()) && beta_new.starts_with(f.dest()));
+    assert_eq!(
+        fs::read_to_string(alpha_new.join("SKILL.md")).unwrap(),
+        "---\nname: alpha\n---\nbody of alpha\n"
+    );
+    assert_eq!(
+        fs::read_to_string(beta_new.join("SKILL.md")).unwrap(),
+        "---\nname: beta\n---\nbody of beta\n",
+        "beta keeps its own bytes"
+    );
+    assert_ne!(
+        alpha_new.canonicalize().unwrap(),
+        beta_new.canonicalize().unwrap(),
+        "two folders, not one"
+    );
+}
