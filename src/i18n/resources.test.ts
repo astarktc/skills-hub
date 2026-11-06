@@ -1,3 +1,4 @@
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 import { resources } from "./resources";
@@ -89,37 +90,161 @@ function retiredWordHits(catalog: unknown): string[] {
 
 /**
  * The reverse guard (BACKLOG #82): every `en` leaf is read somewhere in `src/`.
- * A key is read when the source names it as a quoted literal (`t("a.b")`, or a
- * key map's value such as `HEALTH_ROW_LABEL_KEY`), or when it sits under a
- * prefix the source builds dynamically — a template literal `` `a.b.${…}` ``,
- * detected from the source itself (`DYNAMIC_PREFIX`), so a new dynamic family
- * needs no hand-kept list. A plural leaf (`_one` / `_other` …) is read through
- * its base key. Anything else is dead copy: delete it.
+ * Read from the TypeScript AST, not from text (BACKLOG #99 (3)) — a key named
+ * in a comment, a log line, a comparison or a type is not a read:
+ *
+ * - **A translation call** reads its first argument — `t("a.b")`, `ctx.t(…)`,
+ *   through `?:` branches, `??` / `||`, parentheses and `as`.
+ * - **A key hand-off** reads a key-shaped literal that is data passed on to a
+ *   translation call later: an object property's value (a key map such as
+ *   `HEALTH_ROW_LABEL_KEY`, a `titleKey:`), an array element, a variable's
+ *   initializer, a returned value, or an argument of a call to a
+ *   `KEY_FORWARDERS` function. This is still an approximation: the literal is
+ *   not traced to the `t` call that reads it (`const k = "a.b"; t(k)` counts
+ *   at the constant).
+ * - **A dynamic family**: a translation call whose key is built — a template
+ *   (`` t(`tools.${id}`) ``) or a concatenation (`t("a." + leaf)`) — reads
+ *   every leaf matching its literal pieces (`tools.<anything>`). A template
+ *   that never reaches a translation call exempts nothing.
+ *
+ * A plural leaf (`_one` / `_other` …) is read through its base key. Anything
+ * else is dead copy: delete it.
  */
-const DYNAMIC_PREFIX = /`([a-zA-Z][\w.]*)\.\$\{/g;
+type SourceFileText = readonly [fileName: string, text: string];
+
+/** Functions that translate a key they are handed, each with where and why. Keep it short. */
+const KEY_FORWARDERS: Readonly<Record<string, string>> = {
+  collectRemovalFailures: "reportOutcome.ts: its title key is t()'d for every kept row",
+  part: "reportOutcome.ts tallyHeadline: `part(key, count)` pushes t(key, { count })",
+};
 
 /** Leaves the scan cannot see but the app reads, each with its reason. Keep it empty if you can. */
 const UNREAD_ALLOW_LIST: Readonly<Record<string, string>> = {};
 
 const PLURAL_SUFFIX = /_(zero|one|two|few|many|other)$/;
+const KEY_SHAPED = /^[A-Za-z][\w-]*(?:\.[\w-]+)*$/;
 
-function unreadLeaves(catalog: unknown, texts: readonly string[]): string[] {
-  const text = texts.join("\n");
-  const prefixes = new Set([...text.matchAll(DYNAMIC_PREFIX)].map((match) => `${match[1]}.`));
-  const quoted = (key: string) => {
-    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`["'\`]${escaped}["'\`]`).test(text);
-  };
+const isTranslationCall = (node: ts.CallExpression) => {
+  const callee = node.expression;
+  return ts.isIdentifier(callee)
+    ? callee.text === "t"
+    : ts.isPropertyAccessExpression(callee) && callee.name.text === "t";
+};
+
+const calleeName = (node: ts.CallExpression) => {
+  const callee = node.expression;
+  if (ts.isIdentifier(callee)) return callee.text;
+  return ts.isPropertyAccessExpression(callee) ? callee.name.text : null;
+};
+
+/** The expressions a value can take: `?:` branches, `??` / `||` sides, parentheses, `as`. */
+function alternatives(node: ts.Expression): ts.Expression[] {
+  if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node))
+    return alternatives(node.expression);
+  if (ts.isConditionalExpression(node)) return [...alternatives(node.whenTrue), ...alternatives(node.whenFalse)];
+  if (
+    ts.isBinaryExpression(node) &&
+    (node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+      node.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+  )
+    return [...alternatives(node.left), ...alternatives(node.right)];
+  return [node];
+}
+
+/** A key expression's pieces: literal text, or null where a value is spliced in. */
+function keyPieces(node: ts.Expression): Array<string | null> {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return [node.text];
+  if (ts.isTemplateExpression(node))
+    return [node.head.text, ...node.templateSpans.flatMap((span) => [null, span.literal.text])];
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken)
+    return [...keyPieces(node.left), ...keyPieces(node.right)];
+  if (ts.isParenthesizedExpression(node)) return keyPieces(node.expression);
+  return [null];
+}
+
+/** Where a literal's value goes once `?:` / `??` / `||` / `&&` / parentheses / `as` are climbed out of. */
+function useSite(node: ts.Node): [ts.Node, ts.Node | undefined] {
+  let child: ts.Node = node;
+  let parent = node.parent;
+  while (
+    parent &&
+    (ts.isParenthesizedExpression(parent) ||
+      ts.isAsExpression(parent) ||
+      ts.isSatisfiesExpression(parent) ||
+      (ts.isConditionalExpression(parent) && parent.condition !== child) ||
+      (ts.isBinaryExpression(parent) &&
+        parent.right === child &&
+        [
+          ts.SyntaxKind.QuestionQuestionToken,
+          ts.SyntaxKind.BarBarToken,
+          ts.SyntaxKind.AmpersandAmpersandToken,
+        ].includes(parent.operatorToken.kind)))
+  ) {
+    child = parent;
+    parent = parent.parent;
+  }
+  return [child, parent];
+}
+
+function isHandOff(child: ts.Node, parent: ts.Node | undefined, forwarders: Readonly<Record<string, string>>) {
+  if (!parent) return false;
+  if (ts.isPropertyAssignment(parent)) return parent.initializer === child;
+  if (ts.isVariableDeclaration(parent)) return parent.initializer === child;
+  if (ts.isArrowFunction(parent)) return parent.body === child;
+  if (ts.isArrayLiteralExpression(parent) || ts.isReturnStatement(parent)) return true;
+  if (ts.isCallExpression(parent)) {
+    const name = calleeName(parent);
+    return name !== null && name in forwarders && parent.arguments.some((arg) => arg === child);
+  }
+  return false;
+}
+
+/** Every static key read and every dynamic family the sources translate. */
+function translationReads(files: readonly SourceFileText[], forwarders = KEY_FORWARDERS) {
+  const keys = new Set<string>();
+  const families: RegExp[] = [];
+  for (const [fileName, text] of files) {
+    const kind = fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+    const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, kind);
+    const visit = (node: ts.Node) => {
+      if (ts.isCallExpression(node) && isTranslationCall(node) && node.arguments[0]) {
+        for (const branch of alternatives(node.arguments[0])) {
+          const pieces = keyPieces(branch);
+          if (pieces.every((piece) => piece !== null)) keys.add(pieces.join(""));
+          else if (pieces.some((piece) => piece))
+            families.push(
+              new RegExp(
+                `^${pieces.map((piece) => (piece === null ? ".+" : piece.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))).join("")}$`,
+              ),
+            );
+        }
+      } else if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && KEY_SHAPED.test(node.text)) {
+        const [child, parent] = useSite(node);
+        if (isHandOff(child, parent, forwarders)) keys.add(node.text);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
+  return { keys, families };
+}
+
+function unreadLeaves(
+  catalog: unknown,
+  files: readonly SourceFileText[],
+  forwarders: Readonly<Record<string, string>> = KEY_FORWARDERS,
+): string[] {
+  const { keys: read, families } = translationReads(files, forwarders);
   const keys = [...new Set(leaves(catalog).map(([key]) => key.replace(PLURAL_SUFFIX, "")))];
   return keys.filter(
-    (key) => !(key in UNREAD_ALLOW_LIST) && !quoted(key) && ![...prefixes].some((prefix) => key.startsWith(prefix)),
+    (key) => !(key in UNREAD_ALLOW_LIST) && !read.has(key) && !families.some((family) => family.test(key)),
   );
 }
 
 /** The app's own sources, without the catalog itself (its property names are not reads). */
-const appSources = Object.entries(sources)
-  .filter(([file]) => !file.endsWith("/i18n/resources.ts"))
-  .map(([, text]) => text);
+const appSources: SourceFileText[] = Object.entries(sources).filter(
+  ([file]) => !file.endsWith("/i18n/resources.ts"),
+);
 
 describe("i18n catalog", () => {
   it("reads every en leaf somewhere in src/ (BACKLOG #82)", () => {
@@ -137,7 +262,50 @@ describe("i18n catalog", () => {
       orphan_other: "x",
     };
     const texts = ['t("a.read")', 'const KEY = { k: "a.mapped" };', 't("count", { count })', "t(`tools.${key}`)"];
-    expect(unreadLeaves(catalog, texts)).toEqual(["a.dead", "orphan"]);
+    expect(unreadLeaves(catalog, texts.map((text, i) => [`f${i}.ts`, text] as const))).toEqual(["a.dead", "orphan"]);
+  });
+
+  // Round-19 ticket-31 audit F3: the lexical scan's four counterexamples.
+  describe("the reverse check reads syntax, not text (BACKLOG #99 (3))", () => {
+    const catalog = { a: { b: "x" } };
+    const unread = (text: string, forwarders: Readonly<Record<string, string>> = {}) =>
+      unreadLeaves(catalog, [["probe.ts", text]], forwarders);
+
+    it("a key held in a constant counts at the constant (a key map, by approximation)", () => {
+      expect(unread('const k = "a.b"; t(k);')).toEqual([]);
+    });
+
+    it("a concatenated key reaching t reads its family", () => {
+      expect(unread('t("a." + x);')).toEqual([]);
+      expect(unread('t("b." + x);')).toEqual(["a.b"]);
+    });
+
+    it("a key-shaped string handed to anything but a translation is not a read", () => {
+      expect(unread('console.log("a.b");')).toEqual(["a.b"]);
+      expect(unread('if (x === "a.b") y();')).toEqual(["a.b"]);
+      expect(unread('// t("a.b")\n/* "a.b" */ type K = "a.b";')).toEqual(["a.b"]);
+    });
+
+    it("a template that never reaches t exempts nothing", () => {
+      expect(unread("const unused = `a.${x}`;")).toEqual(["a.b"]);
+      expect(unread("t(`a.${x}`);")).toEqual([]);
+    });
+
+    it("a family keeps its literal tail; a key forwarder reads only when listed", () => {
+      const nested = { a: { q: { title: "x", body: "x" } } };
+      expect(unreadLeaves(nested, [["probe.ts", "t(`a.${x}.title`);"]], {})).toEqual(["a.q.body"]);
+      expect(unread('helper(out, "a.b");')).toEqual(["a.b"]);
+      expect(unread('helper(out, "a.b");', { helper: "test" })).toEqual([]);
+      expect(unread('t(flag ? "a.b" : other ?? "c.d");')).toEqual([]);
+    });
+
+    it("every listed key forwarder still exists in src/", () => {
+      const text = appSources.map(([, source]) => source).join("\n");
+      const stale = Object.keys(KEY_FORWARDERS).filter(
+        (name) => !new RegExp(`\\b(?:function\\s+${name}\\b|(?:const|let)\\s+${name}\\s*=)`).test(text),
+      );
+      expect(stale).toEqual([]);
+    });
   });
 
   it("uses no retired vocabulary word in any en value (D45)", () => {

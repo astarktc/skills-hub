@@ -128,7 +128,6 @@ export const resources = {
         },
       },
       update: "Update",
-      remove: "Remove",
       changeSource: {
         action: "Change source…",
         title: "Change the source of {{name}}",
