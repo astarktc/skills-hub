@@ -1,3 +1,4 @@
+use crate::core::environment::HostRoots;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -19,11 +20,11 @@ fn make_store() -> (tempfile::TempDir, SkillStore) {
 fn make_paths() -> (tempfile::TempDir, InstallerPaths) {
     let dir = tempfile::tempdir().expect("tempdir");
     let paths = InstallerPaths {
-        home: dir.path().join("home"),
+        roots: HostRoots::under_home(&dir.path().join("home")),
         central_dir: dir.path().join("central"),
         cache_dir: dir.path().join("cache"),
     };
-    fs::create_dir_all(&paths.home).unwrap();
+    fs::create_dir_all(&paths.roots.home).unwrap();
     (dir, paths)
 }
 
@@ -119,7 +120,7 @@ fn adding_a_folder_inside_a_tool_skills_dir_is_refused_before_anything_is_writte
     let (_roots, paths) = make_paths();
 
     let claude = adapter_by_key("claude_code").unwrap();
-    let source = skills_dir_in(&paths.home, claude).join("taken");
+    let source = skills_dir_in(&paths.roots, claude).join("taken");
     fs::create_dir_all(&source).unwrap();
     fs::write(source.join("SKILL.md"), b"---\nname: taken\n---\n").unwrap();
 
@@ -153,13 +154,13 @@ fn listing_flags_a_candidate_inside_a_tool_skills_dir() {
     let (_roots, paths) = make_paths();
 
     let claude = adapter_by_key("claude_code").unwrap();
-    let tool_dir = skills_dir_in(&paths.home, claude);
+    let tool_dir = skills_dir_in(&paths.roots, claude);
     let taken = tool_dir.join("x");
     fs::create_dir_all(&taken).unwrap();
     fs::write(taken.join("SKILL.md"), b"---\nname: x\n---\n").unwrap();
 
     // Picking the Tool dir itself lists its children as candidates.
-    let list = super::list_local_skills(&paths.home, &tool_dir).unwrap();
+    let list = super::list_local_skills(&paths.roots, &tool_dir).unwrap();
     let x = list.iter().find(|c| c.subpath == "x").expect("x is listed");
     assert!(!x.valid);
     assert_eq!(
@@ -169,17 +170,17 @@ fn listing_flags_a_candidate_inside_a_tool_skills_dir() {
     );
 
     // Picking the skill folder itself (the root candidate) is flagged too.
-    let list = super::list_local_skills(&paths.home, &taken).unwrap();
+    let list = super::list_local_skills(&paths.roots, &taken).unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].subpath, ".");
     assert!(!list[0].valid);
     assert_eq!(list[0].reason.as_deref(), Some("inside_tool_dir"));
 
     // A folder outside every Tool dir is untouched by the rule.
-    let free = paths.home.join("my-skills/free");
+    let free = paths.roots.home.join("my-skills/free");
     fs::create_dir_all(&free).unwrap();
     fs::write(free.join("SKILL.md"), b"---\nname: free\n---\n").unwrap();
-    let list = super::list_local_skills(&paths.home, &free).unwrap();
+    let list = super::list_local_skills(&paths.roots, &free).unwrap();
     assert!(list[0].valid, "{:?}", list[0]);
     assert_eq!(list[0].reason, None);
 }
@@ -190,7 +191,7 @@ fn selecting_a_candidate_inside_a_tool_skills_dir_is_refused_the_same_way() {
     let (_roots, paths) = make_paths();
 
     let pi = adapter_by_key("pi").unwrap();
-    let base = skills_dir_in(&paths.home, pi);
+    let base = skills_dir_in(&paths.roots, pi);
     let source = base.join("taken");
     fs::create_dir_all(&source).unwrap();
     fs::write(source.join("SKILL.md"), b"---\nname: taken\n---\n").unwrap();
@@ -215,7 +216,7 @@ fn adding_a_folder_outside_every_tool_skills_dir_installs_as_before() {
     let (_dir, store) = make_store();
     let (_roots, paths) = make_paths();
 
-    let source = paths.home.join("Documents/my-skill");
+    let source = paths.roots.home.join("Documents/my-skill");
     fs::create_dir_all(&source).unwrap();
     fs::write(source.join("SKILL.md"), b"---\nname: my-skill\n---\n").unwrap();
 
@@ -443,7 +444,7 @@ fn lists_local_skills_with_invalid_entries() {
     fs::write(base.join("skills/d/SKILL.md"), "---\ndescription: D\n---\n").unwrap();
 
     let home = tempfile::tempdir().unwrap();
-    let list = super::list_local_skills(home.path(), base).unwrap();
+    let list = super::list_local_skills(&HostRoots::under_home(home.path()), base).unwrap();
 
     let find = |subpath: &str| list.iter().find(|c| c.subpath == subpath).cloned();
 
@@ -884,7 +885,7 @@ fn list_local_skills_discovers_deeply_nested() {
     }
 
     let home = tempfile::tempdir().unwrap();
-    let list = super::list_local_skills(home.path(), base).unwrap();
+    let list = super::list_local_skills(&HostRoots::under_home(home.path()), base).unwrap();
     assert!(
         list.len() >= 2,
         "should find at least 2 deeply nested skills, found {}",
@@ -1196,7 +1197,7 @@ fn list_local_skills_reports_root_validity() {
     fs::write(base.join("SKILL.md"), "---\ndescription: x\n---\n").unwrap();
 
     let home = tempfile::tempdir().unwrap();
-    let list = super::list_local_skills(home.path(), &base).unwrap();
+    let list = super::list_local_skills(&HostRoots::under_home(home.path()), &base).unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].subpath, ".");
     assert_eq!(list[0].name, "root-skill");

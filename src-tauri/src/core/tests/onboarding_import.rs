@@ -5,6 +5,7 @@
 //! are written straight into its global skills dir. No test touches the
 //! operator's real home, central repo, or database.
 
+use crate::core::environment::HostRoots;
 use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -28,11 +29,11 @@ struct Fixture {
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let paths = InstallerPaths {
-        home: dir.path().join("home"),
+        roots: HostRoots::under_home(&dir.path().join("home")),
         central_dir: dir.path().join("central"),
         cache_dir: dir.path().join("cache"),
     };
-    fs::create_dir_all(&paths.home).expect("create home");
+    fs::create_dir_all(&paths.roots.home).expect("create home");
     let store = SkillStore::new(dir.path().join("test.db"));
     store.ensure_schema().expect("ensure_schema");
     Fixture {
@@ -45,13 +46,13 @@ fn fixture() -> Fixture {
 /// Mark a Tool installed for this fixture's operator.
 fn install_tool(f: &Fixture, key: &str) {
     let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {}", key));
-    mark_installed_in(&f.paths.home, adapter);
+    mark_installed_in(&f.paths.roots, adapter);
 }
 
 /// A pre-existing skill directory inside a Tool's global skills dir.
 fn seed_skill_dir(f: &Fixture, key: &str, name: &str, body: &str) -> PathBuf {
     let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {}", key));
-    let dir = skills_dir_in(&f.paths.home, adapter).join(name);
+    let dir = skills_dir_in(&f.paths.roots, adapter).join(name);
     fs::create_dir_all(&dir).expect("create skill dir");
     fs::write(
         dir.join("SKILL.md"),
@@ -66,7 +67,7 @@ fn seed_skill_dir(f: &Fixture, key: &str, name: &str, body: &str) -> PathBuf {
 /// another by hand (or by an earlier tool's sync).
 fn seed_skill_link(f: &Fixture, key: &str, name: &str, target: &Path) -> PathBuf {
     let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {}", key));
-    let skills_dir = skills_dir_in(&f.paths.home, adapter);
+    let skills_dir = skills_dir_in(&f.paths.roots, adapter);
     fs::create_dir_all(&skills_dir).expect("create skills dir");
     let link = skills_dir.join(name);
     #[cfg(unix)]
@@ -174,7 +175,7 @@ fn import_of_a_variant_installed_by_npx_skills_add_records_its_upstream_as_git()
     install_tool(&f, "claude_code");
     // `npx skills add` keeps the bytes in ~/.agents/skills/<name> and links
     // every Tool at it; the lock file names the upstream.
-    let agents_dir = f.paths.home.join(".agents");
+    let agents_dir = f.paths.roots.home.join(".agents");
     let real = agents_dir.join("skills").join("alpha");
     fs::create_dir_all(&real).expect("agents skills dir");
     fs::write(real.join("SKILL.md"), "---\nname: alpha\n---\nbody\n").expect("SKILL.md");
@@ -709,8 +710,9 @@ fn a_group_failing_admission_does_not_stop_the_others() {
     // A directory in the skills dir with no SKILL.md: discovered, not admissible.
     let broken = f
         .paths
+        .roots
         .home
-        .join(adapter.relative_skills_dir)
+        .join(adapter.skills_dir.rel)
         .join("broken");
     fs::create_dir_all(&broken).expect("create broken dir");
     fs::write(broken.join("notes.txt"), "no manifest").expect("write");
@@ -790,7 +792,7 @@ fn a_path_the_plan_does_not_own_fails_the_group_without_touching_disk() {
     let f = fixture();
     install_tool(&f, "claude_code");
     let real = seed_skill_dir(&f, "claude_code", "alpha", "v1");
-    let elsewhere = f.paths.home.join("Documents").join("alpha");
+    let elsewhere = f.paths.roots.home.join("Documents").join("alpha");
     fs::create_dir_all(&elsewhere).expect("create dir");
     fs::write(elsewhere.join("SKILL.md"), "---\nname: alpha\n---\n").expect("write");
 
@@ -846,7 +848,7 @@ fn import_without_a_policy_selection_follows_the_recorded_global_selection() {
     crate::core::settings::apply_setting(
         &f.store,
         &crate::core::credentials::MemoryStore::new(),
-        &f.paths.home,
+        &f.paths.roots.home,
         crate::core::settings::SettingUpdate::GlobalToolConfig {
             selected_tools: vec!["claude_code".to_string()],
             scan_selected_only: false,
@@ -877,7 +879,7 @@ fn import_without_a_policy_selection_follows_the_recorded_global_selection() {
         targets
     );
     assert!(
-        !f.paths.home.join(".codex/skills/alpha").exists(),
+        !f.paths.roots.home.join(".codex/skills/alpha").exists(),
         "codex is detected but not selected, so it gets no artifact"
     );
 }
@@ -1120,7 +1122,7 @@ fn replace_over_a_divergent_copy_produces_an_askable_target_exists_row() {
     // The ask's confirmed retry: one batch, per-pair Overwrite override.
     let record = f.store.get_skill_by_id(&skill_id).unwrap().unwrap();
     let retry = sync_skills_to_tools(
-        &f.paths.home,
+        &f.paths.roots,
         &f.store,
         &central_repo_of(&f.store),
         &[BatchSkill {
@@ -1155,7 +1157,7 @@ fn replace_over_a_divergent_copy_produces_an_askable_target_exists_row() {
 fn an_invalid_manifest_is_never_admitted() {
     let f = fixture();
     install_tool(&f, "cursor");
-    let broken = f.paths.home.join(".cursor/skills/broken-skill");
+    let broken = f.paths.roots.home.join(".cursor/skills/broken-skill");
     fs::create_dir_all(&broken).unwrap();
     fs::write(broken.join("SKILL.md"), "no frontmatter at all\n").unwrap();
 
@@ -1593,8 +1595,8 @@ fn remove_divergent_settles_a_shared_dir_once_and_reports_every_harness() {
     let chosen = seed_skill_dir(&f, "claude_code", "alpha", "chosen-body");
     let shared = seed_skill_dir(&f, "amp", "alpha", "different-body");
     assert_eq!(
-        adapter_by_key("kimi_cli").unwrap().relative_skills_dir,
-        adapter_by_key("amp").unwrap().relative_skills_dir,
+        adapter_by_key("kimi_cli").unwrap().skills_dir,
+        adapter_by_key("amp").unwrap().skills_dir,
         "the shared dir this test is about"
     );
 
@@ -1650,7 +1652,7 @@ fn an_original_inside_the_central_library_through_an_aliased_tool_dir_is_refused
 
     install_tool(&f, "cursor");
     let cursor = adapter_by_key("cursor").unwrap();
-    let cursor_dir = f.paths.home.join(cursor.relative_skills_dir);
+    let cursor_dir = f.paths.roots.home.join(cursor.skills_dir.rel);
     if cursor_dir.symlink_metadata().is_ok() {
         fs::remove_dir_all(&cursor_dir).unwrap();
     }

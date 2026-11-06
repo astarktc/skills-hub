@@ -5,6 +5,7 @@
 //! Every case runs against a temp home / central dir / DB; installedness is
 //! faked through `mark_installed_in`. Nothing touches the operator's home.
 
+use crate::core::environment::HostRoots;
 use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -44,7 +45,7 @@ struct Fixture {
 
 impl Fixture {
     fn home(&self) -> &Path {
-        &self.paths.home
+        &self.paths.roots.home
     }
     fn status(&self, tool: &str) -> Option<SyncStatus> {
         self.store
@@ -69,7 +70,7 @@ impl Fixture {
     fn sync(&self, tools: &[&str]) -> Vec<BatchTargetOutcome> {
         let skill = self.store.get_skill_by_id(&self.skill_id).unwrap().unwrap();
         sync_skills_to_tools(
-            self.home(),
+            &HostRoots::under_home(self.home()),
             &self.store,
             &central_repo_of(&self.store),
             &[BatchSkill {
@@ -111,13 +112,13 @@ impl Fixture {
 fn fixture(tools: &[&str]) -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let paths = InstallerPaths {
-        home: dir.path().join("home"),
+        roots: HostRoots::under_home(&dir.path().join("home")),
         central_dir: dir.path().join("central"),
         cache_dir: dir.path().join("cache"),
     };
-    fs::create_dir_all(&paths.home).expect("home");
+    fs::create_dir_all(&paths.roots.home).expect("home");
     for tool in tools {
-        mark_installed_in(&paths.home, adapter_by_key(tool).expect("adapter"));
+        mark_installed_in(&paths.roots, adapter_by_key(tool).expect("adapter"));
     }
     let store = SkillStore::new(dir.path().join("test.db"));
     store.ensure_schema().expect("schema");
@@ -231,7 +232,7 @@ fn disabling_a_pair_removes_the_artifact_and_keeps_the_row_disabled() {
     let report = disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         NOW,
     )
@@ -255,7 +256,7 @@ fn a_disabled_pair_survives_refresh_and_propagation() {
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         NOW,
     )
@@ -306,7 +307,7 @@ fn disabling_a_pair_with_no_row_records_a_marker_a_refresh_honours() {
     let report = disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         NOW,
     )
@@ -328,7 +329,7 @@ fn disabling_a_pair_with_no_row_records_a_marker_a_refresh_honours() {
     let again = disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         NOW,
     )
@@ -351,7 +352,7 @@ fn enabling_a_pair_resyncs_it_as_a_first_sync() {
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         NOW,
     )
@@ -360,7 +361,7 @@ fn enabling_a_pair_resyncs_it_as_a_first_sync() {
     let report = enable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         NOW,
     )
@@ -381,7 +382,7 @@ fn enable_reports_a_directory_in_the_way_as_target_exists_data() {
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         NOW,
     )
@@ -393,7 +394,7 @@ fn enable_reports_a_directory_in_the_way_as_target_exists_data() {
     let report = enable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         NOW,
     )
@@ -420,7 +421,7 @@ fn disabling_twice_settles_nothing_new() {
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         NOW,
     )
@@ -429,7 +430,7 @@ fn disabling_twice_settles_nothing_new() {
     let again = disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         NOW,
     )
@@ -447,7 +448,7 @@ fn a_shared_dir_sibling_is_skipped_while_a_member_is_disabled() {
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("amp"),
         NOW,
     )
@@ -469,7 +470,7 @@ fn an_unknown_tool_with_no_row_is_a_typed_refusal() {
     let err = disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("no_such_tool"),
         NOW,
     )
@@ -500,7 +501,7 @@ fn a_failed_removal_keeps_the_row_error_not_disabled() {
     let report = disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         NOW,
     )
@@ -535,7 +536,7 @@ fn disabling_a_skill_covers_global_targets_and_project_assignments() {
     let report = disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.skill(),
         NOW,
     )
@@ -571,7 +572,7 @@ fn a_disabled_skill_is_never_rematerialised_by_any_automatic_pass() {
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.skill(),
         NOW,
     )
@@ -626,7 +627,7 @@ fn onboarding_import_leaves_a_disabled_pair(replace: bool) {
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         NOW,
     )
@@ -685,7 +686,7 @@ fn a_new_assignment_of_a_disabled_skill_is_recorded_disabled_not_synced() {
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.skill(),
         NOW,
     )
@@ -737,7 +738,7 @@ fn enabling_a_skill_resyncs_every_disabled_row_and_clears_the_marker() {
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.skill(),
         NOW,
     )
@@ -746,7 +747,7 @@ fn enabling_a_skill_resyncs_every_disabled_row_and_clears_the_marker() {
     let report: EnableReport = enable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.skill(),
         NOW,
     )
@@ -791,7 +792,7 @@ fn enabling_a_skill_skips_a_project_whose_folder_is_missing() {
     let disabled = disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.skill(),
         NOW,
     )
@@ -807,7 +808,7 @@ fn enabling_a_skill_skips_a_project_whose_folder_is_missing() {
     let report: EnableReport = enable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.skill(),
         NOW + 1,
     )
@@ -838,7 +839,7 @@ fn enabling_a_skill_skips_a_project_whose_folder_is_missing() {
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.skill(),
         NOW + 2,
     )
@@ -849,7 +850,7 @@ fn enabling_a_skill_skips_a_project_whose_folder_is_missing() {
     let both = enable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &scope,
         NOW + 3,
     )
@@ -866,7 +867,7 @@ fn enabling_a_pair_of_a_disabled_skill_is_skipped() {
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.skill(),
         NOW,
     )
@@ -875,7 +876,7 @@ fn enabling_a_pair_of_a_disabled_skill_is_skipped() {
     let report = enable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         NOW,
     )
@@ -894,13 +895,25 @@ fn the_skills_scope_disables_each_named_skill_and_drops_stale_ids() {
         skill_ids: vec![f.skill_id.clone(), "gone".into()],
     };
 
-    let report =
-        disable_targets(&f.store, &central_repo_of(&f.store), f.home(), &scope, NOW).unwrap();
+    let report = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &HostRoots::under_home(f.home()),
+        &scope,
+        NOW,
+    )
+    .unwrap();
     assert_eq!(report.removed_rows(), 1);
     assert!(f.store.skill_disabled_at(&f.skill_id).unwrap().is_some());
 
-    let enabled =
-        enable_targets(&f.store, &central_repo_of(&f.store), f.home(), &scope, NOW).unwrap();
+    let enabled = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &HostRoots::under_home(f.home()),
+        &scope,
+        NOW,
+    )
+    .unwrap();
     assert_eq!(enabled.global.len(), 1);
     assert_eq!(f.status("claude_code"), Some(SyncStatus::Synced));
 }
@@ -912,8 +925,22 @@ fn an_unknown_skill_is_not_found() {
         skill_id: "missing".into(),
     };
     for err in [
-        disable_targets(&f.store, &central_repo_of(&f.store), f.home(), &scope, NOW).unwrap_err(),
-        enable_targets(&f.store, &central_repo_of(&f.store), f.home(), &scope, NOW).unwrap_err(),
+        disable_targets(
+            &f.store,
+            &central_repo_of(&f.store),
+            &HostRoots::under_home(f.home()),
+            &scope,
+            NOW,
+        )
+        .unwrap_err(),
+        enable_targets(
+            &f.store,
+            &central_repo_of(&f.store),
+            &HostRoots::under_home(f.home()),
+            &scope,
+            NOW,
+        )
+        .unwrap_err(),
     ] {
         assert!(matches!(
             CommandError::from_anyhow(err),
@@ -985,7 +1012,7 @@ fn intent_only_marker_delete_preserves_unmanaged_bytes() {
             disable_targets(
                 &f.store,
                 &central_repo_of(&f.store),
-                f.home(),
+                &HostRoots::under_home(f.home()),
                 &f.pair("claude_code"),
                 NOW,
             )
@@ -997,7 +1024,7 @@ fn intent_only_marker_delete_preserves_unmanaged_bytes() {
             let report = disable_targets(
                 &f.store,
                 &central_repo_of(&f.store),
-                f.home(),
+                &HostRoots::under_home(f.home()),
                 &f.pair("claude_code"),
                 NOW,
             )
@@ -1009,7 +1036,7 @@ fn intent_only_marker_delete_preserves_unmanaged_bytes() {
             disable_targets(
                 &f.store,
                 &central_repo_of(&f.store),
-                f.home(),
+                &HostRoots::under_home(f.home()),
                 &f.pair("claude_code"),
                 NOW,
             )
@@ -1018,7 +1045,7 @@ fn intent_only_marker_delete_preserves_unmanaged_bytes() {
             let enabled = enable_targets(
                 &f.store,
                 &central_repo_of(&f.store),
-                f.home(),
+                &HostRoots::under_home(f.home()),
                 &f.pair("claude_code"),
                 NOW,
             )
@@ -1056,7 +1083,7 @@ fn an_intent_only_assignment_is_unassigned_without_touching_its_path() {
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.skill(),
         NOW,
     )
@@ -1111,7 +1138,7 @@ fn failed_project_enable(f: &Fixture) -> (ProjectRecord, PathBuf) {
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.skill(),
         NOW,
     )
@@ -1131,7 +1158,7 @@ fn failed_project_enable(f: &Fixture) -> (ProjectRecord, PathBuf) {
     let enabled = enable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.skill(),
         NOW,
     )
@@ -1223,7 +1250,7 @@ fn failed_project_enable_never_makes_a_foreign_folder_ours() {
                 let report = disable_targets(
                     &f.store,
                     &central_repo_of(&f.store),
-                    f.home(),
+                    &HostRoots::under_home(f.home()),
                     &f.skill(),
                     NOW,
                 )
@@ -1248,7 +1275,7 @@ fn failed_project_enable_never_makes_a_foreign_folder_ours() {
                 let enabled = enable_targets(
                     &f.store,
                     &central_repo_of(&f.store),
-                    f.home(),
+                    &HostRoots::under_home(f.home()),
                     &f.skill(),
                     NOW,
                 )
@@ -1357,7 +1384,7 @@ fn an_owned_disabled_target_is_still_removed_by_delete() {
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         NOW,
     )
@@ -1393,7 +1420,7 @@ fn delete_disabled_skill_settles_rows_and_cascade() {
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.skill(),
         NOW,
     )
@@ -1480,7 +1507,7 @@ fn partial_skill_disable_resync_skips_error_assignments() {
     let report = disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.skill(),
         NOW,
     )
@@ -1544,7 +1571,10 @@ fn partial_skill_disable_resync_skips_error_assignments() {
 fn missing_shared_sibling_disable_failure_does_not_mint_disabled() {
     let f = fixture(&["kimi_cli"]);
     f.sync(&["kimi_cli"]);
-    mark_installed_in(f.home(), adapter_by_key("amp").unwrap());
+    mark_installed_in(
+        &HostRoots::under_home(f.home()),
+        adapter_by_key("amp").unwrap(),
+    );
     let shared = f.global_path(".config/agents/skills");
     assert!(exists_any(&shared));
     assert_eq!(f.status("amp"), None);
@@ -1556,7 +1586,7 @@ fn missing_shared_sibling_disable_failure_does_not_mint_disabled() {
     let failed = disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("amp"),
         NOW,
     )
@@ -1571,7 +1601,7 @@ fn missing_shared_sibling_disable_failure_does_not_mint_disabled() {
     let retried = disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("amp"),
         NOW,
     )
@@ -1603,7 +1633,7 @@ fn disabled_virtual_group_assignment_enables_once() {
     let disabled = disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.skill(),
         NOW,
     )
@@ -1614,7 +1644,7 @@ fn disabled_virtual_group_assignment_enables_once() {
     let enabled = enable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.skill(),
         NOW,
     )
@@ -1674,7 +1704,7 @@ fn an_enable_collision_is_askable_and_its_overwrite_retry_replaces_the_folder() 
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         NOW,
     )
@@ -1685,7 +1715,7 @@ fn an_enable_collision_is_askable_and_its_overwrite_retry_replaces_the_folder() 
     let enabled = enable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         NOW,
     )
@@ -1706,7 +1736,7 @@ fn an_enable_collision_is_askable_and_its_overwrite_retry_replaces_the_folder() 
     let retried = enable_targets_with(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         &overwrite_or_keep(&f, "claude_code", OverrideDecision::Overwrite),
         NOW,
@@ -1729,7 +1759,7 @@ fn an_enable_collision_kept_stays_disabled_and_reads_declined() {
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         NOW,
     )
@@ -1739,7 +1769,7 @@ fn an_enable_collision_kept_stays_disabled_and_reads_declined() {
     enable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         NOW,
     )
@@ -1748,7 +1778,7 @@ fn an_enable_collision_kept_stays_disabled_and_reads_declined() {
     let retried = enable_targets_with(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.pair("claude_code"),
         &overwrite_or_keep(&f, "claude_code", OverrideDecision::Keep),
         NOW,
@@ -1796,7 +1826,7 @@ fn synced_then_disabled_project_enable(
     disable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.skill(),
         NOW,
     )
@@ -1813,7 +1843,7 @@ fn synced_then_disabled_project_enable(
     let enabled = enable_targets(
         &f.store,
         &central_repo_of(&f.store),
-        f.home(),
+        &HostRoots::under_home(f.home()),
         &f.skill(),
         NOW,
     )

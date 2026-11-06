@@ -153,9 +153,9 @@ pub fn run() {
                     // Tool's skills dir become `imported` (ADR-0003). Roots are
                     // resolved here, at the wiring tier; the pass is idempotent
                     // and logs each row it changes.
-                    match core::environment::home_dir().and_then(|home| {
+                    match core::environment::HostRoots::resolve().and_then(|roots| {
                         core::legacy_reclassification::reclassify_legacy_imports(
-                            &store, &home, &central,
+                            &store, &roots, &central,
                         )
                     }) {
                         Ok(0) => {}
@@ -175,7 +175,7 @@ pub fn run() {
             // lexically, so a Tool skills root that is a directory alias can
             // make it delete central skill bytes. It returns with the
             // relocation redesign (BACKLOG #108), which reuses the module and
-            // the registry's `former_relative_skills_dirs`.
+            // the registry's `former_skills_dirs`.
             app.manage(store.clone());
             app.manage(Arc::new(CancelToken::new()));
 

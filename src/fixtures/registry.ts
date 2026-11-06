@@ -7,8 +7,6 @@ export type FixtureTool = {
   key: string;
   /** Global-scope label (`display_name`). */
   label: string;
-  /** Project-scope label, when it differs (the virtual group's). */
-  groupLabel?: string;
   /** Global skills dir, relative to home. */
   globalDir: string;
   /** Project skills dir, relative to the project root. */
@@ -17,11 +15,24 @@ export type FixtureTool = {
   grouped: boolean;
 };
 
+/**
+ * A reader-only harness (`READER_ONLY_HARNESSES` in the registry): detected
+ * and listed under the `.agents/skills` entry, never a target. Fixture-only
+ * rows until the real ones land (round 20 ticket 05); `detected` stands in
+ * for its detect dirs.
+ */
+export type FixtureReader = { key: string; label: string; detected: boolean };
+
+export const READER_REGISTRY: readonly FixtureReader[] = [
+  { key: "zed", label: "Zed", detected: true },
+  { key: "warp", label: "Warp", detected: false },
+];
+
 /** Registry key of the one virtual group entry (project scope). */
 export const VIRTUAL_GROUP_KEY = "agents_skills";
 
 export const TOOL_REGISTRY: readonly FixtureTool[] = [
-  { key: "agents_skills", label: ".agents/skills", groupLabel: ".agents/skills (9 harnesses)", globalDir: ".agents/skills", projectDir: ".agents/skills", grouped: false },
+  { key: "agents_skills", label: ".agents/skills", globalDir: ".agents/skills", projectDir: ".agents/skills", grouped: false },
   { key: "cursor", label: "Cursor", globalDir: ".cursor/skills", projectDir: ".agents/skills", grouped: true },
   { key: "claude_code", label: "Claude Code", globalDir: ".claude/skills", projectDir: ".claude/skills", grouped: false },
   { key: "codex", label: "Codex", globalDir: ".codex/skills", projectDir: ".agents/skills", grouped: true },
@@ -31,7 +42,7 @@ export const TOOL_REGISTRY: readonly FixtureTool[] = [
   { key: "kimi_cli", label: "Kimi Code CLI", globalDir: ".config/agents/skills", projectDir: ".agents/skills", grouped: true },
   { key: "augment", label: "Augment", globalDir: ".augment/skills", projectDir: ".augment/skills", grouped: false },
   { key: "openclaw", label: "OpenClaw", globalDir: ".openclaw/skills", projectDir: "skills", grouped: false },
-  { key: "copaw", label: "Copaw", globalDir: ".copaw/skill_pool", projectDir: ".copaw/skill_pool", grouped: false },
+  { key: "copaw", label: "QwenPaw", globalDir: ".copaw/skill_pool", projectDir: ".copaw/skill_pool", grouped: false },
   { key: "cline", label: "Cline", globalDir: ".cline/skills", projectDir: ".agents/skills", grouped: true },
   { key: "codebuddy", label: "CodeBuddy", globalDir: ".codebuddy/skills", projectDir: ".codebuddy/skills", grouped: false },
   { key: "command_code", label: "Command Code", globalDir: ".commandcode/skills", projectDir: ".commandcode/skills", grouped: false },
@@ -43,7 +54,7 @@ export const TOOL_REGISTRY: readonly FixtureTool[] = [
   { key: "kode", label: "Kode", globalDir: ".kode/skills", projectDir: ".kode/skills", grouped: false },
   { key: "mcpjam", label: "MCPJam", globalDir: ".mcpjam/skills", projectDir: ".mcpjam/skills", grouped: false },
   { key: "mistral_vibe", label: "Mistral Vibe", globalDir: ".vibe/skills", projectDir: ".vibe/skills", grouped: false },
-  { key: "mux", label: "Mux", globalDir: ".mux/skills", projectDir: ".mux/skills", grouped: false },
+  { key: "mux", label: "Xum", globalDir: ".mux/skills", projectDir: ".mux/skills", grouped: false },
   { key: "openclaude", label: "OpenClaude IDE", globalDir: ".openclaude/skills", projectDir: ".openclaude/skills", grouped: false },
   { key: "openhands", label: "OpenHands", globalDir: ".openhands/skills", projectDir: ".openhands/skills", grouped: false },
   { key: "pi", label: "Pi", globalDir: ".pi/agent/skills", projectDir: ".pi/skills", grouped: false },
@@ -52,7 +63,7 @@ export const TOOL_REGISTRY: readonly FixtureTool[] = [
   { key: "qwen_code", label: "Qwen Code", globalDir: ".qwen/skills", projectDir: ".qwen/skills", grouped: false },
   { key: "trae", label: "Trae", globalDir: ".trae/skills", projectDir: ".trae/skills", grouped: false },
   { key: "trae_cn", label: "Trae CN", globalDir: ".trae-cn/skills", projectDir: ".trae/skills", grouped: false },
-  { key: "zencoder", label: "Zencoder", globalDir: ".zencoder/skills", projectDir: ".zencoder/skills", grouped: false },
+  { key: "zencoder", label: "Zencoder / Zenflow", globalDir: ".zencoder/skills", projectDir: ".zencoder/skills", grouped: false },
   { key: "neovate", label: "Neovate", globalDir: ".neovate/skills", projectDir: ".neovate/skills", grouped: false },
   { key: "pochi", label: "Pochi", globalDir: ".pochi/skills", projectDir: ".pochi/skills", grouped: false },
   { key: "adal", label: "AdaL", globalDir: ".adal/skills", projectDir: ".adal/skills", grouped: false },
@@ -63,7 +74,7 @@ export const TOOL_REGISTRY: readonly FixtureTool[] = [
   { key: "github_copilot", label: "GitHub Copilot", globalDir: ".copilot/skills", projectDir: ".agents/skills", grouped: true },
   { key: "clawdbot", label: "Clawdbot", globalDir: ".clawdbot/skills", projectDir: ".clawdbot/skills", grouped: false },
   { key: "droid", label: "Droid", globalDir: ".factory/skills", projectDir: ".factory/skills", grouped: false },
-  { key: "windsurf", label: "Windsurf", globalDir: ".codeium/windsurf/skills", projectDir: ".windsurf/skills", grouped: false },
+  { key: "windsurf", label: "Devin (Windsurf)", globalDir: ".codeium/windsurf/skills", projectDir: ".windsurf/skills", grouped: false },
   { key: "moltbot", label: "MoltBot", globalDir: ".moltbot/skills", projectDir: ".moltbot/skills", grouped: false },
   { key: "hermes-agent", label: "Hermes Agent", globalDir: ".hermes/skills", projectDir: ".hermes/skills", grouped: false },
 ];

@@ -16,7 +16,7 @@ use crate::core::cache_cleanup::cleanup_git_cache_dirs;
 use crate::core::cancel_token::CancelToken;
 use crate::core::clock::now_ms;
 use crate::core::credentials::KeyringStore;
-use crate::core::environment::{expand_home_path, home_dir};
+use crate::core::environment::{expand_home_path, home_dir, HostRoots};
 use crate::core::errors::{RevealPathFailure, SignalError};
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::global_sync::{
@@ -110,7 +110,7 @@ fn installer_paths(
     store: &SkillStore,
 ) -> Result<InstallerPaths, anyhow::Error> {
     Ok(InstallerPaths {
-        home: home_dir()?,
+        roots: HostRoots::resolve()?,
         central_dir: resolve_central_repo_path_for_app(app, store)?,
         cache_dir: app
             .path()
@@ -131,20 +131,36 @@ pub struct ToolInfoDto {
     /// it from `placement.skills_dir` (see `ToolCatalogEntry`).
     pub shared_with: Vec<String>,
     /// Display labels of the constituent tools absorbed into this entry when
-    /// it is a virtual group (project-scope AgentsStandard); empty for real
-    /// tools. The backend owns group membership; the frontend only presents it.
+    /// it is a virtual group (project-scope AgentsStandard) — its reader-only
+    /// harnesses included; empty for real tools. The backend owns group
+    /// membership; the frontend only presents it (its count is the group
+    /// label's "(N harnesses)").
     pub constituents: Vec<String>,
+    /// The reader-only harnesses reading this entry's folder, with their
+    /// detected state — the global `.agents/skills` entry only; empty
+    /// elsewhere. Never selectable: they have no folder of their own.
+    pub readers: Vec<ReaderHarnessDto>,
     /// Where the tool lives and how it is deployed to — the global list only;
     /// `null` in the project list (see `ToolCatalogEntry::placement`).
     pub placement: Option<ToolPlacementDto>,
 }
 
+/// A reader-only harness listed under the entry whose folder it reads.
+#[derive(Debug, Serialize, Type)]
+pub struct ReaderHarnessDto {
+    pub key: String,
+    pub label: String,
+    pub installed: bool,
+}
+
 /// A global tool's registry placement (the Settings → Harnesses row).
 #[derive(Debug, Serialize, Type)]
 pub struct ToolPlacementDto {
-    /// The global skills dir, relative to the operator's home.
+    /// The global skills dir as shown: `~/.claude/skills` under home, the
+    /// absolute path under another host root (`RegistryPath::display`).
     pub skills_dir: String,
-    /// The detect dirs (any one present marks the tool installed), relative to home.
+    /// The detect dirs (any one present marks the tool installed), spelled
+    /// like `skills_dir`.
     pub detect_dirs: Vec<String>,
     /// `true`: deployed as a link (symlink → junction → copy fallback); `false`: copied.
     pub supports_symlink: bool,
@@ -153,12 +169,8 @@ pub struct ToolPlacementDto {
 impl From<GlobalPlacement> for ToolPlacementDto {
     fn from(placement: GlobalPlacement) -> Self {
         ToolPlacementDto {
-            skills_dir: placement.skills_dir.to_string(),
-            detect_dirs: placement
-                .detect_dirs
-                .iter()
-                .map(|d| d.to_string())
-                .collect(),
+            skills_dir: placement.skills_dir,
+            detect_dirs: placement.detect_dirs,
             supports_symlink: placement.supports_symlink,
         }
     }
@@ -179,6 +191,15 @@ impl From<ToolCatalogEntry> for ToolInfoDto {
             installed: entry.installed,
             shared_with: entry.shared_with.iter().map(|k| k.to_string()).collect(),
             constituents: entry.constituents.iter().map(|k| k.to_string()).collect(),
+            readers: entry
+                .readers
+                .into_iter()
+                .map(|reader| ReaderHarnessDto {
+                    key: reader.key.to_string(),
+                    label: reader.label.to_string(),
+                    installed: reader.installed,
+                })
+                .collect(),
             placement: entry.placement.map(ToolPlacementDto::from),
         }
     }
@@ -189,8 +210,8 @@ impl From<ToolCatalogEntry> for ToolInfoDto {
 pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let home = home_dir()?;
-        let entries = global_tool_entries(&home);
+        let roots = HostRoots::resolve()?;
+        let entries = global_tool_entries(&roots);
         let installed = installed_keys(&entries);
         let newly_installed = record_installed_tools(&store, &installed)?;
         Ok::<_, anyhow::Error>(ToolStatusDto {
@@ -208,8 +229,8 @@ pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusD
 #[specta::specta]
 pub async fn get_project_tool_status() -> Result<ToolStatusDto, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
-        let home = home_dir()?;
-        let entries = project_tool_entries(&home);
+        let roots = HostRoots::resolve()?;
+        let entries = project_tool_entries(&roots);
         let installed = installed_keys(&entries);
         Ok::<_, anyhow::Error>(ToolStatusDto {
             tools: entries.into_iter().map(ToolInfoDto::from).collect(),
@@ -230,10 +251,10 @@ pub async fn get_onboarding_plan(
 ) -> Result<OnboardingPlan, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let home = home_dir()?;
+        let roots = HostRoots::resolve()?;
         let central = resolve_central_repo_path_for_app(&app, &store)?;
         let scope = onboarding_scan_scope(&store)?;
-        build_onboarding_plan(&home, &central, &store, &scope)
+        build_onboarding_plan(&roots, &central, &store, &scope)
     })
     .await
     .map_err(CommandError::internal)?
@@ -406,9 +427,9 @@ pub async fn list_local_skills_cmd(
     basePath: String,
 ) -> Result<Vec<LocalSkillCandidate>, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
-        let home = home_dir()?;
+        let roots = HostRoots::resolve()?;
         let path = std::path::PathBuf::from(basePath);
-        list_local_skills(&home, &path)
+        list_local_skills(&roots, &path)
     })
     .await
     .map_err(CommandError::internal)?
@@ -571,9 +592,9 @@ pub async fn sync_skills_to_tools(
                 .collect(),
         };
 
-        let home = home_dir()?;
+        let roots = HostRoots::resolve()?;
         let outcomes = crate::core::global_sync::sync_skills_to_tools(
-            &home,
+            &roots,
             &store,
             &central_dir,
             &batch_skills,
@@ -611,8 +632,8 @@ pub async fn disable_skill_targets(
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let central_dir = resolve_central_repo_path_for_app(&app, &store)?;
-        let home = home_dir()?;
-        crate::core::skill_disable::disable_targets(&store, &central_dir, &home, &scope, now_ms())
+        let roots = HostRoots::resolve()?;
+        crate::core::skill_disable::disable_targets(&store, &central_dir, &roots, &scope, now_ms())
     })
     .await
     .map_err(CommandError::internal)?
@@ -634,13 +655,13 @@ pub async fn enable_skill_targets(
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let central_dir = resolve_central_repo_path_for_app(&app, &store)?;
-        let home = home_dir()?;
+        let roots = HostRoots::resolve()?;
         let overrides: Vec<BatchOverride> =
             overrides.into_iter().map(BatchOverride::from).collect();
         crate::core::skill_disable::enable_targets_with(
             &store,
             &central_dir,
-            &home,
+            &roots,
             &scope,
             &overrides,
             now_ms(),

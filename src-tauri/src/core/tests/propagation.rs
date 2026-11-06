@@ -7,6 +7,7 @@
 //! as report data — Propagation never fails the operation because one target
 //! failed.
 
+use crate::core::environment::HostRoots;
 use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,7 +20,7 @@ use crate::core::skill_store::{
     ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore, SkillTargetRecord,
 };
 use crate::core::sync_status::{SyncMode, SyncStatus};
-use crate::core::tool_adapters::{adapter_by_key, mark_installed_in, ToolAdapter};
+use crate::core::tool_adapters::{adapter_by_key, mark_installed_in, RegistryPath, ToolAdapter};
 
 #[test]
 fn shared_edit_update_report_preserves_classified_failure_on_the_wire() {
@@ -73,11 +74,11 @@ struct Fixture {
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let paths = InstallerPaths {
-        home: dir.path().join("home"),
+        roots: HostRoots::under_home(&dir.path().join("home")),
         central_dir: dir.path().join("central"),
         cache_dir: dir.path().join("cache"),
     };
-    fs::create_dir_all(&paths.home).expect("create home");
+    fs::create_dir_all(&paths.roots.home).expect("create home");
 
     let central_path = paths.central_dir.join("skill");
     fs::create_dir_all(&central_path).expect("create central skill dir");
@@ -116,7 +117,7 @@ fn fixture() -> Fixture {
 
 /// Fake `tool` as installed for the fixture's home by creating its detect dir.
 fn install_tool(f: &Fixture, adapter: &ToolAdapter) {
-    mark_installed_in(&f.paths.home, adapter);
+    mark_installed_in(&f.paths.roots, adapter);
 }
 
 /// A registry shadow of Cursor with the symlink capability flipped off — no
@@ -177,7 +178,7 @@ fn a_copy_target_is_refreshed_from_the_central_copy() {
     let f = fixture();
     let cursor = copy_only_tool();
     install_tool(&f, cursor);
-    let target = f.paths.home.join(".cursor/skills/skill");
+    let target = f.paths.roots.home.join(".cursor/skills/skill");
     seed_stale_copy(&target);
     seed_global_target(&f, "t-copy", "cursor", &target, SyncMode::Copy);
 
@@ -215,7 +216,7 @@ fn a_drifting_copy_on_a_symlink_capable_tool_becomes_a_link() {
     let f = fixture();
     let claude = adapter_by_key("claude_code").expect("claude_code adapter");
     install_tool(&f, claude);
-    let target = f.paths.home.join(".claude/skills/skill");
+    let target = f.paths.roots.home.join(".claude/skills/skill");
     seed_stale_copy(&target);
     seed_global_target(&f, "t-copy", "claude_code", &target, SyncMode::Copy);
 
@@ -248,7 +249,7 @@ fn a_symlink_target_is_left_untouched_because_it_follows_the_central_copy() {
     let f = fixture();
     let claude = adapter_by_key("claude_code").expect("claude_code adapter");
     install_tool(&f, claude);
-    let target = f.paths.home.join(".claude/skills/skill");
+    let target = f.paths.roots.home.join(".claude/skills/skill");
     fs::create_dir_all(target.parent().expect("parent")).expect("create skills dir");
     #[cfg(unix)]
     std::os::unix::fs::symlink(&f.central_path, &target).expect("symlink");
@@ -310,10 +311,10 @@ fn a_shared_skills_dir_group_syncs_once_and_settles_every_member_row() {
     let f = fixture();
     let amp = adapter_by_key("amp").expect("amp adapter");
     let kimi = adapter_by_key("kimi_cli").expect("kimi_cli adapter");
-    assert_eq!(amp.relative_skills_dir, kimi.relative_skills_dir);
+    assert_eq!(amp.skills_dir, kimi.skills_dir);
     install_tool(&f, amp);
     install_tool(&f, kimi);
-    let target = f.paths.home.join(".config/agents/skills/skill");
+    let target = f.paths.roots.home.join(".config/agents/skills/skill");
     seed_stale_copy(&target);
     seed_global_target(&f, "t-amp", "amp", &target, SyncMode::Copy);
     seed_global_target(&f, "t-kimi", "kimi_cli", &target, SyncMode::Copy);
@@ -353,12 +354,13 @@ fn a_shared_skills_dir_group_syncs_once_and_settles_every_member_row() {
 fn a_row_whose_tool_shares_no_dir_with_the_registry_is_still_its_own_group() {
     let f = fixture();
     let mut lone = adapter_by_key("cursor").expect("cursor adapter").clone();
-    lone.relative_skills_dir = ".lone-tool/skills";
-    lone.relative_detect_dirs = &[".lone-tool"];
+    lone.skills_dir = RegistryPath::home(".lone-tool/skills");
+    const LONE_DETECT: &[RegistryPath] = &[RegistryPath::home(".lone-tool")];
+    lone.detect_dirs = LONE_DETECT;
     lone.supports_symlink = false;
     let lone = crate::core::tool_adapters::test_overrides::shadow(lone);
     install_tool(&f, lone);
-    let target = f.paths.home.join(".lone-tool/skills/skill");
+    let target = f.paths.roots.home.join(".lone-tool/skills/skill");
     seed_stale_copy(&target);
     seed_global_target(&f, "t-lone", lone.key(), &target, SyncMode::Copy);
 
@@ -393,7 +395,7 @@ fn a_missing_central_source_fails_every_row_as_report_data() {
     let amp = adapter_by_key("amp").expect("amp adapter");
     install_tool(&f, amp);
     install_tool(&f, adapter_by_key("kimi_cli").expect("kimi_cli adapter"));
-    let target = f.paths.home.join(".config/agents/skills/skill");
+    let target = f.paths.roots.home.join(".config/agents/skills/skill");
     seed_stale_copy(&target);
     seed_global_target(&f, "t-amp", "amp", &target, SyncMode::Copy);
     seed_global_target(&f, "t-kimi", "kimi_cli", &target, SyncMode::Copy);
@@ -456,7 +458,7 @@ fn seed_project_copy_assignment(f: &Fixture, project_path: &Path) -> PathBuf {
         })
         .expect("seed assignment");
     project_path
-        .join(cursor.project_relative_skills_dir)
+        .join(cursor.project_skills_dir.unwrap())
         .join("skill")
 }
 
@@ -706,7 +708,7 @@ fn a_project_artifact_is_found_by_its_stored_name_after_the_skill_is_renamed() {
 
 /// Amp's global skills dir, shared with Kimi Code CLI.
 fn shared_target(f: &Fixture) -> PathBuf {
-    f.paths.home.join(".config/agents/skills/skill")
+    f.paths.roots.home.join(".config/agents/skills/skill")
 }
 
 /// A failed first sync's row: `error`, never synced, owning nothing.
@@ -736,7 +738,7 @@ fn row_set(f: &Fixture) -> Vec<(String, SyncStatus, SyncMode, PathBuf, bool)> {
         .map(|row| {
             let owns = row.owns_artifact();
             let relative = Path::new(&row.target_path)
-                .strip_prefix(&f.paths.home)
+                .strip_prefix(&f.paths.roots.home)
                 .expect("target under the temp home")
                 .to_path_buf();
             (row.tool, row.status, row.mode, relative, owns)
@@ -759,7 +761,7 @@ fn amp_and_kimi() -> (&'static ToolAdapter, &'static ToolAdapter) {
     let amp = adapter_by_key("amp").expect("amp adapter");
     let kimi = adapter_by_key("kimi_cli").expect("kimi_cli adapter");
     assert_eq!(
-        amp.relative_skills_dir, kimi.relative_skills_dir,
+        amp.skills_dir, kimi.skills_dir,
         "test premise: amp and kimi_cli share a skills dir"
     );
     (amp, kimi)
@@ -883,7 +885,7 @@ fn a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_prop
     );
 
     let retry = sync_skills_to_tools_unlocked(
-        &f.paths.home,
+        &f.paths.roots,
         &f.store,
         &central_repo_of(&f.store),
         &[BatchSkill {

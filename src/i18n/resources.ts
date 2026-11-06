@@ -375,6 +375,7 @@ export const resources = {
         kimi_cli: "Kimi Code CLI",
         augment: "Augment",
         openclaw: "OpenClaw",
+        copaw: "QwenPaw",
         cline: "Cline",
         codebuddy: "CodeBuddy",
         command_code: "Command Code",
@@ -386,7 +387,7 @@ export const resources = {
         kode: "Kode",
         mcpjam: "MCPJam",
         mistral_vibe: "Mistral Vibe",
-        mux: "Mux",
+        mux: "Xum",
         openclaude: "OpenClaude IDE",
         openhands: "OpenHands",
         pi: "Pi",
@@ -395,7 +396,7 @@ export const resources = {
         qwen_code: "Qwen Code",
         trae: "Trae",
         trae_cn: "Trae CN",
-        zencoder: "Zencoder",
+        zencoder: "Zencoder / Zenflow",
         neovate: "Neovate",
         pochi: "Pochi",
         adal: "AdaL",
@@ -407,7 +408,7 @@ export const resources = {
         github_copilot: "GitHub Copilot",
         clawdbot: "Clawdbot",
         droid: "Droid",
-        windsurf: "Windsurf",
+        windsurf: "Devin (Windsurf)",
         moltbot: "MoltBot",
       },
       unsyncNothingPlanned:
@@ -1222,6 +1223,8 @@ export const resources = {
       // cell vocabulary (projectPresentation.ts), the project dialogs.
       projectsSurface: {
         heading: "Projects",
+        groupLabel_one: "{{dir}} ({{count}} harness)",
+        groupLabel_other: "{{dir}} ({{count}} harnesses)",
         done: {
           unassigned_one: "{{count}} removed from project",
           unassigned_other: "{{count}} removed from project",
@@ -1630,6 +1633,7 @@ export const resources = {
           link: "A link to the Library copy (a copy where the system refuses links)",
           copy: "A copy of the Library copy",
           detectedBy: "Detected by",
+          readBy: "Read by (harnesses with no folder of their own)",
           undetectedSelected: "Selected, but not detected on this computer: every deploy skips it, and the Deployments strip shows it hollow. Remove it unless you are about to install it.",
           remove: "Remove from selection",
           noMatches: "No harness is detected on this computer. Turn off \u201cShow detected harnesses only\u201d to choose one anyway.",

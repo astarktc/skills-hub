@@ -28,6 +28,7 @@ use specta::Type;
 
 use super::central_repo::{ensure_central_repo, move_central_repo};
 use super::credentials::{self, CredentialStore};
+use super::environment::HostRoots;
 use super::errors::SignalError;
 use super::skill_store::SkillStore;
 use super::tool_adapters::{adapter_by_key, global_tool_entries, installed_keys};
@@ -303,11 +304,11 @@ pub fn ui_zoom_level(store: &SkillStore) -> f64 {
 /// A stored selection that cannot be parsed is a refusal
 /// (`SignalError::SettingCorrupt`), never a fallback to detection: the
 /// operator repairs it by saving the selection again.
-pub fn effective_global_tool_targets(store: &SkillStore, home: &Path) -> Result<Vec<String>> {
+pub fn effective_global_tool_targets(store: &SkillStore, roots: &HostRoots) -> Result<Vec<String>> {
     Ok(
         match read_tool_selection(store, keys::GLOBAL_SELECTED_TOOLS)? {
             StoredSelection::Configured(selected) => selected,
-            StoredSelection::Unconfigured => installed_keys(&global_tool_entries(home)),
+            StoredSelection::Unconfigured => installed_keys(&global_tool_entries(roots)),
             StoredSelection::Corrupt { detail } => bail!(SignalError::SettingCorrupt {
                 key: keys::GLOBAL_SELECTED_TOOLS.to_string(),
                 detail,

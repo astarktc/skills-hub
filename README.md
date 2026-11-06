@@ -31,60 +31,68 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 
 ## Supported AI Coding Harnesses
 
-| key | Display name | skills dir (relative to `~`) | detect dir (relative to `~`) |
-| --- | --- | --- | --- |
-| `agents_skills` | .agents/skills | `.agents/skills` | `.agents` |
-| `cursor` | Cursor | `.cursor/skills` | `.cursor` |
-| `claude_code` | Claude Code | `.claude/skills` | `.claude` |
-| `codex` | Codex | `.codex/skills` | `.codex` |
-| `opencode` | OpenCode | `.config/opencode/skills` | `.config/opencode` |
-| `antigravity` | Antigravity | `.gemini/antigravity/global_skills` | `.gemini/antigravity` |
-| `amp` | Amp | `.config/agents/skills` | `.config/amp` |
-| `kimi_cli` | Kimi Code CLI | `.config/agents/skills` | `.kimi-code` or `.kimi` |
-| `augment` | Augment | `.augment/skills` | `.augment` |
-| `openclaw` | OpenClaw | `.openclaw/skills` | `.openclaw` |
-| `copaw` | Copaw | `.copaw/skill_pool` | `.copaw` |
-| `cline` | Cline | `.cline/skills` | `.cline` |
-| `codebuddy` | CodeBuddy | `.codebuddy/skills` | `.codebuddy` |
-| `command_code` | Command Code | `.commandcode/skills` | `.commandcode` |
-| `continue` | Continue | `.continue/skills` | `.continue` |
-| `crush` | Crush | `.config/crush/skills` | `.config/crush` |
-| `junie` | Junie | `.junie/skills` | `.junie` |
-| `iflow_cli` | iFlow CLI | `.iflow/skills` | `.iflow` |
-| `kiro_cli` | Kiro CLI | `.kiro/skills` | `.kiro` |
-| `kode` | Kode | `.kode/skills` | `.kode` |
-| `mcpjam` | MCPJam | `.mcpjam/skills` | `.mcpjam` |
-| `mistral_vibe` | Mistral Vibe | `.vibe/skills` | `.vibe` |
-| `mux` | Mux | `.mux/skills` | `.mux` |
-| `openclaude` | OpenClaude IDE | `.openclaude/skills` | `.openclaude` |
-| `openhands` | OpenHands | `.openhands/skills` | `.openhands` |
-| `pi` | Pi | `.pi/agent/skills` | `.pi` |
-| `qoder` | Qoder | `.qoder/skills` | `.qoder` |
-| `qoderwork` | QoderWork | `.qoderwork/skills` | `.qoderwork` |
-| `qwen_code` | Qwen Code | `.qwen/skills` | `.qwen` |
-| `trae` | Trae | `.trae/skills` | `.trae` |
-| `trae_cn` | Trae CN | `.trae-cn/skills` | `.trae-cn` |
-| `zencoder` | Zencoder | `.zencoder/skills` | `.zencoder` |
-| `neovate` | Neovate | `.neovate/skills` | `.neovate` |
-| `pochi` | Pochi | `.pochi/skills` | `.pochi` |
-| `adal` | AdaL | `.adal/skills` | `.adal` |
-| `kilo_code` | Kilo Code | `.kilocode/skills` | `.kilocode` |
-| `roo_code` | Roo Code | `.roo/skills` | `.roo` |
-| `goose` | Goose | `.config/goose/skills` | `.config/goose` |
-| `gemini_cli` | Gemini CLI | `.gemini/skills` | `.gemini` |
-| `github_copilot` | GitHub Copilot | `.copilot/skills` | `.copilot` |
-| `clawdbot` | Clawdbot | `.clawdbot/skills` | `.clawdbot` |
-| `droid` | Droid | `.factory/skills` | `.factory` |
-| `windsurf` | Windsurf | `.codeium/windsurf/skills` | `.codeium/windsurf` |
-| `moltbot` | MoltBot | `.moltbot/skills` | `.moltbot` |
-| `hermes-agent` | Hermes Agent | `.hermes/skills` | `.hermes` |
+| key | Display name | skills dir (relative to `~`) | project skills dir | detect dir (relative to `~`) |
+| --- | --- | --- | --- | --- |
+| `agents_skills` | .agents/skills | `.agents/skills` | `.agents/skills` | `.agents` |
+| `cursor` | Cursor | `.cursor/skills` | `.agents/skills` | `.cursor` |
+| `claude_code` | Claude Code | `.claude/skills` | `.claude/skills` | `.claude` |
+| `codex` | Codex | `.codex/skills` | `.agents/skills` | `.codex` |
+| `opencode` | OpenCode | `.config/opencode/skills` | `.agents/skills` | `.config/opencode` |
+| `antigravity` | Antigravity | `.gemini/antigravity/global_skills` | `.agents/skills` | `.gemini/antigravity` |
+| `amp` | Amp | `.config/agents/skills` | `.agents/skills` | `.config/amp` |
+| `kimi_cli` | Kimi Code CLI | `.config/agents/skills` | `.agents/skills` | `.kimi-code` or `.kimi` |
+| `augment` | Augment | `.augment/skills` | `.augment/skills` | `.augment` |
+| `openclaw` | OpenClaw | `.openclaw/skills` | `skills` | `.openclaw` |
+| `copaw` | QwenPaw | `.copaw/skill_pool` | `.copaw/skill_pool` | `.copaw` |
+| `cline` | Cline | `.cline/skills` | `.agents/skills` | `.cline` |
+| `codebuddy` | CodeBuddy | `.codebuddy/skills` | `.codebuddy/skills` | `.codebuddy` |
+| `command_code` | Command Code | `.commandcode/skills` | `.commandcode/skills` | `.commandcode` |
+| `continue` | Continue | `.continue/skills` | `.continue/skills` | `.continue` |
+| `crush` | Crush | `.config/crush/skills` | `.crush/skills` | `.config/crush` |
+| `junie` | Junie | `.junie/skills` | `.junie/skills` | `.junie` |
+| `iflow_cli` | iFlow CLI | `.iflow/skills` | `.iflow/skills` | `.iflow` |
+| `kiro_cli` | Kiro CLI | `.kiro/skills` | `.kiro/skills` | `.kiro` |
+| `kode` | Kode | `.kode/skills` | `.kode/skills` | `.kode` |
+| `mcpjam` | MCPJam | `.mcpjam/skills` | `.mcpjam/skills` | `.mcpjam` |
+| `mistral_vibe` | Mistral Vibe | `.vibe/skills` | `.vibe/skills` | `.vibe` |
+| `mux` | Xum | `.mux/skills` | `.mux/skills` | `.mux` |
+| `openclaude` | OpenClaude IDE | `.openclaude/skills` | `.openclaude/skills` | `.openclaude` |
+| `openhands` | OpenHands | `.openhands/skills` | `.openhands/skills` | `.openhands` |
+| `pi` | Pi | `.pi/agent/skills` | `.pi/skills` | `.pi` |
+| `qoder` | Qoder | `.qoder/skills` | `.qoder/skills` | `.qoder` |
+| `qoderwork` | QoderWork | `.qoderwork/skills` | `.qoderwork/skills` | `.qoderwork` |
+| `qwen_code` | Qwen Code | `.qwen/skills` | `.qwen/skills` | `.qwen` |
+| `trae` | Trae | `.trae/skills` | `.trae/skills` | `.trae` |
+| `trae_cn` | Trae CN | `.trae-cn/skills` | `.trae/skills` | `.trae-cn` |
+| `zencoder` | Zencoder / Zenflow | `.zencoder/skills` | `.zencoder/skills` | `.zencoder` |
+| `neovate` | Neovate | `.neovate/skills` | `.neovate/skills` | `.neovate` |
+| `pochi` | Pochi | `.pochi/skills` | `.pochi/skills` | `.pochi` |
+| `adal` | AdaL | `.adal/skills` | `.adal/skills` | `.adal` |
+| `kilo_code` | Kilo Code | `.kilocode/skills` | `.kilocode/skills` | `.kilocode` |
+| `roo_code` | Roo Code | `.roo/skills` | `.roo/skills` | `.roo` |
+| `goose` | Goose | `.config/goose/skills` | `.goose/skills` | `.config/goose` |
+| `gemini_cli` | Gemini CLI | `.gemini/skills` | `.agents/skills` | `.gemini` |
+| `github_copilot` | GitHub Copilot | `.copilot/skills` | `.agents/skills` | `.copilot` |
+| `clawdbot` | Clawdbot | `.clawdbot/skills` | `.clawdbot/skills` | `.clawdbot` |
+| `droid` | Droid | `.factory/skills` | `.factory/skills` | `.factory` |
+| `windsurf` | Devin (Windsurf) | `.codeium/windsurf/skills` | `.windsurf/skills` | `.codeium/windsurf` |
+| `moltbot` | MoltBot | `.moltbot/skills` | `.moltbot/skills` | `.moltbot` |
+| `hermes-agent` | Hermes Agent | `.hermes/skills` | `.hermes/skills` | `.hermes` |
 
 `agents_skills` is scope-dependent. **Globally** it is a plain, independently selectable target: it
 manages `~/.agents/skills` and nothing else — Cursor still reads `~/.cursor/skills`, Codex still reads
 `~/.codex/skills`, so those harnesses keep their own rows in the global list. **In a project** it is an
-aggregate shown as `.agents/skills (9 harnesses)`: one folder, `<project>/.agents/skills`, that nine harnesses
-(Cursor, Codex, OpenCode, Antigravity, Amp, Kimi Code CLI, Cline, Gemini CLI, GitHub Copilot) all read,
-so those nine have no separate project row.
+aggregate shown as `.agents/skills (N harnesses)`: one folder, `<project>/.agents/skills`, that every harness
+in the group reads (today nine: Cursor, Codex, OpenCode, Antigravity, Amp, Kimi Code CLI, Cline, Gemini CLI,
+GitHub Copilot), so those harnesses have no separate project row. N is counted from the registry.
+
+A **reader-only harness** has no skills folder of its own: it reads `~/.agents/skills` (and
+`<project>/.agents/skills`), so Skills Hub lists it under the `.agents/skills` entry with its detected state
+and never as a deployment target. Its row shows `—` for both skills dirs. A harness with no project skills dir
+shows `—` in that column and is absent from a project's harness choices.
+
+Environment-variable homes (`KIMI_CODE_HOME` and the like) are not honoured: Skills Hub always uses the
+default folders above (an app launched from the Finder does not see your shell environment).
 
 ## Development
 

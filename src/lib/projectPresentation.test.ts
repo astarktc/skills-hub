@@ -1,3 +1,4 @@
+import i18next from "i18next";
 import { describe, expect, it } from "vitest";
 import { resources } from "../i18n/resources";
 import {
@@ -9,6 +10,7 @@ import {
   matrixColumns,
   matrixFilters,
   matrixLegend,
+  projectToolLabel,
   type MatrixCellInput,
 } from "./projectPresentation";
 
@@ -168,5 +170,19 @@ describe("matrixFocusAfterLeave (N2: a row filtered away under focus)", () => {
   });
   it("an unknown previous order falls back to the first shown row", () => {
     expect(matrixFocusAfterLeave([], ["x"], "a")).toEqual({ kind: "row", skillId: "x" });
+  });
+});
+
+describe("projectToolLabel", () => {
+  it("a group entry counts the harnesses it absorbs, so the count never drifts from the registry", async () => {
+    const i18n = i18next.createInstance();
+    await i18n.init({ resources, lng: "en", interpolation: { escapeValue: false } });
+    const group = { label: ".agents/skills", constituents: ["Cursor", "Codex", "Zed"] };
+    expect(projectToolLabel(group, i18n.t)).toBe(".agents/skills (3 harnesses)");
+    expect(projectToolLabel({ ...group, constituents: ["Cursor"] }, i18n.t)).toBe(".agents/skills (1 harness)");
+  });
+
+  it("a plain Tool keeps its catalog label", () => {
+    expect(projectToolLabel({ label: "Claude Code", constituents: [] }, t)).toBe("Claude Code");
   });
 });

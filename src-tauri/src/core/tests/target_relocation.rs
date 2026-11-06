@@ -4,6 +4,7 @@
 //! Every case runs against a temp home / central dir / DB; installedness is
 //! faked through `mark_installed_in`. Nothing touches the operator's home.
 
+use crate::core::environment::HostRoots;
 use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -31,7 +32,7 @@ struct Fixture {
 
 impl Fixture {
     fn home(&self) -> &Path {
-        &self.paths.home
+        &self.paths.roots.home
     }
     fn former(&self) -> PathBuf {
         self.home().join(".augment/rules/skill")
@@ -45,8 +46,13 @@ impl Fixture {
             .expect("read target row")
     }
     fn relocate(&self) -> RelocationSummary {
-        relocate_unlocked(&self.store, self.home(), &central_repo_of(&self.store), NOW)
-            .expect("relocation reads its rows")
+        relocate_unlocked(
+            &self.store,
+            &HostRoots::under_home(self.home()),
+            &central_repo_of(&self.store),
+            NOW,
+        )
+        .expect("relocation reads its rows")
     }
 }
 
@@ -58,11 +64,11 @@ fn augment() -> &'static ToolAdapter {
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let paths = InstallerPaths {
-        home: dir.path().join("home"),
+        roots: HostRoots::under_home(&dir.path().join("home")),
         central_dir: dir.path().join("central"),
         cache_dir: dir.path().join("cache"),
     };
-    fs::create_dir_all(&paths.home).expect("create home");
+    fs::create_dir_all(&paths.roots.home).expect("create home");
     let central_path = paths.central_dir.join("skill");
     fs::create_dir_all(&central_path).expect("create central skill");
     fs::write(central_path.join("SKILL.md"), "---\nname: skill\n---\n").expect("SKILL.md");
@@ -89,7 +95,7 @@ fn fixture() -> Fixture {
             imported_from_tool: None,
         })
         .expect("seed skill");
-    mark_installed_in(&paths.home, augment());
+    mark_installed_in(&paths.roots, augment());
     Fixture {
         _dir: dir,
         paths,
@@ -298,8 +304,14 @@ fn a_row_left_in_a_former_dir_can_be_disabled_after_the_tool_is_gone() {
         skill_id: "skill-1".into(),
         tool: "augment".into(),
     };
-    let report = disable_targets(&f.store, &central_repo_of(&f.store), f.home(), &scope, 1)
-        .expect("planning accepts a former-dir path");
+    let report = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &HostRoots::under_home(f.home()),
+        &scope,
+        1,
+    )
+    .expect("planning accepts a former-dir path");
 
     assert_eq!(report.removed_rows(), 1);
     assert_eq!(f.row().expect("row kept").status, SyncStatus::Disabled);
@@ -373,8 +385,14 @@ fn partial_skill_disable_relocation_does_not_materialise() {
     let scope = DisableScope::Skill {
         skill_id: "skill-1".into(),
     };
-    let report = disable_targets(&f.store, &central_repo_of(&f.store), f.home(), &scope, 1)
-        .expect("disable reports");
+    let report = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &HostRoots::under_home(f.home()),
+        &scope,
+        1,
+    )
+    .expect("disable reports");
     fs::set_permissions(&rules, fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(report.failed_rows(), 1);
     assert!(f.store.skill_disabled_at("skill-1").unwrap().is_some());
@@ -407,7 +425,7 @@ fn the_superseded_artifact_seam_refuses_anything_outside_a_former_dir() {
     for path in [f.current(), f.home().join(".augment/rules/nested/skill")] {
         let err = remove_superseded_artifact_unlocked(
             &f.store,
-            f.home(),
+            &HostRoots::under_home(f.home()),
             &central_repo_of(&f.store),
             augment(),
             &path,

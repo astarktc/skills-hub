@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use super::cancel_token::CancelToken;
 use super::central_repo::ensure_central_repo;
 use super::credentials::CredentialStore;
+use super::environment::HostRoots;
 use super::errors::SignalError;
 pub use super::git_acquisition::GitSourceResolution;
 use super::git_acquisition::{
@@ -28,12 +29,13 @@ use super::sync_engine::copy_dir_recursive;
 use super::tool_adapters::{tool_holding_path, ToolAdapter};
 
 /// Filesystem roots the installer reads. Resolved once per command at the
-/// wiring seam (home, central repo setting, app cache dir) so core never
-/// touches `dirs` or `tauri` and tests substitute temp directories.
+/// wiring seam (host roots, central repo setting, app cache dir) so core
+/// never touches `dirs` or `tauri` and tests substitute temp directories.
 #[derive(Clone, Debug)]
 pub struct InstallerPaths {
-    /// Operator home: decides tool installedness and skill-lock provenance.
-    pub home: PathBuf,
+    /// Host roots: decide tool installedness (the registry resolves under
+    /// them); `roots.home` also locates skill-lock provenance.
+    pub roots: HostRoots,
     /// Central skills repo root (see `central_repo::resolve_central_repo_path`).
     pub central_dir: PathBuf,
     /// App cache root; the git clone cache lives at `cache_dir/skills-hub-git-cache`.
@@ -56,7 +58,7 @@ pub fn install_local_skill(
     source_path: &Path,
     name: Option<String>,
 ) -> Result<InstallResult> {
-    if let Some(holder) = tool_holding_path(&paths.home, source_path) {
+    if let Some(holder) = tool_holding_path(&paths.roots, source_path) {
         anyhow::bail!(local_source_inside_tool_dir(source_path, holder));
     }
     install_from_dir(paths, store, source_path, name, || {
@@ -150,7 +152,7 @@ fn stage_from_dir(
 
     // Enrich with git provenance from ~/.agents/.skill-lock.json if source is a
     // symlink into ~/.agents/skills/ (skills installed via `npx skills add`).
-    let provenance = match try_enrich_from_skill_lock_with_home(source_path, &paths.home) {
+    let provenance = match try_enrich_from_skill_lock_with_home(source_path, &paths.roots.home) {
         Some(lock_entry) => SkillProvenance {
             source_type: "git".to_string(),
             source_ref: Some(lock_entry.source_url),
@@ -343,8 +345,8 @@ pub const INSIDE_TOOL_DIR_REASON: &str = "inside_tool_dir";
 /// directory (the same predicate Install refuses by, `tool_holding_path`) is
 /// flagged [`INSIDE_TOOL_DIR_REASON`] — that reason wins over a manifest
 /// reason, because editing `SKILL.md` would not make it installable.
-/// `home` locates the Tool dirs; the command seam resolves it.
-pub fn list_local_skills(home: &Path, base_path: &Path) -> Result<Vec<LocalSkillCandidate>> {
+/// `roots` locate the Tool dirs; the command seam resolves them.
+pub fn list_local_skills(roots: &HostRoots, base_path: &Path) -> Result<Vec<LocalSkillCandidate>> {
     if !base_path.exists() {
         anyhow::bail!(source_path_missing(base_path));
     }
@@ -356,7 +358,7 @@ pub fn list_local_skills(home: &Path, base_path: &Path) -> Result<Vec<LocalSkill
             } else {
                 base_path.join(&c.subpath)
             };
-            let (valid, reason) = if tool_holding_path(home, &folder).is_some() {
+            let (valid, reason) = if tool_holding_path(roots, &folder).is_some() {
                 (false, Some(INSIDE_TOOL_DIR_REASON.to_string()))
             } else {
                 (
@@ -529,7 +531,7 @@ pub(crate) fn stage_local_selection(
 
     let display_name = name.unwrap_or(parsed_name);
 
-    if let Some(holder) = tool_holding_path(&paths.home, &selected_dir) {
+    if let Some(holder) = tool_holding_path(&paths.roots, &selected_dir) {
         anyhow::bail!(local_source_inside_tool_dir(&selected_dir, holder));
     }
     stage_from_dir(paths, &selected_dir, Some(display_name), || {

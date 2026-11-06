@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::environment::HostRoots;
 use crate::core::errors::SignalError;
 use crate::core::global_sync::GlobalSyncError;
 use crate::core::removal_fence::{Fence, ProtectedLibrary};
@@ -308,11 +309,11 @@ fn missing_path_fixture() -> (
 ) {
     let dir = tempfile::tempdir().expect("tempdir");
     let paths = crate::core::installer::InstallerPaths {
-        home: dir.path().join("home"),
+        roots: HostRoots::under_home(&dir.path().join("home")),
         central_dir: dir.path().join("central"),
         cache_dir: dir.path().join("cache"),
     };
-    std::fs::create_dir_all(&paths.home).unwrap();
+    std::fs::create_dir_all(&paths.roots.home).unwrap();
     let store = crate::core::skill_store::SkillStore::new(dir.path().join("test.db"));
     store.ensure_schema().expect("ensure_schema");
     (dir, paths, store)
@@ -405,7 +406,7 @@ fn a_missing_central_copy_is_typed_central_path_missing_on_the_wire() {
 #[test]
 fn update_of_an_imported_skill_is_typed_not_refreshable() {
     let (_dir, paths, store) = missing_path_fixture();
-    let found = paths.home.join(".claude/skills/taken-over");
+    let found = paths.roots.home.join(".claude/skills/taken-over");
     std::fs::create_dir_all(&found).unwrap();
     std::fs::write(found.join("SKILL.md"), b"---\nname: taken-over\n---\n").unwrap();
     let installed = crate::core::installer::install_imported_skill(

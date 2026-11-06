@@ -536,7 +536,8 @@ fn remove_project_tool_and_artifacts_handles_missing_skill_gracefully() {
 fn pi_adapter() -> &'static crate::core::tool_adapters::ToolAdapter {
     let adapter = crate::core::tool_adapters::adapter_by_key("pi").expect("pi adapter");
     assert_ne!(
-        adapter.relative_skills_dir, adapter.project_relative_skills_dir,
+        Some(adapter.skills_dir.rel),
+        adapter.project_skills_dir,
         "test precondition: pi's global and project mappings must diverge"
     );
     adapter
@@ -585,7 +586,8 @@ fn setup_pi_assignment(
     )
     .expect("assign");
 
-    let target = project_sync::resolve_project_sync_target(&project_dir, pi_adapter(), name);
+    let target = project_sync::resolve_project_sync_target(&project_dir, pi_adapter(), name)
+        .expect("project dir");
     assert!(
         target.symlink_metadata().is_ok(),
         "precondition: project-scope target should exist at {:?}",
@@ -1204,4 +1206,31 @@ fn project_view_raises_typed_not_found_for_unknown_project() {
             id: "missing".to_string(),
         })
     );
+}
+
+/// A reader-only harness is absorbed into the AGENTS group at project scope:
+/// it is never a project Tool of its own.
+#[test]
+fn configure_tools_refuses_a_reader_only_harness() {
+    let (dir, store) = make_store();
+    let project_dir = dir.path().join("proj");
+    fs::create_dir_all(&project_dir).unwrap();
+    let project = register_dir_project(&store, &project_dir);
+    let reader = crate::core::tool_adapters::test_overrides::sample_reader();
+
+    let err = project_ops::configure_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &strs(&[reader.key]),
+        None,
+    )
+    .expect_err("a reader-only harness is not a project Tool");
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::UnknownTool {
+            tool: reader.key.to_string(),
+        })
+    );
+    assert!(store.list_project_tools(&project.id).unwrap().is_empty());
 }

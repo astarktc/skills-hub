@@ -300,7 +300,7 @@ fn settle_unlocked(
                 .collect(),
         };
         sync_skills_to_tools_unlocked(
-            &paths.home,
+            &paths.roots,
             store,
             &paths.central_dir,
             &[BatchSkill {

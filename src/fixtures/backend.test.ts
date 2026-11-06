@@ -153,6 +153,25 @@ describe("rich", () => {
     expect((await handlers.listProjects()).map((p) => p.name)).toEqual(["skills-hub", "quartermaster", "agent-skills"]);
   });
 
+  // Round 20 ticket 01: reader-only harnesses are listed under the
+  // `.agents/skills` entry with their detected state, never as entries, never
+  // installed keys, and are absorbed into the project group's roster.
+  it("lists reader-only harnesses under the .agents/skills entry, never as targets", async () => {
+    const { handlers } = backendFor("rich");
+    const status = await handlers.getToolStatus();
+    const agents = status.tools.find((tool) => tool.key === "agents_skills");
+    expect(agents?.readers).toEqual([
+      { key: "zed", label: "Zed", installed: true },
+      { key: "warp", label: "Warp", installed: false },
+    ]);
+    expect(status.tools.some((tool) => tool.key === "zed")).toBe(false);
+    expect(status.installed).not.toContain("zed");
+    expect(status.tools.filter((tool) => tool.key !== "agents_skills").every((tool) => tool.readers.length === 0)).toBe(true);
+    const project = await handlers.getProjectToolStatus();
+    const group = project.tools.find((tool) => tool.key === "agents_skills");
+    expect(group?.constituents.slice(-2)).toEqual(["Zed", "Warp"]);
+  });
+
   // Ticket 31 (D41): the listing carries each skill's projects, derived from
   // the assignment rows at read time — so an assignment shows at once.
   it("lists each skill's projects: three + global, project-only, a failed project deployment", async () => {

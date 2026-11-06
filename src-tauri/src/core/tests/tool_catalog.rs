@@ -1,13 +1,16 @@
 use std::path::Path;
 
+use crate::core::environment::HostRoots;
+use crate::core::tool_adapters::catalog::ReaderEntry;
 use crate::core::tool_adapters::{
     adapter_by_key, constituents_of, default_tool_adapters, global_tool_entries, installed_keys,
-    mark_installed_in, project_tool_entries, skills_dir_in, ToolCatalogEntry, ToolId, VirtualGroup,
+    mark_installed_in, mark_reader_installed_in, project_tool_entries, skills_dir_in,
+    test_overrides, ToolCatalogEntry, ToolId, VirtualGroup,
 };
 
 fn install(home: &Path, key: &str) {
     let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {key}"));
-    mark_installed_in(home, adapter);
+    mark_installed_in(&HostRoots::under_home(home), adapter);
 }
 
 fn entry<'a>(entries: &'a [ToolCatalogEntry], key: &str) -> &'a ToolCatalogEntry {
@@ -20,7 +23,7 @@ fn entry<'a>(entries: &'a [ToolCatalogEntry], key: &str) -> &'a ToolCatalogEntry
 #[test]
 fn global_catalog_lists_the_virtual_group_alongside_its_constituents() {
     let home = tempfile::tempdir().unwrap();
-    let entries = global_tool_entries(home.path());
+    let entries = global_tool_entries(&HostRoots::under_home(home.path()));
 
     let agents_key = ToolId::AgentsStandard.as_key();
     // `~/.agents/skills` is a real global location, so it is selectable
@@ -40,19 +43,39 @@ fn global_catalog_lists_the_virtual_group_alongside_its_constituents() {
     assert_eq!(keys.len(), entries.len(), "keys are unique");
 }
 
+/// The group's label is the plain dir at both scopes; only the project entry
+/// carries the roster its "(N harnesses)" count is derived from (the
+/// frontend composes that label through i18n — no count is written anywhere).
 #[test]
-fn the_group_label_carries_the_roster_count_at_project_scope_only() {
+fn the_group_roster_is_carried_at_project_scope_only() {
     let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
     let agents_key = ToolId::AgentsStandard.as_key();
 
-    let global = entry(&global_tool_entries(home.path()), agents_key).label;
-    let project = entry(&project_tool_entries(home.path()), agents_key).label;
+    let global = global_tool_entries(&roots);
+    let project = project_tool_entries(&roots);
+    let global = entry(&global, agents_key);
+    let project = entry(&project, agents_key);
 
-    assert_eq!(global, ".agents/skills");
-    assert_eq!(project, ".agents/skills (9 harnesses)");
+    assert_eq!(global.label, ".agents/skills");
+    assert_eq!(project.label, ".agents/skills");
     assert!(
-        !global.contains("harnesses"),
+        global.constituents.is_empty(),
         "a global roster claim would make a user skip the real Cursor checkbox"
+    );
+    assert_eq!(
+        project.constituents,
+        vec![
+            "Cursor",
+            "Codex",
+            "OpenCode",
+            "Antigravity",
+            "Amp",
+            "Kimi Code CLI",
+            "Cline",
+            "Gemini CLI",
+            "GitHub Copilot",
+        ]
     );
 }
 
@@ -60,14 +83,26 @@ fn the_group_label_carries_the_roster_count_at_project_scope_only() {
 fn global_group_installedness_is_its_own_detect_dir() {
     let home = tempfile::tempdir().unwrap();
     let agents_key = ToolId::AgentsStandard.as_key();
-    assert!(!entry(&global_tool_entries(home.path()), agents_key).installed);
+    assert!(
+        !entry(
+            &global_tool_entries(&HostRoots::under_home(home.path())),
+            agents_key
+        )
+        .installed
+    );
 
     // A constituent being installed says nothing about `~/.agents`.
     install(home.path(), "codex");
-    assert!(!entry(&global_tool_entries(home.path()), agents_key).installed);
+    assert!(
+        !entry(
+            &global_tool_entries(&HostRoots::under_home(home.path())),
+            agents_key
+        )
+        .installed
+    );
 
     install(home.path(), agents_key);
-    let entries = global_tool_entries(home.path());
+    let entries = global_tool_entries(&HostRoots::under_home(home.path()));
     assert!(entry(&entries, agents_key).installed);
     assert!(installed_keys(&entries).contains(&agents_key.to_string()));
 }
@@ -75,7 +110,7 @@ fn global_group_installedness_is_its_own_detect_dir() {
 #[test]
 fn global_catalog_groups_shared_skills_dirs_and_resolves_paths_under_home() {
     let home = tempfile::tempdir().unwrap();
-    let entries = global_tool_entries(home.path());
+    let entries = global_tool_entries(&HostRoots::under_home(home.path()));
 
     let amp = entry(&entries, "amp");
     let kimi = entry(&entries, "kimi_cli");
@@ -95,15 +130,27 @@ fn global_catalog_groups_shared_skills_dirs_and_resolves_paths_under_home() {
     // Grouping is `shared_with`, never the displayed `placement` dir (see
     // `ToolCatalogEntry`); it must match what the registry resolves here.
     assert_eq!(
-        skills_dir_in(home.path(), adapter_by_key("amp").unwrap()),
+        skills_dir_in(
+            &HostRoots::under_home(home.path()),
+            adapter_by_key("amp").unwrap()
+        ),
         home.path().join(".config/agents/skills")
     );
     assert_eq!(
-        skills_dir_in(home.path(), adapter_by_key("kimi_cli").unwrap()),
-        skills_dir_in(home.path(), adapter_by_key("amp").unwrap())
+        skills_dir_in(
+            &HostRoots::under_home(home.path()),
+            adapter_by_key("kimi_cli").unwrap()
+        ),
+        skills_dir_in(
+            &HostRoots::under_home(home.path()),
+            adapter_by_key("amp").unwrap()
+        )
     );
     assert_eq!(
-        skills_dir_in(home.path(), adapter_by_key("claude_code").unwrap()),
+        skills_dir_in(
+            &HostRoots::under_home(home.path()),
+            adapter_by_key("claude_code").unwrap()
+        ),
         home.path().join(".claude/skills")
     );
 }
@@ -111,11 +158,11 @@ fn global_catalog_groups_shared_skills_dirs_and_resolves_paths_under_home() {
 #[test]
 fn global_catalog_installedness_comes_from_home() {
     let home = tempfile::tempdir().unwrap();
-    assert!(installed_keys(&global_tool_entries(home.path())).is_empty());
+    assert!(installed_keys(&global_tool_entries(&HostRoots::under_home(home.path()))).is_empty());
 
     install(home.path(), "claude_code");
     install(home.path(), "amp");
-    let entries = global_tool_entries(home.path());
+    let entries = global_tool_entries(&HostRoots::under_home(home.path()));
     assert!(entry(&entries, "claude_code").installed);
     assert!(entry(&entries, "amp").installed);
     // A shared skills dir does not make kimi_cli installed: it has its own root.
@@ -131,7 +178,7 @@ fn global_catalog_installedness_comes_from_home() {
 #[test]
 fn project_catalog_absorbs_constituents_into_the_virtual_group() {
     let home = tempfile::tempdir().unwrap();
-    let entries = project_tool_entries(home.path());
+    let entries = project_tool_entries(&HostRoots::under_home(home.path()));
 
     let agents = entry(&entries, ToolId::AgentsStandard.as_key());
     for a in constituents_of(VirtualGroup::AgentsStandard) {
@@ -151,10 +198,16 @@ fn project_catalog_absorbs_constituents_into_the_virtual_group() {
 fn project_catalog_group_is_installed_when_any_constituent_is() {
     let home = tempfile::tempdir().unwrap();
     let agents_key = ToolId::AgentsStandard.as_key();
-    assert!(!entry(&project_tool_entries(home.path()), agents_key).installed);
+    assert!(
+        !entry(
+            &project_tool_entries(&HostRoots::under_home(home.path())),
+            agents_key
+        )
+        .installed
+    );
 
     install(home.path(), "codex");
-    let entries = project_tool_entries(home.path());
+    let entries = project_tool_entries(&HostRoots::under_home(home.path()));
     assert!(entry(&entries, agents_key).installed);
     assert!(!entry(&entries, "claude_code").installed);
     assert_eq!(installed_keys(&entries), vec![agents_key]);
@@ -163,13 +216,19 @@ fn project_catalog_group_is_installed_when_any_constituent_is() {
     // is not a tool installation.
     let home2 = tempfile::tempdir().unwrap();
     install(home2.path(), agents_key);
-    assert!(!entry(&project_tool_entries(home2.path()), agents_key).installed);
+    assert!(
+        !entry(
+            &project_tool_entries(&HostRoots::under_home(home2.path())),
+            agents_key
+        )
+        .installed
+    );
 }
 
 #[test]
 fn project_catalog_groups_by_project_skills_dir() {
     let home = tempfile::tempdir().unwrap();
-    let entries = project_tool_entries(home.path());
+    let entries = project_tool_entries(&HostRoots::under_home(home.path()));
 
     let agents = entry(&entries, ToolId::AgentsStandard.as_key());
     assert_eq!(agents.shared_with, vec![agents.key]);
@@ -185,18 +244,108 @@ fn project_catalog_groups_by_project_skills_dir() {
 #[test]
 fn only_the_global_catalog_carries_placement_straight_from_the_registry() {
     let home = tempfile::tempdir().unwrap();
-    for entry in global_tool_entries(home.path()) {
+    for entry in global_tool_entries(&HostRoots::under_home(home.path())) {
         let adapter = adapter_by_key(entry.key).unwrap();
         let placement = entry.placement.expect("every global entry is placed");
-        assert_eq!(placement.skills_dir, adapter.relative_skills_dir);
-        assert_eq!(placement.detect_dirs, adapter.relative_detect_dirs);
+        assert_eq!(
+            placement.skills_dir,
+            format!("~/{}", adapter.skills_dir.rel)
+        );
+        assert_eq!(
+            placement.detect_dirs,
+            adapter
+                .detect_dirs
+                .iter()
+                .map(|dir| format!("~/{}", dir.rel))
+                .collect::<Vec<_>>()
+        );
         assert_eq!(placement.supports_symlink, adapter.supports_symlink);
-        // Relative to home: the catalog never resolves the operator's root.
-        assert!(!Path::new(placement.skills_dir).is_absolute());
+        // Spelled under `~`: the catalog never shows the operator's real home.
+        assert!(placement.skills_dir.starts_with("~/"));
     }
     // Project dirs are project-relative and a group's detection is a union:
     // one field could not say both honestly, so the project list carries none.
-    assert!(project_tool_entries(home.path())
+    assert!(project_tool_entries(&HostRoots::under_home(home.path()))
         .iter()
         .all(|entry| entry.placement.is_none()));
+}
+
+// ---------------------------------------------------------------------------
+// Reader-only harnesses (round 20 ticket 01)
+// ---------------------------------------------------------------------------
+
+/// A reader-only harness reads the `.agents/skills` entry's folder and has
+/// no folder of its own: it is listed as a reader of that entry, with its
+/// detected state, and is never an entry — never selectable, never in the
+/// installed set the new-harness ask diffs, never resolvable as a target.
+#[test]
+fn a_reader_only_harness_is_listed_under_the_agents_entry_never_as_a_target() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    let reader = test_overrides::sample_reader();
+    let agents_key = ToolId::AgentsStandard.as_key();
+
+    let entries = global_tool_entries(&roots);
+    assert!(entries.iter().all(|e| e.key != reader.key), "not an entry");
+    assert_eq!(
+        entry(&entries, agents_key).readers,
+        vec![ReaderEntry {
+            key: reader.key,
+            label: reader.display_name,
+            installed: false,
+        }]
+    );
+    assert!(
+        entries
+            .iter()
+            .filter(|e| e.key != agents_key)
+            .all(|e| e.readers.is_empty()),
+        "only the group entry has readers"
+    );
+
+    assert!(
+        !entry(&entries, agents_key).installed,
+        "no reader, no `~/.agents`"
+    );
+    mark_reader_installed_in(&roots, reader);
+    let entries = global_tool_entries(&roots);
+    assert!(entry(&entries, agents_key).readers[0].installed, "detected");
+    assert!(
+        entry(&entries, agents_key).installed,
+        "a detected reader makes its group installed: the group is its only way in"
+    );
+    assert!(
+        !installed_keys(&entries).contains(&reader.key.to_string()),
+        "never in the installed set the new-harness ask diffs"
+    );
+    assert!(adapter_by_key(reader.key).is_none(), "never a target");
+}
+
+/// At project scope the AGENTS group absorbs its reader-only members like its
+/// constituents: they join its roster (the "(N harnesses)" count) and its
+/// installedness, and are never entries of their own.
+#[test]
+fn the_project_agents_group_absorbs_reader_only_harnesses() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    let reader = test_overrides::sample_reader();
+    let agents_key = ToolId::AgentsStandard.as_key();
+
+    let project = project_tool_entries(&roots);
+    let agents = entry(&project, agents_key);
+    assert_eq!(agents.constituents.last(), Some(&reader.display_name));
+    assert_eq!(
+        agents.constituents.len(),
+        constituents_of(VirtualGroup::AgentsStandard).count() + 1
+    );
+    assert!(!agents.installed);
+    assert!(agents.readers.is_empty(), "absorbed, not listed apart");
+    assert!(project.iter().all(|e| e.key != reader.key));
+
+    mark_reader_installed_in(&roots, reader);
+    let project = project_tool_entries(&roots);
+    assert!(
+        entry(&project, agents_key).installed,
+        "a detected reader makes the project folder worth deploying to"
+    );
 }

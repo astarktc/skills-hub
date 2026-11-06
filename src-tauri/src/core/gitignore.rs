@@ -1,10 +1,10 @@
 //! Maintenance of the managed "Skills Hub" block in a project's `.gitignore`
 //! and `.git/info/exclude`.
 //!
-//! The ignore patterns are derived from `ToolAdapter::project_relative_skills_dir` — the
+//! The ignore patterns are derived from `ToolAdapter::project_skills_dir` — the
 //! same mapping project sync writes with — so the dir-mapping decision is made
 //! exactly once, here. (An earlier version derived patterns from the *global*
-//! `relative_skills_dir`, producing entries that never matched what project
+//! `skills_dir`, producing entries that never matched what project
 //! sync actually wrote for tools like Windsurf/Pi/Goose/Augment.)
 //!
 //! Writes are idempotent rewrites: any existing managed block (including one
@@ -30,11 +30,12 @@ use crate::core::tool_adapters::{adapter_by_key, ToolAdapter};
 pub const MARKER: &str = "# Skills Hub";
 
 /// Ignore patterns for a set of configured tools, deduplicated, in input
-/// order. Uses the project-scope mapping (`ToolAdapter::project_relative_skills_dir`).
+/// order. Uses the project-scope mapping (`ToolAdapter::project_skills_dir`);
+/// a tool with no project skills dir contributes no pattern.
 pub fn patterns_for_tools<'a>(adapters: impl IntoIterator<Item = &'a ToolAdapter>) -> Vec<String> {
     let mut patterns: Vec<String> = Vec::new();
-    for adapter in adapters {
-        let pattern = format!("/{}/", adapter.project_relative_skills_dir);
+    for dir in adapters.into_iter().filter_map(|a| a.project_skills_dir) {
+        let pattern = format!("/{dir}/");
         if !patterns.contains(&pattern) {
             patterns.push(pattern);
         }

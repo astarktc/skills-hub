@@ -31,7 +31,7 @@ use anyhow::Result;
 
 use super::cancel_token::CancelToken;
 use super::credentials::CredentialStore;
-use super::environment::expand_home_path_in;
+use super::environment::{expand_home_path_in, HostRoots};
 use super::errors::SignalError;
 use super::git_acquisition::{
     acquire, parse_full_github_url, AcquireRequest, GitSelection, GitSource, GitSourceResolution,
@@ -135,8 +135,8 @@ pub(crate) fn repoint_skill_source_with(
     let selection = RefreshSelection::Ids(vec![skill_id.to_string()]);
     match target {
         RepointTarget::Local { path } => {
-            let folder = expand_home_path_in(&paths.home, &path)?;
-            validate_local_folder(&paths.home, &folder)?;
+            let folder = expand_home_path_in(&paths.roots.home, &path)?;
+            validate_local_folder(&paths.roots, &folder)?;
             refresh_with_intent(
                 paths,
                 store,
@@ -236,8 +236,8 @@ pub(crate) fn preview_repoint_source_with(
     check_cancelled(cancel)?;
     match target {
         RepointTarget::Local { path } => {
-            let folder = expand_home_path_in(&paths.home, &path)?;
-            validate_local_folder(&paths.home, &folder)?;
+            let folder = expand_home_path_in(&paths.roots.home, &path)?;
+            validate_local_folder(&paths.roots, &folder)?;
             let fallback = folder
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
@@ -413,14 +413,14 @@ fn check_cancelled(cancel: Option<&CancelToken>) -> Result<()> {
 /// present, holds a `SKILL.md`, and not inside a Tool's skills directory (a
 /// Tool's copy is a Sync target, never a source — taking one over is
 /// Onboarding import's door).
-fn validate_local_folder(home: &Path, folder: &Path) -> Result<()> {
+fn validate_local_folder(roots: &HostRoots, folder: &Path) -> Result<()> {
     if !folder.exists() {
         anyhow::bail!(SignalError::SourcePathMissing {
             path: folder.to_string_lossy().to_string(),
         });
     }
     require_skill_md(folder)?;
-    if let Some(holder) = tool_holding_path(home, folder) {
+    if let Some(holder) = tool_holding_path(roots, folder) {
         anyhow::bail!(SignalError::LocalSourceInsideToolDir {
             path: folder.to_string_lossy().to_string(),
             tool: holder.key().to_string(),

@@ -83,12 +83,12 @@ import {
   type FixtureSkill,
   type FixtureState,
 } from "./model";
-import { TOOL_REGISTRY, VIRTUAL_GROUP_KEY } from "./registry";
+import { READER_REGISTRY, TOOL_REGISTRY, VIRTUAL_GROUP_KEY } from "./registry";
 
 /**
  * A plausible detect dir for the fixture's placement facts: the global dir's
  * configuration root (`.claude/skills` → `.claude`, `.config/goose/skills` →
- * `.config/goose`). The real list is the registry's `relative_detect_dirs`.
+ * `.config/goose`). The real list is the registry's `detect_dirs`.
  */
 function fixtureDetectDir(globalDir: string): string {
   const parts = globalDir.split("/");
@@ -1604,7 +1604,15 @@ export function createFixtureBackend(
         installed: isInstalled(t.key),
         shared_with: globalSharers(t.key),
         constituents: [],
-        placement: { skills_dir: t.globalDir, detect_dirs: [fixtureDetectDir(t.globalDir)], supports_symlink: true },
+        readers:
+          t.key === VIRTUAL_GROUP_KEY
+            ? READER_REGISTRY.map((r) => ({ key: r.key, label: r.label, installed: r.detected }))
+            : [],
+        placement: {
+          skills_dir: `~/${t.globalDir}`,
+          detect_dirs: [`~/${fixtureDetectDir(t.globalDir)}`],
+          supports_symlink: true,
+        },
       })),
       installed,
       newly_installed: newly,
@@ -1615,10 +1623,14 @@ export function createFixtureBackend(
     const catalog = projectCatalog();
     const tools = catalog.map((t) => ({
       key: t.key,
-      label: t.groupLabel ?? t.label,
+      label: t.label,
       installed: isProjectToolInstalled(state, t.key),
       shared_with: catalog.filter((o) => o.projectDir === t.projectDir).map((o) => o.key),
-      constituents: t.key === VIRTUAL_GROUP_KEY ? TOOL_REGISTRY.filter((o) => o.grouped).map((o) => o.label) : [],
+      constituents:
+        t.key === VIRTUAL_GROUP_KEY
+          ? [...TOOL_REGISTRY.filter((o) => o.grouped).map((o) => o.label), ...READER_REGISTRY.map((r) => r.label)]
+          : [],
+      readers: [],
       placement: null,
     }));
     return { tools, installed: tools.filter((t) => t.installed).map((t) => t.key), newly_installed: [] };
