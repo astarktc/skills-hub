@@ -545,7 +545,7 @@ const removal = (fail: boolean): RemovalReport => ({
     },
   ],
   central_removed: false,
-  record_deleted: false, cleared_markers: [],
+  record_deleted: false, cleared_markers: [], disabled_markers: [],
 });
 describe("removalOutcome", () => {
   it("counts shared artifact rows and emits failures in target/row order for every removal action", () => {
@@ -574,7 +574,7 @@ describe("removalOutcome", () => {
         },
       ],
       central_removed: false,
-      record_deleted: false, cleared_markers: [],
+      record_deleted: false, cleared_markers: [], disabled_markers: [],
     };
     const before = JSON.stringify(report);
     const unsync = removalOutcome(report, { ...ctx, action: "all" });
@@ -614,7 +614,7 @@ describe("removalOutcome", () => {
   });
 
   it("delete succeeds for removed targets and has kept/retry copy", () => {
-    expect(deleteOutcome([{ skillId: "s1", name: "alpha", report: { ...removal(false), central_removed: true, record_deleted: true, cleared_markers: [] } }], ctx)).toEqual({
+    expect(deleteOutcome([{ skillId: "s1", name: "alpha", report: { ...removal(false), central_removed: true, record_deleted: true, cleared_markers: [], disabled_markers: [] } }], ctx)).toEqual({
       toast: { kind: "success", tone: "success", message: "status.skillRemoved" },
       errors: [], warnings: [], notes: [], completion: { reload: true, closeModal: true, conflict: false },
     });
@@ -658,8 +658,8 @@ describe("removalOutcome", () => {
     },
   );
   it("a zero-target report warns instead of claiming an unsync happened", () => {
-    const nothing: RemovalReport = { targets: [], central_removed: false, record_deleted: false, cleared_markers: [] };
-    for (const action of ["all", "skill", "toggle", "bulkUnassign"] as const) {
+    const nothing: RemovalReport = { targets: [], central_removed: false, record_deleted: false, cleared_markers: [], disabled_markers: [] };
+    for (const action of ["toggle", "bulkUnassign"] as const) {
       const out = removalOutcome(nothing, { ...ctx, action });
       expect(out.toast).toEqual({
         kind: "warning", tone: "skipped",
@@ -684,7 +684,7 @@ describe("removalOutcome", () => {
         },
       ],
       central_removed: false,
-      record_deleted: false, cleared_markers: [],
+      record_deleted: false, cleared_markers: [], disabled_markers: [],
     };
     expect(removalOutcome(report, { ...ctx, action: "bulkUnassign" })).toEqual({
       toast: { kind: "success", tone: "success", message: t("projectsSurface.done.unassigned", { count: 2 }) },
@@ -729,7 +729,7 @@ describe("removalOutcome", () => {
         },
       ],
       central_removed: false,
-      record_deleted: false, cleared_markers: [],
+      record_deleted: false, cleared_markers: [], disabled_markers: [],
     };
     const kept = [
       { title: t("errors.projectRemovalFailedTitle", { tool: "pi" }), message: "denied" },
@@ -770,7 +770,7 @@ describe("removalOutcome", () => {
         },
       ],
       central_removed: false,
-      record_deleted: false, cleared_markers: [],
+      record_deleted: false, cleared_markers: [], disabled_markers: [],
     };
     for (const toolLabelById of [{}, { pi: "Pi" }] as Record<string, string>[]) {
       for (const action of ["removeProject", "configureTools"] as const) {
@@ -795,9 +795,9 @@ describe("removalOutcome", () => {
         },
       ],
       central_removed: false,
-      record_deleted: false, cleared_markers: [],
+      record_deleted: false, cleared_markers: [], disabled_markers: [],
     };
-    const nothing: RemovalReport = { targets: [], central_removed: false, record_deleted: false, cleared_markers: [] };
+    const nothing: RemovalReport = { targets: [], central_removed: false, record_deleted: false, cleared_markers: [], disabled_markers: [] };
     for (const report of [clean, nothing]) {
       expect(plain(projectRemovalOutcome(report, { ...ctx, action: "removeProject" }))).toEqual({
         toast: { kind: "success", tone: "success", message: "projects.removeComplete" },
@@ -816,7 +816,7 @@ describe("removalOutcome", () => {
     }
   });
   it("delete's successful report reloads and closes", () => {
-    expect(deleteOutcome([{ skillId: "s1", name: "alpha", report: { targets: [], central_removed: true, record_deleted: true, cleared_markers: [] } }], ctx)).toEqual({
+    expect(deleteOutcome([{ skillId: "s1", name: "alpha", report: { targets: [], central_removed: true, record_deleted: true, cleared_markers: [], disabled_markers: [] } }], ctx)).toEqual({
       toast: { kind: "success", tone: "success", message: "status.skillRemoved" },
       errors: [],
       warnings: [],
@@ -1847,6 +1847,50 @@ describe("projectSyncOutcome counts disabled skips", () => {
   });
 });
 
+// #95: a Disable that only records intent (a never-deployed pair's marker
+// flipped `disabled`, or a skill-grain Disable with nothing deployed) worked —
+// it says so instead of "Nothing was removed".
+describe("removalOutcome of a Disable that only records intent", () => {
+  const intent = (...tools: string[]): RemovalReport => ({
+    targets: [],
+    central_removed: false,
+    record_deleted: false,
+    cleared_markers: [],
+    disabled_markers: tools.map((tool) => ({ scope: "global_target", id: `m-${tool}`, skill_id: "s1", tool })),
+  });
+  it("a pair's flipped marker reads as '{skill} stays off {harness}'", () => {
+    const out = removalOutcome(intent("claude"), { ...ctx, action: "toggle", skillNames: { s1: "alpha" } });
+    expect(out).toEqual({
+      toast: { kind: "success", tone: "success", message: t("status.pairStaysOff", { name: "alpha", tool: "CLAUDE" }) },
+      errors: [], warnings: [], notes: [],
+      completion: { reload: true, closeModal: true, conflict: false },
+    });
+  });
+  it("a pair Disable that also removed an artifact keeps the plain confirmation", () => {
+    const report = { ...removal(false), disabled_markers: intent("claude").disabled_markers };
+    expect(removalOutcome(report, { ...ctx, action: "toggle", skillNames: { s1: "alpha" } }).toast).toEqual({
+      kind: "success", tone: "success", message: "status.syncDisabled",
+    });
+  });
+  it("a bulk Disable counts flipped markers as disabled", () => {
+    expect(removalOutcome(intent("claude", "pi"), { ...ctx, action: "all" }).toast).toEqual({
+      kind: "success", tone: "success", message: t("outcome.done.disabled", { count: 2 }),
+    });
+  });
+  it("a skill-grain Disable with nothing deployed records the skill disabled and says nothing was removed", () => {
+    for (const action of ["skill", "all"] as const) {
+      const out = removalOutcome(intent(), { ...ctx, action });
+      expect(out.toast).toEqual({ kind: "success", tone: "success", message: "status.disabledNothingDeployed" });
+      expect(out.completion.closeModal).toBe(true);
+    }
+  });
+  it("a skill-grain Disable whose only rows were markers is the plain success", () => {
+    const out = removalOutcome(intent("claude"), { ...ctx, action: "skill" });
+    expect(out.toast).toBeNull();
+    expect(out.completion).toEqual({ reload: true, closeModal: true, conflict: false });
+  });
+});
+
 // F1: clearing a marker (a row owning no artifact) is work done, not "nothing planned".
 describe("removalOutcome with cleared markers", () => {
   it("a report that only cleared a marker row is a success", () => {
@@ -1855,6 +1899,7 @@ describe("removalOutcome with cleared markers", () => {
       central_removed: false,
       record_deleted: false,
       cleared_markers: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude" }],
+      disabled_markers: [],
     };
     const out = removalOutcome(report, { ...ctx, action: "toggle" });
     expect(out.toast).toEqual({ kind: "success", tone: "success", message: "status.syncDisabled" });
@@ -1871,6 +1916,7 @@ describe("removalOutcome with cleared markers", () => {
       central_removed: false,
       record_deleted: false,
       cleared_markers: [marker("claude"), marker("pi")],
+      disabled_markers: [],
     };
     expect(removalOutcome(report, { ...ctx, action: "bulkUnassign" })).toEqual({
       toast: { kind: "success", tone: "success", message: t("projectsSurface.done.unassigned", { count: 2 }) },
@@ -1892,6 +1938,7 @@ describe("removalOutcome with cleared markers", () => {
       central_removed: false,
       record_deleted: false,
       cleared_markers: [marker("claude")],
+      disabled_markers: [],
     };
     expect(removalOutcome(report, { ...ctx, action: "bulkUnassign" }).toast).toEqual({
       kind: "success", tone: "success",
@@ -2120,9 +2167,9 @@ describe("Delete over several skills (ticket 13, D16)", () => {
     ],
     central_removed: false,
     record_deleted: false,
-    cleared_markers: [],
+    cleared_markers: [], disabled_markers: [],
   };
-  const gone: RemovalReport = { targets: [], central_removed: true, record_deleted: true, cleared_markers: [] };
+  const gone: RemovalReport = { targets: [], central_removed: true, record_deleted: true, cleared_markers: [], disabled_markers: [] };
   const settled = [
     { skillId: "a", name: "alpha", report: gone },
     { skillId: "rt", name: "release-train", report: kept },

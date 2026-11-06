@@ -49,6 +49,7 @@ fn removal_report_keeps_shared_rows_and_classified_failure_on_the_wire() {
         central_removed: false,
         record_deleted: false,
         cleared_markers: Vec::new(),
+        disabled_markers: Vec::new(),
     };
     assert_eq!(report.failed_rows(), 2);
     assert_eq!(
@@ -64,7 +65,8 @@ fn removal_report_keeps_shared_rows_and_classified_failure_on_the_wire() {
             }],
             "central_removed": false,
             "record_deleted": false,
-            "cleared_markers": []
+            "cleared_markers": [],
+            "disabled_markers": []
         })
     );
 }
@@ -89,6 +91,7 @@ fn merge_preserves_target_order_rows_statuses_and_deletion_flags() {
         central_removed: true,
         record_deleted: false,
         cleared_markers: vec![row.clone()],
+        disabled_markers: Vec::new(),
     };
     let second = RemovalReport {
         scope: RemovalScope::Skill {
@@ -104,6 +107,7 @@ fn merge_preserves_target_order_rows_statuses_and_deletion_flags() {
         central_removed: false,
         record_deleted: true,
         cleared_markers: Vec::new(),
+        disabled_markers: vec![row.clone()],
     };
     let expected_targets = serde_json::json!([
         serde_json::to_value(&first.targets[0]).unwrap(),
@@ -117,6 +121,7 @@ fn merge_preserves_target_order_rows_statuses_and_deletion_flags() {
     assert_eq!((merged.removed_rows(), merged.failed_rows()), (1, 2));
     assert!(merged.central_removed && merged.record_deleted);
     assert_eq!(merged.cleared_markers, vec![row.clone()]);
+    assert_eq!(merged.disabled_markers, vec![row.clone()]);
     assert_eq!(
         serde_json::to_value(&row).unwrap(),
         serde_json::json!({

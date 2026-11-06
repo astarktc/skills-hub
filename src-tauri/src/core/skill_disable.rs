@@ -200,7 +200,7 @@ fn disable_pair(
             home: home.to_path_buf(),
         },
     )?;
-    let report = execute_disable(store, plan)?;
+    let mut report = execute_disable(store, plan)?;
 
     if let (Some(adapter), false) = (adapter, has_row) {
         // Admitted only when the shared artifact settled: a failed removal
@@ -216,8 +216,9 @@ fn disable_pair(
             } else {
                 SyncMode::Copy
             };
+            let id = Uuid::new_v4().to_string();
             store.transition_skill_target(
-                &Uuid::new_v4().to_string(),
+                &id,
                 TargetTransition::DisabledRecorded {
                     skill_id: &skill.id,
                     tool,
@@ -225,6 +226,11 @@ fn disable_pair(
                     target_path: &target_path.to_string_lossy(),
                 },
             )?;
+            report.disabled_markers.push(RowRef::GlobalTarget {
+                id,
+                skill_id: skill.id.clone(),
+                tool: tool.to_string(),
+            });
         }
     }
     Ok(report)
@@ -268,8 +274,15 @@ fn disable_skill(store: &SkillStore, skill: &SkillRecord, now: i64) -> Result<Re
 
 /// Execute a plan with the Disable settlement, after dropping rows that are
 /// already `disabled`: disabling twice is a no-op, and the report counts only
-/// the targets this call settled.
+/// the targets and markers this call settled.
 fn execute_disable(store: &SkillStore, mut plan: RemovalPlan) -> Result<RemovalReport> {
+    let mut markers = Vec::with_capacity(plan.markers.len());
+    for marker in plan.markers.drain(..) {
+        if !row_is_disabled(store, &marker)? {
+            markers.push(marker);
+        }
+    }
+    plan.markers = markers;
     for target in &mut plan.targets {
         let mut kept = Vec::with_capacity(target.rows.len());
         for row in target.rows.drain(..) {

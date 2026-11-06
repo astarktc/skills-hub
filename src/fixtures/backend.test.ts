@@ -384,6 +384,7 @@ describe("Disabled: two grains, skipped by every automatic pass (round 19 D8)", 
     const zod = await byName(handlers, "zod-schema-first");
     const off = await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: zod.id, tool: "claude_code" });
     expect(off.targets.map((t) => t.status.status)).toEqual(["removed"]);
+    expect(off.disabled_markers).toEqual([]);
     expect(statusOf(await byName(handlers, "zod-schema-first"), "claude_code")).toBe("disabled");
     const on = await handlers.enableSkillTargets({ kind: "skill_tool", skill_id: zod.id, tool: "claude_code" }, []);
     expect(on.global.map((o) => o.status.status)).toEqual(["synced"]);
@@ -392,6 +393,8 @@ describe("Disabled: two grains, skipped by every automatic pass (round 19 D8)", 
     const prisma = await byName(handlers, "prisma-review");
     const marker = await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: prisma.id, tool: "claude_code" });
     expect(marker.targets).toEqual([]);
+    // #95: the recorded intent is report data (Rust `disabled_markers`).
+    expect(marker.disabled_markers).toEqual([expect.objectContaining({ scope: "global_target", tool: "claude_code" })]);
     const marked = await byName(handlers, "prisma-review");
     expect(statusOf(marked, "claude_code")).toBe("disabled");
     const sync = await handlers.syncSkillsToTools(batchOf(marked), ["claude_code"], { overwrite_if_same_content: true }, sink<SyncProgressDto>().channel);

@@ -530,6 +530,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
               central_removed: false,
               record_deleted: false,
               cleared_markers: reports.flatMap((report) => report.cleared_markers),
+              disabled_markers: reports.flatMap((report) => report.disabled_markers),
             };
       } catch (err) {
         await refreshView(projectId);

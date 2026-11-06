@@ -469,16 +469,20 @@ export function createFixtureBackend(
 
   /** A row owning no artifact, set aside by planning, cleared with its scope. */
   type Marker = { row: RowRef; clear: () => void; disable: () => void };
-  /** One removal scope's settled targets and its set-aside markers. */
-  type Removal = { targets: RemovalTargetOutcome[]; markers: Marker[] };
+  /**
+   * One removal scope's settled targets, its set-aside markers, and the
+   * markers a Disable recorded `disabled` (Rust `disabled_markers`).
+   */
+  type Removal = { targets: RemovalTargetOutcome[]; markers: Marker[]; disabled?: RowRef[] };
 
   const ownsArtifact = (row: { synced_at: number | null }) => row.synced_at !== null;
 
   /** Rust `Settlement::Disable` on markers: the row flips, no path is touched. */
   const disableMarkers = (settle: Settle, removal: Removal): Removal => {
     if (settle !== "disable") return removal;
-    if (!failedIn(removal.targets)) for (const marker of removal.markers) marker.disable();
-    return { targets: removal.targets, markers: [] };
+    const disabled = failedIn(removal.targets) ? [] : removal.markers;
+    for (const marker of disabled) marker.disable();
+    return { targets: removal.targets, markers: [], disabled: disabled.map((marker) => marker.row) };
   };
 
   const removeGlobalRows = (
@@ -609,6 +613,7 @@ export function createFixtureBackend(
       central_removed: false,
       record_deleted: false,
       cleared_markers: cleared.map((marker) => marker.row),
+      disabled_markers: all.flatMap((part) => part.disabled ?? []),
       ...extra,
     };
   };
@@ -823,6 +828,8 @@ export function createFixtureBackend(
         target_path: `${globalRoot(tool)}/${skill.dto.name}`,
         synced_at: null,
       });
+      const marker = { scope: "global_target" as const, id: `tgt-${skill.dto.id}-${tool}`, skill_id: skill.dto.id, tool };
+      return { ...out, disabled: [...(out.disabled ?? []), marker] };
     }
     return out;
   };

@@ -8,7 +8,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::core::artifact_removal::remove_skill;
+use crate::core::artifact_removal::{remove_skill, RowRef};
 use crate::core::errors::CommandError;
 use crate::core::global_sync::{
     sync_skills_to_tools, BatchPolicy, BatchSkill, BatchTargetOutcome, BatchTargetStatus,
@@ -290,6 +290,24 @@ fn disabling_a_pair_with_no_row_records_a_marker_a_refresh_honours() {
     let report = disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
     assert!(report.targets.is_empty(), "nothing to remove");
     assert_eq!(f.status("claude_code"), Some(SyncStatus::Disabled));
+    // #95: the recorded intent is report data, so the fold can say so.
+    assert!(
+        matches!(
+            report.disabled_markers.as_slice(),
+            [RowRef::GlobalTarget { skill_id, tool, .. }]
+                if *skill_id == f.skill_id && tool == "claude_code"
+        ),
+        "{:?}",
+        report.disabled_markers
+    );
+    assert!(report.cleared_markers.is_empty());
+
+    let again = disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    assert!(
+        again.targets.is_empty() && again.disabled_markers.is_empty(),
+        "a second Disable records nothing new: {:?}",
+        again.disabled_markers
+    );
 
     f.refresh_all();
     assert!(!exists_any(&f.global_path(".claude/skills")));
@@ -345,6 +363,7 @@ fn disabling_twice_settles_nothing_new() {
 
     let again = disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
     assert!(again.targets.is_empty());
+    assert!(again.disabled_markers.is_empty(), "an owner is no marker");
     assert_eq!(f.status("claude_code"), Some(SyncStatus::Disabled));
 }
 
@@ -910,6 +929,15 @@ fn failed_project_enable_never_makes_a_foreign_folder_ours() {
             |f, project, _| {
                 let report = disable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
                 assert!(report.targets.is_empty(), "{report}");
+                assert!(
+                    matches!(
+                        report.disabled_markers.as_slice(),
+                        [RowRef::Assignment { project_id, tool, .. }]
+                            if *project_id == project.id && tool == "claude_code"
+                    ),
+                    "the never-synced `error` row is recorded `disabled`: {:?}",
+                    report.disabled_markers
+                );
                 let row = f
                     .store
                     .get_project_skill_assignment(&project.id, &f.skill_id, "claude_code")

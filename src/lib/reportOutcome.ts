@@ -356,10 +356,17 @@ function refreshCounts(report: RefreshReport) {
  * `removed` / `failed` count the rows of removed / kept targets; `cleared`
  * counts rows settled without touching any path (`cleared_markers`: rows that
  * owned no artifact), so an unassignment that only cleared such a row still
- * counts as one without claiming an artifact was removed.
+ * counts as one without claiming an artifact was removed. `flipped` counts the
+ * markers a Disable recorded `disabled` (`disabled_markers`, #95): intent
+ * recorded, nothing removed.
  */
 function removalCounts(report: RemovalReport) {
-  const counts = { removed: 0, failed: 0, cleared: report.cleared_markers.length };
+  const counts = {
+    removed: 0,
+    failed: 0,
+    cleared: report.cleared_markers.length,
+    flipped: report.disabled_markers.length,
+  };
   for (const target of report.targets)
     counts[target.status.status] += target.rows.length;
   return counts;
@@ -665,18 +672,27 @@ function collectRemovalFailures(
  */
 export function removalOutcome(
   report: RemovalReport,
-  ctx: ReportContext & { action: "all" | "skill" | "toggle" | "bulkUnassign" },
+  ctx: ReportContext & {
+    action: "all" | "skill" | "toggle" | "bulkUnassign";
+    /** Skill names by id: a pair Disable that only recorded intent names its skill. */
+    skillNames?: Readonly<Record<string, string>>;
+  },
 ): Outcome<PlainEntry> {
   const out = empty();
   const counts = removalCounts(report);
   const failed = collectRemovalFailures(out, report, ctx, "errors.unsyncFailedTitle");
-  // Zero targets is neither success nor failure: nothing was planned, so
+  // A skill-grain Disable (`skill` / `all`) always records the skill
+  // disabled, so it is never "nothing planned" — even with nothing deployed.
+  const skillGrain = ctx.action === "skill" || ctx.action === "all";
+  // Zero work is neither success nor failure: nothing was planned, so
   // nothing was removed and whatever the operator clicked is still there.
   // `failed` counts failures and must keep meaning exactly that.
   // Clearing a marker (a row that owned no artifact: the app never
-  // materialised it, whatever its status) is work done, not "nothing planned", even though no path was touched.
-  const nothingPlanned =
-    !failed && report.targets.length === 0 && report.cleared_markers.length === 0;
+  // materialised it, whatever its status) is work done, not "nothing planned", even though no path was touched;
+  // so is recording one `disabled` (#95).
+  const markersOnly = report.targets.length === 0;
+  const noWork = !failed && markersOnly && counts.cleared === 0 && counts.flipped === 0;
+  const nothingPlanned = noWork && !skillGrain;
   out.completion.closeModal = !failed && !nothingPlanned;
   if (ctx.action === "toggle") out.completion.reload = !failed;
   if (ctx.action === "bulkUnassign") out.completion.reload = false;
@@ -684,12 +700,32 @@ export function removalOutcome(
     out.toast = toast("skipped", ctx.t("unsyncNothingPlanned"));
     return out;
   }
+  // The skill is recorded disabled; there was nothing anywhere to remove.
+  if (noWork) {
+    out.toast = toast("success", ctx.t("status.disabledNothingDeployed"));
+    return out;
+  }
   // A Disable over several skills (the bulk rail, D8) reads as the count
   // line over its Sync targets: "412 disabled · 3 failed" (D10).
   if (ctx.action === "all")
-    out.toast = headlineToast(ctx.t, "disabled", { done: counts.removed + counts.cleared, failed: counts.failed });
+    out.toast = headlineToast(ctx.t, "disabled", {
+      done: counts.removed + counts.cleared + counts.flipped,
+      failed: counts.failed,
+    });
+  // A pair Disable that only recorded its marker removed nothing: it says
+  // the pair stays off (#95) rather than that deploying was disabled.
+  const [flipped] = report.disabled_markers;
   if (ctx.action === "toggle" && !failed)
-    out.toast = toast("success", ctx.t("status.syncDisabled"));
+    out.toast =
+      markersOnly && counts.cleared === 0 && flipped
+        ? toast(
+            "success",
+            ctx.t("status.pairStaysOff", {
+              name: ctx.skillNames?.[flipped.skill_id] ?? flipped.skill_id,
+              tool: label(ctx, flipped.tool),
+            }),
+          )
+        : toast("success", ctx.t("status.syncDisabled"));
   // One skill off a project's Tools: the count line over its assignments
   // ("2 unassigned · 1 failed"); a kept row stays in the matrix, failed.
   if (ctx.action === "bulkUnassign")

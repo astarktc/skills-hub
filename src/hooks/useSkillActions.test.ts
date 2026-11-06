@@ -97,7 +97,7 @@ const EMPTY_REMOVAL: RemovalReport = {
   targets: [],
   central_removed: false,
   record_deleted: false,
-  cleared_markers: [],
+  cleared_markers: [], disabled_markers: [],
 };
 const EMPTY_ENABLE: EnableReport = { global: [], projects: { skipped_projects: [], items: [] } };
 const EMPTY_SYNC: BatchTargetOutcome[] = [];
@@ -261,6 +261,29 @@ describe("the door, verb by verb", () => {
     expect(reloads() > 0).toBe(row.reloadsOnSuccess);
     // The lifecycle ended: nothing pending, nothing refused.
     expect(result.current.reporter.pending).toBeNull();
+  });
+
+  it("a pair Disable that only records intent names its skill and harness (#95)", async () => {
+    const s = setup();
+    const { result } = await render(s);
+    mockInvoke.mockImplementation((command) =>
+      Promise.resolve(
+        command === "disableSkillTargets"
+          ? { ...EMPTY_REMOVAL, disabled_markers: [{ scope: "global_target", id: "m", skill_id: "s2", tool: "cursor" }] }
+          : command === "getManagedSkills"
+            ? s.skills
+            : null,
+      ),
+    );
+    const spy = vi.spyOn(folds, "removalOutcome");
+    await act(async () => {
+      await result.current.actions.run("disable", [s.skills[1]], { tool: "cursor" });
+    });
+    expect(spy.mock.results[0]?.value.toast).toEqual({
+      kind: "success",
+      tone: "success",
+      message: t("status.pairStaysOff", { name: "beta", tool: "CURSOR" }),
+    });
   });
 
   it("acts on ids resolved against the catalog at click time, dropping unknown ids", async () => {
@@ -603,7 +626,7 @@ describe("where confirmation happens", () => {
       ],
       central_removed: false,
       record_deleted: false,
-      cleared_markers: [],
+      cleared_markers: [], disabled_markers: [],
     };
     const base = mockInvoke.getMockImplementation()!;
     mockInvoke.mockImplementation((command, ...args) => {

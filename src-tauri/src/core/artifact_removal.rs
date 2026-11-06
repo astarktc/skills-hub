@@ -207,6 +207,11 @@ pub struct RemovalReport {
     /// clears them, and only when every target of the scope succeeded (a
     /// kept skill or project keeps its markers too).
     pub cleared_markers: Vec<RowRef>,
+    /// Rows owning no artifact that this call recorded `disabled` without
+    /// touching any path (only the Disable settlement, including the marker
+    /// row a pair Disable records for a pair that had none): the operator's
+    /// "not on this Tool" was recorded although nothing was removed.
+    pub disabled_markers: Vec<RowRef>,
 }
 
 impl RemovalReport {
@@ -234,10 +239,12 @@ impl RemovalReport {
             central_removed: false,
             record_deleted: false,
             cleared_markers: Vec::new(),
+            disabled_markers: Vec::new(),
         });
         for report in reports {
             merged.targets.extend(report.targets);
             merged.cleared_markers.extend(report.cleared_markers);
+            merged.disabled_markers.extend(report.disabled_markers);
             merged.central_removed |= report.central_removed;
             merged.record_deleted |= report.record_deleted;
         }
@@ -643,6 +650,7 @@ pub(crate) fn execute_settling_unlocked(
     // `synced_at` untouched, so they stay non-owners) so the operator's "not
     // on this Tool" is durable and Enable retries them.
     let mut cleared_markers = Vec::new();
+    let mut disabled_markers = Vec::new();
     if !any_failed {
         for marker in plan.markers {
             match settlement {
@@ -650,7 +658,10 @@ pub(crate) fn execute_settling_unlocked(
                     delete_row(store, &marker)?;
                     cleared_markers.push(marker);
                 }
-                Settlement::Disable => settle_row_as_disabled(store, &marker)?,
+                Settlement::Disable => {
+                    settle_row_as_disabled(store, &marker)?;
+                    disabled_markers.push(marker);
+                }
             }
         }
     }
@@ -691,6 +702,7 @@ pub(crate) fn execute_settling_unlocked(
         central_removed,
         record_deleted,
         cleared_markers,
+        disabled_markers,
     })
 }
 

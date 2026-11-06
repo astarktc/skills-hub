@@ -328,6 +328,8 @@ export const resources = {
         skillRemoved: "Skill removed.",
         skillDeleteKept: "Skill kept: {{failed}} deployments could not be removed. You can retry.",
         syncDisabled: "Deploying disabled.",
+        pairStaysOff: "{{name}} stays off {{tool}} — it was not deployed there, so nothing was removed.",
+        disabledNothingDeployed: "Disabled — nothing was deployed, so nothing was removed.",
         syncEnabled: "Deploying enabled.",
         updated: "{{name}} updated.",
         restored: "{{name}} restored.",

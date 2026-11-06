@@ -497,7 +497,8 @@ export function useSkillActions({
           },
           async () => {
             const report = await invokeTauri("disableSkillTargets", scope);
-            await applyOutcome(removalOutcome(report, { ...foldContext, action }), { reload });
+            const skillNames = Object.fromEntries(skills.map((skill) => [skill.id, skill.name]));
+            await applyOutcome(removalOutcome(report, { ...foldContext, action, skillNames }), { reload });
           },
         );
         return;

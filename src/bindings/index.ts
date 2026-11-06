@@ -1187,6 +1187,13 @@ export type RemovalReport = {
 	 *  kept skill or project keeps its markers too).
 	 */
 	cleared_markers: RowRef[],
+	/**
+	 *  Rows owning no artifact that this call recorded `disabled` without
+	 *  touching any path (only the Disable settlement, including the marker
+	 *  row a pair Disable records for a pair that had none): the operator's
+	 *  "not on this Tool" was recorded although nothing was removed.
+	 */
+	disabled_markers: RowRef[],
 };
 
 export type RemovalTargetOutcome = {
