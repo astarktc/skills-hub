@@ -19,7 +19,16 @@ the folder at that path is its own. Today a row counts as the owner of its path 
 
 After this ticket, a folder that isn't verifiably ours stays where it is and goes to the one overwrite ask (D12).
 
+**Decision record:** `docs/adr/0007-ownership-is-evidence-and-legacy-rows-convert-explicitly.md`. Implement rule 1 and
+its Consequences.
+
 ## Acceptance criteria
+
+- [ ] **Each row records what it deployed.** Global Deployment rows gain the deployed Content identity
+      (`content_hash`), which project assignments already carry. It is written at every successful write and
+      re-materialisation (sync, Propagation, Enable, collision Overwrite). Schema migration through
+      `migrate_legacy_db_if_needed`. An existing row with no recorded evidence owns only a link resolving to its
+      Library copy; an unrecorded copy is not provably ours.
 
 - [ ] **Disable gives up ownership when it succeeds.** When Disable removes the artifact, or confirms it is already
       absent, the row stops owning its path (at both scopes). A failed removal keeps ownership, as ADR-0002 requires.
@@ -28,7 +37,7 @@ After this ticket, a folder that isn't verifiably ours stays where it is and goe
 - [ ] **One occupant check, used at every destructive seam.**
   - A path counts as ours only when one of these holds:
     - it is a link resolving, by physical identity, to its skill's Library copy;
-    - it is a copy whose Content identity matches the content that was deployed there.
+    - it is a copy whose Content identity matches the row's recorded deployed identity.
   - Anything else, or anything that can't be verified, is not ours.
   - The check runs at the moment of removal or replacement, not as an earlier observation that permission is carried
     over from.
