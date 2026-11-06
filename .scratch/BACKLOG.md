@@ -15,47 +15,15 @@ the code that day (`archive/round19/closure/extract-{A..G}.md`).
 1. **1.3.3, a hygiene patch** — a solid base before roadmap features (`archive/release-1.3.3/spec.md`; released 2026-11-05). Merged and
    removed from this file: #63 #68 #72 #73 #74 (its pointer; persistence is #53's) #75 #90 #95 #96 #97 #98 #99 #100
    #101 #102 (dark theme only — the README embeds one image per screen) #103 #104 #106 #107 #76 #105.
-2. **Round 20**: #92 then #110, beside #91 (they touch different files); #108; #109 and #84 (both need the
-   project defaults/overrides pattern); then #70, #85/#86, #93, #87.
+2. **Round 20** (`round20/spec.md`): **Wave A = 1.3.4** absorbed #92, #110 and #91 (opened 2026-11-06, tickets
+   `round20/issues/01`–`08`). **Wave B** is grilled after Wave A lands: #108; #109 and #84 (both need the project
+   defaults/overrides pattern); then #70, #85/#86, #93, #87.
 
 Harness research behind #92 and #108–#110: `docs/design-inputs/2026-11-05-harness-candidates-and-shared-dir-reads.md` and
 `docs/design-inputs/2026-11-05-harness-candidates-acp-addendum.md`.
 
 ## Now — evidence of unfinished work is strong
 
-- **#92 Registry structure for the wider roster (registry truth without relocation), rebuilt from `main`.** What every new
-  row (#110) needs, and the facts #109 reads. Cut it fresh from `main`; branch `t3/registry-truth-pass` (`9d282d4`) is
-  reference only — never cherry-pick its 44 files. Scope:
-  - **Per-OS dirs.** Devin, Reasonix and Zed resolve under `%APPDATA%` on Windows, Crush also reads `%LOCALAPPDATA%`; the
-    registry knows only home-relative paths. Decide whether documented home overrides (`KIMI_CODE_HOME`, `DSH_HOME`,
-    `GROK_HOME`, …) are honoured — AGENTS.md's "core never resolves roots from the environment" rule applies.
-  - **An optional project dir** (WorkBuddy, Hermes and others have none).
-  - **Shared-folder facts per harness** from the 2026-11-05 brief's Part 2: reads `~/.agents/skills` / `~/.claude/skills`
-    (default / opt-in / no / unknown), precedence, duplicate hazard (fx loads neither copy; Cortex Code flags a conflict),
-    plus `also_reads` cross-reads — pinned by a brief-snapshot test.
-  - **The cross-read warning** in the Harnesses pane and the deploy confirmation (no auto-deselect; Kimi's legacy-only
-    cross-reads must not over-warn).
-  - **Undetected harnesses collapse by default** in the Harnesses pane (operator 2026-11-05).
-  - **Label and detect fixes that move no deployment:** Xum's label (`tool_adapters/mod.rs:478` still "Mux"); Windsurf
-    relabelled Devin (Devin CLI reads `~/.codeium/windsurf/skills`); Antigravity CLI's `.gemini/antigravity-cli` detect
-    dir; Zenflow as a Zencoder alias; QwenPaw's label and `.qwenpaw` detect dir (its dir move is #108).
-  - A fixture `registry` scenario; README table; the table test.
-  Absorbs #45 and #40's detection half. Source: `docs/design-inputs/2026-11-05-harness-candidates-and-shared-dir-reads.md`
-  § Part 2, § Implications; `archive/round19/issues/34-registry-truth-and-agents-dir-preference.md:30–64, :116`;
-  `archive/round19/closure/extract-F.md` F8.
-- **#110 New harness rows (operator 2026-11-05: every recommended row, the optional ones included).** Blocked by #92.
-  Each row re-verified against its brief source when added; README rows; the table test; the AGENTS group label's count.
-  - **Own rows:** DeepSeek Harness, ZCode, Codewhale, WorkBuddy (promised by CHANGELOG 1.3.1); Grok Build, Deep Agents
-    Code (copy by default — it rejects symlinks resolving outside its skill dirs; see #84), Reasonix, Cortex Code, Rovo
-    Dev, IBM Bob, ForgeCode, Firebender, MiniMax Code, Posit Assistant, AiderDesk, Autohand Code CLI, Code Studio,
-    CodeArts Agent, Qoder CN (IDE, ex-Lingma), Qoder CN CLI, Kimchi, AstrBot, oh-my-pi, Letta Code; Muse Code, Poolside,
-    Dirac, Stakpak (ACP addendum; Muse Code, Poolside and Dirac also join the AGENTS group at project scope).
-  - **AGENTS-group members only** (no own deploy target): Warp, Zed, Dexto, fx, Sarvam Code, VT Code, DimCode,
-    crow-cli, Corust Agent.
-  - Skipped by the briefs (each with its reason there): Codemaker, inference.sh, Jazz, Loaf, Moxby, Ona, Terramind,
-    Tinycloud, Tabnine CLI, Eve, PromptScript, Replit, fast-agent, siGit Code, Minion Code, Harn, Nova, GLM Agent,
-    Agoragentic. ZeroClaw and nanobot (per-workspace skills dirs) need their own look.
-  Source: both 2026-11-05 briefs.
 - **#108 Redeploy: deploy to the new place, then undeploy the old (operator 2026-11-05).** One mechanism for every change
   of where or how a Deployment lives: the shared-folder preference (#109), registry dir corrections, retired keys and
   copy ↔ link switches (#84). Rules:
@@ -95,17 +63,6 @@ Harness research behind #92 and #108–#110: `docs/design-inputs/2026-11-05-harn
     operation (composites re-read it today), onboarding's reader roster for shared / aliased dirs.
   Blocked by #92 and #108. Source: this session; `docs/design-inputs/2026-11-05-harness-candidates-and-shared-dir-reads.md`
   § Part 2, § Implications; `archive/round19/issues/34-…md:440–466`.
-- **#91 Changing the library folder is unguarded, non-atomic and strands every link.** Settings → General → Browse…
-  writes `central_repo_path` outside `runAction` (`src/hooks/useSettingsState.ts:214–228`); the backend
-  (`commands/mod.rs` `update_setting` → `core/settings.rs:490–505` → `core/central_repo.rs:19–55` `move_central_repo`)
-  takes no `mutation_guard`, moves one skill at a time and `?`-bails mid-loop (earlier skills already moved and
-  re-recorded, the new root never saved), and nothing re-points or re-materialises a Deployment afterwards — every
-  symlink/junction into the old root dangles. No bytes are lost; the library splits and every harness breaks. Clean
-  Now (`clearGitCacheNow`, `useSettingsState.ts:309–320`, `commands/mod.rs:245–252`) also runs outside the lifecycle and
-  the guard while an acquisition may read the cache. Design both as mutations under the lifecycle + guard; the move
-  all-or-nothing (or resumable with truthful status) and followed by re-pointing every owned Deployment. Pre-existing
-  (not a round-19 regression); designed in round 20 (operator 2026-11-05). Source: `archive/round19/review/ticket-20-audit.md:161`;
-  `archive/round19/closure/extract-E.md` E1–E2.
 (Retired: #88 — split 2026-11-05 (operator): physical identity in every destructive seam, onboarding's physical-path
 exclusion included → #107; resumable moves, dir corrections, the launch pass, F14–F16 and the smoke line → #108;
 the #83 preference and its UI → #109. #89 — the lexical launch relocation pass is no longer called (1.3.2, PR #5,
