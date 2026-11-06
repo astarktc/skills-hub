@@ -382,3 +382,4 @@ The operator keeps one skill Library and deploys it to many harnesses. Three thi
 - 05 merged as `9c66a8e` (PR #17) and 07 as `d954846` (PR #15); they ran in parallel, and the orchestrator merged them
   keeping both appended blocks. 06 is still running. The combined row review follows. 03 is in round 4 (both round-3
   reviews were fix-then-ship).
+- 06 merged as `01e4ec3` (PR #16). Posit's `.positai` detect dir was dropped (Q7). All 33 new harness rows are on `main`; the combined row review is dispatched.
