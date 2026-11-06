@@ -304,22 +304,25 @@ fn registry_joins_spell_paths_with_the_platform_separator() {
 #[test]
 fn a_mixed_separator_path_recorded_before_the_fix_still_matches_the_registry() {
     let home = std::path::Path::new(r"C:\Users\op");
+    let roots = HostRoots::under_home(home);
     let claude = adapter_by_key("claude_code").expect("claude adapter");
     assert_eq!(
-        skills_dir_in(home, claude).to_str(),
+        skills_dir_in(&roots, claude).to_str(),
         Some(r"C:\Users\op\.claude\skills")
     );
     assert_eq!(
-        project_skills_dir_in(std::path::Path::new(r"D:\work\app"), claude).to_str(),
+        project_skills_dir_in(std::path::Path::new(r"D:\work\app"), claude)
+            .expect("claude has a project dir")
+            .to_str(),
         Some(r"D:\work\app\.claude\skills")
     );
 
     let recorded = std::path::PathBuf::from(r"C:\Users\op\.claude/skills\grill-me");
-    assert_eq!(recorded, skills_dir_in(home, claude).join("grill-me"));
-    assert!(recorded.starts_with(skills_dir_in(home, claude)));
-    ensure_path_within_tool_dirs(home, &recorded).expect("a recorded target stays removable");
+    assert_eq!(recorded, skills_dir_in(&roots, claude).join("grill-me"));
+    assert!(recorded.starts_with(skills_dir_in(&roots, claude)));
+    ensure_path_within_tool_dirs(&roots, &recorded).expect("a recorded target stays removable");
     assert_eq!(
-        tool_holding_path(home, &recorded).map(|adapter| adapter.key()),
+        tool_holding_path(&roots, &recorded).map(|adapter| adapter.key()),
         Some("claude_code")
     );
 
@@ -329,7 +332,7 @@ fn a_mixed_separator_path_recorded_before_the_fix_still_matches_the_registry() {
     let former = std::path::PathBuf::from(r"C:\Users\op\.augment/rules\grill-me");
     assert_eq!(
         former.parent(),
-        Some(former_skills_dirs_in(home, augment)[0].as_path())
+        Some(former_skills_dirs_in(&roots, augment)[0].as_path())
     );
 }
 
