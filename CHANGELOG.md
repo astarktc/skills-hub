@@ -2,6 +2,69 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.3] - 2026-11-05
+
+A hygiene patch that clears the small and bug-shaped backlog before new features. It closes a data-safety hole in how
+Skills Hub removes files, makes the database hold up under concurrent work on slow disks, and fixes a set of reading
+and reporting problems found in the 1.3 think-aloud.
+
+### Fixed
+
+- **Removing a deployment can no longer delete a skill from your Library.** When a harness's skills folder (or a folder
+  above it) was a link pointing into the Library, removing a deployment there deleted the Library copy itself and
+  reported success. Every removal — Delete, Disable, removing a skill from a project, replacing a folder on overwrite,
+  Import's removal of originals, and the git cache's cleanup — now checks the folder it would actually delete, not the
+  path as written. It refuses anything inside the Library or outside the folder it claims to be in, including when a
+  name differs only in letter case. A refused removal says which path resolved where.
+- **A removal blocked by permissions says what to check** — ownership, a read-only folder, or another app holding it
+  — and that Retry will fail the same way until that is fixed, instead of showing the raw "Permission denied".
+- **Refresh and other simultaneous work no longer fail with "database is locked" on slow disks**, notably on Windows.
+  The database now uses write-ahead logging; it is converted once on first launch, with its data intact, and every
+  write is still flushed to disk before it is reported done.
+- **Opening a project that finds a deployed copy missing or out of date updates My Skills right away** — the row's
+  mark, the Issues count and the inspector — instead of after a later reload.
+- **Disabling a harness where the skill was never deployed says so** ("{skill} stays off {harness} — it was not
+  deployed there, so nothing was removed") instead of "Nothing was removed".
+- **A failed update check reads "Couldn't check for updates — download the latest release from GitHub"**, with a link,
+  and keeps the updater's raw text as a faint detail line.
+- **When a Delete leaves something behind, its summary toast waits until you close the Delete report** instead of
+  covering it.
+- **Tab out of the "deploy again?" prompt under a skill's switch closes it** and moves on to the next control.
+- **Skill folders with an invalid `SKILL.md` stay visible in My Skills** and can be reviewed even when nothing else is
+  left to import; "Remove the other copies" now says a harness can end up without the skill if its deploy fails.
+- **Windows: newly recorded deployment paths use backslashes throughout** (`C:\Users\…\.claude\skills\grill-me`);
+  paths recorded earlier keep working.
+- **Installing from a Windows-style `file://C:\…` URL names the skill after its folder**, not the full path.
+
+### My Skills and Projects
+
+- **The header puts the skill count first**: "View 11 skills with issues · Deployments: 7 failed · 2 out of date".
+- **A "Problems first" sort** brings failed and out-of-date skills — and, when grouped, their groups — to the top.
+- **On a harness that isn't detected, the inspector explains why Deploy, Retry and Enable are off** instead of trying
+  and failing.
+- **In a run's report, problems with a whole skill** (an Edit to review, a failed update) are listed before failures on
+  single harnesses.
+- **Imported skills have their own "Managed here" group** instead of sitting under "Local".
+- **The bulk-action bar wears the same purple edge as the selected rows**, so it is easier to notice.
+- **The bulk Disable and Enable confirmations say in plain sentences** what is removed, turned off or redeployed, and
+  that disabled skills stay in your library.
+- **Un-assigning a skill from a project cell can be undone for five seconds**, right in the cell.
+- **An empty Notifications panel says it covers this session only** and, when any skill has problems, offers "View N
+  skills with issues".
+
+### Internal
+
+- `core/removal_fence.rs` admits every destructive operation by physical identity (the parent resolved, a leaf link
+  never followed), with the configured Library and the app cache directory passed in from the command seam.
+- The store runs WAL with `synchronous = FULL`; legacy-database migration backs up a database and its sidecars as
+  one unit. The SQLite contention test runs on Windows CI again.
+- Test hardening: the secure-delete test is sensitive to its pragma, guard-polling tests no longer flake under load,
+  install-batch and collision-resolution arms are covered, the door's verb table and the i18n unread-key scan are
+  literal and syntax-based, and `styles:check` reads imports from syntax.
+- The reporter's legacy `setError` dialect is gone; `@base-ui/react` is pinned to an exact version, with a browser
+  regression (`scripts/browser/popover-focus.ts`) to run before bumping it.
+- README screenshots recaptured from the fixture.
+
 ## [1.3.2] - 2026-11-05
 
 A patch: four fixes from the 1.3.1 field report, three more fixes the new Windows test run found, and a CI job that
