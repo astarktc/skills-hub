@@ -155,7 +155,7 @@ function setup(options: { skills?: ManagedSkill[]; sharedDir?: boolean; effectiv
   const projects = {
     assignToProject: vi.fn(async (): Promise<ProjectSyncReport> => ({ items: [], skipped_projects: [] })),
     unassignFromProject: vi.fn(async () => EMPTY_REMOVAL),
-    refreshView: vi.fn(async () => true),
+    refreshView: vi.fn(async (_projectId: string) => true),
     projects: [] as ProjectDto[],
   };
   return { skills, sync, projects };
@@ -258,7 +258,6 @@ const reachedAt = (s: Setup, reaches: Row["reaches"]): number[] => {
     command === reaches ? [mockInvoke.mock.invocationCallOrder[i]] : [],
   );
 };
-const reached = (s: Setup, reaches: Row["reaches"]) => reachedAt(s, reaches).length;
 
 describe("the door, verb by verb", () => {
   it.each(VERBS)("$name: reaches the backend once, settles through its fold, keeps the reload rule", async (row) => {
