@@ -9,6 +9,7 @@ import type {
 } from "../components/skills/types";
 import {
   defaultChoices,
+  discoveryInvitation,
   failedGroups,
   importPolicy,
   importResultRows,
@@ -67,6 +68,33 @@ const PLAN: OnboardingPlan = {
 
 const model = (choices: ImportChoices, autoDeploy: boolean, deployTools: string[] = ["claude_code", "cursor"]) =>
   importReviewModel(PLAN, choices, { t, toolLabelById: labels, autoDeploy, deployTools });
+
+describe("discoveryInvitation (#98)", () => {
+  it("invites a review of the discovered skills, counting the invalid manifests beside them", () => {
+    expect(discoveryInvitation(PLAN)).toEqual({ skills: 3, invalid: 1 });
+  });
+
+  it("still invites a review when only invalid manifests remain: unmanaged copies stay visible", () => {
+    expect(discoveryInvitation({ ...PLAN, group_count: 0, copy_count: 0, groups: [] })).toEqual({ skills: 0, invalid: 1 });
+  });
+
+  it("a review of invalid manifests alone lists them and refuses Import with what would make one importable", () => {
+    const invalidOnly = { ...PLAN, group_count: 0, copy_count: 0, groups: [] };
+    const review = importReviewModel(invalidOnly, defaultChoices(invalidOnly), {
+      t,
+      toolLabelById: labels,
+      autoDeploy: true,
+      deployTools: [],
+    });
+    expect(review.invalidRows.map((row) => row.name)).toEqual(["broken-skill"]);
+    expect(review.action.refusal).toBe("importReview.action.nothingImportable");
+  });
+
+  it("invites nothing when the harnesses hold nothing unmanaged, or before a scan", () => {
+    expect(discoveryInvitation({ ...PLAN, group_count: 0, copy_count: 0, groups: [], invalid: [] })).toBeNull();
+    expect(discoveryInvitation(null)).toBeNull();
+  });
+});
 
 describe("defaultChoices (D14)", () => {
   it("checks a new name whose copies agree; a Conflict, a managed name and a failed group start unchecked", () => {
@@ -127,10 +155,15 @@ describe("importReviewModel", () => {
       ["Claude Code", "removed"],
       ["Pi", "chosenRemoved"],
     ]);
+    // Removing them comes before any deploy (#98): with auto-deploy off nothing replaces them.
+    expect(handoff.removeOthersThen).toBe("nothingDeployed");
+    const deploying = model(choices, true).importRows.find((row) => row.name === "handoff")!;
+    expect(deploying.removeOthersThen).toBe("deployed");
     const kept = model({ ...choices, removeOthers: {}, removeOriginals: false }, false).importRows.find(
       (row) => row.name === "handoff",
     )!;
     expect(kept.copies.map((copy) => copy.fate)).toEqual(["leftInPlace", "chosenLeft"]);
+    expect(kept.removeOthersThen).toBeNull();
   });
 
   it("a managed row compares each copy with the managed copy: Replace links the same one and asks about the other", () => {

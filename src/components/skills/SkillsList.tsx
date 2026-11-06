@@ -19,6 +19,7 @@ import {
   syncedStrip,
   type SyncedStrip,
 } from "../../lib/skillPresentation";
+import { discoveryInvitation } from "../../lib/importReview";
 import { GRID_COLUMNS } from "./listColumns";
 import SkillRow, { type SkillRowLayout } from "./SkillRow";
 import SourceGroupHeader from "./SourceGroupHeader";
@@ -95,7 +96,25 @@ const SkillsList = ({
 }: SkillsListProps) => {
   const { displayed, onScreen, groups, viewMode, collapsed, setCollapsed } = lens;
   const layout: SkillRowLayout = viewMode === "list" ? "list" : "card";
-  const discovered = plan?.group_count ?? 0;
+  // The invitation stays while anything unmanaged sits in the harnesses —
+  // discovered skills, or only folders with an invalid SKILL.md (#98).
+  const invitation = discoveryInvitation(plan);
+  const discovered = invitation !== null;
+  const invitationBody = invitation
+    ? invitation.skills > 0
+      ? [
+          t("library.discovered.body", { count: invitation.skills }),
+          invitation.invalid > 0 ? t("library.discovered.invalidToo", { count: invitation.invalid }) : null,
+        ]
+          .filter(Boolean)
+          .join(" ")
+      : t("library.discovered.invalidOnly", { count: invitation.invalid })
+    : null;
+  const invitationReview = invitation
+    ? invitation.skills > 0
+      ? t("library.discovered.review", { count: invitation.skills })
+      : t("library.discovered.reviewInvalid", { count: invitation.invalid })
+    : null;
   const busy = pending !== null;
   const listId = useId();
 
@@ -188,13 +207,9 @@ const SkillsList = ({
         <div className="flex max-w-lg flex-col items-start gap-3 px-8 py-16">
           <h2 className="m-0 text-lg font-semibold text-foreground">{t("library.empty.title")}</h2>
           <p className="m-0 text-sm text-muted-foreground">{t("library.empty.body")}</p>
-          {discovered > 0 ? (
-            <p className="m-0 text-sm text-muted-foreground">
-              {t("library.discovered.body", { count: discovered })}
-            </p>
-          ) : null}
+          {discovered ? <p className="m-0 text-sm text-muted-foreground">{invitationBody}</p> : null}
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            {discovered > 0 ? (
+            {discovered ? (
               <Button
                 data-import-review=""
                 variant="solid"
@@ -208,12 +223,12 @@ const SkillsList = ({
                 aria-description={busy ? (blockedReason ?? undefined) : undefined}
               >
                 <Inbox />
-                {t("library.discovered.review", { count: discovered })}
+                {invitationReview}
               </Button>
             ) : null}
             <Button
-              variant={discovered > 0 ? "outline" : "solid"}
-              tone={discovered > 0 ? "neutral" : "accent"}
+              variant={discovered ? "outline" : "solid"}
+              tone={discovered ? "neutral" : "accent"}
               onClick={onAddGit}
               disabled={busy}
             >
@@ -243,13 +258,13 @@ const SkillsList = ({
       aria-label={t("library.list")}
       role="region"
     >
-      {discovered > 0 ? (
+      {discovered ? (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border bg-card px-4 py-2">
           <Inbox className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
           <p className="m-0 min-w-0 text-sm text-muted-foreground">
             <span className="font-medium text-foreground">{t("library.discovered.title")}</span>
             {" · "}
-            {t("library.discovered.body", { count: discovered })}
+            {invitationBody}
           </p>
           <Button
             variant={discoveryLeads ? "solid" : "outline"}
@@ -265,7 +280,7 @@ const SkillsList = ({
             title={blockedReason ?? undefined}
             aria-description={busy ? (blockedReason ?? undefined) : undefined}
           >
-            {t("library.discovered.review", { count: discovered })}
+            {invitationReview}
           </Button>
         </div>
       ) : null}

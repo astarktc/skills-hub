@@ -160,9 +160,15 @@ function ReviewStep({
   const { counts, selection } = model;
   const allState =
     selection.imports === 0 ? "none" : selection.imports === selection.importable ? "all" : "some";
+  // Only invalid manifests left (#98): the line counts what is there.
+  const invalidOnly = counts.skills === 0 && counts.invalid > 0;
   const countsLine = [
-    t("importReview.counts.skills", { count: counts.skills }),
-    t("importReview.counts.copies", { count: counts.copies, harnesses: t("importReview.counts.harnesses", { count: counts.harnesses }) }),
+    ...(invalidOnly
+      ? []
+      : [
+          t("importReview.counts.skills", { count: counts.skills }),
+          t("importReview.counts.copies", { count: counts.copies, harnesses: t("importReview.counts.harnesses", { count: counts.harnesses }) }),
+        ]),
     ...(counts.invalid > 0 ? [t("importReview.counts.invalid", { count: counts.invalid })] : []),
   ].join(" \u00b7 ");
   const refusal = model.action.refusal;
@@ -179,7 +185,7 @@ function ReviewStep({
           >
             {countsLine}
           </h3>
-          <p className="m-0">{t("importReview.intro")}</p>
+          <p className="m-0">{t(invalidOnly ? "importReview.introInvalidOnly" : "importReview.intro")}</p>
         </div>
 
         {model.importRows.length > 0 ? (
@@ -383,7 +389,11 @@ function ImportGroupItem({ row, review, running, t }: { row: ImportRow; review: 
               <div className="flex min-w-0 flex-col gap-0.5">
                 <FieldLabel>{t("importReview.removeOthers", { count: row.others, name: row.name })}</FieldLabel>
                 <FieldDescription>
-                  {row.removeOthers ? t("importReview.removeOthersOn") : t("importReview.removeOthersOff")}
+                  {row.removeOthersThen === "deployed"
+                    ? t("importReview.removeOthersOn")
+                    : row.removeOthersThen === "nothingDeployed"
+                      ? t("importReview.removeOthersOnLibraryOnly")
+                      : t("importReview.removeOthersOff")}
                 </FieldDescription>
               </div>
             </Field>

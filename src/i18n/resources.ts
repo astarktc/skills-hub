@@ -691,6 +691,13 @@ export const resources = {
           body_other: "{{count}} skills sit in your harnesses' folders (Claude Code, Cursor, Codex, \u2026) and are not in your Library yet.",
           review_one: "Review {{count}} discovered skill",
           review_other: "Review {{count}} discovered skills",
+          // Folders whose SKILL.md the scan refused stay visible (#98).
+          invalidToo_one: "{{count}} more can't be imported: its SKILL.md is invalid.",
+          invalidToo_other: "{{count}} more can't be imported: their SKILL.md files are invalid.",
+          invalidOnly_one: "{{count}} skill folder in your harnesses can't be imported: its SKILL.md is invalid.",
+          invalidOnly_other: "{{count}} skill folders in your harnesses can't be imported: their SKILL.md files are invalid.",
+          reviewInvalid_one: "Review {{count}} skill folder",
+          reviewInvalid_other: "Review {{count}} skill folders",
         },
       },
       // The Deployments strip's marks (read-only, D22): one sentence per mark.
@@ -1461,6 +1468,8 @@ export const resources = {
         },
         intro:
           "These skills sit in your harnesses' folders, but Skills Hub doesn't manage them yet. Importing one copies it into your Library.",
+        introInvalidOnly:
+          "These folders sit in your harnesses, but their SKILL.md can't be read as a skill, so Skills Hub can't import them.",
         sections: {
           new: "New to your Library",
           managed: "Names you already manage",
@@ -1505,7 +1514,11 @@ export const resources = {
         },
         removeOthers_one: "Remove the other copy of {{name}}",
         removeOthers_other: "Remove the {{count}} other copies of {{name}}",
-        removeOthersOn: "The copies that differ from the one you chose are deleted from their harnesses.",
+        // The differing copies go before any deploy (#98): say what that leaves.
+        removeOthersOn:
+          "The copies that differ from the one you chose are deleted from their harnesses first, then the Library skill is deployed to your selected harnesses. A harness the deploy doesn't reach, or where it fails, is left without this skill.",
+        removeOthersOnLibraryOnly:
+          "The copies that differ from the one you chose are deleted from their harnesses. Auto-deploy is off, so those harnesses are left without this skill until you deploy it.",
         removeOthersOff: "Unchecked, the copies that differ stay where they are.",
         lastFailure: "Last import failed: {{reason}}",
         invalidReason: "Can't be imported: {{reason}}",
@@ -1542,6 +1555,7 @@ export const resources = {
           replace_one: "Replace {{count}} skill's copies",
           replace_other: "Replace {{count}} skills' copies",
           nothing: "Select a skill to import, or choose Replace for a name you already manage.",
+          nothingImportable: "Nothing here can be imported yet: fix the SKILL.md in its folder, then review again.",
         },
         result: {
           status: {

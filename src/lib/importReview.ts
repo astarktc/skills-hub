@@ -190,6 +190,15 @@ export type ImportRow = {
   /** A checked Match group: its copies' one fate (they all hold the chosen bytes); `null` otherwise. */
   groupFate: GroupFate | null;
   removeOthers: boolean;
+  /**
+   * What follows removing the differing copies (#98) — they go *before*
+   * any deploy, so the harnesses they sat in rely on what comes next:
+   * `deployed` (auto-deploy on: the Library skill is deployed to the
+   * selected harnesses, and one the deploy misses or fails is left without
+   * it), `nothingDeployed` (auto-deploy off: those harnesses are left
+   * without it). `null` while the copies stay.
+   */
+  removeOthersThen: "deployed" | "nothingDeployed" | null;
   /** The harnesses holding a copy, labelled, in plan order. */
   harnesses: string[];
   /** The last import of this group failed: why, in words. */
@@ -244,6 +253,19 @@ const labelOf = (labels: Labels, tool: string) => labels[tool] ?? tool;
 const unique = (values: readonly string[]) => [...new Set(values)];
 
 /** The review of a plan under the operator's choices. */
+/**
+ * My Skills' invitation to review what sits unmanaged in the harnesses, from
+ * the banner's plan: the discovered skills, and the folders whose `SKILL.md`
+ * the scan refused. Either alone keeps the invitation up — an invalid copy in
+ * a harness folder is still an unmanaged skill the operator should see (#98).
+ * `null` when there is nothing, or no plan yet.
+ */
+export function discoveryInvitation(plan: OnboardingPlan | null): { skills: number; invalid: number } | null {
+  if (!plan) return null;
+  const invitation = { skills: plan.group_count, invalid: plan.invalid.length };
+  return invitation.skills > 0 || invitation.invalid > 0 ? invitation : null;
+}
+
 export function importReviewModel(plan: OnboardingPlan, choices: ImportChoices, ctx: ReviewContext): ImportReviewModel {
   const { t, toolLabelById: labels, autoDeploy, deployTools } = ctx;
   const failures = ctx.lastFailures ?? {};
@@ -320,6 +342,7 @@ export function importReviewModel(plan: OnboardingPlan, choices: ImportChoices, 
       others: group.variants.filter((variant) => !sameAsChosen(group, variant, chosenPath)).length,
       groupFate: checked && !group.has_conflict ? (autoDeploy ? "linked" : choices.removeOriginals ? "removed" : "leftInPlace") : null,
       removeOthers,
+      removeOthersThen: removeOthers ? (autoDeploy ? "deployed" : "nothingDeployed") : null,
       harnesses,
       lastFailure: failures[group.name] ?? null,
     });
@@ -336,6 +359,9 @@ export function importReviewModel(plan: OnboardingPlan, choices: ImportChoices, 
   const imports = importRows.filter((row) => row.checked).length;
   const replaces = managedRows.filter((row) => row.replace).length;
   const action = (): { label: string; refusal: string | null } => {
+    // Only folders whose SKILL.md was refused: nothing to select (#98).
+    if (importRows.length === 0 && managedRows.length === 0)
+      return { label: t("importReview.action.import"), refusal: t("importReview.action.nothingImportable") };
     if (imports === 0 && replaces === 0)
       return { label: t("importReview.action.import"), refusal: t("importReview.action.nothing") };
     if (imports === 0) return { label: t("importReview.action.replace", { count: replaces }), refusal: null };

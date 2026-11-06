@@ -924,7 +924,10 @@ skill. Shape carries the state; colour only reinforces it; the strip was checked
   words, no amber) — "Skills already in your harnesses · 12 skills sit in your harnesses' folders…" — with **Review N
   discovered skills**. While the discovery outweighs the library (N ≥ library size) Review is the one
   `solid accent` action and Add skill steps back to `outline`; otherwise Review is `outline accent` and the list's
-  real issues lead. In an empty library with discoveries, Review leads the empty state's buttons.
+  real issues lead. In an empty library with discoveries, Review leads the empty state's buttons. Folders whose
+  `SKILL.md` the scan refused keep the row up (#98): beside discoveries one more sentence ("1 more can't be imported:
+  its SKILL.md is invalid."); alone, the row says so and offers **Review N skill folders** — an unmanaged copy in a
+  harness folder is always visible.
 - **The rare delight** (D6; built with Import's migration, ticket 21): when the Result of an import that added
   ≥ 10 skills with auto-deploy on is closed — the moment the list is on screen again — the imported rows' strips
   light mark by mark, left to right, 20 ms apart (opacity 0 → 1, each ≤ 120 ms, `ease-out`), once. The composite
@@ -1376,7 +1379,9 @@ dismissed for good.
   Not dismissible while its own import runs; its progress (`HeaderProgress placement="dialog"`) sits at its foot.
 - **Counts** (the Review's first focus, an `h3` `sm` semibold `tabular-nums`): "12 skills · 22 copies in 6 harnesses
   · 1 can't be imported" — name-groups and copies counted separately (D14), the harnesses holding a copy, the
-  invalid manifests. One sentence under it says what importing does.
+  invalid manifests. One sentence under it says what importing does. With only invalid manifests left the line is
+  "1 can't be imported", the sentence says why, and Import is refused with "Nothing here can be imported yet: fix the
+  SKILL.md in its folder, then review again."
 - **Rows** in three bordered lists, each under its `h4`:
   - **New to your Library** — one row per name the Library does not hold: a Checkbox named by the name (its badge
     in the label), described by where the copies are, the copy's description and modified time. "Select all" (over
@@ -1391,7 +1396,10 @@ dismissed for good.
     by a link to it / is then removed / is left in place" (`foreground` medium); a copy that differs "Removed"
     (`failed`), "Left in place", or "Left in place until you answer: you're asked before a link replaces it" (a kept
     copy in a harness auto-deploy reaches — D12's ask decides). Choosing a copy checks the row. Under the radios one
-    Checkbox per Conflict, **"Remove the other copy of handoff"** (default unchecked = keep), described by what it does.
+    Checkbox per Conflict, **"Remove the other copy of handoff"** (default unchecked = keep), described by what it does
+    — checked, including what that leaves: the differing copies go *before* any deploy, so with auto-deploy on a
+    harness the deploy doesn't reach, or where it fails, is left without the skill; with it off, every such harness is
+    (#98).
   - **Names you already manage** — one row per managed-name group, starting at **Leave**: the name + "In your
     Library" (`soft neutral`), "You already manage a skill named tdd, so this one can't be imported under that name",
     then each copy (harness — path) **compared with your managed copy**: "Same as your managed copy" (muted) or
