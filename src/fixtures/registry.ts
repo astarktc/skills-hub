@@ -15,6 +15,8 @@ export type FixtureTool = {
   projectDir: string | null;
   /** Absorbed into the AGENTS-standard virtual group at project scope. */
   grouped: boolean;
+  /** The registry's `supports_symlink`; omitted = `true` (every row but Deep Agents Code). */
+  supportsSymlink?: false;
 };
 
 /**
@@ -126,7 +128,7 @@ export const TOOL_REGISTRY: readonly FixtureTool[] = [
   { key: "stakpak", label: "Stakpak", globalDir: ".stakpak/skills", projectDir: ".stakpak/skills", grouped: false },
   // round 20 ticket 06 rows (Reasonix's Windows `%APPDATA%` override is not modelled)
   { key: "grok_build", label: "Grok Build", globalDir: ".grok/skills", projectDir: ".grok/skills", grouped: false },
-  { key: "deep_agents_code", label: "Deep Agents Code", globalDir: ".deepagents/agent/skills", projectDir: ".deepagents/skills", grouped: false },
+  { key: "deep_agents_code", label: "Deep Agents Code", globalDir: ".deepagents/agent/skills", projectDir: ".deepagents/skills", grouped: false, supportsSymlink: false },
   { key: "reasonix", label: "Reasonix", globalDir: ".reasonix/skills", projectDir: ".reasonix/skills", grouped: false },
   { key: "cortex_code", label: "Cortex Code", globalDir: ".snowflake/cortex/skills", projectDir: ".cortex/skills", grouped: false },
   { key: "rovo_dev", label: "Rovo Dev", globalDir: ".rovodev/skills", projectDir: ".rovodev/skills", grouped: false },

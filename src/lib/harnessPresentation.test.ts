@@ -208,8 +208,8 @@ describe("reader-only pairs", () => {
     ] ?? key;
   const K = "settingsDialog.harnesses.duplicates";
 
-  it("pairs the reader with the other harness only while its group entry is selected too", () => {
-    expect(duplicatePairs(READ_ONLY, new Set(["claude_code", "codex"]))).toEqual([]);
+  it("pairs the reader with the other harness via its group entry while that entry is selected", () => {
+    expect(duplicatePairs(READ_ONLY, new Set(["claude_code"]))).toEqual([]);
     expect(duplicatePairs(READ_ONLY, new Set(["agents_skills", "claude_code"]))).toEqual([
       { reader: "fx_reader", other: "claude_code", behaviour: "loads_none", via: "agents_skills" },
     ]);
@@ -227,6 +227,19 @@ describe("reader-only pairs", () => {
       `${K}.reads.loadsNone {"reader":"fx","harnesses":"Claude Code and Codex","count":2} ` +
         `${K}.readBy.showsTwice {"readers":"Cursor","harness":".agents/skills","count":1}`,
     );
+  });
+
+  it("without its group entry, pairs the reader among two selected folders it reads (round 20 rows review)", () => {
+    // fx reads Claude Code's and Codex's folders: deploying one skill to both breaks `$name` in fx, AGENTS or not.
+    expect(duplicatePairs(READ_ONLY, new Set(["claude_code", "codex"]))).toEqual([
+      { reader: "fx_reader", other: "claude_code", behaviour: "loads_none", among: true },
+      { reader: "fx_reader", other: "codex", behaviour: "loads_none", among: true },
+    ]);
+    const pairs = duplicatePairs(READ_ONLY, new Set(["claude_code", "codex"]));
+    expect(duplicateWarning(pairs, "claude_code", names, t)).toBe(
+      `${K}.among.loadsNone {"reader":"fx","harnesses":"Claude Code and Codex"}`,
+    );
+    expect(pairsInvolving(pairs, "codex")).toHaveLength(1);
   });
 
   it("warns on the other harness's row that the reader reads its folder", () => {

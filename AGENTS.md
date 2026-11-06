@@ -124,7 +124,8 @@ than re-tagging.
   optional**: `None` keeps the harness out of `project_tool_entries` and every project-scope admission
   (`project_adapter_by_key`) and its README cell reads `—`. A harness that reads `~/.agents/skills` and has no
   folder of its own is a **reader-only harness**: one `ReaderOnlyHarness` literal in `READER_ONLY_HARNESSES` (key,
-  label, detect dirs, the `group` it reads, its `reads` facts — restated in `every_reader_only_row_restates_its_brief_read_facts`,
+  label, detect dirs, its own `skills_dirs` (never deployed to — only so `reader_installed_in` applies the
+  skills-only-footprint rule), the `group` it reads, its `reads` facts — restated in `every_reader_only_row_restates_its_brief_read_facts`,
   its pairs resolved with the group entry's folder as its own and carried on `ReaderHarnessDto.duplicate_readers`) — never
   a `ToolId`, never a target; the catalogs list it under its group's
   entry (`ToolInfoDto.readers`) and absorb it into the project group's roster, whose "(N harnesses)" count the

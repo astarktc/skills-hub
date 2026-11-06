@@ -1688,6 +1688,11 @@ export const resources = {
               flagsConflict_one: "{{reader}} also reads the {{harnesses}} folder \u2014 a skill deployed to both is flagged as a conflict in {{reader}}.",
               flagsConflict_other: "{{reader}} also reads the {{harnesses}} folders \u2014 a skill deployed to {{reader}} and one of them is flagged as a conflict in {{reader}}.",
             },
+            among: {
+              showsTwice: "{{reader}} reads the {{harnesses}} folders \u2014 a skill deployed to more than one of them shows twice in {{reader}}.",
+              loadsNone: "{{reader}} reads the {{harnesses}} folders \u2014 a skill deployed to more than one of them can\u2019t be invoked by name in {{reader}}.",
+              flagsConflict: "{{reader}} reads the {{harnesses}} folders \u2014 a skill deployed to more than one of them is flagged as a conflict in {{reader}}.",
+            },
             readBy: {
               showsTwice_one: "{{readers}} also reads the {{harness}} folder \u2014 a skill deployed to both shows twice in {{readers}}.",
               showsTwice_other: "{{readers}} also read the {{harness}} folder \u2014 a skill deployed to {{harness}} and to them shows twice in each.",

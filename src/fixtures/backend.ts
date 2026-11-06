@@ -1634,7 +1634,7 @@ export function createFixtureBackend(
         placement: {
           skills_dir: `~/${t.globalDir}`,
           detect_dirs: [`~/${fixtureDetectDir(t.globalDir)}`],
-          supports_symlink: true,
+          supports_symlink: t.supportsSymlink ?? true,
         },
         duplicate_readers: duplicateReads(t.key),
       })),
