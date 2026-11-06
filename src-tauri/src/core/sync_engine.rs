@@ -513,16 +513,20 @@ fn remove_entry(path: &Path, ft: std::fs::FileType) -> Result<()> {
 }
 
 /// Whether the OS refused for lack of permission: the `PermissionDenied`
-/// kind, or on Windows `ERROR_ACCESS_DENIED` (5) and `ERROR_SHARING_VIOLATION`
-/// (32, another process holds the file) whatever kind a wrapper reports —
-/// gated to Windows because raw 5 is EIO on Unix.
+/// kind, a read-only volume (`ReadOnlyFilesystem`, EROFS), or on Windows
+/// `ERROR_ACCESS_DENIED` (5), `ERROR_WRITE_PROTECT` (19, write-protected
+/// media) and `ERROR_SHARING_VIOLATION` (32, another process holds the file)
+/// whatever kind a wrapper reports — gated to Windows because raw 5 is EIO
+/// on Unix.
 fn is_permission_denied(err: &anyhow::Error) -> bool {
     err.chain().any(|cause| {
         cause
             .downcast_ref::<std::io::Error>()
             .is_some_and(|io_err| {
-                io_err.kind() == std::io::ErrorKind::PermissionDenied
-                    || (cfg!(windows) && matches!(io_err.raw_os_error(), Some(5 | 32)))
+                matches!(
+                    io_err.kind(),
+                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+                ) || (cfg!(windows) && matches!(io_err.raw_os_error(), Some(5 | 19 | 32)))
             })
     })
 }
