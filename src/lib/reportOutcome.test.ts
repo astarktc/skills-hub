@@ -2475,6 +2475,7 @@ describe("libraryMoveOutcome", () => {
     "destination_missing",
     "replaced",
     "stale_journal",
+    "set_aside",
   ] as const;
 
   const moved = (id: string): LibraryMoveReport["skills"][number] => ({
@@ -2720,6 +2721,7 @@ describe("libraryMoveOutcome", () => {
         'libraryMove.report.staleJournalTitle {"name":"a"}',
         'libraryMove.report.staleJournalMessage {"path":"/old/stale_journal"}',
       ],
+      ['libraryMove.report.setAsideTitle {"name":"a"}', 'libraryMove.report.setAsideMessage {"path":"/old/set_aside"}'],
     ]);
     expect(outcome.warnings.every((entry) => entry.subject?.skillId === "a")).toBe(true);
   });

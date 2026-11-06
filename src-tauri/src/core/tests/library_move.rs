@@ -1848,3 +1848,141 @@ fn the_compared_extended_attributes_are_the_ones_a_process_owns() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Round-4 regressions: the round-3 reviews' probes
+// (`.scratch/reviews/round20-t03-move-library-review.md` § Round 3 reviews).
+// ---------------------------------------------------------------------------
+
+/// A move interrupted — as a crash would — right after its clean renamed
+/// the first old copy aside. Answers that skill (id, old path, link).
+fn crash_after_set_aside(f: &Fixture, skills: &[(String, PathBuf, PathBuf)]) -> (String, PathBuf) {
+    use crate::core::library_move::test_seams;
+    test_seams::crash_after_set_aside();
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f.run())).is_err());
+    let (id, old, _) = skills
+        .iter()
+        .find(|(_, old, _)| !old.exists())
+        .expect("one old copy is set aside");
+    (id.clone(), old.clone())
+}
+
+/// The `.skills-hub-clean-*` folders in the old Library folder.
+fn set_aside_dirs(root: &Path) -> Vec<PathBuf> {
+    fs::read_dir(root)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(".skills-hub-clean-")
+        })
+        .map(|e| e.path())
+        .collect()
+}
+
+/// A1 / S4 (`review_aside_missing_destination_restores_last_copy`): a crash
+/// right after an old copy was renamed aside, then its new copy is deleted.
+/// The set-aside copy is the last one: the resume puts it back at its own
+/// path and names it with its skill — never an anonymous `unrecorded`.
+#[test]
+fn review_aside_missing_destination_restores_last_copy() {
+    use crate::core::library_move::resume_library_move;
+    let (f, skills, _) = crash_fixture();
+    let (id, old) = crash_after_set_aside(&f, &skills);
+    fs::remove_dir_all(f.central(&id)).unwrap();
+
+    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
+        .expect("resume")
+        .expect("a move is pending");
+
+    assert!(
+        old.join("SKILL.md").is_file(),
+        "the last copy is back at its own path"
+    );
+    assert_no_set_aside_left(&f.paths.central_dir);
+    let item = report
+        .left_behind
+        .iter()
+        .find(|item| PathBuf::from(&item.path) == old)
+        .unwrap_or_else(|| panic!("{old:?} reported: {:?}", report.left_behind));
+    assert_eq!(item.reason, LeftBehindReason::DestinationMissing);
+    assert_eq!(item.skill_id.as_deref(), Some(id.as_str()));
+    assert!(
+        left_behind(&report, LeftBehindReason::Unrecorded).is_empty(),
+        "{:?}",
+        report.left_behind
+    );
+}
+
+/// A1 / S4 (`review_aside_replaced_old_is_reported_with_skill_identity`): a
+/// crash right after an old copy was renamed aside, then another folder
+/// takes its old path. The replacement is never touched; the set-aside copy
+/// stays where it is and is reported there, with its skill.
+#[test]
+fn review_aside_replaced_old_is_reported_with_skill_identity() {
+    use crate::core::library_move::resume_library_move;
+    let (f, skills, _) = crash_fixture();
+    let (id, old) = crash_after_set_aside(&f, &skills);
+    let aside = set_aside_dirs(&f.paths.central_dir)
+        .pop()
+        .expect("a set-aside folder")
+        .join(old.file_name().unwrap());
+    fs::create_dir_all(&old).unwrap();
+    fs::write(old.join("mine.txt"), "the operator's").unwrap();
+
+    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
+        .expect("resume")
+        .expect("a move is pending");
+
+    assert_eq!(
+        fs::read_to_string(old.join("mine.txt")).unwrap(),
+        "the operator's",
+        "the replacement survives"
+    );
+    assert!(aside.join("SKILL.md").is_file(), "the set-aside copy stays");
+    let item = report
+        .left_behind
+        .iter()
+        .find(|item| item.reason == LeftBehindReason::SetAside)
+        .unwrap_or_else(|| panic!("the set-aside copy reported: {:?}", report.left_behind));
+    assert_eq!(PathBuf::from(&item.path), aside);
+    assert_eq!(item.skill_id.as_deref(), Some(id.as_str()));
+    assert!(
+        left_behind(&report, LeftBehindReason::Unrecorded).is_empty(),
+        "nothing of it reads as unrecorded: {:?}",
+        report.left_behind
+    );
+}
+
+/// A1 / S4: a journal that no longer describes the Library touches nothing
+/// — but a copy its own clean had renamed aside is put back where it was,
+/// not left hidden.
+#[test]
+fn a_stale_journal_puts_a_set_aside_copy_back() {
+    use crate::core::library_move::resume_library_move;
+    let (f, skills, _) = crash_fixture();
+    let (id, old) = crash_after_set_aside(&f, &skills);
+    let mut journal = journal_json(&f);
+    journal["to"] = f
+        .dir
+        .path()
+        .join("some-other-library")
+        .to_string_lossy()
+        .into_owned()
+        .into();
+    write_journal(&f, &journal);
+
+    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
+        .expect("resume")
+        .expect("a move was pending");
+
+    assert!(old.join("SKILL.md").is_file(), "put back at its own path");
+    assert_no_set_aside_left(&f.paths.central_dir);
+    assert!(report
+        .left_behind
+        .iter()
+        .any(|item| PathBuf::from(&item.path) == old
+            && item.reason == LeftBehindReason::StaleJournal
+            && item.skill_id.as_deref() == Some(id.as_str())));
+}

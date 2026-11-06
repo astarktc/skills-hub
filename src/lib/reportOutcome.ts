@@ -1755,6 +1755,10 @@ const KEPT_OLD_COPY_KEYS: Record<KeptOldCopyReason, { title: string; message: st
     title: "libraryMove.report.staleJournalTitle",
     message: "libraryMove.report.staleJournalMessage",
   },
+  set_aside: {
+    title: "libraryMove.report.setAsideTitle",
+    message: "libraryMove.report.setAsideMessage",
+  },
 };
 
 function keptOldCopyKeys(reason: LeftBehindReason): { title: string; message: string } | undefined {

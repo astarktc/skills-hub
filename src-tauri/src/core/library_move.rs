@@ -318,6 +318,11 @@ pub enum LeftBehindReason {
     /// Library folder or the skill's record changed since): nothing of it
     /// is touched.
     StaleJournal,
+    /// A moved skill's old copy that an interrupted clean had renamed aside
+    /// (into a `.skills-hub-clean-*` folder in the old Library folder) and
+    /// that could not be put back — its old path is taken: kept where it is,
+    /// at `path`, never removed.
+    SetAside,
 }
 
 // ---------------------------------------------------------------------------
@@ -438,7 +443,9 @@ pub fn move_library(
 /// Library configured now (`central_dir`): Re-point and Clean every skill
 /// its journal still describes (idempotent — a link already re-pointed is
 /// re-made into the same copy, an old copy already removed is absent, one a
-/// crash left renamed aside is put back first), then drop the journal.
+/// crash left renamed aside is put back first — or, when its old path is
+/// taken, reported where it is with its skill, `set_aside`), then drop the
+/// journal.
 /// `None` when no move is pending, or its journal could not be read (it is
 /// dropped and logged; nothing is removed). Run once at startup, before
 /// anything else can mutate; [`move_library`] also runs it first.
@@ -511,6 +518,24 @@ fn resume_unlocked(
             error: None,
         })
     };
+    // Before anything is decided, every old copy an interrupted clean had
+    // renamed aside is found by its identity: put back at its old path when
+    // that is free; otherwise it stays where it is and is reported there,
+    // with its skill, beside what took its path — and that skill is settled
+    // no further. An app-made recovery copy is never left anonymous.
+    let set_aside = |entry: &JournaledMove, left_behind: &mut Vec<LeftBehind>| -> Result<bool> {
+        let Some(aside) = locate_old_copy(&from, entry)? else {
+            return Ok(false);
+        };
+        left_behind.push(LeftBehind {
+            path: aside.to_string_lossy().into_owned(),
+            reason: LeftBehindReason::SetAside,
+            skill_id: Some(entry.skill_id.clone()),
+            error: None,
+        });
+        left_behind.extend(left(entry, LeftBehindReason::Replaced));
+        Ok(true)
+    };
 
     // A journal of another Library (the setting changed since) describes
     // nothing that is true now.
@@ -520,11 +545,12 @@ fn resume_unlocked(
             to,
             central_dir
         );
-        let left_behind = journal
-            .moves
-            .iter()
-            .filter_map(|entry| left(entry, LeftBehindReason::StaleJournal))
-            .collect();
+        let mut left_behind = Vec::new();
+        for entry in &journal.moves {
+            if !set_aside(entry, &mut left_behind)? {
+                left_behind.extend(left(entry, LeftBehindReason::StaleJournal));
+            }
+        }
         settings::finish_library_move(store)?;
         return Ok(Some(LibraryMoveReport {
             from: journal.from,
@@ -539,6 +565,9 @@ fn resume_unlocked(
     let mut left_behind = Vec::new();
     for entry in &journal.moves {
         let (old, new) = (PathBuf::from(&entry.old), PathBuf::from(&entry.new));
+        if set_aside(entry, &mut left_behind)? {
+            continue;
+        }
         // The record is still the one the switch wrote.
         let mut skill = match store.get_skill_by_id(&entry.skill_id)? {
             Some(skill) if Path::new(&skill.central_path) == new => skill,
@@ -551,11 +580,6 @@ fn resume_unlocked(
         if EntryId::of(&new)? != Some(entry.new_id) {
             left_behind.extend(left(entry, LeftBehindReason::DestinationMissing));
             continue;
-        }
-        // A crash between the clean's rename aside and its removal left the
-        // old copy renamed aside: put it back where the journal names it.
-        if !present(&old) && in_library_folder(&old, &from) {
-            restore_set_aside(&from, &old, entry.old_id)?;
         }
         // The old copy, when still there, is still the folder the move
         // copied (absent: already cleaned).
@@ -593,8 +617,7 @@ fn settle(
     on_progress: &mut impl FnMut(LibraryMoveProgress),
 ) -> Result<LibraryMoveReport> {
     let deployments = relink_phase(store, new_root, moved, now, on_progress)?;
-    let mut left_behind = clean_phase(store, old_root, new_root, moved, on_progress)?;
-    left_behind.extend(left);
+    let left_behind = clean_phase(store, old_root, new_root, moved, left, on_progress)?;
     #[cfg(test)]
     test_seams::before_journal_clear();
     settings::finish_library_move(store)?;
@@ -1964,12 +1987,15 @@ const SET_ASIDE_PREFIX: &str = ".skills-hub-clean-";
 /// * set aside and compared again, it is not the same as the new copy
 ///   (`changed_since_copy`), or its removal failed (`removal_failed`).
 ///
-/// Retention is decided over physical copies, never per skill id.
+/// Retention is decided over physical copies, never per skill id. `left` —
+/// what the caller already decided to leave — is reported among what stays,
+/// never again as `unrecorded`.
 fn clean_phase(
     store: &SkillStore,
     old_root: &Path,
     dest: &Path,
     moved: &[Moved],
+    left: Vec<LeftBehind>,
     on_progress: &mut impl FnMut(LibraryMoveProgress),
 ) -> Result<Vec<LeftBehind>> {
     let records = store.list_skills()?;
@@ -1986,7 +2012,7 @@ fn clean_phase(
             .filter(|skill| !moved_ids.contains(skill.id.as_str())),
     )?;
     let total = moved.len() as u32;
-    let mut kept: Vec<LeftBehind> = Vec::new();
+    let mut kept: Vec<LeftBehind> = left;
     for (done, m) in moved.iter().enumerate() {
         on_progress(LibraryMoveProgress {
             phase: LibraryMovePhase::Cleaning,
@@ -2046,6 +2072,12 @@ fn clean_phase(
             error: None,
         });
         let kept_paths: HashSet<PathBuf> = kept.iter().map(|k| PathBuf::from(&k.path)).collect();
+        // A set-aside folder holding an old copy reported kept is that copy's.
+        let holds_kept = |path: &Path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(SET_ASIDE_PREFIX))
+                && kept_paths.iter().any(|kept| kept.starts_with(path))
+        };
         let recorded: HashSet<PathBuf> = store
             .list_skills()?
             .into_iter()
@@ -2057,7 +2089,9 @@ fn clean_phase(
                     .filter_map(|entry| entry.ok())
                     .filter(|entry| !is_scratch(&entry.file_name().to_string_lossy()))
                     .map(|entry| entry.path())
-                    .filter(|path| !kept_paths.contains(path) && !recorded.contains(path))
+                    .filter(|path| {
+                        !kept_paths.contains(path) && !recorded.contains(path) && !holds_kept(path)
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -2219,40 +2253,69 @@ fn put_back(aside: &Path, aside_dir: &Path, old: &Path) -> PathBuf {
     }
 }
 
-/// A crash between a clean's rename aside and its removal leaves the old
-/// copy at `<from>/.skills-hub-clean-<uuid>/<name>`: put the one whose
-/// identity is `old_id` back at `old` (absent), so the resume settles it
-/// like any other.
-fn restore_set_aside(from: &Path, old: &Path, old_id: EntryId) -> Result<()> {
-    let Some(name) = old.file_name() else {
-        return Ok(());
+/// Find a journaled old copy a crash left renamed aside — between a clean's
+/// rename aside and its removal it sits at
+/// `<from>/.skills-hub-clean-<uuid>/<name>`, found by its journaled
+/// identity, never by its name alone. Put back at its old path when that is
+/// free (`None`: the resume then settles it like any other); answers where
+/// it stays when its old path is taken or the rename back fails (never
+/// replaced, never removed). `None` too when nothing is set aside: the old
+/// copy is at its path, or already cleaned. Only an old copy directly inside
+/// the old Library folder `from` is ever set aside, so only that is looked
+/// for.
+fn locate_old_copy(from: &Path, entry: &JournaledMove) -> Result<Option<PathBuf>> {
+    let old = Path::new(&entry.old);
+    let Some(name) = old.file_name().filter(|_| in_library_folder(old, from)) else {
+        return Ok(None);
     };
+    if EntryId::of(old)? == Some(entry.old_id) {
+        return Ok(None);
+    }
     let entries = match std::fs::read_dir(from) {
         Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err).with_context(|| format!("read {:?}", from)),
     };
-    for entry in entries.filter_map(|entry| entry.ok()) {
-        if !entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with(SET_ASIDE_PREFIX)
-        {
-            continue;
-        }
-        let candidate = entry.path().join(name);
-        if EntryId::of(&candidate).ok().flatten() == Some(old_id) {
-            std::fs::rename(&candidate, old)
-                .with_context(|| format!("put {:?} back at {:?}", candidate, old))?;
-            remove_empty_dir(&entry.path());
+    let found = entries
+        .filter_map(|entry| entry.ok())
+        .filter(|dir| {
+            dir.file_name()
+                .to_string_lossy()
+                .starts_with(SET_ASIDE_PREFIX)
+        })
+        .map(|dir| dir.path().join(name))
+        .find(|candidate| EntryId::of(candidate).ok().flatten() == Some(entry.old_id));
+    let Some(aside) = found else {
+        return Ok(None);
+    };
+    if present(old) {
+        log::warn!(
+            "[library move] {:?} is taken; the old copy set aside at {:?} stays there",
+            old,
+            aside
+        );
+        return Ok(Some(aside));
+    }
+    match std::fs::rename(&aside, old) {
+        Ok(()) => {
+            if let Some(dir) = aside.parent() {
+                remove_empty_dir(dir);
+            }
             log::info!(
                 "[library move] put the old copy set aside at {:?} back",
-                candidate
+                aside
             );
-            break;
+            Ok(None)
+        }
+        Err(err) => {
+            log::warn!(
+                "[library move] could not put {:?} back at {:?}: {err}",
+                aside,
+                old
+            );
+            Ok(Some(aside))
         }
     }
-    Ok(())
 }
 
 /// Remove the set-aside folder `dir` if it is empty. `remove_dir` removes

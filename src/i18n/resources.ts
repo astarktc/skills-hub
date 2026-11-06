@@ -1776,6 +1776,9 @@ export const resources = {
           staleJournalTitle: "An interrupted move of {{name}} was left alone",
           staleJournalMessage:
             "Your Library changed since the move was interrupted, so Skills Hub didn't touch {{path}}.",
+          setAsideTitle: "The old copy of {{name}} is in a recovery folder",
+          setAsideMessage:
+            "An interrupted move set it aside at {{path}}, and something else now has its old place, so Skills Hub left it there. Move it back or remove it yourself once you no longer need it.",
           oldLibraryLine: "Your old Library folder stays at {{path}}.",
           unrecordedLine: "Left in the old folder: {{path}}",
           copiesLine_one: "{{count}} copied deployment left as it is.",

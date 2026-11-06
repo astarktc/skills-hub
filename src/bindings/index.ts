@@ -901,7 +901,14 @@ export type LeftBehindReason =
  *  Library folder or the skill's record changed since): nothing of it
  *  is touched.
  */
-"stale_journal";
+"stale_journal" |
+/**
+ *  A moved skill's old copy that an interrupted clean had renamed aside
+ *  (into a `.skills-hub-clean-*` folder in the old Library folder) and
+ *  that could not be put back — its old path is taken: kept where it is,
+ *  at `path`, never removed.
+ */
+"set_aside";
 
 /**
  *  Why Move Library folder refused a destination (the backend classifies;
