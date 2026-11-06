@@ -6,7 +6,7 @@
 
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ManagedSkill, SkillTargetDto } from "../components/skills/types";
+import type { ManagedSkill, SkillTargetDto, ToolInfoDto } from "../components/skills/types";
 import { useHarnessSelection, type HarnessSelectionDeps } from "./useHarnessSelection";
 import type { AskAnswer } from "./useSurfaceState";
 import type { HarnessSaveResult } from "./useSyncOrchestration";
@@ -62,6 +62,8 @@ type SetupOptions = {
   /** The selection as saved after each write (the sync world's echo). */
   saved?: string[];
   result?: HarnessSaveResult;
+  /** The Tool catalog's global list (its cross-read pairs). */
+  catalog?: ToolInfoDto[];
 };
 
 function setup({
@@ -71,6 +73,7 @@ function setup({
   answer = "confirmed",
   saved = ["cursor"],
   result = "saved",
+  catalog = [],
 }: SetupOptions = {}) {
   const savedSelection = { current: saved as readonly string[] | null };
   const setHarnessSelected = vi.fn(async (): Promise<HarnessSaveResult> => result);
@@ -86,6 +89,7 @@ function setup({
       useHarnessSelection({
         sync: { setHarnessSelected, autoSyncEnabled: props.autoSync, readSavedSelection },
         installed: props.installed,
+        catalog,
         skills: props.skills,
         labelOf: (id) => id.toUpperCase(),
         // SAFETY: the mocks answer the narrowed signatures the hook calls.
@@ -116,7 +120,13 @@ describe("useHarnessSelection", () => {
     expect(setHarnessSelected).toHaveBeenCalledWith("cursor", true);
     // The deploy waits out the import-plan rescan the save started.
     expect(whenIdle).toHaveBeenCalledTimes(1);
-    expect(ask).toHaveBeenCalledWith({ kind: "deployHarness", toolKey: "cursor", toolLabel: "CURSOR", count: 2 });
+    expect(ask).toHaveBeenCalledWith({
+      kind: "deployHarness",
+      toolKey: "cursor",
+      toolLabel: "CURSOR",
+      count: 2,
+      duplicates: [],
+    });
     expect(run).toHaveBeenCalledTimes(1);
     const [verb, skills, opts] = run.mock.calls[0] as unknown as [string, ManagedSkill[], unknown];
     expect(verb).toBe("syncToTargets");
@@ -148,6 +158,43 @@ describe("useHarnessSelection", () => {
     const { setSelected, ask } = setup({ result });
     await act(() => setSelected("cursor", true));
     expect(ask).not.toHaveBeenCalled();
+  });
+});
+
+// Round 20 ticket 02: the ask repeats the cross-read warning when turning the
+// harness on completes a pair (the other harness already selected).
+describe("useHarnessSelection cross-read warning", () => {
+  const info = (key: string, keys: string[] = []): ToolInfoDto => ({
+    key,
+    label: key,
+    installed: true,
+    shared_with: [key],
+    constituents: [],
+    readers: [],
+    placement: null,
+    duplicate_readers: keys.length > 0 ? { keys, behaviour: "shows_all" } : null,
+  });
+  const CATALOG = [info("cursor", ["claude"]), info("claude")];
+
+  it("carries the pairs turning the harness on completes, as the reader or the one read", async () => {
+    const reader = setup({ catalog: CATALOG, saved: ["cursor", "claude"] });
+    await act(() => reader.setSelected("cursor", true));
+    expect(reader.ask).toHaveBeenCalledWith(
+      expect.objectContaining({ duplicates: [{ reader: "cursor", other: "claude", behaviour: "shows_all" }] }),
+    );
+
+    cleanup();
+    const read = setup({ catalog: CATALOG, saved: ["cursor", "claude"] });
+    await act(() => read.setSelected("claude", true));
+    expect(read.ask).toHaveBeenCalledWith(
+      expect.objectContaining({ toolKey: "claude", duplicates: [{ reader: "cursor", other: "claude", behaviour: "shows_all" }] }),
+    );
+  });
+
+  it("carries none while the other harness is not selected", async () => {
+    const { setSelected, ask } = setup({ catalog: CATALOG, saved: ["claude"] });
+    await act(() => setSelected("claude", true));
+    expect(ask).toHaveBeenCalledWith(expect.objectContaining({ duplicates: [] }));
   });
 });
 
@@ -191,7 +238,7 @@ describe("useHarnessSelection eligibility (audit F2)", () => {
     const skills = [skill("a"), skill("b", { targets: [target("cursor", "synced")] }), skill("c"), skill("d", { targets: [target("claude", "synced")] })];
     const { setSelected, ask } = setup({ skills });
     await act(() => setSelected("cursor", true));
-    expect(ask).toHaveBeenCalledWith({ kind: "deployHarness", toolKey: "cursor", toolLabel: "CURSOR", count: 3 });
+    expect(ask).toHaveBeenCalledWith(expect.objectContaining({ kind: "deployHarness", toolKey: "cursor", count: 3 }));
   });
 
   it("a harness that stops being detected before dispatch deploys nothing", async () => {

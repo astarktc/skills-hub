@@ -1,5 +1,5 @@
-import { useId, useRef, useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { useId, useState } from "react";
+import { ChevronRight, TriangleAlert } from "lucide-react";
 import type { TFunction } from "i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,8 +7,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import type { ToolInfoDto, ToolStatusDto } from "../skills/types";
-import { visibleToolChoices } from "../../lib/skillPresentation";
+import type { ReaderHarnessDto, ToolInfoDto, ToolStatusDto } from "../skills/types";
+import {
+  duplicatePairs,
+  duplicateWarning,
+  harnessListGroups,
+  pairsInvolving,
+  type UndetectedReader,
+} from "../../lib/harnessPresentation";
 import { PaneHeader, SettingGroup } from "./PaneDialog";
 
 type HarnessesPaneProps = {
@@ -32,18 +38,25 @@ type HarnessesPaneProps = {
 
 /**
  * Settings → Harnesses (D47; replaces Configure harnesses): one expandable
- * row per harness of the Tool catalog — name, detected or not, and the
- * selection switch (the saved global selection, i.e. where your skills are
- * deployed; saves as it changes). Expanded: the global skills folder in use
- * (and the harnesses sharing it), how it is deployed to (the registry's
- * capability), the folders it is detected by, and — for a selected harness
- * this computer does not have — why it is listed and "Remove from
- * selection". A folder read by reader-only harnesses (`.agents/skills`)
- * lists them under its row — "Read by", each detected or not, with no
- * switch: they have no folder of their own, so deploying to the folder is
- * deploying to them. The Import scan scope is its own section: it decides what
- * Import reviews, never where skills go. Auto-deploy's state shows here,
- * where it acts (D49).
+ * row per detected harness of the Tool catalog, in catalog order — name,
+ * detected, and the selection switch (the saved global selection, i.e. where
+ * your skills are deployed; saves as it changes). Expanded: the global skills
+ * folder in use (and the harnesses sharing it), how it is deployed to (the
+ * registry's capability) and the folders it is detected by. A folder read by
+ * reader-only harnesses (`.agents/skills`) lists its detected ones under its
+ * row — "Read by", with no switch: they have no folder of their own, so
+ * deploying to the folder is deploying to them.
+ *
+ * Every undetected harness — a selected one included (its row explains why it
+ * is listed and offers "Remove from selection"), reader-only ones too — sits
+ * in one "Not detected (N)" group, closed whenever the pane mounts (Settings
+ * opening) and never persisted (round 20 ticket 02).
+ *
+ * A row whose harness takes part in a cross-read pair with both harnesses
+ * selected says so on one line (`harnessPresentation.duplicateWarning`, from
+ * the backend's `duplicate_readers`); nothing is deselected. The Import scan
+ * scope is its own section: it decides what Import reviews, never where
+ * skills go. Auto-deploy's state shows here, where it acts (D49).
  */
 export function HarnessesPane({
   toolStatus,
@@ -57,16 +70,16 @@ export function HarnessesPane({
   blockedReason,
   t,
 }: HarnessesPaneProps) {
-  const [detectedOnly, setDetectedOnly] = useState(true);
+  const [undetectedOpen, setUndetectedOpen] = useState(false);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const listId = useId();
   const all = toolStatus?.tools ?? [];
   const installed = toolStatus?.installed ?? [];
   const selectedSet = new Set(selected);
-  // A selected harness renders whatever the filter says: the filter hides
-  // harnesses the operator has no relationship with, never their own choice.
-  const rows = visibleToolChoices(all, installed, selectedSet, detectedOnly);
+  const groups = harnessListGroups(all);
+  const pairs = duplicatePairs(all, selectedSet);
   const selectedCount = all.filter((tool) => selectedSet.has(tool.key)).length;
+  const undetectedSelected = groups.undetected.tools.filter((tool) => selectedSet.has(tool.key)).length;
 
   const toggleExpanded = (key: string) =>
     setExpanded((current) => {
@@ -75,6 +88,23 @@ export function HarnessesPane({
       else next.add(key);
       return next;
     });
+
+  const row = (tool: ToolInfoDto, readers: readonly ReaderHarnessDto[]) => (
+    <HarnessRow
+      key={tool.key}
+      tool={tool}
+      label={labelOf(tool.key)}
+      labelOf={labelOf}
+      readers={readers}
+      selected={selectedSet.has(tool.key)}
+      expanded={expanded.has(tool.key)}
+      warning={duplicateWarning(pairsInvolving(pairs, tool.key), labelOf, t)}
+      onToggleExpanded={() => toggleExpanded(tool.key)}
+      onSelectedChange={(on) => onSelectedChange(tool.key, on)}
+      blockedReason={blockedReason}
+      t={t}
+    />
+  );
 
   return (
     <>
@@ -103,37 +133,48 @@ export function HarnessesPane({
       </div>
 
       <section className="flex flex-col gap-2" aria-labelledby={`${listId}-heading`}>
-        <div className="flex items-center justify-between gap-4">
-          <h4 id={`${listId}-heading`} className="m-0 text-xs font-medium text-faint">
-            {t("settingsDialog.harnesses.list")}
-          </h4>
-          <Field className="flex-row items-center gap-2">
-            <Checkbox checked={detectedOnly} onCheckedChange={(checked) => setDetectedOnly(checked)} />
-            <FieldLabel>{t("toolConfigDetectedOnly")}</FieldLabel>
-          </Field>
-        </div>
-        {rows.length === 0 ? (
+        <h4 id={`${listId}-heading`} className="m-0 text-xs font-medium text-faint">
+          {t("settingsDialog.harnesses.list")}
+        </h4>
+        {groups.detected.length === 0 ? (
           <p className="m-0 text-sm text-muted-foreground">{t("settingsDialog.harnesses.noMatches")}</p>
         ) : (
           <ul className="m-0 flex list-none flex-col divide-y divide-border rounded-lg border border-border p-0">
-            {rows.map((tool) => (
-              <HarnessRow
-                key={tool.key}
-                tool={tool}
-                label={labelOf(tool.key)}
-                labelOf={labelOf}
-                detected={installed.includes(tool.key)}
-                selected={selectedSet.has(tool.key)}
-                expanded={expanded.has(tool.key)}
-                hiddenWhenOff={detectedOnly}
-                onToggleExpanded={() => toggleExpanded(tool.key)}
-                onSelectedChange={(on) => onSelectedChange(tool.key, on)}
-                blockedReason={blockedReason}
-                t={t}
-              />
-            ))}
+            {groups.detected.map((entry) => row(entry.tool, entry.readers))}
           </ul>
         )}
+        {groups.undetected.count > 0 ? (
+          <div className="flex flex-col gap-2">
+            <Button
+              variant="ghost"
+              className="self-start"
+              aria-expanded={undetectedOpen}
+              aria-controls={`${listId}-undetected`}
+              onClick={() => setUndetectedOpen((open) => !open)}
+            >
+              <ChevronRight aria-hidden="true" className={cn(undetectedOpen && "rotate-90")} />
+              {t("settingsDialog.harnesses.notDetectedGroup", { count: groups.undetected.count })}
+              {undetectedSelected > 0 ? (
+                <Badge variant="soft" tone="stale">
+                  {t("settingsDialog.harnesses.notDetectedSelected", { count: undetectedSelected })}
+                </Badge>
+              ) : null}
+            </Button>
+            {undetectedOpen ? (
+              <ul
+                id={`${listId}-undetected`}
+                className="m-0 flex list-none flex-col divide-y divide-border rounded-lg border border-border p-0"
+              >
+                {groups.undetected.tools.map((tool) => row(tool, []))}
+                {groups.undetected.readers.map((reader) => (
+                  <UndetectedReaderRow key={reader.key} reader={reader} labelOf={labelOf} t={t} />
+                ))}
+              </ul>
+            ) : (
+              <div id={`${listId}-undetected`} hidden />
+            )}
+          </div>
+        ) : null}
       </section>
 
       <SettingGroup title={t("settingsDialog.harnesses.scanTitle")}>
@@ -160,10 +201,10 @@ function HarnessRow({
   tool,
   label,
   labelOf,
-  detected,
+  readers,
   selected,
   expanded,
-  hiddenWhenOff,
+  warning,
   onToggleExpanded,
   onSelectedChange,
   blockedReason,
@@ -172,34 +213,24 @@ function HarnessRow({
   tool: ToolInfoDto;
   label: string;
   labelOf: (toolId: string) => string;
-  detected: boolean;
+  /** The detected reader-only harnesses listed under this row ("Read by"). */
+  readers: readonly ReaderHarnessDto[];
   selected: boolean;
   expanded: boolean;
-  /** The list shows detected harnesses only: an undetected row leaves it once off. */
-  hiddenWhenOff: boolean;
+  /** The cross-read warning line, when a pair with both harnesses selected involves this one. */
+  warning: string | null;
   onToggleExpanded: () => void;
   onSelectedChange: (selected: boolean) => void;
   blockedReason: string | null;
   t: TFunction;
 }) {
   const detailsId = useId();
-  const rowRef = useRef<HTMLLIElement>(null);
+  const detected = tool.installed;
   const stray = selected && !detected;
   const placement = tool.placement;
   const sharers = tool.shared_with.filter((key) => key !== tool.key).map(labelOf);
-  // Turning a stray harness off takes its row out of a detected-only list:
-  // focus moves to the next row (else the previous one) first, so it never
-  // falls to <body> or the bare dialog with the row.
-  const change = (on: boolean) => {
-    const row = rowRef.current;
-    if (!on && stray && hiddenWhenOff && row) {
-      const neighbour = row.nextElementSibling ?? row.previousElementSibling;
-      neighbour?.querySelector<HTMLElement>("button")?.focus();
-    }
-    onSelectedChange(on);
-  };
   return (
-    <li ref={rowRef} data-harness-row={tool.key}>
+    <li data-harness-row={tool.key}>
       <div className="flex h-row items-center gap-3 pr-3 pl-1">
         <Button
           variant="ghost"
@@ -218,21 +249,32 @@ function HarnessRow({
           <Switch
             size="sm"
             checked={selected}
-            onCheckedChange={change}
+            onCheckedChange={onSelectedChange}
             aria-label={t("settingsDialog.harnesses.select", { harness: label })}
+            aria-describedby={warning ? `${detailsId}-warning` : undefined}
             disabled={blockedReason !== null}
             focusableWhenDisabled
             title={blockedReason ?? undefined}
           />
         </span>
       </div>
-      {tool.readers.length > 0 ? (
+      {warning ? (
+        <p
+          id={`${detailsId}-warning`}
+          data-harness-warning={tool.key}
+          className="m-0 flex items-start gap-1 pr-3 pb-2 pl-10 text-xs text-stale"
+        >
+          <TriangleAlert aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+          {warning}
+        </p>
+      ) : null}
+      {readers.length > 0 ? (
         <div className="flex flex-col gap-1 pr-3 pb-2 pl-10">
           <span id={`${detailsId}-readers`} className="text-xs text-muted-foreground">
             {t("settingsDialog.harnesses.readBy")}
           </span>
           <ul aria-labelledby={`${detailsId}-readers`} className="m-0 flex list-none flex-col gap-1 p-0">
-            {tool.readers.map((reader) => (
+            {readers.map((reader) => (
               <li
                 key={reader.key}
                 data-harness-reader={reader.key}
@@ -275,7 +317,7 @@ function HarnessRow({
               <p className="m-0 text-xs text-muted-foreground">{t("settingsDialog.harnesses.undetectedSelected")}</p>
               <Button
                 size="sm"
-                onClick={() => change(false)}
+                onClick={() => onSelectedChange(false)}
                 disabled={blockedReason !== null}
                 focusableWhenDisabled
                 title={blockedReason ?? undefined}
@@ -288,6 +330,31 @@ function HarnessRow({
       ) : (
         <div id={detailsId} hidden />
       )}
+    </li>
+  );
+}
+
+/** An undetected reader-only harness in the "Not detected" group: no switch — it has no folder of its own. */
+function UndetectedReaderRow({
+  reader,
+  labelOf,
+  t,
+}: {
+  reader: UndetectedReader;
+  labelOf: (toolId: string) => string;
+  t: TFunction;
+}) {
+  return (
+    <li data-harness-reader={reader.key} className="flex h-row items-center gap-3 pr-3 pl-10">
+      <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+        {t(`tools.${reader.key}`, { defaultValue: reader.label })}
+      </span>
+      <span className="text-xs text-muted-foreground">
+        {t("settingsDialog.harnesses.readerOf", { folder: labelOf(reader.reads) })}
+      </span>
+      <Badge variant="outline" tone="neutral">
+        {t("settingsDialog.harnesses.notDetected")}
+      </Badge>
     </li>
   );
 }
