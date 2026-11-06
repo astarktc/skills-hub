@@ -33,3 +33,8 @@ back with evidence, not forced.
 - L3 merged (`f0c4a96`): Sol review fix-then-merge, one P2 (HTML scan not quote-aware) fixed by the orchestrator.
 - L4 merged (`8f69777`): Sol review fix-then-merge, three P2s — two Enable-copy accuracy bugs fixed by the orchestrator;
   "Problems first is not persisted" declined: sort was never persisted (pre-existing `useState`), outside #72.
+- L5 merged (`9b90c68`): Sol review fix-then-merge, two P2s fixed by the orchestrator (a refused cell Undo was spent
+  before admission; one failed project-view read hid another's rewrite). For later: the 1.3.0 whole-cell hit area makes
+  matrix misclicks likelier (Undo mitigates); deleting a divergent Import original before the deploy could become
+  move-aside → deploy → delete-or-restore.
+- L1: rebased, draft PR #7 for Windows CI; Sol (high) review running.
