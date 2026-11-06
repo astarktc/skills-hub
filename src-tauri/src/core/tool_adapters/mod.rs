@@ -1085,14 +1085,22 @@ pub fn detect_dirs_in(roots: &HostRoots, adapter: &ToolAdapter) -> Vec<PathBuf> 
 /// (Amp's `~/.config/amp` beside `~/.config/agents/skills`) counts by
 /// presence alone. A virtual group's detect dir *is* the convention
 /// (`~/.agents` legitimately holds only `skills/`), so for a group entry
-/// presence alone counts too.
+/// presence alone counts too. A group entry is also installed when any of
+/// its reader-only harnesses is: the group is that reader's only way in, so
+/// its first deployment must not wait for the group's folder to exist.
 pub fn is_installed_in(roots: &HostRoots, adapter: &ToolAdapter) -> bool {
     let skills_dir = skills_dir_in(roots, adapter);
-    detect_dirs_in(roots, adapter).iter().any(|detect_dir| {
+    let detected = detect_dirs_in(roots, adapter).iter().any(|detect_dir| {
         detect_dir.exists()
             && (adapter.as_virtual_group().is_some()
                 || !is_skills_only_footprint(detect_dir, &skills_dir))
-    })
+    });
+    detected
+        || adapter.as_virtual_group().is_some_and(|group| {
+            readers_of(group)
+                .iter()
+                .any(|reader| reader_installed_in(roots, reader))
+        })
 }
 
 /// True when every directory from `detect_dir` down to (but excluding)

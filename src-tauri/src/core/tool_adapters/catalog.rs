@@ -71,7 +71,8 @@ pub struct GlobalPlacement {
 /// it is simply one more directory some tools also read. So it carries no
 /// constituent roster — the roster renders exactly when ticking this box
 /// covers those tools — its label is the plain `display_name`, and its
-/// installedness is its own detect dir like any other entry.
+/// installedness is its own detect dir like any other entry, or any detected
+/// reader-only harness of it (`is_installed_in`).
 pub fn global_tool_entries(roots: &HostRoots) -> Vec<ToolCatalogEntry> {
     catalog_rows()
         .map(|adapter| ToolCatalogEntry {

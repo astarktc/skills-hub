@@ -1094,3 +1094,51 @@ fn a_reader_only_harness_mints_no_target_row() {
     ));
     assert!(store.list_skill_targets("skill-1").unwrap().is_empty());
 }
+
+/// A detected reader-only harness is reached only through its group, so the
+/// group's first deployment must not wait for `~/.agents` to exist: the
+/// reader makes the group installed, and the batch creates the folder. The
+/// record is the group's alone — the reader never gets a row.
+#[test]
+fn a_detected_reader_makes_its_group_deployable_before_the_group_folder_exists() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let home = dir.path().join("home");
+    let roots = HostRoots::under_home(&home);
+    let reader = crate::core::tool_adapters::test_overrides::sample_reader();
+    crate::core::tool_adapters::mark_reader_installed_in(&roots, reader);
+    assert!(!home.join(".agents").exists(), "no group folder yet");
+    let store = make_store(dir.path());
+    seed_skill(&store, "skill-1");
+    let source = make_skill_dir(dir.path(), "central-a", "# A");
+    let agents_key = crate::core::tool_adapters::ToolId::AgentsStandard.as_key();
+
+    let outcomes = sync_skills_to_tools(
+        &roots,
+        &store,
+        &central_repo_of(&store),
+        &[batch_skill("skill-1", "skill-1", &source)],
+        &[agents_key.to_string()],
+        &BatchPolicy {
+            overwrite: false,
+            overwrite_if_same_content: false,
+            overrides: vec![],
+        },
+        42,
+        |_| {},
+    );
+
+    assert!(
+        matches!(
+            outcomes.as_slice(),
+            [o] if o.tool_key == agents_key && matches!(o.status, BatchTargetStatus::Synced { .. })
+        ),
+        "{outcomes:?}"
+    );
+    assert!(home.join(".agents/skills/skill-1").exists());
+    let targets = store.list_skill_targets("skill-1").unwrap();
+    assert!(
+        targets.iter().all(|t| t.tool != reader.key),
+        "no reader row"
+    );
+    assert!(targets.iter().any(|t| t.tool == agents_key));
+}

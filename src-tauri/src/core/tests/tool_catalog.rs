@@ -303,9 +303,17 @@ fn a_reader_only_harness_is_listed_under_the_agents_entry_never_as_a_target() {
         "only the group entry has readers"
     );
 
+    assert!(
+        !entry(&entries, agents_key).installed,
+        "no reader, no `~/.agents`"
+    );
     mark_reader_installed_in(&roots, reader);
     let entries = global_tool_entries(&roots);
     assert!(entry(&entries, agents_key).readers[0].installed, "detected");
+    assert!(
+        entry(&entries, agents_key).installed,
+        "a detected reader makes its group installed: the group is its only way in"
+    );
     assert!(
         !installed_keys(&entries).contains(&reader.key.to_string()),
         "never in the installed set the new-harness ask diffs"
