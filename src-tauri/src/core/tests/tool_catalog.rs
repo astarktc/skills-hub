@@ -1,12 +1,12 @@
 use std::path::Path;
 
-use crate::core::environment::HostRoots;
+use crate::core::environment::{HostOs, HostRoot, HostRoots};
 use crate::core::tool_adapters::catalog::{DuplicateReads, ReaderEntry};
 use crate::core::tool_adapters::reads::DuplicateBehaviour;
 use crate::core::tool_adapters::{
     adapter_by_key, constituents_of, default_tool_adapters, global_tool_entries, installed_keys,
     mark_installed_in, mark_reader_installed_in, project_tool_entries, skills_dir_in,
-    test_overrides, ToolCatalogEntry, ToolId, VirtualGroup,
+    test_overrides, RegistryPath, ToolCatalogEntry, ToolId, VirtualGroup,
 };
 
 fn install(home: &Path, key: &str) {
@@ -245,20 +245,24 @@ fn project_catalog_groups_by_project_skills_dir() {
 #[test]
 fn only_the_global_catalog_carries_placement_straight_from_the_registry() {
     let home = tempfile::tempdir().unwrap();
+    // `HostRoots::under_home` lays the app-data roots out as Windows does, so
+    // a path whose effective root on this host is one of them (Reasonix on
+    // Windows) is spelled under `~/AppData/…`.
+    let shown = |path: &RegistryPath| {
+        let (root, rel) = path.effective(HostOs::CURRENT);
+        match root {
+            HostRoot::Home => format!("~/{rel}"),
+            HostRoot::RoamingAppData => format!("~/AppData/Roaming/{rel}"),
+            HostRoot::LocalAppData => format!("~/AppData/Local/{rel}"),
+        }
+    };
     for entry in global_tool_entries(&HostRoots::under_home(home.path())) {
         let adapter = adapter_by_key(entry.key).unwrap();
         let placement = entry.placement.expect("every global entry is placed");
-        assert_eq!(
-            placement.skills_dir,
-            format!("~/{}", adapter.skills_dir.rel)
-        );
+        assert_eq!(placement.skills_dir, shown(&adapter.skills_dir));
         assert_eq!(
             placement.detect_dirs,
-            adapter
-                .detect_dirs
-                .iter()
-                .map(|dir| format!("~/{}", dir.rel))
-                .collect::<Vec<_>>()
+            adapter.detect_dirs.iter().map(shown).collect::<Vec<_>>()
         );
         assert_eq!(placement.supports_symlink, adapter.supports_symlink);
         // Spelled under `~`: the catalog never shows the operator's real home.
