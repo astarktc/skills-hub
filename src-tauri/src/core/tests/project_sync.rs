@@ -20,15 +20,20 @@ fn make_skill_dir(base: &Path, name: &str) -> std::path::PathBuf {
     dir
 }
 
-/// A copy-only tool key for the calling thread: no shipped registry entry
-/// lacks `supports_symlink` any more, so tests that need copy-mode
-/// bookkeeping shadow the Cursor record with the capability flipped.
+/// A copy-only tool key with a project folder of its own: Deep Agents Code,
+/// the shipped copy-only harness (`.deepagents/skills`). A project folder's
+/// deploy capability is placement's (`placement::capability_entry`), so a
+/// copy-only shadow of a group constituent would be served by the group's
+/// link-mode `.agents/skills` folder and never exercise copy bookkeeping.
 fn copy_only_tool() -> &'static str {
-    let mut adapter = crate::core::tool_adapters::adapter_by_key("cursor")
-        .expect("cursor adapter")
-        .clone();
-    adapter.supports_symlink = false;
-    crate::core::tool_adapters::test_overrides::shadow(adapter).key()
+    let key = "deep_agents_code";
+    assert!(
+        !crate::core::tool_adapters::adapter_by_key(key)
+            .expect("deep agents adapter")
+            .supports_symlink,
+        "test premise: Deep Agents Code is copy-only"
+    );
+    key
 }
 
 /// A listing whose reconcile pass actually ran.
@@ -47,7 +52,7 @@ fn list_reconciled(
     })
     .expect("list should succeed");
     assert!(listing.reconciled, "the reconcile pass ran");
-    listing.assignments
+    listing.assignments.into_iter().map(|f| f.row).collect()
 }
 
 fn register_project_and_skill(
@@ -167,7 +172,7 @@ fn assign_stores_hash_for_copy() {
     assert!(!hash.is_empty(), "content_hash should be non-empty");
 
     // Verify filesystem: target should exist and NOT be a symlink
-    let target = project_dir.join(".agents/skills/copy-skill");
+    let target = project_dir.join(".deepagents/skills/copy-skill");
     assert!(target.exists(), "target should exist");
     assert!(
         !target.symlink_metadata().unwrap().file_type().is_symlink(),
@@ -855,7 +860,7 @@ fn staleness_detected_for_copy() {
 
     // Verify initial status is synced
     let before = store
-        .get_project_skill_assignment(&project.id, &skill.id, "cursor")
+        .get_project_skill_assignment(&project.id, &skill.id, tool)
         .unwrap()
         .expect("assignment exists");
     assert_eq!(before.status, SyncStatus::Synced);
@@ -872,7 +877,7 @@ fn staleness_detected_for_copy() {
 
     // DB should also be updated to stale
     let after = store
-        .get_project_skill_assignment(&project.id, &skill.id, "cursor")
+        .get_project_skill_assignment(&project.id, &skill.id, tool)
         .unwrap()
         .expect("assignment exists");
     assert_eq!(after.status, SyncStatus::Stale);
@@ -959,7 +964,7 @@ fn missing_status_when_source_absent() {
 
     // Verify DB persisted the missing status
     let db_record = store
-        .get_project_skill_assignment(&project.id, &skill.id, "cursor")
+        .get_project_skill_assignment(&project.id, &skill.id, tool)
         .unwrap()
         .expect("assignment should exist in DB");
     assert_eq!(
@@ -1141,7 +1146,7 @@ fn missing_status_recovers_when_source_restored() {
     fs::write(skill_dir.join("SKILL.md"), "# Test Skill\nTest content.").expect("write SKILL.md");
 
     // Also ensure target copy exists (re-sync to restore it)
-    let target = project_dir.join(".agents/skills/recover-skill");
+    let target = project_dir.join(".deepagents/skills/recover-skill");
     if !target.exists() {
         // Manually recreate the target copy to simulate recovery
         fs::create_dir_all(&target).expect("recreate target");
@@ -1195,7 +1200,7 @@ fn missing_status_source_and_target_both_absent() {
 
     // Delete both source and target
     fs::remove_dir_all(&skill_dir).expect("remove source");
-    let target = project_dir.join(".agents/skills/both-gone-skill");
+    let target = project_dir.join(".deepagents/skills/both-gone-skill");
     fs::remove_dir_all(&target).ok();
     assert!(!skill_dir.exists(), "source should be gone");
     assert!(!target.exists(), "target should be gone");
@@ -1263,8 +1268,10 @@ fn fanout_assigns_every_tool_in_caller_order() {
     )
     .unwrap();
 
+    // One row per folder, keyed by it: Cursor's project folder is the AGENTS
+    // group's `.agents/skills`.
     let tool_keys: Vec<&str> = report.items.iter().map(|o| o.tool.as_str()).collect();
-    assert_eq!(tool_keys, vec!["claude_code", "cursor"]);
+    assert_eq!(tool_keys, vec!["claude_code", "agents_skills"]);
     for o in &report.items {
         assert!(
             matches!(o.status, ProjectSyncOutcomeStatus::Synced),
@@ -1422,7 +1429,7 @@ fn fanout_reports_a_sync_failure_with_the_kept_error_row() {
     .unwrap();
 
     let row = store
-        .get_project_skill_assignment(&project.id, &skill.id, "cursor")
+        .get_project_skill_assignment(&project.id, &skill.id, "agents_skills")
         .unwrap()
         .expect("the row exists");
     assert_eq!(row.status, SyncStatus::Error);
@@ -1490,7 +1497,7 @@ fn fanout_propagates_a_refused_settlement_instead_of_reporting_it_settled() {
         "the sync failure stays in the chain as context: {chain}"
     );
     let row = store
-        .get_project_skill_assignment(&project.id, &skill.id, "cursor")
+        .get_project_skill_assignment(&project.id, &skill.id, "agents_skills")
         .unwrap()
         .expect("the inserted row remains");
     assert_eq!(row.status, SyncStatus::Pending, "nothing settled");
@@ -1558,6 +1565,7 @@ fn project_sync_report_wire_shape() {
                 skill_id: "s".into(),
                 skill_name: "skill".into(),
                 tool: "claude_code".into(),
+                folder_key: "claude_code".into(),
                 status: ProjectSyncOutcomeStatus::Synced,
             },
             ProjectSyncOutcome {
@@ -1566,6 +1574,7 @@ fn project_sync_report_wire_shape() {
                 skill_id: "s".into(),
                 skill_name: "skill".into(),
                 tool: "cursor".into(),
+                folder_key: "agents_skills".into(),
                 status: ProjectSyncOutcomeStatus::AlreadyAssigned,
             },
             ProjectSyncOutcome {
@@ -1574,6 +1583,7 @@ fn project_sync_report_wire_shape() {
                 skill_id: "s".into(),
                 skill_name: "skill".into(),
                 tool: "nope".into(),
+                folder_key: "nope".into(),
                 status: ProjectSyncOutcomeStatus::Failed {
                     error: CommandError::UnknownTool {
                         tool: "nope".into(),
@@ -1591,11 +1601,11 @@ fn project_sync_report_wire_shape() {
         json!({ "skipped_projects": [{ "project_id": "gone", "reason": { "reason": "folder_missing" } }],
           "items": [
             { "assignment_id": "a1", "project_id": "p", "skill_id": "s", "skill_name": "skill",
-              "tool": "claude_code", "status": { "status": "synced" } },
+              "tool": "claude_code", "folder_key": "claude_code", "status": { "status": "synced" } },
             { "assignment_id": "a2", "project_id": "p", "skill_id": "s", "skill_name": "skill",
-              "tool": "cursor", "status": { "status": "already_assigned" } },
+              "tool": "cursor", "folder_key": "agents_skills", "status": { "status": "already_assigned" } },
             { "assignment_id": null, "project_id": "p", "skill_id": "s", "skill_name": "skill",
-              "tool": "nope", "status": { "status": "failed",
+              "tool": "nope", "folder_key": "nope", "status": { "status": "failed",
                 "error": { "code": "UNKNOWN_TOOL", "tool": "nope" } } },
         ] })
     );
@@ -2683,7 +2693,10 @@ fn removal_still_works_for_a_missing_project_folder() {
 /// `error` row — never Synced. Symlink and copy-only Tools alike.
 #[test]
 fn a_project_root_that_vanishes_at_parent_creation_is_not_recreated() {
-    for tool in ["claude_code", copy_only_tool()] {
+    // Deep Agents Code is the shipped copy-only harness, with a project
+    // folder of its own (a copy-only shadow of a group constituent would be
+    // served by the group's link-mode folder).
+    for tool in ["claude_code", "deep_agents_code"] {
         let (_db_dir, store) = make_store();
         let tmpdir = tempfile::tempdir().unwrap();
         let skill_dir = make_skill_dir(tmpdir.path(), "race-skill");
@@ -2797,4 +2810,954 @@ fn a_listing_says_whether_its_reconcile_pass_rewrote_a_status() {
     let again = reconciled_listing(&store, &project.id);
     assert_eq!(again.assignments[0].status, SyncStatus::Missing);
     assert!(!again.rewrote_statuses, "the stored status already matches");
+}
+
+// ---------------------------------------------------------------------------
+// One assignment row per (project, skill, folder) — round 20 ticket 09.
+// Trae and Trae CN share `<project>/.trae/skills` (folder key `trae`).
+// ---------------------------------------------------------------------------
+
+fn trae_project() -> (
+    tempfile::TempDir,
+    tempfile::TempDir,
+    SkillStore,
+    ProjectRecord,
+    SkillRecord,
+) {
+    let (db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let skill_dir = make_skill_dir(tmpdir.path(), "trae-skill");
+    let project_dir = tmpdir.path().join("trae-project");
+    fs::create_dir_all(&project_dir).unwrap();
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "trae-skill",
+        &skill_dir.to_string_lossy(),
+    );
+    (db_dir, tmpdir, store, project, skill)
+}
+
+#[test]
+fn harnesses_sharing_a_project_folder_get_one_row_keyed_by_the_folder() {
+    let (_db, _tmp, store, project, skill) = trae_project();
+    add_tools(&store, &project, &["trae", "trae_cn"]);
+
+    let report = assign_skill_to_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        3000,
+    )
+    .unwrap();
+
+    assert_eq!(report.items.len(), 1, "one folder, one item: {report:?}");
+    assert_eq!(report.items[0].tool, "trae");
+    assert!(matches!(
+        report.items[0].status,
+        ProjectSyncOutcomeStatus::Synced
+    ));
+    let rows = store.list_project_skill_assignments(&project.id).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].tool, "trae");
+    assert!(Path::new(&project.path)
+        .join(".trae/skills/trae-skill")
+        .exists());
+
+    // Asking for the sibling again is the same assignment.
+    let again = assign_skill_to_tools(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        &keys(&["trae_cn"]),
+        3100,
+    )
+    .unwrap();
+    assert!(matches!(
+        again.items[0].status,
+        ProjectSyncOutcomeStatus::AlreadyAssigned
+    ));
+
+    // Toggling the sibling's cell takes the folder's row off.
+    let toggled = project_sync::toggle_skill_assignment(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "trae_cn",
+        3200,
+    )
+    .unwrap();
+    assert!(matches!(
+        toggled,
+        project_sync::ToggleOutcome::Unassigned { .. }
+    ));
+    assert!(store
+        .list_project_skill_assignments(&project.id)
+        .unwrap()
+        .is_empty());
+    assert!(!Path::new(&project.path)
+        .join(".trae/skills/trae-skill")
+        .exists());
+}
+
+#[test]
+fn dropping_one_of_two_harnesses_sharing_a_folder_keeps_its_deployments() {
+    let (_db, _tmp, store, project, skill) = trae_project();
+    add_tools(&store, &project, &["trae", "trae_cn"]);
+    assign_skill_to_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        3000,
+    )
+    .unwrap();
+
+    let removals = crate::core::project_ops::configure_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &["trae".to_string()],
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(removals.len(), 1);
+    assert!(
+        removals[0].targets.is_empty(),
+        "nothing removed: {}",
+        removals[0]
+    );
+    assert_eq!(
+        store
+            .list_project_skill_assignments(&project.id)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(Path::new(&project.path)
+        .join(".trae/skills/trae-skill")
+        .exists());
+    let tools: Vec<String> = store
+        .list_project_tools(&project.id)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.tool)
+        .collect();
+    assert_eq!(tools, vec!["trae"]);
+}
+
+/// Astra 206, the reproduction: dropping a configured harness takes its
+/// legacy assignments with it, as on `main` — through the removal module —
+/// while the folder's own row stays because another configured harness still
+/// serves the folder. Trae CN's pre-1.4.0 row records `previous-name` (an
+/// artifact of ours under the old name); Trae's folder row records the
+/// current one.
+#[test]
+fn dropping_a_harness_removes_its_legacy_assignment_and_keeps_the_folders_row() {
+    let (_db, _tmp, store, project, skill) = trae_project();
+    add_tools(&store, &project, &["trae", "trae_cn"]);
+    assign_skill_to_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        3000,
+    )
+    .unwrap();
+    let folder_row = store
+        .list_project_skill_assignments(&project.id)
+        .unwrap()
+        .pop()
+        .expect("the folder's row");
+    assert_eq!(folder_row.tool, "trae");
+    let old = Path::new(&project.path).join(".trae/skills/previous-name");
+    fs::create_dir_all(&old).unwrap();
+    fs::write(old.join("SKILL.md"), "# previous").unwrap();
+    store
+        .add_project_skill_assignment(&crate::core::skill_store::ProjectSkillAssignmentRecord {
+            id: "legacy-trae-cn".to_string(),
+            tool: "trae_cn".to_string(),
+            skill_name: "previous-name".to_string(),
+            ..folder_row.clone()
+        })
+        .unwrap();
+
+    let removals = crate::core::project_ops::configure_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &["trae".to_string()],
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(removals.len(), 1);
+    assert!(removals[0].failures().is_empty(), "{}", removals[0]);
+    assert_eq!(removals[0].removed_rows(), 1, "{}", removals[0]);
+    assert!(!old.exists(), "the legacy assignment's artifact is removed");
+    let rows = store.list_project_skill_assignments(&project.id).unwrap();
+    assert_eq!(
+        rows.iter().map(|r| r.tool.as_str()).collect::<Vec<_>>(),
+        vec!["trae"],
+        "the folder's row stays"
+    );
+    assert!(Path::new(&project.path)
+        .join(".trae/skills/trae-skill")
+        .exists());
+    let tools: Vec<String> = store
+        .list_project_tools(&project.id)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.tool)
+        .collect();
+    assert_eq!(tools, vec!["trae"]);
+}
+
+/// The folder's rows go with the last harness serving the folder: dropping
+/// Trae CN when Trae is not configured removes the `trae`-keyed row too.
+#[test]
+fn dropping_the_last_harness_serving_a_folder_removes_the_folders_rows() {
+    let (_db, _tmp, store, project, skill) = trae_project();
+    add_tools(&store, &project, &["trae_cn"]);
+    assign_skill_to_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        3000,
+    )
+    .unwrap();
+    assert_eq!(
+        store
+            .list_project_skill_assignments(&project.id)
+            .unwrap()
+            .iter()
+            .map(|r| r.tool.clone())
+            .collect::<Vec<_>>(),
+        vec!["trae".to_string()]
+    );
+
+    let removals = crate::core::project_ops::configure_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &[],
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(removals.len(), 1);
+    assert!(removals[0].failures().is_empty(), "{}", removals[0]);
+    assert!(store
+        .list_project_skill_assignments(&project.id)
+        .unwrap()
+        .is_empty());
+    assert!(!Path::new(&project.path)
+        .join(".trae/skills/trae-skill")
+        .exists());
+    assert!(store.list_project_tools(&project.id).unwrap().is_empty());
+}
+
+/// Rows a pre-1.4.0 project wrote once per sibling are each their own row to
+/// every mutation, and one folder to every reader: the re-sync syncs and
+/// settles each row by itself, the listing and the counts read one Deployment.
+#[test]
+fn legacy_sibling_assignment_rows_resync_each_row_and_list_as_one_folder() {
+    let (_db, _tmp, store, project, skill) = trae_project();
+    for tool in ["trae", "trae_cn"] {
+        project_sync::assign_and_sync(
+            &store,
+            &central_repo_of(&store),
+            &project,
+            &skill,
+            tool,
+            2000,
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        store
+            .list_project_skill_assignments(&project.id)
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let report =
+        project_sync::resync_project(&store, &central_repo_of(&store), &project.id, 3000).unwrap();
+
+    let tools: Vec<&str> = report.items.iter().map(|item| item.tool.as_str()).collect();
+    assert_eq!(
+        tools,
+        vec!["trae", "trae_cn"],
+        "one item per row: {report:?}"
+    );
+    for row in store.list_project_skill_assignments(&project.id).unwrap() {
+        assert_eq!(row.status, SyncStatus::Synced, "{}", row.tool);
+        assert_eq!(row.synced_at, Some(3000), "{}", row.tool);
+    }
+
+    let listing = project_sync::list_assignments_with_staleness(&store, &project.id).unwrap();
+    assert_eq!(listing.assignments.len(), 1);
+    assert_eq!(listing.assignments[0].tool, "trae");
+    assert_eq!(
+        store
+            .project_aggregate(&project.id)
+            .unwrap()
+            .assignment_count,
+        1
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Folder grouping is presentation and counting only (round 20 t09 reviews,
+// rounds 1–3). Every mutation acts on each stored row by itself — its own
+// recorded path, its own ownership, its own settlement — exactly as before
+// rows were per folder. Nothing is lent, shared or settled between two rows of
+// one folder, whatever their paths; the redeploy (ticket 10) collapses them.
+// ---------------------------------------------------------------------------
+
+/// A pre-1.4.0 assignment row of the trae project, seeded as written.
+fn seed_trae_row(
+    store: &SkillStore,
+    project: &ProjectRecord,
+    skill: &SkillRecord,
+    tool: &str,
+    artifact_name: &str,
+    owned: bool,
+) -> crate::core::skill_store::ProjectSkillAssignmentRecord {
+    let record = crate::core::skill_store::ProjectSkillAssignmentRecord {
+        id: format!("pa-{tool}"),
+        project_id: project.id.clone(),
+        skill_id: skill.id.clone(),
+        skill_name: artifact_name.to_string(),
+        tool: tool.to_string(),
+        mode: SyncMode::Symlink,
+        status: if owned {
+            SyncStatus::Synced
+        } else {
+            SyncStatus::Error
+        },
+        last_error: (!owned).then(|| "an earlier first sync failed".to_string()),
+        synced_at: owned.then_some(1500),
+        content_hash: None,
+        created_at: 1500,
+    };
+    store.add_project_skill_assignment(&record).unwrap();
+    record
+}
+
+fn trae_dir(project: &ProjectRecord) -> std::path::PathBuf {
+    Path::new(&project.path).join(".trae/skills")
+}
+
+/// A folder that is not ours, where the current skill name would go.
+fn foreign_folder_at(path: &Path) {
+    fs::create_dir_all(path).unwrap();
+    fs::write(path.join("SKILL.md"), "foreign").unwrap();
+}
+
+/// An artifact of ours: a link to the skill's central copy.
+fn our_link(skill: &SkillRecord, path: &Path) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&skill.central_path, path).unwrap();
+    #[cfg(not(unix))]
+    {
+        // No unprivileged symlink on Windows CI: stand in with a folder.
+        let _ = &skill.central_path;
+        fs::create_dir_all(path).unwrap();
+        fs::write(path.join("SKILL.md"), "ours").unwrap();
+    }
+}
+
+fn row_of(
+    store: &SkillStore,
+    project: &ProjectRecord,
+    skill: &SkillRecord,
+    tool: &str,
+) -> Option<crate::core::skill_store::ProjectSkillAssignmentRecord> {
+    store
+        .get_project_skill_assignment(&project.id, &skill.id, tool)
+        .unwrap()
+}
+
+fn item_of<'r>(
+    report: &'r project_sync::ProjectSyncReport,
+    assignment_id: &str,
+) -> &'r project_sync::ProjectSyncOutcome {
+    report
+        .items
+        .iter()
+        .find(|item| item.assignment_id.as_deref() == Some(assignment_id))
+        .unwrap_or_else(|| panic!("no item for {assignment_id}: {report:?}"))
+}
+
+fn is_collision(status: &ProjectSyncOutcomeStatus) -> bool {
+    matches!(
+        status,
+        ProjectSyncOutcomeStatus::Failed {
+            error: CommandError::TargetExists { .. }
+        }
+    )
+}
+
+/// Review repro 1: an owned `trae_cn` row under the skill's previous name and
+/// a never-synced `trae` row whose current-name path holds a foreign folder.
+/// Each row re-syncs by itself: the owner replaces its own artifact, the
+/// never-synced row's first sync meets the foreign folder and asks — no
+/// ownership is borrowed, so the foreign folder is neither replaced nor
+/// settled as ours.
+#[test]
+fn resync_never_borrows_ownership_from_a_sibling_naming_another_artifact() {
+    let (_db, _tmp, store, project, skill) = trae_project();
+    seed_trae_row(&store, &project, &skill, "trae_cn", "previous-name", true);
+    our_link(&skill, &trae_dir(&project).join("previous-name"));
+    seed_trae_row(&store, &project, &skill, "trae", "trae-skill", false);
+    let foreign = trae_dir(&project).join("trae-skill");
+    foreign_folder_at(&foreign);
+
+    let report =
+        project_sync::resync_project(&store, &central_repo_of(&store), &project.id, 3000).unwrap();
+
+    assert_eq!(report.items.len(), 2, "one item per row: {report:?}");
+    let owner = item_of(&report, "pa-trae_cn");
+    assert_eq!(owner.tool, "trae_cn");
+    assert!(
+        matches!(owner.status, ProjectSyncOutcomeStatus::Synced),
+        "{report:?}"
+    );
+    let first = item_of(&report, "pa-trae");
+    assert_eq!(first.tool, "trae");
+    assert!(is_collision(&first.status), "{report:?}");
+    assert_eq!(
+        fs::read_to_string(foreign.join("SKILL.md")).unwrap(),
+        "foreign",
+        "the foreign folder is untouched"
+    );
+    let trae = row_of(&store, &project, &skill, "trae").unwrap();
+    assert!(!trae.owns_artifact(), "no ownership was handed over");
+    assert_eq!(trae.status, SyncStatus::Error);
+    assert!(trae_dir(&project)
+        .join("previous-name")
+        .symlink_metadata()
+        .is_ok());
+}
+
+/// Review repro 2, keys reversed: the canonical `trae` row owns its artifact
+/// under the previous name; the never-synced `trae_cn` row names a foreign
+/// current-name folder. The canonical row's successful re-sync settles only
+/// itself, so a later unassign leaves the foreign folder.
+#[test]
+fn a_settlement_never_makes_a_sibling_naming_another_artifact_its_owner() {
+    let (_db, _tmp, store, project, skill) = trae_project();
+    seed_trae_row(&store, &project, &skill, "trae", "previous-name", true);
+    our_link(&skill, &trae_dir(&project).join("previous-name"));
+    seed_trae_row(&store, &project, &skill, "trae_cn", "trae-skill", false);
+    let foreign = trae_dir(&project).join("trae-skill");
+    foreign_folder_at(&foreign);
+
+    let report =
+        project_sync::resync_project(&store, &central_repo_of(&store), &project.id, 3000).unwrap();
+    assert!(
+        matches!(
+            item_of(&report, "pa-trae").status,
+            ProjectSyncOutcomeStatus::Synced
+        ),
+        "the canonical row re-syncs its own artifact: {report:?}"
+    );
+    assert!(is_collision(&item_of(&report, "pa-trae_cn").status));
+    let trae_cn = row_of(&store, &project, &skill, "trae_cn").unwrap();
+    assert!(
+        !trae_cn.owns_artifact(),
+        "a settlement of another row makes no row an owner"
+    );
+
+    let toggled = project_sync::toggle_skill_assignment(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "trae",
+        3100,
+    )
+    .unwrap();
+    assert!(matches!(
+        toggled,
+        project_sync::ToggleOutcome::Unassigned { .. }
+    ));
+    assert_eq!(
+        fs::read_to_string(foreign.join("SKILL.md")).unwrap(),
+        "foreign",
+        "the unassign never deletes a folder no row materialised"
+    );
+    assert!(
+        trae_dir(&project)
+            .join("previous-name")
+            .symlink_metadata()
+            .is_err(),
+        "the canonical row's own artifact is removed"
+    );
+    assert!(store
+        .list_project_skill_assignments(&project.id)
+        .unwrap()
+        .is_empty());
+}
+
+/// Review finding 5: two names that are hard links to one symlink inode are
+/// still two rows with two recorded paths. The owned `current` re-syncs by
+/// itself; the never-written `previous` (a Keep marker) is neither marked
+/// owned nor deleted by the unassign — an equal inode grants nothing.
+#[cfg(unix)]
+#[test]
+fn hard_linked_names_never_share_ownership() {
+    use crate::core::skill_store::AssignmentTransition;
+    let (_db, _tmp, store, project, skill) = trae_project();
+    seed_trae_row(&store, &project, &skill, "trae", "current", true);
+    let current = trae_dir(&project).join("current");
+    our_link(&skill, &current);
+    let previous = trae_dir(&project).join("previous");
+    // A hard link to the symlink itself (not its referent): one inode, two
+    // names (`linkat` without AT_SYMLINK_FOLLOW, std's choice on Unix).
+    fs::hard_link(&current, &previous).expect("hard-link the symlink");
+    {
+        use std::os::unix::fs::MetadataExt;
+        let (a, b) = (
+            current.symlink_metadata().unwrap(),
+            previous.symlink_metadata().unwrap(),
+        );
+        assert!(
+            b.file_type().is_symlink() && (a.dev(), a.ino()) == (b.dev(), b.ino()),
+            "test premise: one symlink inode under two names"
+        );
+    }
+    seed_trae_row(&store, &project, &skill, "trae_cn", "previous", false);
+    store
+        .transition_assignment("pa-trae_cn", AssignmentTransition::Disabled)
+        .unwrap();
+
+    let report =
+        project_sync::resync_project(&store, &central_repo_of(&store), &project.id, 3000).unwrap();
+    assert!(
+        matches!(
+            item_of(&report, "pa-trae").status,
+            ProjectSyncOutcomeStatus::Synced
+        ),
+        "{report:?}"
+    );
+    let never_written = row_of(&store, &project, &skill, "trae_cn").unwrap();
+    assert!(
+        !never_written.owns_artifact(),
+        "an equal inode is not a write of this row's path"
+    );
+    assert_eq!(never_written.status, SyncStatus::Disabled);
+
+    project_sync::toggle_skill_assignment(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "trae",
+        3100,
+    )
+    .unwrap();
+    assert!(
+        current.symlink_metadata().is_err(),
+        "the owned name is removed"
+    );
+    assert!(
+        previous.symlink_metadata().is_ok(),
+        "the never-written name is not deleted"
+    );
+}
+
+/// Pre-1.4.0 siblings recording one path (Amp/Kimi style) are still two rows:
+/// the owner's write settles the owner alone. The never-synced sibling's own
+/// first sync, run before the owner's in store order, met the stale copy and
+/// asked; once the owner has written its link there, the sibling's next
+/// re-sync settles it by its own sync — the per-row resync clears what the
+/// folder showed.
+#[test]
+fn siblings_recording_the_same_path_settle_each_by_its_own_sync() {
+    let (_db, _tmp, store, project, skill) = trae_project();
+    seed_trae_row(&store, &project, &skill, "trae", "trae-skill", false);
+    seed_trae_row(&store, &project, &skill, "trae_cn", "trae-skill", true);
+    let artifact = trae_dir(&project).join("trae-skill");
+    fs::create_dir_all(&artifact).unwrap();
+    fs::write(artifact.join("SKILL.md"), "stale copy of ours").unwrap();
+
+    let report =
+        project_sync::resync_project(&store, &central_repo_of(&store), &project.id, 3000).unwrap();
+
+    assert_eq!(report.items.len(), 2, "{report:?}");
+    assert!(
+        is_collision(&item_of(&report, "pa-trae").status),
+        "a non-owner never replaces the folder: {report:?}"
+    );
+    assert!(
+        matches!(
+            item_of(&report, "pa-trae_cn").status,
+            ProjectSyncOutcomeStatus::Synced
+        ),
+        "the owner replaces its own artifact: {report:?}"
+    );
+    let trae = row_of(&store, &project, &skill, "trae").unwrap();
+    assert!(!trae.owns_artifact(), "nothing settled it from the owner");
+    assert_eq!(trae.status, SyncStatus::Error);
+    assert_eq!(
+        fs::read_to_string(artifact.join("SKILL.md")).unwrap(),
+        "# Test Skill\nTest content.",
+        "the artifact now carries the skill's bytes"
+    );
+    let listing = project_sync::list_assignments_with_staleness(&store, &project.id).unwrap();
+    assert_eq!(listing.assignments[0].status, SyncStatus::Error);
+
+    let again = project_sync::resync_assignment(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "trae",
+        3100,
+    )
+    .unwrap();
+    assert_eq!(again.items.len(), 2, "{again:?}");
+    for tool in ["trae", "trae_cn"] {
+        let row = row_of(&store, &project, &skill, tool).unwrap();
+        assert_eq!(row.status, SyncStatus::Synced, "{tool}");
+        assert_eq!(row.synced_at, Some(3100), "{tool}");
+    }
+    let listing = project_sync::list_assignments_with_staleness(&store, &project.id).unwrap();
+    assert_eq!(listing.assignments[0].status, SyncStatus::Synced);
+}
+
+/// A collision answer applies to the row it names: Keep disables that row
+/// alone, never another row of the folder.
+#[test]
+fn a_collision_answer_leaves_a_sibling_naming_another_artifact_alone() {
+    use crate::core::global_sync::OverrideDecision;
+    let (_db, _tmp, store, project, skill) = trae_project();
+    seed_trae_row(&store, &project, &skill, "trae", "trae-skill", false);
+    foreign_folder_at(&trae_dir(&project).join("trae-skill"));
+    // A disabled Keep marker under another name, never synced.
+    seed_trae_row(&store, &project, &skill, "trae_cn", "previous-name", false);
+    store
+        .transition_assignment(
+            "pa-trae_cn",
+            crate::core::skill_store::AssignmentTransition::Disabled,
+        )
+        .unwrap();
+    let before = row_of(&store, &project, &skill, "trae_cn").unwrap();
+
+    let report = project_sync::resolve_collisions(
+        &store,
+        &central_repo_of(&store),
+        &[project_sync::AssignmentDecision {
+            project_id: project.id.clone(),
+            skill_id: skill.id.clone(),
+            tool: "trae".to_string(),
+            decision: OverrideDecision::Keep,
+        }],
+        3000,
+    )
+    .unwrap();
+
+    assert!(
+        matches!(report.items[0].status, ProjectSyncOutcomeStatus::Declined),
+        "another row's state does not decide this row's answer: {report:?}"
+    );
+    assert_eq!(
+        row_of(&store, &project, &skill, "trae").unwrap().status,
+        SyncStatus::Disabled
+    );
+    let after = row_of(&store, &project, &skill, "trae_cn").unwrap();
+    assert_eq!(
+        (after.status, after.synced_at, after.last_error),
+        (before.status, before.synced_at, before.last_error),
+        "left as it is"
+    );
+}
+
+/// Sol's finding 101: an Overwrite answer reaches only the row, and the path,
+/// it was asked about. Enable admits the owning-but-disabled `trae_cn` row
+/// (its ownership cleared) and its first sync meets a foreign folder at
+/// `previous`: the ask names that row. The never-synced `trae` error row,
+/// whose current-name path holds another foreign folder, was not enabled and
+/// never asked about — the answer must not reach it.
+#[test]
+fn an_overwrite_answer_reaches_only_the_asked_row_and_path() {
+    use crate::core::global_sync::OverrideDecision;
+    use crate::core::skill_disable::{enable_targets, DisableScope};
+    use crate::core::skill_store::AssignmentTransition;
+    let (_db, tmp, store, project, skill) = trae_project();
+    seed_trae_row(&store, &project, &skill, "trae_cn", "previous", true);
+    store
+        .transition_assignment("pa-trae_cn", AssignmentTransition::Disabled)
+        .unwrap();
+    store.set_skill_disabled_at(&skill.id, Some(2500)).unwrap();
+    seed_trae_row(&store, &project, &skill, "trae", "trae-skill", false);
+    let previous = trae_dir(&project).join("previous");
+    foreign_folder_at(&previous);
+    let alpha = trae_dir(&project).join("trae-skill");
+    foreign_folder_at(&alpha);
+    let roots = crate::core::environment::HostRoots::under_home(&tmp.path().join("home"));
+
+    let enabled = enable_targets(
+        &store,
+        &central_repo_of(&store),
+        &roots,
+        &DisableScope::Skill {
+            skill_id: skill.id.clone(),
+        },
+        3000,
+    )
+    .unwrap();
+    assert_eq!(enabled.projects.items.len(), 1, "{:?}", enabled.projects);
+    let asked = &enabled.projects.items[0];
+    assert_eq!(asked.assignment_id.as_deref(), Some("pa-trae_cn"));
+    assert_eq!(asked.tool, "trae_cn", "the ask carries the row's own key");
+    let ProjectSyncOutcomeStatus::Failed {
+        error: CommandError::TargetExists { path, .. },
+    } = &asked.status
+    else {
+        panic!("expected a collision: {asked:?}");
+    };
+    assert!(
+        path.ends_with("previous"),
+        "the ask shows `previous`: {path}"
+    );
+
+    let answered = project_sync::resolve_collisions(
+        &store,
+        &central_repo_of(&store),
+        &[project_sync::AssignmentDecision {
+            project_id: asked.project_id.clone(),
+            skill_id: asked.skill_id.clone(),
+            tool: asked.tool.clone(),
+            decision: OverrideDecision::Overwrite,
+        }],
+        3100,
+    )
+    .unwrap();
+
+    assert_eq!(answered.items.len(), 1, "{answered:?}");
+    assert_eq!(
+        answered.items[0].assignment_id.as_deref(),
+        Some("pa-trae_cn")
+    );
+    assert!(matches!(
+        answered.items[0].status,
+        ProjectSyncOutcomeStatus::Synced
+    ));
+    assert!(
+        previous
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink()
+            || fs::read_to_string(previous.join("SKILL.md")).unwrap() != "foreign",
+        "the asked path now holds the skill"
+    );
+    assert_eq!(
+        fs::read_to_string(alpha.join("SKILL.md")).unwrap(),
+        "foreign",
+        "a path the ask never showed is untouched"
+    );
+    let trae = row_of(&store, &project, &skill, "trae").unwrap();
+    assert!(!trae.owns_artifact());
+    assert_eq!(trae.status, SyncStatus::Error);
+}
+
+/// A skill-grain Enable re-materialises each disabled row by itself, at its
+/// own recorded path, as it did before rows were per folder; the listing reads
+/// the folder as one, enabled.
+#[test]
+fn enable_rematerialises_each_disabled_row_at_its_own_path() {
+    use crate::core::skill_disable::{disable_targets, enable_targets, DisableScope};
+    let (_db, tmp, store, project, skill) = trae_project();
+    seed_trae_row(&store, &project, &skill, "trae", "trae-skill", true);
+    our_link(&skill, &trae_dir(&project).join("trae-skill"));
+    seed_trae_row(&store, &project, &skill, "trae_cn", "previous-name", true);
+    our_link(&skill, &trae_dir(&project).join("previous-name"));
+    let roots = crate::core::environment::HostRoots::under_home(&tmp.path().join("home"));
+    let scope = DisableScope::Skill {
+        skill_id: skill.id.clone(),
+    };
+
+    disable_targets(&store, &central_repo_of(&store), &roots, &scope, 3000).unwrap();
+    for name in ["trae-skill", "previous-name"] {
+        assert!(trae_dir(&project).join(name).symlink_metadata().is_err());
+    }
+
+    let report = enable_targets(&store, &central_repo_of(&store), &roots, &scope, 3100).unwrap();
+
+    assert_eq!(report.projects.items.len(), 2, "{:?}", report.projects);
+    for (tool, name) in [("trae", "trae-skill"), ("trae_cn", "previous-name")] {
+        assert!(
+            trae_dir(&project).join(name).symlink_metadata().is_ok(),
+            "{name}"
+        );
+        let row = row_of(&store, &project, &skill, tool).unwrap();
+        assert!(row.owns_artifact(), "{tool}");
+        assert_eq!(row.status, SyncStatus::Synced, "{tool}");
+        assert_eq!(row.skill_name, name, "{tool} keeps its own path");
+    }
+    let listing = project_sync::list_assignments_with_staleness(&store, &project.id).unwrap();
+    assert_eq!(listing.assignments.len(), 1);
+    assert_eq!(listing.assignments[0].status, SyncStatus::Synced);
+}
+
+/// Review finding 7: Enable never deletes a disabled record. A never-owned
+/// Keep marker over a foreign folder under another name keeps its record and
+/// its path; its own first sync meets the foreign folder and asks (the row
+/// stays a non-owner, `error`, for the overwrite ask), the folder stays, and
+/// the other row of the folder is enabled by its own sync.
+#[test]
+fn enable_keeps_a_keep_marker_over_a_foreign_folder_as_its_own_row() {
+    use crate::core::skill_disable::{disable_targets, enable_targets, DisableScope};
+    use crate::core::skill_store::AssignmentTransition;
+    let (_db, tmp, store, project, skill) = trae_project();
+    seed_trae_row(&store, &project, &skill, "trae", "trae-skill", true);
+    our_link(&skill, &trae_dir(&project).join("trae-skill"));
+    // The operator once answered Keep over a foreign folder at the old name.
+    seed_trae_row(&store, &project, &skill, "trae_cn", "previous-name", false);
+    store
+        .transition_assignment("pa-trae_cn", AssignmentTransition::Disabled)
+        .unwrap();
+    let foreign = trae_dir(&project).join("previous-name");
+    foreign_folder_at(&foreign);
+    let roots = crate::core::environment::HostRoots::under_home(&tmp.path().join("home"));
+    let scope = DisableScope::Skill {
+        skill_id: skill.id.clone(),
+    };
+    let disabled = disable_targets(&store, &central_repo_of(&store), &roots, &scope, 3000).unwrap();
+    assert_eq!(
+        fs::read_to_string(foreign.join("SKILL.md")).unwrap(),
+        "foreign",
+        "{disabled:?}"
+    );
+
+    let report = enable_targets(&store, &central_repo_of(&store), &roots, &scope, 3100).unwrap();
+
+    assert_eq!(report.projects.items.len(), 2, "{:?}", report.projects);
+    assert!(matches!(
+        item_of(&report.projects, "pa-trae").status,
+        ProjectSyncOutcomeStatus::Synced
+    ));
+    assert!(is_collision(
+        &item_of(&report.projects, "pa-trae_cn").status
+    ));
+    assert!(report.projects.skipped_projects.is_empty());
+    let marker = row_of(&store, &project, &skill, "trae_cn").expect("the record is kept");
+    assert_eq!(marker.skill_name, "previous-name", "its own path is kept");
+    assert!(!marker.owns_artifact());
+    assert_eq!(
+        fs::read_to_string(foreign.join("SKILL.md")).unwrap(),
+        "foreign",
+        "the foreign folder stays"
+    );
+    assert_eq!(
+        store
+            .list_project_skill_assignments(&project.id)
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+/// Sol's finding 104: the project total is the listing's own fold. A folder
+/// whose rows disagree shows one state in the matrix and the same state in
+/// the total, and the per-row resync that settles the rows clears both.
+#[test]
+fn the_project_total_reads_the_same_fold_as_the_listing() {
+    use crate::core::sync_status::{aggregate, ProjectSyncStatus};
+    let (_db, _tmp, store, project, skill) = trae_project();
+    seed_trae_row(&store, &project, &skill, "trae", "trae-skill", true);
+    our_link(&skill, &trae_dir(&project).join("trae-skill"));
+    // A sibling row whose first sync failed, on another name, with nothing
+    // in its way: its own re-sync can settle it.
+    seed_trae_row(&store, &project, &skill, "trae_cn", "previous-name", false);
+
+    let listing = project_sync::list_assignments_with_staleness(&store, &project.id).unwrap();
+    assert_eq!(listing.assignments.len(), 1);
+    let shown = aggregate(listing.assignments.iter().map(|a| a.status));
+    assert_eq!(
+        shown,
+        ProjectSyncStatus::Error,
+        "the matrix shows the error"
+    );
+    assert_eq!(
+        store.project_aggregate(&project.id).unwrap().sync_status,
+        shown,
+        "the total agrees with the matrix"
+    );
+
+    project_sync::resync_assignment(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "trae",
+        3000,
+    )
+    .unwrap();
+
+    let listing = project_sync::list_assignments_with_staleness(&store, &project.id).unwrap();
+    let shown = aggregate(listing.assignments.iter().map(|a| a.status));
+    assert_eq!(shown, ProjectSyncStatus::Synced, "{listing:?}");
+    assert_eq!(
+        store.project_aggregate(&project.id).unwrap().sync_status,
+        shown
+    );
+}
+
+/// Astra 204: a disabled sibling never hides the folder's other rows from the
+/// listing or the total. A failed removal (`error`, still owning its link)
+/// beside a settled Disable shows the error in both, with the disabled intent
+/// carried; a `disabled` row beside a live link reads disabled in the matrix,
+/// yet the total counts the link still on disk instead of reading empty.
+#[test]
+fn a_disabled_sibling_hides_no_failure_and_no_live_link_from_listing_or_total() {
+    use crate::core::skill_store::AssignmentTransition;
+    use crate::core::sync_status::ProjectSyncStatus;
+    let (_db, _tmp, store, project, skill) = trae_project();
+    seed_trae_row(&store, &project, &skill, "trae", "trae-skill", true);
+    our_link(&skill, &trae_dir(&project).join("trae-skill"));
+    seed_trae_row(&store, &project, &skill, "trae_cn", "previous-name", true);
+    store
+        .transition_assignment("pa-trae_cn", AssignmentTransition::Disabled)
+        .unwrap();
+
+    let listing = project_sync::list_assignments_with_staleness(&store, &project.id).unwrap();
+    assert_eq!(listing.assignments.len(), 1);
+    let folder = &listing.assignments[0];
+    assert_eq!(folder.status, SyncStatus::Disabled);
+    assert!(folder.facts.disabled && folder.facts.deployed, "{folder:?}");
+    assert_eq!(
+        store.project_aggregate(&project.id).unwrap().sync_status,
+        ProjectSyncStatus::Synced,
+        "the live link still counts"
+    );
+
+    // The folder row's removal failed: the error shows ahead of the muted row.
+    store
+        .transition_assignment(
+            "pa-trae",
+            AssignmentTransition::SyncFailed {
+                error: "removal failed",
+            },
+        )
+        .unwrap();
+    let listing = project_sync::list_assignments_with_staleness(&store, &project.id).unwrap();
+    let folder = &listing.assignments[0];
+    assert_eq!(folder.status, SyncStatus::Error);
+    assert!(folder.facts.disabled && folder.facts.deployed, "{folder:?}");
+    assert_eq!(
+        store.project_aggregate(&project.id).unwrap().sync_status,
+        ProjectSyncStatus::Error
+    );
 }

@@ -40,7 +40,17 @@ function skill(id: string, extra: Partial<ManagedSkill> = {}): ManagedSkill {
 }
 
 function target(tool: string, status: string): SkillTargetDto {
-  return { tool, mode: "symlink", status, target_path: `/t/${tool}`, synced_at: 1, last_error: null } as unknown as SkillTargetDto;
+  // A folder of one row: its facts are that row's.
+  return {
+    tool,
+    mode: "symlink",
+    status,
+    target_path: `/t/${tool}`,
+    synced_at: 1,
+    last_error: null,
+    disabled: status === "disabled",
+    deployed: status !== "disabled",
+  } as unknown as SkillTargetDto;
 }
 
 const SKILLS = [skill("a"), skill("b"), skill("off", { disabled_at: 1 })];
@@ -168,6 +178,7 @@ describe("useHarnessSelection cross-read warning", () => {
     key,
     label: key,
     installed: true,
+    folder_key: key,
     shared_with: [key],
     constituents: [],
     readers: [],

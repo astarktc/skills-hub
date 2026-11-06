@@ -308,7 +308,7 @@ export function mergePropagationRetry(
       // is what Propagation itself answers for it, never a collision again.
       if (target.scope.scope === "project" && projectsSkipped.has(target.scope.project_id))
         out.push({
-          scope: target.scope,
+          ...target,
           status: { status: "skipped", reason: { reason: "project_unavailable", project_id: target.scope.project_id } },
         });
       else out.push(target);
@@ -319,7 +319,7 @@ export function mergePropagationRetry(
     } else if (settled.status === "failed") {
       // The retry wrote the same row: still a first deploy if the asked one was.
       const firstDeploy = target.status.status === "failed" && target.status.first_deploy;
-      out.push({ scope: target.scope, status: { status: "failed", error: settled.error, first_deploy: firstDeploy } });
+      out.push({ ...target, status: { status: "failed", error: settled.error, first_deploy: firstDeploy } });
     }
   }
   return { targets: out, declined };

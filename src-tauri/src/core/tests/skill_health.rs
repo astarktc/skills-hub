@@ -110,7 +110,8 @@ fn planned(adapter: &'static ToolAdapter, root: &Path) -> PlannedToolTarget {
         adapter,
         root: root.to_path_buf(),
         installed: true,
-        record_tools: vec![adapter],
+        folder_key: adapter.key().to_string(),
+        detected: crate::core::placement::InstalledSet::from_keys([adapter.key()]),
     }
 }
 

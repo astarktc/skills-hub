@@ -42,14 +42,29 @@ export function useToolCatalog({ t }: { t: TranslateFn }) {
 
   const toolInfos = useMemo(() => toolStatus?.tools ?? [], [toolStatus]);
 
-  /** Every known tool, labelled (i18n label when present, else the backend's). */
+  /**
+   * Every known tool, labelled (i18n label when present, else the backend's),
+   * with the Deployment folder serving it (`ToolInfoDto.folder_key`).
+   */
   const tools: ToolOption[] = useMemo(
     () =>
       toolInfos.map((info) => ({
         id: info.key,
         label: t(`tools.${info.key}`, { defaultValue: info.label }),
+        folder: info.folder_key,
       })),
     [t, toolInfos],
+  );
+
+  /**
+   * Harness key → the global Deployment folder serving it: its Deployment
+   * rows are keyed by that folder (`ToolInfoDto.folder_key`, the backend's
+   * answer — never derived from a path). A key the catalog does not list (a
+   * folder key itself, or a row of an unknown Tool) stands for itself.
+   */
+  const folderOf = useCallback(
+    (key: string) => toolInfos.find((info) => info.key === key)?.folder_key ?? key,
+    [toolInfos],
   );
 
   /**
@@ -73,6 +88,18 @@ export function useToolCatalog({ t }: { t: TranslateFn }) {
   const installedTools = useMemo(
     () => tools.filter((tool) => installedToolIds.includes(tool.id)),
     [tools, installedToolIds],
+  );
+
+  /**
+   * Whether the global Deployment folder `folder` is reachable: some detected
+   * harness of the catalog is served by it (`ToolInfoDto.folder_key` — never
+   * a path). A folder row is written through any of them, so a mark standing
+   * for the folder reads detected when one is (Amp's folder with only Kimi
+   * Code installed).
+   */
+  const isFolderDetected = useCallback(
+    (folder: string) => installedTools.some((tool) => tool.folder === folder),
+    [installedTools],
   );
 
   /**
@@ -103,10 +130,14 @@ export function useToolCatalog({ t }: { t: TranslateFn }) {
       installedToolIds,
       installedTools,
       sharedToolIdsByToolId,
+      folderOf,
+      isFolderDetected,
       projectToolStatus,
       loadProjectToolStatus,
     }),
     [
+      folderOf,
+      isFolderDetected,
       toolStatus,
       tools,
       toolLabelById,

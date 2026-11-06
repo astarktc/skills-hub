@@ -179,10 +179,13 @@ export function useProjectActions({ t, state, catalog, reporter, surface }: Proj
   }, [unassigned]);
   // Offered only while that cell, in the project shown, is still unassigned:
   // a removal that failed kept its row (ADR-0002), so there is nothing to undo.
+  // The cell's row is its column's Deployment folder's (`folder_key`).
+  const unassignedFolder =
+    unassigned && (state.tools.find((tool) => tool.tool === unassigned.tool)?.folder_key ?? unassigned.tool);
   const undoCell =
     unassigned &&
     unassigned.projectId === state.selectedProjectId &&
-    !state.assignments.some((row) => row.skill_id === unassigned.skillId && row.tool === unassigned.tool)
+    !state.assignments.some((row) => row.skill_id === unassigned.skillId && row.tool === unassignedFolder)
       ? `${unassigned.skillId}:${unassigned.tool}`
       : null;
 

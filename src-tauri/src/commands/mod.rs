@@ -126,6 +126,11 @@ pub struct ToolInfoDto {
     pub key: String,
     pub label: String,
     pub installed: bool,
+    /// The folder key of the Deployment folder serving this harness at the
+    /// list's scope (`core::placement`). Deployment rows, the project matrix
+    /// and the saved selection are keyed by folder: the frontend matches a
+    /// harness to its rows through this key, never through a path.
+    pub folder_key: String,
     /// Keys of every listed tool sharing this tool's skills dir (global dir
     /// for the global list, project dir for the project list), in adapter
     /// order, including this tool itself (len >= 1). The backend owns the
@@ -222,6 +227,7 @@ impl From<ToolCatalogEntry> for ToolInfoDto {
             key: entry.key.to_string(),
             label: entry.label.to_string(),
             installed: entry.installed,
+            folder_key: entry.folder_key.to_string(),
             shared_with: entry.shared_with.iter().map(|k| k.to_string()).collect(),
             constituents: entry.constituents.iter().map(|k| k.to_string()).collect(),
             readers: entry
@@ -1157,23 +1163,42 @@ pub struct SkillProjectDto {
     pub deployments: Vec<SkillProjectDeploymentDto>,
 }
 
-/// One project assignment row of the skill: its Tool key and lifecycle.
+/// One project Deployment folder of the skill: its folder key, the folder's
+/// displayed status and facts (`core::placement::FolderFacts`).
 #[derive(Debug, Serialize, Type)]
 pub struct SkillProjectDeploymentDto {
     pub tool: String,
+    /// The folder's displayed status: failure ahead of muted.
     pub status: SyncStatus,
     /// Set once a sync of ours succeeded there; a never-synced `error` row
     /// owns nothing and is not a live deployment.
     pub synced_at: Option<i64>,
+    /// The Disabled rule holds on the folder: some row of it is `disabled`.
+    pub disabled: bool,
+    /// Some row of the folder that is not `disabled` owns its artifact — what
+    /// a Disable would remove (presentation only).
+    pub deployed: bool,
 }
 
+/// One global Deployment folder of the skill: the row standing for it (keyed
+/// by the folder key; its mode, path and `synced_at` are that row's own) and
+/// the folder's facts over all its rows (`core::placement::FolderFacts`).
 #[derive(Debug, Serialize, Type)]
 pub struct SkillTargetDto {
     pub tool: String,
     pub mode: SyncMode,
+    /// The folder's displayed status: failure ahead of muted (`error` ›
+    /// `missing` › `stale` › `disabled` › `pending` › `synced`).
     pub status: SyncStatus,
     pub target_path: String,
     pub synced_at: Option<i64>,
+    /// The Disabled rule holds on the folder: some row of it is `disabled`,
+    /// so a re-sync is skipped; its repair is finishing the Disable, or Enable.
+    pub disabled: bool,
+    /// Some row of the folder that is not `disabled` owns its artifact — what
+    /// a Disable or Delete would remove (presentation only, never a row's
+    /// ownership).
+    pub deployed: bool,
 }
 
 #[tauri::command]
@@ -1285,11 +1310,13 @@ impl From<ManagedSkillEntry> for ManagedSkillDto {
             targets: targets
                 .into_iter()
                 .map(|target| SkillTargetDto {
-                    tool: target.tool,
-                    mode: target.mode,
-                    status: target.status,
-                    target_path: target.target_path,
-                    synced_at: target.synced_at,
+                    tool: target.row.tool,
+                    mode: target.row.mode,
+                    status: target.facts.status,
+                    target_path: target.row.target_path,
+                    synced_at: target.row.synced_at,
+                    disabled: target.facts.disabled,
+                    deployed: target.facts.deployed,
                 })
                 .collect(),
             disabled_at,
@@ -1309,6 +1336,8 @@ impl From<ManagedSkillEntry> for ManagedSkillDto {
                             tool: deployment.tool,
                             status: deployment.status,
                             synced_at: deployment.synced_at,
+                            disabled: deployment.disabled,
+                            deployed: deployment.deployed,
                         })
                         .collect(),
                 })

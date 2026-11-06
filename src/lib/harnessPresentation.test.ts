@@ -17,6 +17,7 @@ function tool(
     key,
     label: key,
     installed,
+    folder_key: key,
     shared_with: [key],
     constituents: [],
     readers,

@@ -170,8 +170,11 @@ export type SkillActionsDeps = {
     | "collectEnable"
     | "settleCollisionParts"
   >;
-  /** The Tool catalog: labels for reports and progress. */
-  catalog: Pick<ToolCatalog, "toolLabelById">;
+  /**
+   * The Tool catalog: labels for reports and progress, and the Deployment
+   * folder each harness's rows are keyed by.
+   */
+  catalog: Pick<ToolCatalog, "toolLabelById" | "folderOf">;
   /** The surface module: the dialogs a verb opens for its confirmation. */
   surface: Pick<DialogDoor, "openDialog" | "dismissDialog" | "updateDialog">;
   /** The skills world's catalog: resolution, replacement and reload. */
@@ -238,7 +241,7 @@ export function useSkillActions({
     collectEnable,
     settleCollisionParts,
   } = sync;
-  const { toolLabelById } = catalog;
+  const { toolLabelById, folderOf } = catalog;
   const { openDialog, dismissDialog, updateDialog } = surface;
   const { managedSkills, loadManagedSkills, replaceCatalog } = library;
   const { assignToProject, unassignFromProject, refreshView, projects: projectList } = projects;
@@ -447,14 +450,16 @@ export function useSkillActions({
       case "retry": {
         const { tool, tools } = opts as SkillVerbOptions["retry"];
         // Exactly the pairs to repair: each skill's own Tools, never the
-        // product of every skill with every Tool.
+        // product of every skill with every Tool. A row is keyed by its
+        // Deployment folder, so the asked Tools are matched by theirs.
+        const wanted = tools?.map(folderOf);
         const bySet = new Map<string, { tools: string[]; items: BatchSyncSkillDto[] }>();
         for (const skill of skills) {
           const toolIds =
             tool !== undefined
               ? [tool]
               : skill.targets
-                  .filter((target) => RETRYABLE.has(target.status) && (!tools || tools.includes(target.tool)))
+                  .filter((target) => RETRYABLE.has(target.status) && (!wanted || wanted.includes(target.tool)))
                   .map((target) => target.tool);
           if (toolIds.length === 0) continue;
           const key = toolIds.join("\n");
@@ -836,9 +841,17 @@ export function useSkillActions({
       case "deploy":
         // The repair names its targets (the effective set): no pick.
         return run("syncToTargets", [skill], { confirmed: true });
-      case "disable":
-        // Finish the skill-grain Disable its failed targets interrupted.
-        return run("disable", [skill]);
+      case "disable": {
+        // Finish the Disable its failed targets interrupted: the skill-grain
+        // one, else the pair-grain Disable of each listed Tool a Disable
+        // holds on (the folder's `disabled` fact), one after another.
+        if (skill.disabled_at !== null) return run("disable", [skill]);
+        const held = row.tools.filter((tool) => skill.targets.some((target) => target.tool === tool && target.disabled));
+        return held.reduce<Promise<void>>(
+          (previous, tool) => previous.then(() => run("disable", [skill], { tool })),
+          Promise.resolve(),
+        );
+      }
     }
   };
 

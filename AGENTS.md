@@ -338,8 +338,9 @@ than re-tagging.
   `*ReportDto` mirror or mapper in `commands/`, per-item failures are `CommandError` classified at settlement,
   and counters (`refreshed/failed/skipped`, `removed/failed`, …) are derived once by the frontend fold
   (`src/lib/reportOutcome.ts`), never carried on the wire. Delete returns its `RemovalReport` too:
-  - sync → `sync_skills_to_tools` (`core/global_sync.rs`): installedness filtering, shared-dir dedupe,
-    overwrite policy (batch default + per-(skill,tool) overrides), DB record fan-out. The frontend seam
+  - sync → `sync_skills_to_tools` (`core/global_sync.rs`): each key placed in the Deployment folder serving it
+    (`core/placement.rs`, the layout read once per batch), folder dedupe, installedness filtering, overwrite policy
+    (batch default + per-(skill,tool) overrides), one row per (skill, folder key) — never one per shared-dir sibling. The frontend seam
     (`useSyncOrchestration.syncSkillsToTools`) owns the **overwrite ask**: every call site passes
     `overwriteIfSameContent: true` (identical content is replaced silently); `TARGET_EXISTS` rows raise one
     confirmation and one retry batch with per-pair `overrides` (`decision: "overwrite"` confirmed, `"keep"` declined —
@@ -350,8 +351,8 @@ than re-tagging.
     never for a `?`-propagated error or a cancellation; a success clears only its own family.
   - Update / Refresh (all) → `refresh_managed_skills` (`core/refresh.rs`): acquire every skill (bounded
     pool of 4, std threads), then `skill_update::apply_unlocked` admits and settles each under the
-    guard (finalize + Edit replay + Propagation; ADR-0004) — existing targets only, never a new one (D34; a first sync
-    into a shared skills dir records its installed sharers, as the global batch does — D34 amendment). A single
+    guard (finalize + Edit replay + Propagation; ADR-0004) — existing targets only, never a new one (D34; a shared
+    skills dir is one folder with one row, round 20 ticket 09 retiring the D34 amendment's sharer records). A single
     Update is a batch of one, reached through `update_managed_skill` for Update/Restore's catalog-bearing
     response. `core/skill_update.rs` owns the git/local/Edit/Restore byte adapters; stale acquisitions are
     discarded as skipped report data, never retried in-batch. Direct Edit settles through the same Update
@@ -404,7 +405,11 @@ than re-tagging.
     target row (pair), or `skills.disabled_at` plus every row `disabled` (skill). There is no unrecorded unsync.
     **Every fan-out skips a disabled target as report data, never `Failed`**: Propagation
     (`PropagationSkip::Disabled`); the global batch, hence Onboarding import's first sync (`Skipped` with
-    `TARGET_DISABLED`, also for a shared-dir sibling of a disabled row); project sync (`ProjectSyncSkip::Disabled`).
+    `TARGET_DISABLED`, also for every other row of a Deployment folder one of whose rows is disabled); project sync
+    (`ProjectSyncSkip::Disabled`). Every mutation acts on each stored row by itself (its own ownership and
+    settlement); a row keyed by another key than its folder's is a legacy row that keeps 1.3.4's meaning in every
+    mutation (`placement::is_folder_row`, ADR-0007); grouping rows by Deployment folder is presentation and counting
+    only (`placement::fold_folder_rows`, whole-folder `FolderFacts`).
     A fan-out gates on `skills.disabled_at` as well as row status: a failed skill Disable keeps rows `error`
     (ADR-0002), and those are skipped too (resync, bulk assign, relocation).
     Only Enable re-materialises, as a first sync (`EnableReport { global, projects }`).

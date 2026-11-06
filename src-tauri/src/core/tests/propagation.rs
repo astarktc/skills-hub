@@ -25,37 +25,39 @@ use crate::core::tool_adapters::{adapter_by_key, mark_installed_in, RegistryPath
 #[test]
 fn shared_edit_update_report_preserves_classified_failure_on_the_wire() {
     use crate::core::errors::{CommandError, SignalError};
-    let target = PropagationOutcome {
-        scope: PropagationScope::Global {
-            tool: "cursor".into(),
+    let target = PropagationOutcome::new(
+        PropagationScope::Global {
+            tool: "kimi_cli".into(),
         },
-        status: PropagationStatus::Failed {
+        PropagationStatus::Failed {
             error: CommandError::from_anyhow(anyhow::anyhow!(SignalError::CentralPathMissing {
                 path: "central".into(),
             })),
             first_deploy: false,
         },
-    };
+    );
     assert_eq!(
         serde_json::to_value(target).unwrap(),
         serde_json::json!({
-            "scope": { "scope": "global", "tool": "cursor" },
+            "scope": { "scope": "global", "tool": "kimi_cli" },
+            "folder_key": "amp",
             "status": { "status": "failed", "error": { "code": "CENTRAL_PATH_MISSING", "path": "central" }, "first_deploy": false }
         })
     );
-    let skipped = PropagationOutcome {
-        scope: PropagationScope::Project {
+    let skipped = PropagationOutcome::new(
+        PropagationScope::Project {
             project_id: "p1".into(),
-            tool: "pi".into(),
+            tool: "trae_cn".into(),
         },
-        status: PropagationStatus::Skipped {
+        PropagationStatus::Skipped {
             reason: PropagationSkip::LinkFollowsSource,
         },
-    };
+    );
     assert_eq!(
         serde_json::to_value(skipped).unwrap(),
         serde_json::json!({
-            "scope": { "scope": "project", "project_id": "p1", "tool": "pi" },
+            "scope": { "scope": "project", "project_id": "p1", "tool": "trae_cn" },
+            "folder_key": "trae",
             "status": { "status": "skipped", "reason": { "reason": "link_follows_source" } }
         })
     );
@@ -306,8 +308,12 @@ fn an_uninstalled_tool_is_skipped() {
     );
 }
 
+/// Rows written once per shared-dir sibling before rows were per folder (Amp
+/// and Kimi Code's `~/.config/agents/skills`) are each their own row: each is
+/// synced at its own recorded path and settles itself, as before rows were
+/// per folder.
 #[test]
-fn a_shared_skills_dir_group_syncs_once_and_settles_every_member_row() {
+fn legacy_sibling_rows_each_sync_and_settle_by_themselves() {
     let f = fixture();
     let amp = adapter_by_key("amp").expect("amp adapter");
     let kimi = adapter_by_key("kimi_cli").expect("kimi_cli adapter");
@@ -429,10 +435,28 @@ fn a_missing_central_source_fails_every_row_as_report_data() {
     }
 }
 
+/// The shipped copy-only harness with a project folder of its own (Deep Agents
+/// Code, `.deepagents/skills`): a project folder deploys with placement's
+/// capability for it, so a copy-only shadow of a group constituent would be
+/// served by the group's link-mode `.agents/skills` folder instead.
+fn project_copy_only_tool() -> &'static ToolAdapter {
+    let adapter = adapter_by_key("deep_agents_code").expect("deep agents adapter");
+    assert!(!adapter.supports_symlink, "test premise: copy-only");
+    adapter
+}
+
+/// The project folder [`seed_project_copy_assignment`]'s row describes.
+fn project_folder_of_project_copy_only_tool() -> String {
+    crate::core::placement::row_folder(
+        crate::core::placement::ScopeKind::Project,
+        project_copy_only_tool().key(),
+    )
+}
+
 /// A project assignment row in copy mode on a copy-only Tool, with a stale
 /// copy already on disk.
 fn seed_project_copy_assignment(f: &Fixture, project_path: &Path) -> PathBuf {
-    let cursor = copy_only_tool();
+    let tool = project_copy_only_tool();
     let project = ProjectRecord {
         id: "p1".to_string(),
         path: project_path.to_string_lossy().to_string(),
@@ -448,7 +472,7 @@ fn seed_project_copy_assignment(f: &Fixture, project_path: &Path) -> PathBuf {
             project_id: "p1".to_string(),
             skill_id: f.skill_id.clone(),
             skill_name: "skill".to_string(),
-            tool: cursor.key().to_string(),
+            tool: tool.key().to_string(),
             mode: SyncMode::Copy,
             status: SyncStatus::Synced,
             last_error: None,
@@ -458,7 +482,7 @@ fn seed_project_copy_assignment(f: &Fixture, project_path: &Path) -> PathBuf {
         })
         .expect("seed assignment");
     project_path
-        .join(cursor.project_skills_dir.unwrap())
+        .join(tool.project_skills_dir.unwrap())
         .join("skill")
 }
 
@@ -473,7 +497,7 @@ fn a_project_copy_is_refreshed_and_its_row_settled() {
 
     let scope = PropagationScope::Project {
         project_id: "p1".to_string(),
-        tool: copy_only_tool().key().to_string(),
+        tool: project_folder_of_project_copy_only_tool(),
     };
     assert!(
         matches!(
@@ -491,7 +515,7 @@ fn a_project_copy_is_refreshed_and_its_row_settled() {
     );
     let row = f
         .store
-        .get_project_skill_assignment("p1", &f.skill_id, copy_only_tool().key())
+        .get_project_skill_assignment("p1", &f.skill_id, project_copy_only_tool().key())
         .expect("query")
         .expect("row");
     assert_eq!(row.status, SyncStatus::Synced);
@@ -557,7 +581,7 @@ fn update_supplies_a_real_hash_to_copy_assignments_and_reconcile_keeps_synced() 
     let skill = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
     let row = f
         .store
-        .get_project_skill_assignment("p1", &f.skill_id, "cursor")
+        .get_project_skill_assignment("p1", &f.skill_id, project_copy_only_tool().key())
         .unwrap()
         .unwrap();
     assert_eq!(row.mode, SyncMode::Copy);
@@ -594,7 +618,7 @@ fn a_project_whose_directory_is_gone_is_skipped() {
 
     let scope = PropagationScope::Project {
         project_id: "p1".to_string(),
-        tool: copy_only_tool().key().to_string(),
+        tool: project_folder_of_project_copy_only_tool(),
     };
     assert!(
         matches!(
@@ -608,7 +632,7 @@ fn a_project_whose_directory_is_gone_is_skipped() {
     );
     let row = f
         .store
-        .get_project_skill_assignment("p1", &f.skill_id, copy_only_tool().key())
+        .get_project_skill_assignment("p1", &f.skill_id, project_copy_only_tool().key())
         .expect("query")
         .expect("row");
     assert_eq!(
@@ -634,7 +658,7 @@ fn a_project_path_that_is_a_file_is_skipped() {
 
     let scope = PropagationScope::Project {
         project_id: "p1".to_string(),
-        tool: copy_only_tool().key().to_string(),
+        tool: project_folder_of_project_copy_only_tool(),
     };
     assert!(
         matches!(
@@ -673,7 +697,7 @@ fn a_project_artifact_is_found_by_its_stored_name_after_the_skill_is_renamed() {
 
     let scope = PropagationScope::Project {
         project_id: "p1".to_string(),
-        tool: copy_only_tool().key().to_string(),
+        tool: project_folder_of_project_copy_only_tool(),
     };
     assert!(
         matches!(
@@ -699,11 +723,11 @@ fn a_project_artifact_is_found_by_its_stored_name_after_the_skill_is_renamed() {
 }
 
 // ---------------------------------------------------------------------------
-// A shared skills dir is one artifact (D34 amendment, ticket 33 audit F1):
-// Propagation's first sync of a never-materialised row records every
-// installed sharer, exactly as the global batch does — so the Update's own
-// first sync and its confirmed overwrite retry (which goes through the batch)
-// leave the same row set.
+// A shared skills dir is one Deployment folder, one row (round 20 ticket 09,
+// retiring the D34 amendment's per-sharer records): Propagation's first sync
+// of a never-materialised row records nothing beyond the folder's row, exactly
+// as the global batch does — so the Update's own first sync and its confirmed
+// overwrite retry (which goes through the batch) leave the same row set.
 // ---------------------------------------------------------------------------
 
 /// Amp's global skills dir, shared with Kimi Code CLI.
@@ -768,7 +792,7 @@ fn amp_and_kimi() -> (&'static ToolAdapter, &'static ToolAdapter) {
 }
 
 #[test]
-fn a_first_sync_records_every_installed_sharer_of_the_shared_dir() {
+fn a_first_sync_into_a_shared_folder_records_only_the_folders_row() {
     let f = fixture();
     let (amp, kimi) = amp_and_kimi();
     install_tool(&f, amp);
@@ -778,26 +802,22 @@ fn a_first_sync_records_every_installed_sharer_of_the_shared_dir() {
 
     let outcomes = propagate(&f);
 
-    for tool in ["amp", "kimi_cli"] {
-        assert!(
-            matches!(
-                outcome_for(&outcomes, &global(tool)),
-                PropagationStatus::Synced {
-                    mode_used: SyncMode::Symlink
-                }
-            ),
-            "{tool} is reported synced, got {outcomes:?}"
-        );
-    }
-    assert_eq!(outcomes.len(), 2, "each row reported once: {outcomes:?}");
-    let rows = row_set(&f);
-    assert_eq!(tools_of(&f), ["amp", "kimi_cli"]);
-    for (tool, status, mode, path, owns) in &rows {
-        assert_eq!(*status, SyncStatus::Synced, "{tool}");
-        assert_eq!(*mode, SyncMode::Symlink, "{tool}");
-        assert!(*owns, "{tool} owns the artifact it was synced to");
-        assert_eq!(path, &rows[0].3, "{tool} records the one shared path");
-    }
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &global("amp")),
+            PropagationStatus::Synced {
+                mode_used: SyncMode::Symlink
+            }
+        ),
+        "the folder is reported synced, got {outcomes:?}"
+    );
+    assert_eq!(outcomes.len(), 1, "one folder, one outcome: {outcomes:?}");
+    // Kimi Code reads the folder's row; no row of its own is minted.
+    assert_eq!(tools_of(&f), ["amp"]);
+    let (_, status, mode, _, owns) = &row_set(&f)[0];
+    assert_eq!(*status, SyncStatus::Synced);
+    assert_eq!(*mode, SyncMode::Symlink);
+    assert!(*owns, "the folder's row owns the artifact it was synced to");
     // One artifact: the shared dir holds the skill once, as a link.
     let entries: Vec<_> = fs::read_dir(target.parent().unwrap())
         .expect("read shared dir")
@@ -848,10 +868,10 @@ fn an_update_of_an_owned_artifact_records_no_new_sharer() {
 }
 
 /// The audit's exact sequence: the Update's first sync meets a foreign folder
-/// (`TARGET_EXISTS`, first deploy; the batch's rule records no sharer until
-/// the ask is answered), then the confirmed retry through the global batch
-/// records Amp and Kimi — the same row set Propagation writes when nothing
-/// is in the way.
+/// (`TARGET_EXISTS`, first deploy; nothing is recorded until the ask is
+/// answered), then the confirmed retry through the global batch records the
+/// folder's one row — the same row set Propagation writes when nothing is in
+/// the way.
 #[test]
 fn a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_propagation() {
     use crate::core::errors::CommandError;
@@ -919,7 +939,7 @@ fn a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_prop
     seed_unowned_target(&control, "amp", &shared_target(&control));
     propagate(&control);
 
-    assert_eq!(tools_of(&f), ["amp", "kimi_cli"]);
+    assert_eq!(tools_of(&f), ["amp"]);
     assert_eq!(
         row_set(&f),
         row_set(&control),
@@ -928,7 +948,7 @@ fn a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_prop
 }
 
 #[test]
-fn a_failed_first_sync_records_installed_sharers_error_as_the_batch_does() {
+fn a_failed_first_sync_settles_the_folders_row_error_as_the_batch_does() {
     use crate::core::errors::CommandError;
 
     let f = fixture();
@@ -941,22 +961,18 @@ fn a_failed_first_sync_records_installed_sharers_error_as_the_batch_does() {
 
     let outcomes = propagate(&f);
 
-    for tool in ["amp", "kimi_cli"] {
-        match outcome_for(&outcomes, &global(tool)) {
-            PropagationStatus::Failed {
-                error: CommandError::InvalidPath { reason, .. },
-                first_deploy: true,
-            } if reason == "missing" => {}
-            other => panic!("expected a failed first deploy for {tool}, got {other:?}"),
-        }
+    assert_eq!(outcomes.len(), 1, "{outcomes:?}");
+    match outcome_for(&outcomes, &global("amp")) {
+        PropagationStatus::Failed {
+            error: CommandError::InvalidPath { reason, .. },
+            first_deploy: true,
+        } if reason == "missing" => {}
+        other => panic!("expected a failed first deploy, got {other:?}"),
     }
-    let rows = row_set(&f);
-    assert_eq!(tools_of(&f), ["amp", "kimi_cli"]);
-    for (tool, status, _, path, owns) in &rows {
-        assert_eq!(*status, SyncStatus::Error, "{tool}");
-        assert!(!owns, "{tool}: a failed first sync owns nothing");
-        assert_eq!(path, &rows[0].3, "{tool}");
-    }
+    assert_eq!(tools_of(&f), ["amp"], "no sibling row is minted");
+    let (_, status, _, _, owns) = &row_set(&f)[0];
+    assert_eq!(*status, SyncStatus::Error);
+    assert!(!owns, "a failed first sync owns nothing");
 }
 
 #[test]
@@ -1010,4 +1026,434 @@ fn a_disabled_member_mints_no_sharer_and_skips_the_group() {
     ));
     assert_eq!(tools_of(&g), ["amp"]);
     assert!(fs::symlink_metadata(shared_target(&g)).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// Every row propagates by itself (round 20 t09 reviews, rounds 1–3): at its
+// own recorded path, with its own ownership and its own settlement, and with
+// the capability of the folder it describes. Nothing is lent or settled from
+// one row to another, however physically close their paths are.
+// ---------------------------------------------------------------------------
+
+/// A project with Trae and Trae CN rows, as a pre-1.4.0 project wrote them.
+fn seed_trae_assignment(
+    f: &Fixture,
+    project_path: &Path,
+    tool: &str,
+    name: &str,
+    mode: SyncMode,
+    owned: bool,
+) {
+    if f.store.get_project_by_id("p1").unwrap().is_none() {
+        f.store
+            .register_project(&ProjectRecord {
+                id: "p1".to_string(),
+                path: project_path.to_string_lossy().to_string(),
+                created_at: 1,
+                updated_at: 1,
+            })
+            .expect("register project");
+    }
+    f.store
+        .add_project_skill_assignment(&ProjectSkillAssignmentRecord {
+            id: format!("pa-{tool}"),
+            project_id: "p1".to_string(),
+            skill_id: f.skill_id.clone(),
+            skill_name: name.to_string(),
+            tool: tool.to_string(),
+            mode,
+            status: if owned {
+                SyncStatus::Synced
+            } else {
+                SyncStatus::Error
+            },
+            last_error: None,
+            synced_at: owned.then_some(1),
+            content_hash: None,
+            created_at: 1,
+        })
+        .expect("seed assignment");
+}
+
+fn trae_scope(tool: &str) -> PropagationScope {
+    PropagationScope::Project {
+        project_id: "p1".to_string(),
+        tool: tool.to_string(),
+    }
+}
+
+fn is_first_deploy_collision(status: &PropagationStatus) -> bool {
+    matches!(
+        status,
+        PropagationStatus::Failed {
+            error: crate::core::errors::CommandError::TargetExists { .. },
+            first_deploy: true,
+        }
+    )
+}
+
+/// Review repro 3: the `trae` row records a link, the `trae_cn` row records a
+/// copy of the same artifact, and that artifact is a real copy with old bytes.
+/// The copy row's own Propagation refreshes it — no representative row's
+/// link can skip it.
+#[test]
+fn a_project_copy_recorded_by_any_row_of_its_artifact_gets_new_bytes() {
+    let f = fixture();
+    let project = tempfile::tempdir().expect("project tempdir");
+    seed_trae_assignment(&f, project.path(), "trae", "skill", SyncMode::Symlink, true);
+    seed_trae_assignment(&f, project.path(), "trae_cn", "skill", SyncMode::Copy, true);
+    let target = project.path().join(".trae/skills/skill");
+    seed_stale_copy(&target);
+
+    let outcomes = propagate(&f);
+
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &trae_scope("trae_cn")),
+            PropagationStatus::Synced { .. }
+        ),
+        "the stale copy is refreshed by its own row, got {outcomes:?}"
+    );
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &trae_scope("trae")),
+            PropagationStatus::Skipped {
+                reason: PropagationSkip::LinkFollowsSource
+            }
+        ),
+        "{outcomes:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("a.txt")).expect("read target"),
+        "v2",
+        "the copy carries the new bytes"
+    );
+    let row = f
+        .store
+        .get_project_skill_assignment("p1", &f.skill_id, "trae_cn")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.synced_at, Some(2000), "the copy row settles itself");
+}
+
+/// A project sibling recording another name neither lends its ownership nor
+/// settles another row: the owned old-name copy is refreshed in place by its
+/// own row; the never-synced row's own first deploy meets the foreign folder
+/// at the current name and asks.
+#[test]
+fn a_project_sibling_naming_another_artifact_lends_no_ownership() {
+    let f = fixture();
+    let project = tempfile::tempdir().expect("project tempdir");
+    seed_trae_assignment(
+        &f,
+        project.path(),
+        "trae",
+        "skill",
+        SyncMode::Symlink,
+        false,
+    );
+    seed_trae_assignment(
+        &f,
+        project.path(),
+        "trae_cn",
+        "old-name",
+        SyncMode::Copy,
+        true,
+    );
+    let old = project.path().join(".trae/skills/old-name");
+    seed_stale_copy(&old);
+    let foreign = project.path().join(".trae/skills/skill");
+    foreign_folder(&foreign);
+
+    let outcomes = propagate(&f);
+
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &trae_scope("trae_cn")),
+            PropagationStatus::Synced { .. }
+        ),
+        "the owner's own copy is refreshed, got {outcomes:?}"
+    );
+    assert!(
+        is_first_deploy_collision(outcome_for(&outcomes, &trae_scope("trae"))),
+        "{outcomes:?}"
+    );
+    assert_eq!(fs::read_to_string(old.join("a.txt")).unwrap(), "v2");
+    assert_eq!(
+        fs::read_to_string(foreign.join("SKILL.md")).unwrap(),
+        "foreign"
+    );
+    let trae = f
+        .store
+        .get_project_skill_assignment("p1", &f.skill_id, "trae")
+        .unwrap()
+        .unwrap();
+    assert!(!trae.owns_artifact(), "never lent ownership");
+    assert_eq!(trae.status, SyncStatus::Error);
+}
+
+/// The global arm: Kimi's row owning a copy under another name is refreshed in
+/// place by itself; Amp's never-synced row over a foreign folder at the
+/// current name gets its own first deploy, which asks — it is neither
+/// authorised by Kimi's ownership nor settled by Kimi's write.
+#[test]
+fn a_global_sibling_naming_another_artifact_lends_no_ownership() {
+    let f = fixture();
+    let (amp, kimi) = amp_and_kimi();
+    install_tool(&f, amp);
+    install_tool(&f, kimi);
+    let foreign = shared_target(&f);
+    foreign_folder(&foreign);
+    seed_unowned_target(&f, "amp", &foreign);
+    let old = f.paths.roots.home.join(".config/agents/skills/old-name");
+    seed_stale_copy(&old);
+    seed_global_target(&f, "t-kimi", "kimi_cli", &old, SyncMode::Copy);
+
+    let outcomes = propagate(&f);
+
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &global("kimi_cli")),
+            PropagationStatus::Synced { .. }
+        ),
+        "the owner's own copy is refreshed, got {outcomes:?}"
+    );
+    assert!(
+        is_first_deploy_collision(outcome_for(&outcomes, &global("amp"))),
+        "{outcomes:?}"
+    );
+    assert_eq!(fs::read_to_string(old.join("a.txt")).unwrap(), "v2");
+    assert_eq!(
+        fs::read_to_string(foreign.join("SKILL.md")).unwrap(),
+        "foreign"
+    );
+    let kimi_row = f
+        .store
+        .get_skill_target(&f.skill_id, "kimi_cli")
+        .unwrap()
+        .unwrap();
+    assert_eq!(std::path::Path::new(&kimi_row.target_path), old.as_path());
+    assert_eq!(kimi_row.synced_at, Some(2000), "its own path, written");
+    let amp_row = f
+        .store
+        .get_skill_target(&f.skill_id, "amp")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        amp_row.target_path,
+        foreign.to_string_lossy(),
+        "its own path"
+    );
+    assert!(!amp_row.owns_artifact());
+    assert_eq!(amp_row.status, SyncStatus::Error);
+}
+
+/// Pre-1.4.0 Amp/Kimi siblings recording one path byte for byte are still two
+/// rows: the never-synced row's own first deploy (first in store order) meets
+/// the stale copy and asks; the owner then refreshes its own artifact. The
+/// next Propagation's first deploy of the never-synced row finds the skill's
+/// link there and settles it by its own sync.
+#[test]
+fn global_siblings_recording_the_same_path_settle_each_by_its_own_sync() {
+    let f = fixture();
+    let (amp, kimi) = amp_and_kimi();
+    install_tool(&f, amp);
+    install_tool(&f, kimi);
+    let shared = shared_target(&f);
+    seed_stale_copy(&shared);
+    seed_unowned_target(&f, "amp", &shared);
+    seed_global_target(&f, "t-kimi", "kimi_cli", &shared, SyncMode::Copy);
+
+    let outcomes = propagate(&f);
+
+    assert_eq!(outcomes.len(), 2, "one outcome per row: {outcomes:?}");
+    assert!(
+        is_first_deploy_collision(outcome_for(&outcomes, &global("amp"))),
+        "{outcomes:?}"
+    );
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &global("kimi_cli")),
+            PropagationStatus::Synced { .. }
+        ),
+        "{outcomes:?}"
+    );
+    let amp_row = f
+        .store
+        .get_skill_target(&f.skill_id, "amp")
+        .unwrap()
+        .unwrap();
+    assert!(
+        !amp_row.owns_artifact(),
+        "nothing settled it from Kimi's write"
+    );
+
+    let again = propagate(&f);
+    assert!(
+        matches!(
+            outcome_for(&again, &global("amp")),
+            PropagationStatus::Synced { .. }
+        ),
+        "{again:?}"
+    );
+    for tool in ["amp", "kimi_cli"] {
+        let row = f
+            .store
+            .get_skill_target(&f.skill_id, tool)
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.status, SyncStatus::Synced, "{tool}");
+        assert!(row.owns_artifact(), "{tool}");
+    }
+}
+
+/// One disabled row of a folder keeps every row of it from being written, as
+/// it did before rows were per folder: writing the shared artifact for the
+/// other row would re-materialise it where the disabled harness reads. Each
+/// row is reported for itself.
+#[test]
+fn a_disabled_row_keeps_its_folders_other_rows_unwritten() {
+    let f = fixture();
+    let (amp, kimi) = amp_and_kimi();
+    install_tool(&f, amp);
+    install_tool(&f, kimi);
+    let shared = shared_target(&f);
+    seed_stale_copy(&shared);
+    seed_global_target(&f, "t-kimi", "kimi_cli", &shared, SyncMode::Copy);
+    f.store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "t-amp".to_string(),
+            skill_id: f.skill_id.clone(),
+            tool: "amp".to_string(),
+            target_path: shared.to_string_lossy().to_string(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Disabled,
+            last_error: None,
+            synced_at: None,
+        })
+        .expect("seed disabled marker");
+
+    let outcomes = propagate(&f);
+
+    for tool in ["amp", "kimi_cli"] {
+        assert!(
+            matches!(
+                outcome_for(&outcomes, &global(tool)),
+                PropagationStatus::Skipped {
+                    reason: PropagationSkip::Disabled
+                }
+            ),
+            "{tool}: {outcomes:?}"
+        );
+    }
+    assert_eq!(fs::read_to_string(shared.join("a.txt")).unwrap(), "v1");
+}
+
+/// Review finding 6: two spellings naming one slot (the folder reached
+/// directly and through an aliased home) are two rows with two recorded paths.
+/// With a foreign folder in that slot, neither never-synced row gets an
+/// overwrite permission from the other: each one's own first deploy asks,
+/// and the foreign folder stays.
+#[cfg(unix)]
+#[test]
+fn a_slot_reached_by_two_spellings_lends_nothing() {
+    let f = fixture();
+    let (amp, kimi) = amp_and_kimi();
+    install_tool(&f, amp);
+    install_tool(&f, kimi);
+    let canonical = shared_target(&f);
+    let alias_home = f.paths.roots.home.parent().unwrap().join("alias-home");
+    std::os::unix::fs::symlink(&f.paths.roots.home, &alias_home).unwrap();
+    let aliased = alias_home.join(".config/agents/skills/skill");
+    foreign_folder(&canonical);
+    assert!(
+        aliased.join("SKILL.md").is_file(),
+        "one slot, two spellings"
+    );
+    seed_unowned_target(&f, "amp", &canonical);
+    seed_unowned_target(&f, "kimi_cli", &aliased);
+
+    let outcomes = propagate(&f);
+
+    for tool in ["amp", "kimi_cli"] {
+        assert!(
+            is_first_deploy_collision(outcome_for(&outcomes, &global(tool))),
+            "{tool}: {outcomes:?}"
+        );
+        let row = f
+            .store
+            .get_skill_target(&f.skill_id, tool)
+            .unwrap()
+            .unwrap();
+        assert!(!row.owns_artifact(), "{tool}");
+    }
+    assert_eq!(
+        fs::read_to_string(canonical.join("SKILL.md")).unwrap(),
+        "foreign",
+        "the foreign occupant is not replaced"
+    );
+}
+
+/// Astra 203, the differential against `main`: an owned legacy Kimi Code copy
+/// on Amp's folder, with Amp installed and Kimi Code not. A legacy row is
+/// reached through its own harness alone (`placement::row_reachable`), so it
+/// is `ToolNotInstalled` and its bytes are left as they are — never written
+/// because a sibling harness of its folder is installed.
+#[test]
+fn a_legacy_row_of_an_uninstalled_harness_is_skipped_whatever_its_folder_serves() {
+    let f = fixture();
+    let (amp, _) = amp_and_kimi();
+    install_tool(&f, amp);
+    let target = shared_target(&f);
+    seed_stale_copy(&target);
+    seed_global_target(&f, "t-kimi", "kimi_cli", &target, SyncMode::Copy);
+
+    let outcomes = propagate(&f);
+
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &global("kimi_cli")),
+            PropagationStatus::Skipped {
+                reason: PropagationSkip::ToolNotInstalled { tool }
+            } if tool == "kimi_cli"
+        ),
+        "got {outcomes:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("a.txt")).expect("read target"),
+        "v1",
+        "the legacy copy's bytes are untouched"
+    );
+    let row = f
+        .store
+        .get_skill_target(&f.skill_id, "kimi_cli")
+        .expect("query")
+        .expect("row");
+    assert_eq!((row.status, row.synced_at), (SyncStatus::Synced, Some(1)));
+}
+
+/// The folder row of the same folder is reached through any harness the
+/// folder serves: Amp's row is refreshed with only Kimi Code installed.
+#[test]
+fn a_folder_row_is_reached_through_any_harness_its_folder_serves() {
+    let f = fixture();
+    let (_, kimi) = amp_and_kimi();
+    install_tool(&f, kimi);
+    let target = shared_target(&f);
+    seed_stale_copy(&target);
+    seed_global_target(&f, "t-amp", "amp", &target, SyncMode::Copy);
+
+    let outcomes = propagate(&f);
+
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &global("amp")),
+            PropagationStatus::Synced { .. }
+        ),
+        "got {outcomes:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("a.txt")).expect("read target"),
+        "v2"
+    );
 }

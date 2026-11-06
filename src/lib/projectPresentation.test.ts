@@ -59,7 +59,7 @@ describe("matrixCell", () => {
   });
 
   it("D17: a live global target marks the cell 'also global' and keeps it a normal cell", () => {
-    const global = skill({ targets: [{ tool: "claude_code", status: "synced", synced_at: 1 }] });
+    const global = skill({ targets: [{ tool: "claude_code", status: "synced", synced_at: 1, deployed: true }] });
     const unassigned = matrixCell({ skill: global, tool, assignment: undefined, inFlight: false }, t);
     expect(unassigned).toMatchObject({ alsoGlobal: true, assigned: false, state: "unassigned" });
     expect(unassigned.name.endsWith(", projectsSurface.cell.alsoGlobal")).toBe(true);
@@ -67,9 +67,9 @@ describe("matrixCell", () => {
     expect(assigned).toMatchObject({ alsoGlobal: true, assigned: true, state: "synced" });
     // A disabled global row, or a never-synced error row, is not a deployment.
     for (const target of [
-      { tool: "claude_code", status: "disabled", synced_at: 1 },
-      { tool: "claude_code", status: "error", synced_at: null },
-      { tool: "pi", status: "synced", synced_at: 1 },
+      { tool: "claude_code", status: "disabled", synced_at: 1, deployed: false },
+      { tool: "claude_code", status: "error", synced_at: null, deployed: false },
+      { tool: "pi", status: "synced", synced_at: 1, deployed: true },
     ] as const) {
       expect(matrixCell({ skill: skill({ targets: [target] }), tool, assignment: undefined, inFlight: false }, t).alsoGlobal).toBe(false);
     }
@@ -92,11 +92,26 @@ describe("matrixCell", () => {
 describe("matrixColumns", () => {
   it("labels each configured Tool from the catalog and says when detection does not see it", () => {
     const labels: Record<string, string> = { claude_code: "Claude Code", windsurf: "Windsurf" };
-    const tools = [{ tool: "claude_code" }, { tool: "windsurf" }, { tool: "zed" }];
+    const tools = [
+      { tool: "claude_code", folder_key: "claude_code" },
+      { tool: "windsurf", folder_key: "windsurf" },
+      { tool: "zed", folder_key: "zed" },
+    ];
     expect(matrixColumns(tools, (key) => labels[key] ?? key, ["claude_code"])).toEqual([
-      { key: "claude_code", label: "Claude Code", detected: true },
-      { key: "windsurf", label: "Windsurf", detected: false },
-      { key: "zed", label: "zed", detected: false },
+      { key: "claude_code", folder: "claude_code", label: "Claude Code", detected: true },
+      { key: "windsurf", folder: "windsurf", label: "Windsurf", detected: false },
+      { key: "zed", folder: "zed", label: "zed", detected: false },
+    ]);
+  });
+
+  it("carries the Deployment folder each column reads (two Tools may share one)", () => {
+    const tools = [
+      { tool: "trae", folder_key: "trae" },
+      { tool: "trae_cn", folder_key: "trae" },
+    ];
+    expect(matrixColumns(tools, (key) => key, null).map((column) => [column.key, column.folder])).toEqual([
+      ["trae", "trae"],
+      ["trae_cn", "trae"],
     ]);
     // Before the catalog loads nothing is called "not detected".
     expect(matrixColumns(tools, (key) => key, null).every((column) => column.detected)).toBe(true);

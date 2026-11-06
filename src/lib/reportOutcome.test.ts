@@ -107,6 +107,7 @@ function changed(
   if (kind === "target")
     row.status.targets.push({
       scope: { scope: "project", project_id: "project", tool: "claude" },
+      folder_key: "claude",
       status: {
         status: "failed",
         error: { code: "OTHER", message: "target failed" },
@@ -371,6 +372,7 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
     const en = i18n.t.bind(i18n) as unknown as typeof t;
     const failure = (tool: string): InvocationEditReport["propagation"]["targets"][number] => ({
       scope: { scope: "global", tool },
+      folder_key: tool,
       status: { status: "failed", error: { code: "OTHER", message: "blocked" }, first_deploy: false },
     });
     const out = invocationEditOutcome(
@@ -409,8 +411,8 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
     const success = refreshed("alpha");
     if (success.status.status !== "refreshed") throw new Error("fixture");
     success.status.targets.push(
-      { scope: { scope: "global", tool: "claude" }, status: { status: "synced", mode_used: "symlink" } },
-      { scope: { scope: "global", tool: "cursor" }, status: { status: "synced", mode_used: "copy" } },
+      { scope: { scope: "global", tool: "claude" }, folder_key: "claude", status: { status: "synced", mode_used: "symlink" } },
+      { scope: { scope: "global", tool: "cursor" }, folder_key: "cursor", status: { status: "synced", mode_used: "copy" } },
     );
     const out = refreshOutcome(refreshReport([success]), ctx);
     expect(out.notes).toEqual([]);
@@ -441,8 +443,8 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
     const success = refreshed("alpha");
     if (success.status.status !== "refreshed") throw new Error("fixture");
     success.status.targets.push(
-      { scope: { scope: "global", tool: "claude" }, status: { status: "failed", error: { code: "OTHER", message: "io" }, first_deploy: true } },
-      { scope: { scope: "global", tool: "cursor" }, status: { status: "failed", error: { code: "OTHER", message: "io" }, first_deploy: false } },
+      { scope: { scope: "global", tool: "claude" }, folder_key: "claude", status: { status: "failed", error: { code: "OTHER", message: "io" }, first_deploy: true } },
+      { scope: { scope: "global", tool: "cursor" }, folder_key: "cursor", status: { status: "failed", error: { code: "OTHER", message: "io" }, first_deploy: false } },
     );
     const out = refreshOutcome(refreshReport([success]), ctx);
     expect(out.errors.map((entry) => entry.title)).toEqual([
@@ -456,6 +458,7 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
     if (success.status.status !== "refreshed") throw new Error("fixture");
     success.status.targets.push({
       scope: { scope: "global", tool: "unknown" },
+      folder_key: "unknown",
       status: { status: "skipped", reason: { reason: "link_follows_source" } },
     });
     const out = refreshOutcome(
@@ -505,15 +508,17 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
 describe("invocationEditOutcome", () => {
   const globalFailure: InvocationEditReport["propagation"]["targets"][number] = {
     scope: { scope: "global", tool: "claude" },
+    folder_key: "claude",
     status: { status: "failed", error: { code: "OTHER", message: "global blocked" }, first_deploy: false },
   };
   const projectFailure: InvocationEditReport["propagation"]["targets"][number] = {
     scope: { scope: "project", project_id: "p1", tool: "unknown" },
+    folder_key: "unknown",
     status: { status: "failed", error: { code: "OTHER", message: "project blocked" }, first_deploy: false },
   };
   it.each([
     { name: "no targets / no-op", propagation: [], errors: [] },
-    { name: "synced", propagation: [{ scope: { scope: "global", tool: "claude" }, status: { status: "synced", mode_used: "copy" } }], errors: [] },
+    { name: "synced", propagation: [{ scope: { scope: "global", tool: "claude" }, folder_key: "claude", status: { status: "synced", mode_used: "copy" } }], errors: [] },
     { name: "global failure", propagation: [globalFailure], errors: [{ title: 'errors.propagationFailedTitle {"name":"alpha","tool":"CLAUDE"}', message: "global blocked" }] },
     { name: "project failure", propagation: [projectFailure], errors: [{ title: 'errors.propagationFailedTitle {"name":"alpha","tool":"unknown"}', message: "project blocked" }] },
     { name: "both failures", propagation: [globalFailure, projectFailure], errors: [
@@ -521,10 +526,10 @@ describe("invocationEditOutcome", () => {
       { title: 'errors.propagationFailedTitle {"name":"alpha","tool":"unknown"}', message: "project blocked" },
     ] },
     { name: "expected skips", propagation: [
-      { scope: { scope: "global", tool: "claude" }, status: { status: "skipped", reason: { reason: "link_follows_source" } } },
-      { scope: { scope: "global", tool: "absent" }, status: { status: "skipped", reason: { reason: "tool_not_installed", tool: "absent" } } },
-      { scope: { scope: "global", tool: "unknown" }, status: { status: "skipped", reason: { reason: "unknown_tool", tool: "unknown" } } },
-      { scope: { scope: "project", project_id: "p1", tool: "claude" }, status: { status: "skipped", reason: { reason: "project_unavailable", project_id: "p1" } } },
+      { scope: { scope: "global", tool: "claude" }, folder_key: "claude", status: { status: "skipped", reason: { reason: "link_follows_source" } } },
+      { scope: { scope: "global", tool: "absent" }, folder_key: "absent", status: { status: "skipped", reason: { reason: "tool_not_installed", tool: "absent" } } },
+      { scope: { scope: "global", tool: "unknown" }, folder_key: "unknown", status: { status: "skipped", reason: { reason: "unknown_tool", tool: "unknown" } } },
+      { scope: { scope: "project", project_id: "p1", tool: "claude" }, folder_key: "claude", status: { status: "skipped", reason: { reason: "project_unavailable", project_id: "p1" } } },
     ], errors: [] },
   ] satisfies { name: string; propagation: InvocationEditReport["propagation"]["targets"]; errors: { title: string; message: string }[] }[])("$name: central-settled completion, saved even with drift", ({ propagation, errors }) => {
     const report: InvocationEditReport = { skill_id: "s1", skill_name: "alpha", propagation: { targets: propagation } };
@@ -543,7 +548,7 @@ describe("invocationEditOutcome", () => {
 const removal = (fail: boolean): RemovalReport => ({
   targets: [
     {
-      rows: [{ scope: "global_target", id: "t1", skill_id: "s1", tool: "unknown" }],
+      rows: [{ scope: "global_target", id: "t1", skill_id: "s1", tool: "unknown", folder_key: "unknown" }],
       path: "/target",
       status: fail
         ? { status: "failed", error: { code: "OTHER", message: "busy" } }
@@ -560,22 +565,22 @@ describe("removalOutcome", () => {
         {
           path: "/removed",
           rows: [
-            { scope: "global_target", id: "r1", skill_id: "s1", tool: "claude" },
-            { scope: "global_target", id: "r2", skill_id: "s1", tool: "pi" },
+            { scope: "global_target", id: "r1", skill_id: "s1", tool: "claude", folder_key: "claude" },
+            { scope: "global_target", id: "r2", skill_id: "s1", tool: "pi", folder_key: "pi" },
           ],
           status: { status: "removed" },
         },
         {
           path: "/kept",
           rows: [
-            { scope: "global_target", id: "t1", skill_id: "s1", tool: "claude" },
-            { scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "unknown" },
+            { scope: "global_target", id: "t1", skill_id: "s1", tool: "claude", folder_key: "claude" },
+            { scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "unknown", folder_key: "unknown" },
           ],
           status: { status: "failed", error: { code: "PATH_OUTSIDE_TOOL_DIRS", path: "/kept" } },
         },
         {
           path: "/also-kept",
-          rows: [{ scope: "assignment", id: "a2", project_id: "p2", skill_id: "s1", tool: "pi" }],
+          rows: [{ scope: "assignment", id: "a2", project_id: "p2", skill_id: "s1", tool: "pi", folder_key: "pi" }],
           status: { status: "failed", error: { code: "OTHER", message: "busy" } },
         },
       ],
@@ -601,18 +606,21 @@ describe("removalOutcome", () => {
       // A project removal closes either way: the kept row shows in the matrix.
       expect(out.completion.closeModal).toBe(out === project);
     }
+    // Counted per Deployment: the global (s1, claude) Deployment has one row
+    // removed and one kept, so it counts once, as failed — only (s1, pi)
+    // globally was removed.
     expect(unsync.toast).toEqual({
       kind: "warning",
       tone: "failure",
-      message: [t("outcome.done.disabled", { count: 2 }), t("outcome.failed", { count: 3 })].join(" · "),
+      message: [t("outcome.done.disabled", { count: 1 }), t("outcome.failed", { count: 3 })].join(" · "),
     });
     expect(project.toast).toEqual({
       kind: "warning", tone: "failure",
-      message: [t("projectsSurface.removeKept"), t("outcome.done.removed", { count: 2 }), t("outcome.failed", { count: 3 })].join(" · "),
+      message: [t("projectsSurface.removeKept"), t("outcome.done.removed", { count: 1 }), t("outcome.failed", { count: 3 })].join(" · "),
     });
     expect(configure.toast).toEqual({
       kind: "warning", tone: "failure",
-      message: [t("outcome.done.removed", { count: 2 }), t("outcome.failed", { count: 3 })].join(" · "),
+      message: [t("outcome.done.removed", { count: 1 }), t("outcome.failed", { count: 3 })].join(" · "),
     });
     expect(deleted.toast).toEqual({ kind: "warning", tone: "failure", message: t("status.skillDeleteKept", { failed: 3 }) });
     expect(deleted.completion).toEqual({ reload: true, closeModal: false, conflict: false });
@@ -679,12 +687,12 @@ describe("removalOutcome", () => {
     const report: RemovalReport = {
       targets: [
         {
-          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude" }],
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude", folder_key: "claude" }],
           path: "/work/p1/.claude/skills/s1",
           status: { status: "removed" },
         },
         {
-          rows: [{ scope: "assignment", id: "a2", project_id: "p1", skill_id: "s1", tool: "pi" }],
+          rows: [{ scope: "assignment", id: "a2", project_id: "p1", skill_id: "s1", tool: "pi", folder_key: "pi" }],
           path: "/work/p1/.pi/skills/s1",
           status: { status: "removed" },
         },
@@ -724,12 +732,12 @@ describe("removalOutcome", () => {
     const report: RemovalReport = {
       targets: [
         {
-          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude" }],
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude", folder_key: "claude" }],
           path: "/work/p1/.claude/skills/a",
           status: { status: "removed" },
         },
         {
-          rows: [{ scope: "assignment", id: "a2", project_id: "p1", skill_id: "s1", tool: "pi" }],
+          rows: [{ scope: "assignment", id: "a2", project_id: "p1", skill_id: "s1", tool: "pi", folder_key: "pi" }],
           path: "/work/p1/.pi/skills/a",
           status: { status: "failed", error: { code: "OTHER", message: "denied" } },
         },
@@ -757,8 +765,12 @@ describe("removalOutcome", () => {
       notes: [],
       completion: { reload: false, closeModal: false, conflict: false },
     });
-    // The tool label map applies to the failed target's title.
-    const relabelled = { ...report, targets: [{ ...report.targets[1], rows: [{ ...report.targets[1].rows[0], tool: "claude" }] }] };
+    // The tool label map applies to the failed target's title, named by the
+    // Deployment folder the row describes.
+    const relabelled = {
+      ...report,
+      targets: [{ ...report.targets[1], rows: [{ ...report.targets[1].rows[0], tool: "claude", folder_key: "claude" }] }],
+    };
     expect(
       projectRemovalOutcome(relabelled, { ...ctx, action: "removeProject" }).errors[0].title,
     ).toBe(t("errors.projectRemovalFailedTitle", { tool: "CLAUDE" }));
@@ -770,7 +782,7 @@ describe("removalOutcome", () => {
     const report: RemovalReport = {
       targets: [
         {
-          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude" }],
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude", folder_key: "claude" }],
           path: "/work/p1/.claude/skills/a",
           status: { status: "failed", error: { code: "OTHER", message: "denied" } },
         },
@@ -795,7 +807,7 @@ describe("removalOutcome", () => {
     const clean: RemovalReport = {
       targets: [
         {
-          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "pi" }],
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "pi", folder_key: "pi" }],
           path: "/work/p1/.pi/skills/a",
           status: { status: "removed" },
         },
@@ -842,9 +854,50 @@ const projectItem = (
   skill_id: skill,
   skill_name: `${skill}-name`,
   tool,
+  folder_key: tool,
   status,
 });
 const denied = { status: "failed", error: { code: "OTHER", message: "denied" } } as const;
+describe("sync reports count one Deployment per folder (round 20 t09)", () => {
+  const synced = { status: "synced" as const, outcome: { mode_used: "symlink" as const, target_path: "/a", replaced: false } };
+  it("a pre-1.4.0 Amp + Kimi pair, each row settled by itself, is one deployment named by its folder", () => {
+    const report: BatchTargetOutcome[] = [
+      { skill_id: "s1", skill_name: "git", tool_key: "amp", folder_key: "amp", status: synced },
+      { skill_id: "s1", skill_name: "git", tool_key: "kimi_cli", folder_key: "amp", status: synced },
+      { skill_id: "s1", skill_name: "git", tool_key: "claude", folder_key: "claude", status: synced },
+    ];
+    const out = syncOutcome(report, { ...ctx, action: "bulk" });
+    expect(out.tally?.done).toEqual([{ verb: "synced", count: 2 }]);
+  });
+  it("the folder's strongest row decides it, and an error names the folder", () => {
+    const report: BatchTargetOutcome[] = [
+      { skill_id: "s1", skill_name: "git", tool_key: "amp", folder_key: "amp", status: synced },
+      {
+        skill_id: "s1",
+        skill_name: "git",
+        tool_key: "kimi_cli",
+        folder_key: "amp",
+        status: { status: "failed", error: { code: "OTHER", message: "busy" } },
+      },
+    ];
+    const out = syncOutcome(report, { ...ctx, action: "bulk" });
+    expect(out.tally?.done).toEqual([{ verb: "synced", count: 0 }]);
+    expect(out.tally?.counts.failed).toBe(1);
+    expect(out.errors.map((entry) => entry.subject?.tool)).toEqual(["amp"]);
+  });
+  it("a project resync of Trae and Trae CN rows counts one deployment", () => {
+    const report: ProjectSyncReport = {
+      skipped_projects: [],
+      items: [
+        { ...projectItem("trae", { status: "synced" }) },
+        { ...projectItem("trae_cn", { status: "synced" }), folder_key: "trae" },
+      ],
+    };
+    const out = projectSyncOutcome(report, { ...ctx, action: "resync" });
+    expect(out.toast?.message).toBe(line(["outcome.done.synced", 1]));
+  });
+});
+
 describe("projectSyncOutcome", () => {
   const actions = ["toggleOn", "bulkAssign", "resync", "resyncAll"] as const;
 
@@ -1041,27 +1094,33 @@ const syncReport: BatchTargetOutcome[] = [
       skill_id: "git",
       skill_name: "git",
       tool_key: "claude",
+      folder_key: "claude",
       status: { status: "synced", outcome: { mode_used: "copy", target_path: "/target", replaced: false } },
     },
     {
       skill_id: "git",
       skill_name: "git",
       tool_key: "unknown",
+      folder_key: "unknown",
       status: { status: "failed", error: { code: "OTHER", message: "failed" } },
     },
     {
       skill_id: "git",
       skill_name: "git",
       tool_key: "absent",
+      folder_key: "absent",
       status: {
         status: "skipped",
         error: { code: "TOOL_NOT_INSTALLED", tool: "absent" },
       },
     },
     {
-      skill_id: "git",
+      // Another skill of the same name: a second Deployment on Claude Code
+      // (one (skill, folder) is one Deployment to every fold).
+      skill_id: "git-2",
       skill_name: "git",
       tool_key: "claude",
+      folder_key: "claude",
       status: {
         status: "skipped",
         error: { code: "TOOL_NOT_WRITABLE", tool: "claude", path: "/locked" },
@@ -1142,6 +1201,7 @@ describe("syncOutcome", () => {
       skill_id: skill,
       skill_name: skill,
       tool_key: tool,
+      folder_key: tool,
       status: { status: "skipped", error: { code: "TOOL_NOT_INSTALLED", tool } },
     });
     const out = syncOutcome(
@@ -1200,7 +1260,7 @@ describe("syncOutcome", () => {
       expect(out.warnings).toMatchObject([{ review: true, repair: { verb: "overwrite", tool: "claude", via: "enable" } }]);
     });
     it("a bulk sync counts it in the headline as to review, beside what synced", () => {
-      const out = syncOutcome([syncReport[0], { ...unanswered("failed"), tool_key: "cursor" }], { ...ctx, action: "bulk" });
+      const out = syncOutcome([syncReport[0], { ...unanswered("failed"), tool_key: "cursor", folder_key: "cursor" }], { ...ctx, action: "bulk" });
       expect(out.errors).toEqual([]);
       expect(out.toast).toMatchObject({
         tone: "conflict",
@@ -1209,7 +1269,7 @@ describe("syncOutcome", () => {
       expect(out.tally?.counts.collisions).toBe(1);
     });
     it("a failure beside it still wins the tone; the collision is never counted failed", () => {
-      const out = syncOutcome([syncReport[1], { ...unanswered("failed"), tool_key: "cursor" }], { ...ctx, action: "bulk" });
+      const out = syncOutcome([syncReport[1], { ...unanswered("failed"), tool_key: "cursor", folder_key: "cursor" }], { ...ctx, action: "bulk" });
       expect(out.toast).toMatchObject({
         tone: "failure",
         message: line(["outcome.failed", 1], ["runReport.collisions", 1]),
@@ -1220,7 +1280,7 @@ describe("syncOutcome", () => {
     it("a Refresh's Propagation collision is to review, not a target failure", () => {
       const success = refreshed("alpha");
       if (success.status.status !== "refreshed") throw new Error("fixture");
-      success.status.targets.push({ scope: { scope: "global", tool: "cursor" }, status: { status: "failed", error: exists, first_deploy: true } });
+      success.status.targets.push({ scope: { scope: "global", tool: "cursor" }, folder_key: "cursor", status: { status: "failed", error: exists, first_deploy: true } });
       const out = refreshOutcome(refreshReport([success]), ctx);
       expect(out.errors).toEqual([]);
       expect(out.toast).toMatchObject({
@@ -1231,7 +1291,7 @@ describe("syncOutcome", () => {
     it("a project assignment collision is to review and names the project in its subject", () => {
       const report: ProjectSyncReport = { skipped_projects: [],
         items: [
-          { assignment_id: "a1", project_id: "p1", skill_id: "s1", skill_name: "tdd", tool: "claude", status: { status: "failed", error: exists } },
+          { assignment_id: "a1", project_id: "p1", skill_id: "s1", skill_name: "tdd", tool: "claude", folder_key: "claude", status: { status: "failed", error: exists } },
         ],
       };
       const out = projectSyncOutcome(report, { ...ctx, action: "toggleOn" });
@@ -1250,6 +1310,7 @@ describe("syncOutcome", () => {
     skill_id: skill,
     skill_name: skill,
     tool_key: tool,
+    folder_key: tool,
     status: { status: "declined" },
   });
   it("a declined-only bulk sync is one quiet line per pair, declined-toned", () => {
@@ -1562,7 +1623,7 @@ describe("importOutcome", () => {
     const out = importOutcome(
       importReport(imported({
         forced_tools: ["claude"],
-        targets: [{ ...syncReport[0], tool_key: "cursor", status: { status: "declined" } }],
+        targets: [{ ...syncReport[0], tool_key: "cursor", folder_key: "cursor", status: { status: "declined" } }],
       })),
       ctx,
     );
@@ -1736,7 +1797,7 @@ describe("installOutcome", () => {
         result: installed,
         deployment: {
           status: "reported",
-          report: [syncReport[0], { ...syncReport[0], tool_key: "cursor", status: { status: "declined" } }],
+          report: [syncReport[0], { ...syncReport[0], tool_key: "cursor", folder_key: "cursor", status: { status: "declined" } }],
         },
       }],
       { ...ctx, source: "git" },
@@ -1760,11 +1821,12 @@ describe("Disabled is a skip in every fold", () => {
     skill_id: "s1",
     skill_name: "alpha",
     tool_key: "claude",
+    folder_key: "claude",
     status: { status: "skipped", error: { code: "TARGET_DISABLED", tool: "claude" } },
   };
   const disabledPropagation = [
-    { scope: { scope: "global", tool: "claude" }, status: { status: "skipped", reason: { reason: "disabled" } } },
-    { scope: { scope: "project", project_id: "p1", tool: "claude" }, status: { status: "skipped", reason: { reason: "disabled" } } },
+    { scope: { scope: "global", tool: "claude" }, folder_key: "claude", status: { status: "skipped", reason: { reason: "disabled" } } },
+    { scope: { scope: "project", project_id: "p1", tool: "claude" }, folder_key: "claude", status: { status: "skipped", reason: { reason: "disabled" } } },
   ] satisfies InvocationEditReport["propagation"]["targets"];
   const refreshedDisabled = (): SkillRefreshOutcome => {
     const row = refreshed();
@@ -1862,7 +1924,7 @@ describe("removalOutcome of a Disable that only records intent", () => {
     central_removed: false,
     record_deleted: false,
     cleared_markers: [],
-    disabled_markers: tools.map((tool) => ({ scope: "global_target", id: `m-${tool}`, skill_id: "s1", tool })),
+    disabled_markers: tools.map((tool) => ({ scope: "global_target", id: `m-${tool}`, skill_id: "s1", tool, folder_key: tool })),
   });
   it("a pair's flipped marker reads as '{skill} stays off {harness}'", () => {
     const out = removalOutcome(intent("claude"), { ...ctx, action: "toggle", skillNames: { s1: "alpha" } });
@@ -1904,7 +1966,7 @@ describe("removalOutcome with cleared markers", () => {
       targets: [],
       central_removed: false,
       record_deleted: false,
-      cleared_markers: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude" }],
+      cleared_markers: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "claude", folder_key: "claude" }],
       disabled_markers: [],
     };
     const out = removalOutcome(report, { ...ctx, action: "toggle" });
@@ -1915,7 +1977,7 @@ describe("removalOutcome with cleared markers", () => {
   // N1: a cleared marker is an unassignment, so bulk unassign counts it (the
   // copy says "removed from N tools", not that an artifact was removed).
   const marker = (tool: string) =>
-    ({ scope: "assignment", id: `m-${tool}`, project_id: "p1", skill_id: "s1", tool }) as const;
+    ({ scope: "assignment", id: `m-${tool}`, project_id: "p1", skill_id: "s1", tool, folder_key: tool }) as const;
   it("a markers-only bulk unassign counts every cleared assignment", () => {
     const report: RemovalReport = {
       targets: [],
@@ -1936,7 +1998,7 @@ describe("removalOutcome with cleared markers", () => {
     const report: RemovalReport = {
       targets: [
         {
-          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "codex" }],
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "codex", folder_key: "codex" }],
           path: "/work/p1/.codex/skills/s1",
           status: { status: "removed" },
         },
@@ -1983,7 +2045,7 @@ describe("ticket 04: the install batch report and the project Keep", () => {
     const out = projectSyncOutcome(
       { skipped_projects: [],
         items: [
-          { assignment_id: "x", project_id: "p", skill_id: "a", skill_name: "alpha", tool: "claude_code", status: { status: "declined" } },
+          { assignment_id: "x", project_id: "p", skill_id: "a", skill_name: "alpha", tool: "claude_code", folder_key: "claude_code", status: { status: "declined" } },
         ],
       },
       { t, action: "toggleOn" },
@@ -2068,6 +2130,7 @@ describe("combineOutcomes (one action, several reports, one run)", () => {
     skill_id: skill,
     skill_name: skill,
     tool_key: tool,
+    folder_key: tool,
     status,
   });
   const synced: BatchTargetOutcome["status"] = {
@@ -2157,17 +2220,17 @@ describe("Delete over several skills (ticket 13, D16)", () => {
     targets: [
       {
         path: "/tools/codex/release-train",
-        rows: [{ scope: "global_target", id: "t1", skill_id: "rt", tool: "codex" }],
+        rows: [{ scope: "global_target", id: "t1", skill_id: "rt", tool: "codex", folder_key: "codex" }],
         status: { status: "removed" },
       },
       {
         path: "/tools/claude/release-train",
-        rows: [{ scope: "global_target", id: "t2", skill_id: "rt", tool: "claude" }],
+        rows: [{ scope: "global_target", id: "t2", skill_id: "rt", tool: "claude", folder_key: "claude" }],
         status: { status: "failed", error: { code: "OTHER", message: "Permission denied" } },
       },
       {
         path: "/work/mono/.agents/skills/release-train",
-        rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "rt", tool: "claude" }],
+        rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "rt", tool: "claude", folder_key: "claude" }],
         status: { status: "removed" },
       },
     ],
@@ -2266,7 +2329,7 @@ describe("Enable over several skills (ticket 13)", () => {
   it("reads as the count line over targets, even when clean", () => {
     const report: EnableReport = {
       global: [
-        { skill_id: "a", skill_name: "alpha", tool_key: "claude", status: { status: "synced", outcome: { mode_used: "symlink", target_path: "/x", replaced: false } } },
+        { skill_id: "a", skill_name: "alpha", tool_key: "claude", folder_key: "claude", status: { status: "synced", outcome: { mode_used: "symlink", target_path: "/x", replaced: false } } },
       ],
       projects: { skipped_projects: [], items: [] },
     };
@@ -2287,6 +2350,7 @@ describe("importGroupKind / import headline by settled targets", () => {
     skill_id: "tdd",
     skill_name: "tdd",
     tool_key: tool,
+    folder_key: tool,
     status,
   });
   const synced = (tool: string) =>
@@ -2492,7 +2556,7 @@ describe("libraryMoveOutcome", () => {
     skill_id: id,
     name: id,
     path: `/home/.claude/skills/${id}`,
-    rows: [{ scope: "global_target", id: `${id}-row`, skill_id: id, tool }],
+    rows: [{ scope: "global_target", id: `${id}-row`, skill_id: id, tool, folder_key: tool }],
     status,
   });
   const report = (parts: Partial<LibraryMoveReport>): LibraryMoveReport => ({
@@ -2512,10 +2576,10 @@ describe("libraryMoveOutcome", () => {
         deployment("a", { status: "relinked", mode: "symlink" }),
         deployment("a", { status: "relinked", mode: "symlink" }, "cursor"),
         deployment("b", { status: "failed", error: failure }),
-        deployment("c", { status: "skipped", reason: "not_ours" }),
+        deployment("c", { status: "skipped", reason: "not_ours" }, "cursor"),
         deployment("c", { status: "skipped", reason: "folder_missing" }),
-        deployment("c", { status: "unchanged", reason: "copy" }),
-        deployment("c", { status: "skipped", reason: "disabled" }),
+        deployment("c", { status: "unchanged", reason: "copy" }, "pi"),
+        deployment("c", { status: "skipped", reason: "disabled" }, "codex"),
       ],
       left_behind: [
         { path: "/old", reason: "old_library", skill_id: null, error: null },
@@ -2558,7 +2622,7 @@ describe("libraryMoveOutcome", () => {
     // Unlocatable, not ours, folder missing and the kept copy are warnings.
     expect(outcome.warnings.map((entry) => entry.title)).toEqual([
       'libraryMove.report.missingTitle {"name":"gone"}',
-      'libraryMove.report.notOursTitle {"name":"c","tool":"CLAUDE"}',
+      'libraryMove.report.notOursTitle {"name":"c","tool":"tools.cursor {\\"defaultValue\\":\\"cursor\\"}"}',
       'libraryMove.report.folderMissingTitle {"name":"c","tool":"CLAUDE"}',
       'libraryMove.report.stillLinkedTitle {"name":"b"}',
     ]);
@@ -2571,6 +2635,69 @@ describe("libraryMoveOutcome", () => {
     ]);
     // The catalog came with the response; Settings stays open.
     expect(outcome.completion).toEqual({ reload: false, closeModal: false, conflict: false });
+  });
+
+  it("names a stored 1.3.4 report's Deployments by their folder, not a sibling's own key", () => {
+    // The shape `decode_stored_report` hands out for the 1.3.4 fixture
+    // (`src-tauri/src/core/tests/fixtures/library-move-report-1.3.4.json`):
+    // Kimi's pre-1.4.0 rows carry the folder key the backend's rule filled in.
+    const failure = { code: "OTHER", message: "permission denied" } as const;
+    const r = report({
+      skills: [moved("alpha")],
+      deployments: [
+        {
+          skill_id: "alpha",
+          name: "alpha",
+          path: "/Users/op/.config/agents/skills/alpha",
+          rows: [
+            { scope: "global_target", id: "t-kimi", skill_id: "alpha", tool: "kimi_cli", folder_key: "amp" },
+            { scope: "global_target", id: "t-amp", skill_id: "alpha", tool: "amp", folder_key: "amp" },
+          ],
+          status: { status: "failed", error: failure },
+        },
+        {
+          skill_id: "alpha",
+          name: "alpha",
+          path: "/Users/op/code/app/.agents/skills/alpha",
+          rows: [
+            {
+              scope: "assignment",
+              id: "a-kimi",
+              project_id: "project-app",
+              skill_id: "alpha",
+              tool: "kimi_cli",
+              folder_key: "agents_skills",
+            },
+            {
+              scope: "assignment",
+              id: "a-amp",
+              project_id: "project-app",
+              skill_id: "alpha",
+              tool: "amp",
+              folder_key: "agents_skills",
+            },
+          ],
+          status: { status: "skipped", reason: "not_ours" },
+        },
+      ],
+    });
+    const labels = { ...ctx, toolLabelById: { amp: "Amp folder", kimi_cli: "Kimi", agents_skills: "Agents folder" } };
+
+    const outcome = libraryMoveOutcome(r, labels);
+
+    expect(libraryMoveCounts(r)).toMatchObject({ failed: 1, notOurs: 1 });
+    expect(outcome.errors).toHaveLength(1);
+    expect(outcome.errors[0]).toMatchObject({
+      title: 'libraryMove.report.relinkFailedTitle {"name":"alpha","tool":"Amp folder"}',
+      repair: { verb: "retry", tool: "amp" },
+      subject: { skillId: "alpha", tool: "amp" },
+    });
+    expect(outcome.warnings.map((entry) => [entry.title, entry.subject])).toEqual([
+      [
+        'libraryMove.report.notOursTitle {"name":"alpha","tool":"Agents folder"}',
+        { skillId: "alpha", skillName: "alpha", tool: "agents_skills", projectId: "project-app" },
+      ],
+    ]);
   });
 
   it("a clean move is a success whose old folder is a note, not a skip", () => {
@@ -2777,5 +2904,149 @@ describe("gitCacheCleanOutcome (Clean Now)", () => {
     expect(gitCacheCleanOutcome({ cleared: 0, in_use: 1 }, { t: en }).toast?.message).toBe(
       "Cleared 0 cached repos; 1 in use, skipped",
     );
+  });
+});
+
+// Round 20 t09 review finding 4: rows a pre-1.4.0 app wrote once per
+// shared-dir sibling keep their own keys for settlement, but each names the
+// Deployment folder it describes (`folder_key`, the backend's answer). The
+// fold counts — and names failures by — one Deployment per (skill, folder),
+// per project for an assignment; it never reads a path.
+describe("removal reports count one Deployment per folder", () => {
+  const amp = { scope: "global_target", id: "t-amp", skill_id: "s1", tool: "amp", folder_key: "amp" } as const;
+  const kimi = { scope: "global_target", id: "t-kimi", skill_id: "s1", tool: "kimi_cli", folder_key: "amp" } as const;
+  const trae = (project: string) =>
+    ({ scope: "assignment", id: `a-trae-${project}`, project_id: project, skill_id: "s1", tool: "trae", folder_key: "trae" }) as const;
+  const traeCn = (project: string) =>
+    ({ scope: "assignment", id: `a-trae_cn-${project}`, project_id: project, skill_id: "s1", tool: "trae_cn", folder_key: "trae" }) as const;
+  const report = (parts: Partial<RemovalReport>): RemovalReport => ({
+    targets: [],
+    central_removed: false,
+    record_deleted: false,
+    cleared_markers: [],
+    disabled_markers: [],
+    ...parts,
+  });
+
+  it("a removed artifact with two sibling rows is one Deployment disabled", () => {
+    const out = removalOutcome(report({ targets: [{ path: "/shared/alpha", rows: [amp, kimi], status: { status: "removed" } }] }), {
+      ...ctx,
+      action: "all",
+    });
+    expect(out.toast?.message).toBe(t("outcome.done.disabled", { count: 1 }));
+  });
+
+  it("a kept artifact with two sibling rows is one failure, named by its folder", () => {
+    const kept = report({
+      targets: [{ path: "/shared/alpha", rows: [amp, kimi], status: { status: "failed", error: { code: "OTHER", message: "busy" } } }],
+    });
+    const out = removalOutcome(kept, { ...ctx, action: "all" });
+    expect(words(out.errors)).toEqual([{ title: t("errors.unsyncFailedTitle", { tool: "amp" }), message: "busy" }]);
+    expect(out.errors[0].subject).toEqual({ skillId: "s1", skillName: "", tool: "amp" });
+    expect(out.toast?.message).toBe(t("outcome.failed", { count: 1 }));
+    const deleted = deleteOutcome([{ skillId: "s1", name: "alpha", report: kept }], ctx);
+    expect(deleted.toast?.message).toBe(t("status.skillDeleteKept", { failed: 1 }));
+  });
+
+  it("never-synced sibling markers are one Deployment cleared, per project", () => {
+    const out = removalOutcome(report({ cleared_markers: [trae("p1"), traeCn("p1"), trae("p2")] }), {
+      ...ctx,
+      action: "bulkUnassign",
+    });
+    expect(out.toast?.message).toBe(t("projectsSurface.done.unassigned", { count: 2 }));
+  });
+
+  it("a kept row beside its sibling's cleared marker counts once, as failed", () => {
+    const out = projectRemovalOutcome(
+      report({
+        targets: [
+          { path: "/p1/.trae/skills/alpha", rows: [trae("p1")], status: { status: "failed", error: { code: "OTHER", message: "busy" } } },
+        ],
+        cleared_markers: [traeCn("p1")],
+      }),
+      { ...ctx, action: "configureTools" },
+    );
+    expect(words(out.errors)).toEqual([{ title: t("errors.projectRemovalFailedTitle", { tool: "trae" }), message: "busy" }]);
+    expect(out.toast?.message).toBe(t("outcome.failed", { count: 1 }));
+  });
+
+  it("the Delete report names a shared folder once", () => {
+    const rows = deleteReportRows(
+      [{ skillId: "s1", name: "alpha", report: report({ record_deleted: true, targets: [{ path: "/shared/alpha", rows: [amp, kimi], status: { status: "removed" } }] }) }],
+      ctx,
+    );
+    expect(rows[0].removedFrom).toEqual(["amp"]);
+  });
+});
+
+// Round 20 t09 review round 4 (Astra 205, Sol 304): Update/Edit
+// (Propagation), Import and Library-move reports count one Deployment per
+// (scope, project, skill, folder) by the backend's `folder_key`, however many
+// pre-1.4.0 rows describe it; the raw rows stay for the asks and mutations.
+describe("per-Deployment folds of the per-row reports (round 4)", () => {
+  const blocked = { code: "OTHER", message: "blocked" } as const;
+  const legacyPair = (scope: "global" | "project") =>
+    (["amp", "kimi_cli"] as const).map((tool) => ({
+      scope: scope === "global" ? { scope: "global" as const, tool } : { scope: "project" as const, project_id: "p1", tool },
+      folder_key: "amp",
+      status: { status: "failed" as const, error: blocked, first_deploy: false },
+    }));
+
+  it("an Update whose two legacy rows of one folder both failed counts one failed target, named by its folder", () => {
+    const row = refreshed("alpha");
+    if (row.status.status !== "refreshed") throw new Error("fixture");
+    row.status.targets.push(...legacyPair("global"));
+    const out = refreshOutcome(refreshReport([row, refreshed("beta")]), ctx);
+    expect(out.errors).toHaveLength(1);
+    expect(out.errors[0]).toMatchObject({ subject: { tool: "amp" }, repair: { verb: "retry", tool: "amp" } });
+    expect(out.toast?.message).toContain('outcome.targetsFailed {"count":1}');
+  });
+
+  it("an Edit's Propagation folds per folder and per project", () => {
+    const out = invocationEditOutcome(
+      {
+        skill_id: "s1",
+        skill_name: "alpha",
+        propagation: { targets: [...legacyPair("global"), ...legacyPair("project")] },
+      },
+      ctx,
+    );
+    expect(out.errors).toHaveLength(2);
+    expect(out.toast?.message).toContain('outcome.targetsFailed {"count":2}');
+  });
+
+  it("an Import's target rows of one folder are one Deployment", () => {
+    const row = (tool: string): BatchTargetOutcome => ({
+      skill_id: "git",
+      skill_name: "git",
+      tool_key: tool,
+      folder_key: "amp",
+      status: { status: "failed", error: blocked },
+    });
+    const out = importOutcome(importReport(imported({ targets: [row("amp"), row("kimi_cli")] })), ctx);
+    expect(out.errors).toHaveLength(1);
+    expect(out.errors[0]).toMatchObject({ subject: { tool: "amp" } });
+  });
+
+  it("a Library move's two outcomes for one folder count once, the stronger kept", () => {
+    const relink = (tool: string, status: LibraryMoveReport["deployments"][number]["status"], path: string) => ({
+      skill_id: "a",
+      name: "a",
+      path,
+      rows: [{ scope: "global_target" as const, id: `a-${tool}`, skill_id: "a", tool, folder_key: "amp" }],
+      status,
+    });
+    const report: LibraryMoveReport = {
+      from: "/old",
+      to: "/new",
+      skills: [{ skill_id: "a", name: "a", status: { status: "moved", from: "/old/a", to: "/new/a" } }],
+      deployments: [
+        relink("amp", { status: "relinked", mode: "symlink" }, "/h/.config/agents/skills/a"),
+        relink("kimi_cli", { status: "failed", error: blocked }, "/h/.config/agents/skills/previous"),
+      ],
+      left_behind: [],
+    };
+    expect(libraryMoveCounts(report)).toMatchObject({ relinked: 0, failed: 1 });
+    expect(libraryMoveOutcome(report, ctx).errors).toHaveLength(1);
   });
 });

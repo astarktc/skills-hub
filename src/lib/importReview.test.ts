@@ -258,6 +258,7 @@ const synced = (tool: string): BatchTargetOutcome => ({
   skill_id: "s",
   skill_name: "s",
   tool_key: tool,
+  folder_key: tool,
   status: { status: "synced", outcome: { mode_used: "symlink", target_path: `/t/${tool}`, replaced: false } },
 });
 

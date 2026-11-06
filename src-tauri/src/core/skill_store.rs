@@ -6,6 +6,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use tauri::Manager;
 
 use super::errors::SignalError;
+use super::placement::{fold_status, row_folder, RowState, ScopeKind};
 use super::sync_status::{aggregate, ProjectSyncStatus, SyncMode, SyncStatus};
 
 const DB_FILE_NAME: &str = "skills_hub.db";
@@ -1876,11 +1877,11 @@ impl SkillStore {
 
             let assignments_sql = match only {
                 Some(_) => {
-                    "SELECT project_id, skill_id, id, mode, status, last_error \
+                    "SELECT project_id, skill_id, id, mode, status, last_error, tool, synced_at \
                      FROM project_skill_assignments WHERE project_id = ?1"
                 }
                 None => {
-                    "SELECT project_id, skill_id, id, mode, status, last_error \
+                    "SELECT project_id, skill_id, id, mode, status, last_error, tool, synced_at \
                      FROM project_skill_assignments"
                 }
             };
@@ -1890,29 +1891,51 @@ impl SkillStore {
                 let skill_id: String = row.get(1)?;
                 let id: String = row.get(2)?;
                 let (_, status, _) = read_lifecycle(&id, row.get(3)?, row.get(4)?, row.get(5)?);
-                Ok((project_id, skill_id, status))
+                let tool: String = row.get(6)?;
+                let synced_at: Option<i64> = row.get(7)?;
+                let state = RowState {
+                    status,
+                    owns_artifact: owns_artifact(synced_at),
+                };
+                Ok((project_id, skill_id, state, tool))
             };
             let assignment_rows = match only {
                 Some(project_id) => stmt.query_map(params![project_id], read_assignment)?,
                 None => stmt.query_map([], read_assignment)?,
             };
 
-            let mut statuses: HashMap<String, Vec<SyncStatus>> = HashMap::new();
             let mut skills: HashMap<String, HashSet<String>> = HashMap::new();
+            // One Deployment per (project, skill, folder): its rows — several
+            // when a pre-1.4.0 app wrote one per shared-dir sibling — count
+            // once, with the folder's folded facts (`placement::fold_status`,
+            // the fold the project listing shows), so the project total never
+            // disagrees with its matrix.
+            let mut deployments: HashMap<(String, String, String), Vec<RowState>> = HashMap::new();
             for row in assignment_rows {
-                let (project_id, skill_id, status) = row?;
+                let (project_id, skill_id, state, tool) = row?;
+                let folder = row_folder(ScopeKind::Project, &tool);
+                skills
+                    .entry(project_id.clone())
+                    .or_default()
+                    .insert(skill_id.clone());
+                deployments
+                    .entry((project_id, skill_id, folder))
+                    .or_default()
+                    .push(state);
+            }
+            for (project_id, skill_ids) in skills {
+                aggregates.entry(project_id).or_default().skill_count = skill_ids.len();
+            }
+            let mut statuses: HashMap<String, Vec<SyncStatus>> = HashMap::new();
+            for ((project_id, _, _), rows) in deployments {
                 aggregates
                     .entry(project_id.clone())
                     .or_default()
                     .assignment_count += 1;
-                skills
-                    .entry(project_id.clone())
+                statuses
+                    .entry(project_id)
                     .or_default()
-                    .insert(skill_id);
-                statuses.entry(project_id).or_default().push(status);
-            }
-            for (project_id, skill_ids) in skills {
-                aggregates.entry(project_id).or_default().skill_count = skill_ids.len();
+                    .extend(fold_status(rows).map(|facts| facts.total_status()));
             }
             for (project_id, statuses) in statuses {
                 aggregates.entry(project_id).or_default().sync_status = aggregate(statuses);

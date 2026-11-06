@@ -14,6 +14,7 @@ import type {
   PropagationOutcome,
   RefreshReport,
   RemovalReport,
+  RowRef,
 } from "../bindings";
 import { describeCommandError, toCommandError } from "../commandError";
 import type { DeclinedPair } from "./overwriteAsk";
@@ -374,7 +375,7 @@ function refreshCounts(report: RefreshReport) {
   for (const { status } of report.skills) {
     if (status.status === "refreshed") {
       counts.refreshed++;
-      for (const target of status.targets) {
+      for (const target of propagationDeployments(status.targets)) {
         if (target.status.status !== "failed") continue;
         if (unansweredCollision(target.status.error)) counts.collisions++;
         else counts.target_failures++;
@@ -388,28 +389,136 @@ function refreshCounts(report: RefreshReport) {
 }
 
 /**
- * `removed` / `failed` count the rows of removed / kept targets; `cleared`
- * counts rows settled without touching any path (`cleared_markers`: rows that
- * owned no artifact), so an unassignment that only cleared such a row still
- * counts as one without claiming an artifact was removed. `flipped` counts the
- * markers a Disable recorded `disabled` (`disabled_markers`, #95): intent
- * recorded, nothing removed.
+ * The Deployment a removal row describes: its folder (`folder_key`, the
+ * backend's answer — never derived from a path) for its skill, and for an
+ * assignment its project. Rows a pre-1.4.0 app wrote once per shared-dir
+ * sibling keep their own keys for settlement but describe one Deployment.
+ */
+function deploymentOf(row: RowRef): string {
+  return [row.scope, row.scope === "assignment" ? row.project_id : "", row.skill_id, row.folder_key].join("\n");
+}
+
+/** Which way a Deployment settled when its rows settled differently: a kept row wins. */
+const REMOVAL_RANK = { failed: 3, removed: 2, cleared: 1, flipped: 0 } as const;
+type RemovalKind = keyof typeof REMOVAL_RANK;
+
+/**
+ * Counts **Deployments**, one per (skill, folder) — per project for an
+ * assignment — however many rows describe it (`deploymentOf`), each counted
+ * once by its strongest settlement (failed › removed › cleared › flipped).
+ * `removed` / `failed` count the Deployments of removed / kept targets;
+ * `cleared` counts those settled without touching any path (`cleared_markers`:
+ * rows that owned no artifact), so an unassignment that only cleared such a
+ * row still counts as one without claiming an artifact was removed. `flipped`
+ * counts the markers a Disable recorded `disabled` (`disabled_markers`, #95):
+ * intent recorded, nothing removed.
  */
 function removalCounts(report: RemovalReport) {
-  const counts = {
-    removed: 0,
-    failed: 0,
-    cleared: report.cleared_markers.length,
-    flipped: report.disabled_markers.length,
+  const settled = new Map<string, RemovalKind>();
+  const note = (row: RowRef, kind: RemovalKind) => {
+    const key = deploymentOf(row);
+    const before = settled.get(key);
+    if (before === undefined || REMOVAL_RANK[kind] > REMOVAL_RANK[before]) settled.set(key, kind);
   };
-  for (const target of report.targets)
-    counts[target.status.status] += target.rows.length;
+  for (const target of report.targets) for (const row of target.rows) note(row, target.status.status);
+  for (const row of report.cleared_markers) note(row, "cleared");
+  for (const row of report.disabled_markers) note(row, "flipped");
+  const counts = { removed: 0, failed: 0, cleared: 0, flipped: 0 };
+  for (const kind of settled.values()) counts[kind]++;
   return counts;
+}
+
+/**
+ * A sync report's outcomes are per stored row: a pre-1.4.0 app wrote one row
+ * per shared-dir sibling (Amp and Kimi Code; Trae and Trae CN), and each is
+ * settled by itself. The folds count **Deployments**: one per (skill, folder)
+ * — per project for an assignment — by the backend's `folder_key`, never a
+ * path. Each keeps its strongest row (failed › to review › skipped ›
+ * declined › done), named by its folder, in order of first appearance; the
+ * overwrite ask reads the raw rows, never this.
+ */
+function onePerDeployment<R>(rows: readonly R[], key: (row: R) => string, rank: (row: R) => number): R[] {
+  const kept = new Map<string, R>();
+  for (const row of rows) {
+    const at = key(row);
+    const before = kept.get(at);
+    if (before === undefined || rank(row) > rank(before)) kept.set(at, row);
+  }
+  return [...kept.values()];
+}
+
+const syncRank = (status: BatchTargetOutcome["status"] | ProjectSyncReport["items"][number]["status"]): number => {
+  switch (status.status) {
+    case "failed":
+      return unansweredCollision(status.error) ? 4 : 5;
+    case "skipped":
+      return 3;
+    case "declined":
+      return 2;
+    case "synced":
+      return 1;
+    default:
+      return 0;
+  }
+};
+
+/** The global batch's outcomes, one per Deployment (`onePerDeployment`). */
+function batchDeployments(report: readonly BatchTargetOutcome[]): BatchTargetOutcome[] {
+  return onePerDeployment(
+    report,
+    (row) => `${row.skill_id}\n${row.folder_key}`,
+    (row) => syncRank(row.status),
+  ).map((row) => ({ ...row, tool_key: row.folder_key }));
+}
+
+/** A project sync report's items, one per Deployment (`onePerDeployment`). */
+function projectDeployments(report: ProjectSyncReport): ProjectSyncReport {
+  return {
+    ...report,
+    items: onePerDeployment(
+      report.items,
+      (item) => `${item.project_id}\n${item.skill_id}\n${item.folder_key}`,
+      (item) => syncRank(item.status),
+    ).map((item) => ({ ...item, tool: item.folder_key })),
+  };
+}
+
+/**
+ * One skill's Propagation targets (Update / Refresh / Restore / Re-point, an
+ * Edit's Propagation), one per Deployment (`onePerDeployment`): per (scope,
+ * project, folder) by the backend's `folder_key`, each keeping its strongest
+ * row (failed › to review › skipped › synced) named by its folder. The
+ * overwrite ask and its retry read the raw rows, never this.
+ */
+export function propagationDeployments(targets: readonly PropagationOutcome[]): PropagationOutcome[] {
+  const rank = ({ status }: PropagationOutcome) =>
+    status.status === "failed" ? (unansweredCollision(status.error) ? 4 : 5) : status.status === "skipped" ? 3 : 1;
+  return onePerDeployment(
+    targets,
+    (target) =>
+      [target.scope.scope, target.scope.scope === "project" ? target.scope.project_id : "", target.folder_key].join("\n"),
+    rank,
+  ).map((target) => ({ ...target, scope: { ...target.scope, tool: target.folder_key } }));
+}
+
+/**
+ * A Library move's Deployments, one per (scope, project, skill, folder)
+ * (`deploymentOf` over each outcome's rows; one with no row stands for its
+ * path), keeping the strongest (failed › skipped › relinked › unchanged).
+ */
+function libraryMoveDeployments(report: LibraryMoveReport): LibraryMoveReport["deployments"] {
+  const rank = ({ status }: LibraryMoveReport["deployments"][number]) =>
+    status.status === "failed" ? 4 : status.status === "skipped" ? 3 : status.status === "relinked" ? 2 : 1;
+  return onePerDeployment(
+    report.deployments,
+    (deployment) => (deployment.rows[0] ? deploymentOf(deployment.rows[0]) : `path\n${deployment.path}`),
+    rank,
+  );
 }
 
 function projectSyncCounts(report: ProjectSyncReport) {
   const counts = { synced: 0, alreadyAssigned: 0, failed: 0, skipped: 0, declined: 0 };
-  for (const { status } of report.items) {
+  for (const { status } of projectDeployments(report).items) {
     if (status.status === "synced") counts.synced++;
     else if (status.status === "already_assigned") counts.alreadyAssigned++;
     else if (status.status === "skipped") counts.skipped++;
@@ -593,8 +702,9 @@ export function refreshOutcome(
 }
 
 /**
- * One skill's Propagation targets as entries: a failed target is an error
- * (a global one offers Retry); a collision nobody answered is "to review".
+ * One skill's Propagation targets as entries, one per Deployment
+ * (`propagationDeployments`): a failed one is an error (a global one offers
+ * Retry); a collision nobody answered is "to review".
  */
 function propagationEntries(
   targets: PropagationOutcome[],
@@ -603,7 +713,7 @@ function propagationEntries(
 ): { errors: OutcomeEntry[]; reviews: OutcomeEntry[] } {
   const errors: OutcomeEntry[] = [];
   const reviews: OutcomeEntry[] = [];
-  for (const target of targets) {
+  for (const target of propagationDeployments(targets)) {
     if (target.status.status !== "failed") continue;
     const { tool } = target.scope;
     const subject: EntrySubject & { tool: string } = {
@@ -666,9 +776,11 @@ export function invocationEditOutcome(
 }
 
 /**
- * One error entry per kept row of a removal report (ADR-0002: shared
- * artifacts may describe several tools' rows). Shared by every removal-shaped fold; the title key
- * is the only thing that differs per action. Returns whether anything failed.
+ * One error entry per kept Deployment of a removal report (ADR-0002: a kept
+ * artifact keeps every row describing it; rows of one Deployment — `deploymentOf`
+ * — are one entry, named by its folder). Shared by every removal-shaped fold;
+ * the title key is the only thing that differs per action. Returns whether
+ * anything failed.
  */
 function collectRemovalFailures(
   out: Outcome<PlainEntry>,
@@ -678,16 +790,20 @@ function collectRemovalFailures(
   /** Skill names by id, when the fold knows them (a Delete names its skill). */
   skillNames?: Readonly<Record<string, string>>,
 ): boolean {
+  const named = new Set<string>();
   for (const target of report.targets) {
     if (target.status.status !== "failed") continue;
     for (const row of target.rows) {
+      const deployment = deploymentOf(row);
+      if (named.has(deployment)) continue;
+      named.add(deployment);
       out.errors.push({
-        title: ctx.t(titleKey, { tool: label(ctx, row.tool) }),
+        title: ctx.t(titleKey, { tool: label(ctx, row.folder_key) }),
         message: errorMessage(ctx, target.status.error),
         subject: {
           skillId: row.skill_id,
           skillName: skillNames?.[row.skill_id] ?? "",
-          tool: row.tool,
+          tool: row.folder_key,
           ...(row.scope === "assignment" ? { projectId: row.project_id } : {}),
         },
         error: target.status.error,
@@ -757,7 +873,7 @@ export function removalOutcome(
             "success",
             ctx.t("status.pairStaysOff", {
               name: ctx.skillNames?.[flipped.skill_id] ?? flipped.skill_id,
-              tool: label(ctx, flipped.tool),
+              tool: label(ctx, flipped.folder_key),
             }),
           )
         : toast("success", ctx.t("status.syncDisabled"));
@@ -801,7 +917,7 @@ export function projectSyncOutcome(
   const { t } = ctx;
   const projectLabel = (id: string) => ctx.projectLabelById?.[id] ?? id;
   let collisions = 0;
-  for (const item of report.items) {
+  for (const item of projectDeployments(report).items) {
     // "Keep existing" in the overwrite ask (ticket 04): a quiet note, never
     // an error — the row is kept `disabled` (D9, D10).
     if (item.status.status === "declined") {
@@ -1015,7 +1131,7 @@ function foldSync(
   const tally: SyncTally = { synced: 0, failed: 0, skipped: 0, declined: 0, collisions: 0 };
   const skips = new NotInstalledSkips();
   let disabledSkip = false;
-  for (const result of report) {
+  for (const result of batchDeployments(report)) {
     const status = result.status;
     if (status.status === "synced") {
       tally.synced++;
@@ -1102,7 +1218,7 @@ export function enableOutcome(
   // A project skipped whole is one warning line, counted once as skipped.
   const projects = projectSyncOutcome(report.projects, { ...ctx, action: "toggleOn" });
   const projectCounts = projectSyncCounts(report.projects);
-  const projectCollisions = report.projects.items.filter(
+  const projectCollisions = projectDeployments(report.projects).items.filter(
     (item) => item.status.status === "failed" && unansweredCollision(item.status.error),
   ).length;
   const errors = [...global.errors, ...projects.errors];
@@ -1196,7 +1312,9 @@ export function importOutcome(
       forcedLines.push(
         t("status.importSourceToolForced", { name, tool: label(ctx, tool) }),
       );
-    for (const target of group.status.targets) {
+    // One per Deployment (`batchDeployments`): a pre-1.4.0 sibling's row of
+    // a shared folder is the same Deployment, counted once.
+    for (const target of batchDeployments(group.status.targets)) {
       if (target.status.status === "synced" || skips.absorb(target)) continue;
       // The same skip policy as the bulk sync fold: a Disabled pair is
       // skipped by design, silently — never a sync failure.
@@ -1544,10 +1662,12 @@ export function deleteReportRows(
   settled: readonly DeleteSettlement[],
   ctx: ReportContext & { projectLabelById?: Readonly<Record<string, string>> },
 ): DeleteReportRow[] {
-  const rowLabel = (row: RemovalReport["targets"][number]["rows"][number]) =>
+  // Named by the Deployment folder each row describes (`folder_key`): rows a
+  // pre-1.4.0 app wrote once per shared-dir sibling read as their one folder.
+  const rowLabel = (row: RowRef) =>
     row.scope === "assignment"
-      ? `${label(ctx, row.tool)} · ${ctx.projectLabelById?.[row.project_id] ?? row.project_id}`
-      : label(ctx, row.tool);
+      ? `${label(ctx, row.folder_key)} · ${ctx.projectLabelById?.[row.project_id] ?? row.project_id}`
+      : label(ctx, row.folder_key);
   const unique = (values: string[]) => [...new Set(values)];
   const rows = settled.map((settlement): DeleteReportRow => {
     if (!("report" in settlement))
@@ -1707,7 +1827,7 @@ export function libraryMoveCounts(report: LibraryMoveReport) {
     else if (skill.status.status === "kept") counts.kept++;
     else counts.missing++;
   }
-  for (const deployment of report.deployments) {
+  for (const deployment of libraryMoveDeployments(report)) {
     const { status } = deployment;
     if (status.status === "relinked") counts.relinked++;
     else if (status.status === "unchanged") counts.unchanged++;
@@ -1836,23 +1956,26 @@ export function libraryMoveOutcome(
       });
     }
   }
-  for (const deployment of report.deployments) {
+  for (const deployment of libraryMoveDeployments(report)) {
     const { status } = deployment;
+    // Named by the Deployment folder its rows describe (`folder_key`), never a
+    // pre-1.4.0 sibling's own key: a stored 1.3.4 report has the key filled
+    // by the backend's compatibility decoder.
     const row = deployment.rows[0];
     const subject: EntrySubject = {
       skillId: deployment.skill_id,
       skillName: deployment.name,
-      ...(row ? { tool: row.tool } : {}),
+      ...(row ? { tool: row.folder_key } : {}),
       ...(row?.scope === "assignment" ? { projectId: row.project_id } : {}),
     };
-    const where = row ? tool(row.tool) : deployment.path;
+    const where = row ? tool(row.folder_key) : deployment.path;
     if (status.status === "failed") {
       out.errors.push({
         title: ctx.t("libraryMove.report.relinkFailedTitle", { name: deployment.name, tool: where }),
         message: errorMessage(ctx, status.error),
         subject,
         error: status.error,
-        ...(row && row.scope === "global_target" ? { repair: { verb: "retry" as const, tool: row.tool } } : {}),
+        ...(row && row.scope === "global_target" ? { repair: { verb: "retry" as const, tool: row.folder_key } } : {}),
       });
     } else if (status.status === "skipped" && status.reason === "not_ours") {
       out.warnings.push({

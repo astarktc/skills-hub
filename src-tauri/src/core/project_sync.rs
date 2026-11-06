@@ -6,7 +6,9 @@ use anyhow::{Context, Result};
 use crate::core::{
     artifact_removal, content_identity,
     errors::{CommandError, SignalError},
-    mutation_guard, project_ops,
+    mutation_guard,
+    placement::{self, row_folder, PlacementSettings, ScopeKind},
+    project_ops,
     removal_fence::ProtectedLibrary,
     skill_store::{
         AssignmentTransition, ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore,
@@ -165,21 +167,57 @@ pub(crate) fn sync_assignment_target(
     Ok(outcome)
 }
 
-/// The registry record for an assignment's Tool at project scope, or the
-/// typed `UnknownTool` (also for a Tool that reads no project skills dir).
-fn require_adapter(tool_key: &str) -> Result<&'static ToolAdapter> {
-    tool_adapters::project_adapter_by_key(tool_key).ok_or_else(|| {
-        anyhow::anyhow!(SignalError::UnknownTool {
-            tool: tool_key.to_string(),
+/// The project folder `tool_key` names: the folder serving it when the
+/// registry knows it as a harness with a project skills dir
+/// (`placement::serving_folder`), else the folder its rows describe (an
+/// unknown key stands for itself and is refused where a row would be made).
+pub(crate) fn project_folder(tool_key: &str) -> String {
+    placement::serving_folder(ScopeKind::Project, tool_key, &PlacementSettings::default())
+        .map(str::to_string)
+        .unwrap_or_else(|| row_folder(ScopeKind::Project, tool_key))
+}
+
+/// Every stored assignment row of `skill_id` in `project_id` describing the
+/// folder `tool_key` names (`row_folder`), in store order: the row keyed by the
+/// folder itself, and any a sibling sharing it wrote before rows were per
+/// folder. A mutation of the folder acts on each of them by itself.
+pub(crate) fn folder_assignments(
+    store: &SkillStore,
+    project_id: &str,
+    skill_id: &str,
+    tool_key: &str,
+) -> Result<Vec<ProjectSkillAssignmentRecord>> {
+    let folder = project_folder(tool_key);
+    Ok(store
+        .list_project_skill_assignments(project_id)?
+        .into_iter()
+        .filter(|a| a.skill_id == skill_id && row_folder(ScopeKind::Project, &a.tool) == folder)
+        .collect())
+}
+
+/// The registry entry that deploys into the project folder a row keyed
+/// `tool_key` describes: placement's capability entry for that folder
+/// (`placement::capability_entry` — the folder's mode, never a pre-1.4.0
+/// member key's own), or the typed `UnknownTool` (also for a Tool that reads
+/// no project skills dir). Every entry sharing a folder names the same
+/// project dir, so the artifact a row locates through it is the row's own.
+pub(crate) fn deploy_adapter(tool_key: &str) -> Result<&'static ToolAdapter> {
+    let folder = row_folder(ScopeKind::Project, tool_key);
+    placement::capability_entry(ScopeKind::Project, &folder)
+        .filter(|adapter| adapter.project_skills_dir.is_some())
+        .ok_or_else(|| {
+            anyhow::anyhow!(SignalError::UnknownTool {
+                tool: tool_key.to_string(),
+            })
         })
-    })
 }
 
 /// Test fixture over [`assign_and_settle`]: create one assignment row and
 /// run its first sync, returning the row (a sync failure is recorded on it
 /// with `status = error`). Production reaches the first sync through the
 /// fan-out ([`assign_skill_to_tools`]), which keeps the settled failure as
-/// report data.
+/// report data and keys the row by its folder. This fixture keys it by
+/// `tool_key` as given, so a test can seed the row a pre-1.4.0 sibling wrote.
 #[cfg(test)]
 pub(crate) fn assign_and_sync(
     store: &SkillStore,
@@ -230,7 +268,7 @@ fn assign_and_settle(
     now: i64,
 ) -> Result<AssignAttempt> {
     // Refuse before a row exists: an unknown tool gets no assignment.
-    let adapter = match require_adapter(tool_key) {
+    let adapter = match deploy_adapter(tool_key) {
         Ok(adapter) => adapter,
         Err(refusal) => return Ok(AssignAttempt::Refused(refusal)),
     };
@@ -318,8 +356,14 @@ pub struct ProjectSyncOutcome {
     pub project_id: String,
     pub skill_id: String,
     pub skill_name: String,
-    /// Registry key of the project Tool.
+    /// Registry key of the project Tool: the raw row the outcome settled (a
+    /// pre-1.4.0 shared-dir sibling's row keeps its own key) — the key an
+    /// overwrite answer names.
     pub tool: String,
+    /// The project Deployment folder that row describes
+    /// (`placement::row_folder`): a report reader counts one Deployment per
+    /// (project, skill, folder) however many legacy rows describe it.
+    pub folder_key: String,
     pub status: ProjectSyncOutcomeStatus,
 }
 
@@ -491,73 +535,95 @@ pub(crate) fn assign_skill_to_tools(
     }
     let skill_disabled = store.skill_disabled_at(&skill.id)?.is_some();
     let mut items = Vec::with_capacity(tool_keys.len());
-    for tool_key in tool_keys {
-        let (assignment_id, status) =
-            match store.get_project_skill_assignment(&project.id, &skill.id, tool_key)? {
-                // A skill disabled at skill grain answers Disabled for every
-                // existing row too: a failed Disable leaves it `error`, and
-                // that row is not "already assigned" — it is off until Enable.
-                Some(existing) if existing.status == SyncStatus::Disabled || skill_disabled => (
-                    Some(existing.id),
-                    ProjectSyncOutcomeStatus::Skipped {
-                        reason: ProjectSyncSkip::Disabled,
+    // One folder, one row: keys naming the same project folder (a harness and
+    // its folder, two harnesses sharing a dir) are one assignment, keyed by
+    // the folder.
+    let mut folders: Vec<String> = Vec::new();
+    for requested in tool_keys {
+        let folder = project_folder(requested);
+        if folders.contains(&folder) {
+            continue;
+        }
+        folders.push(folder);
+    }
+    for tool_key in &folders {
+        // The folder is assigned when any row describes it; which state it
+        // is in is the one presentation fold (`placement::fold_folder_rows`),
+        // read here and nothing written.
+        let existing = placement::fold_folder_rows(
+            ScopeKind::Project,
+            folder_assignments(store, &project.id, &skill.id, tool_key)?,
+        )
+        .into_iter()
+        .next();
+        let (assignment_id, status) = match existing {
+            // A folder the Disabled rule holds (a row of it is `disabled`),
+            // or a skill disabled at skill grain — whose failed Disable leaves
+            // rows `error`, not "already assigned": off until Enable.
+            Some(existing) if existing.facts.disabled || skill_disabled => (
+                Some(existing.row.id),
+                ProjectSyncOutcomeStatus::Skipped {
+                    reason: ProjectSyncSkip::Disabled,
+                },
+            ),
+            Some(existing) => (
+                Some(existing.row.id),
+                ProjectSyncOutcomeStatus::AlreadyAssigned,
+            ),
+            None if skill_disabled => match deploy_adapter(tool_key) {
+                Ok(_) => {
+                    let record = ProjectSkillAssignmentRecord {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        project_id: project.id.clone(),
+                        skill_id: skill.id.clone(),
+                        skill_name: skill.name.clone(),
+                        tool: tool_key.to_string(),
+                        mode: SyncMode::Symlink,
+                        status: SyncStatus::Disabled,
+                        last_error: None,
+                        synced_at: None,
+                        content_hash: None,
+                        created_at: now,
+                    };
+                    store.add_project_skill_assignment(&record)?;
+                    (
+                        Some(record.id),
+                        ProjectSyncOutcomeStatus::Skipped {
+                            reason: ProjectSyncSkip::Disabled,
+                        },
+                    )
+                }
+                Err(refusal) => (
+                    None,
+                    ProjectSyncOutcomeStatus::Failed {
+                        error: CommandError::from_anyhow(refusal),
                     },
                 ),
-                Some(existing) => (Some(existing.id), ProjectSyncOutcomeStatus::AlreadyAssigned),
-                None if skill_disabled => match require_adapter(tool_key) {
-                    Ok(_) => {
-                        let record = ProjectSkillAssignmentRecord {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            project_id: project.id.clone(),
-                            skill_id: skill.id.clone(),
-                            skill_name: skill.name.clone(),
-                            tool: tool_key.to_string(),
-                            mode: SyncMode::Symlink,
-                            status: SyncStatus::Disabled,
-                            last_error: None,
-                            synced_at: None,
-                            content_hash: None,
-                            created_at: now,
-                        };
-                        store.add_project_skill_assignment(&record)?;
-                        (
-                            Some(record.id),
-                            ProjectSyncOutcomeStatus::Skipped {
-                                reason: ProjectSyncSkip::Disabled,
-                            },
-                        )
-                    }
-                    Err(refusal) => (
-                        None,
-                        ProjectSyncOutcomeStatus::Failed {
-                            error: CommandError::from_anyhow(refusal),
-                        },
-                    ),
-                },
-                None => match assign_and_settle(store, central_dir, project, skill, tool_key, now)?
-                {
-                    AssignAttempt::Settled {
-                        record,
-                        sync_error: None,
-                    } => (Some(record.id), ProjectSyncOutcomeStatus::Synced),
-                    AssignAttempt::Settled {
-                        record,
-                        sync_error: Some(error),
-                    } => (Some(record.id), ProjectSyncOutcomeStatus::Failed { error }),
-                    AssignAttempt::Refused(refusal) => (
-                        None,
-                        ProjectSyncOutcomeStatus::Failed {
-                            error: CommandError::from_anyhow(refusal),
-                        },
-                    ),
-                },
-            };
+            },
+            None => match assign_and_settle(store, central_dir, project, skill, tool_key, now)? {
+                AssignAttempt::Settled {
+                    record,
+                    sync_error: None,
+                } => (Some(record.id), ProjectSyncOutcomeStatus::Synced),
+                AssignAttempt::Settled {
+                    record,
+                    sync_error: Some(error),
+                } => (Some(record.id), ProjectSyncOutcomeStatus::Failed { error }),
+                AssignAttempt::Refused(refusal) => (
+                    None,
+                    ProjectSyncOutcomeStatus::Failed {
+                        error: CommandError::from_anyhow(refusal),
+                    },
+                ),
+            },
+        };
         items.push(ProjectSyncOutcome {
             assignment_id,
             project_id: project.id.clone(),
             skill_id: skill.id.clone(),
             skill_name: skill.name.clone(),
             tool: tool_key.clone(),
+            folder_key: row_folder(ScopeKind::Project, tool_key),
             status,
         });
     }
@@ -669,7 +735,7 @@ pub(crate) fn sync_single_assignment(
         store,
         central_dir,
         project_path: Path::new(&project.path),
-        adapter: require_adapter(&assignment.tool)?,
+        adapter: deploy_adapter(&assignment.tool)?,
         skill: &skill,
         overwrite,
         now,
@@ -710,12 +776,15 @@ pub(crate) fn resync_project_unlocked(
     resync_assignments_unlocked(store, central_dir, &project, &assignments, now)
 }
 
-/// Re-sync one assignment of a project — a matrix cell's **Sync this** (a
-/// stale copy, a missing artifact, a failed sync). The project re-sync's rule
-/// for one row: a disabled row is skipped, only a row that owns its path
-/// replaces what is there (otherwise a folder in the way is `TARGET_EXISTS`
-/// report data), and a missing project folder is skipped whole. An absent
-/// assignment is the typed `NotFound`.
+/// Re-sync one cell of a project — a matrix cell's **Sync this** (a stale
+/// copy, a missing artifact, a failed sync). The cell is the folder `tool`
+/// names, and every stored row describing it is re-synced by itself
+/// ([`folder_assignments`]: one row, or several a pre-1.4.0 app wrote once per
+/// shared-dir sibling), so whatever state the cell's fold shows, this settles.
+/// The project re-sync's rule for each row: a disabled row is skipped, only a
+/// row that owns its path replaces what is there (otherwise a folder in the
+/// way is `TARGET_EXISTS` report data), and a missing project folder is
+/// skipped whole. A cell with no row is the typed `NotFound`.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
 pub fn resync_assignment(
@@ -728,15 +797,14 @@ pub fn resync_assignment(
 ) -> Result<ProjectSyncReport> {
     mutation_guard::serialized(|| {
         let project = project_ops::require_project(store, project_id)?;
-        let assignment = store
-            .get_project_skill_assignment(project_id, skill_id, tool)?
-            .ok_or_else(|| {
-                anyhow::anyhow!(SignalError::NotFound {
-                    kind: "assignment".to_string(),
-                    id: format!("{project_id}/{skill_id}/{tool}"),
-                })
-            })?;
-        resync_assignments_unlocked(store, central_dir, &project, &[assignment], now)
+        let rows = folder_assignments(store, project_id, skill_id, tool)?;
+        if rows.is_empty() {
+            anyhow::bail!(SignalError::NotFound {
+                kind: "assignment".to_string(),
+                id: format!("{project_id}/{skill_id}/{tool}"),
+            });
+        }
+        resync_assignments_unlocked(store, central_dir, &project, &rows, now)
     })
 }
 
@@ -780,6 +848,7 @@ fn resync_assignments_unlocked(
                 skill_id: assignment.skill_id.clone(),
                 skill_name: reported_skill_name(store, assignment),
                 tool: assignment.tool.clone(),
+                folder_key: row_folder(ScopeKind::Project, &assignment.tool),
                 status: ProjectSyncOutcomeStatus::Skipped {
                     reason: ProjectSyncSkip::Disabled,
                 },
@@ -818,6 +887,7 @@ fn resync_assignments_unlocked(
             skill_id: assignment.skill_id.clone(),
             skill_name: reported_skill_name(store, assignment),
             tool: assignment.tool.clone(),
+            folder_key: row_folder(ScopeKind::Project, &assignment.tool),
             status,
         });
     }
@@ -888,6 +958,7 @@ pub(crate) fn first_sync_assignments_unlocked(
             skill_id: assignment.skill_id.clone(),
             skill_name: reported_skill_name(store, assignment),
             tool: assignment.tool.clone(),
+            folder_key: row_folder(ScopeKind::Project, &assignment.tool),
             status,
         });
     }
@@ -948,6 +1019,7 @@ fn resolve_collisions_unlocked(
             skill_id: decision.skill_id.clone(),
             skill_name,
             tool: decision.tool.clone(),
+            folder_key: row_folder(ScopeKind::Project, &decision.tool),
             status,
         };
         let Some(assignment) = assignment else {
@@ -1169,7 +1241,9 @@ fn reconcile_assignment(
 /// consumer must not read it as "everything is fine".
 #[derive(Debug)]
 pub struct AssignmentListing {
-    pub assignments: Vec<ProjectSkillAssignmentRecord>,
+    /// One entry per (skill, folder): a row standing for the folder and the
+    /// folder's facts over all its rows (`placement::fold_folder_rows`).
+    pub assignments: Vec<placement::Folded<ProjectSkillAssignmentRecord>>,
     pub reconciled: bool,
     /// Whether the reconcile pass rewrote at least one row's stored status
     /// (a copy found missing or stale, or back in line). Every skill row's
@@ -1197,7 +1271,12 @@ pub fn list_assignments_with_staleness(
         reconcile_listing_unlocked(store, project_id, &mut assignments)
     });
     Ok(AssignmentListing {
-        assignments,
+        // One row per (skill, folder), keyed by the folder, in the state the
+        // one presentation fold gives it (`placement::fold_folder_rows`) — the
+        // fold the project total reads too. Rows written once per shared-dir
+        // sibling before rows were per folder read as one; each stays its own
+        // row for every mutation.
+        assignments: placement::fold_folder_rows(ScopeKind::Project, assignments),
         reconciled: pass.is_some(),
         rewrote_statuses: pass.unwrap_or(false),
     })
@@ -1267,10 +1346,9 @@ pub fn toggle_skill_assignment(
 ) -> Result<ToggleOutcome> {
     mutation_guard::serialized(|| {
         // Both branches use the unlocked seams — the guard is not reentrant.
-        if store
-            .get_project_skill_assignment(project_id, skill_id, tool_key)?
-            .is_some()
-        {
+        // The cell is the folder `tool_key` names: any row describing it is
+        // the assignment.
+        if !folder_assignments(store, project_id, skill_id, tool_key)?.is_empty() {
             let (project, skill) = lookup_project_and_skill(store, project_id, skill_id)?;
             let report =
                 unassign_and_remove_artifacts(store, central_dir, &project, &skill, tool_key)?;

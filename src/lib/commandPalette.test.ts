@@ -22,7 +22,15 @@ beforeAll(async () => {
   t = i18n.t.bind(i18n) as unknown as Translate;
 });
 
-const deployed: SkillTargetDto = { tool: "claude", mode: "symlink", status: "synced", target_path: "/t/x", synced_at: 1 };
+const deployed: SkillTargetDto = {
+  tool: "claude",
+  mode: "symlink",
+  status: "synced",
+  target_path: "/t/x",
+  synced_at: 1,
+  disabled: false,
+  deployed: true,
+};
 
 function skill(id: string, extra: Partial<ManagedSkill> = {}): ManagedSkill {
   return {

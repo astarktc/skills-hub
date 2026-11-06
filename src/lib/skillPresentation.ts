@@ -530,8 +530,8 @@ export function unlocatableRepairs(
 
 /**
  * One tool chip on a skill card: a Tool the card must offer the operator,
- * with the target row it has (if any) and whether detection still sees the
- * Tool.
+ * with the target row of the folder serving it (if any) and whether
+ * detection still sees the Tool.
  */
 export type SkillToolChip = {
   id: string;
@@ -556,14 +556,15 @@ export function skillToolChips(
   installedTools: ToolOption[],
   allTools: ToolOption[],
 ): SkillToolChip[] {
-  const targetByTool = new Map(targets.map((target) => [target.tool, target]));
+  // Rows are keyed by Deployment folder (`ToolOption.folder`).
+  const targetByFolder = new Map(targets.map((target) => [target.tool, target]));
   const chips: SkillToolChip[] = installedTools.map((tool) => ({
     id: tool.id,
     label: tool.label,
-    target: targetByTool.get(tool.id) ?? null,
+    target: targetByFolder.get(tool.folder) ?? null,
     detected: true,
   }));
-  const seen = new Set(chips.map((chip) => chip.id));
+  const seen = new Set(installedTools.map((tool) => tool.folder));
   const labelById = new Map(allTools.map((tool) => [tool.id, tool.label]));
   for (const target of targets) {
     if (seen.has(target.tool)) continue;
@@ -620,12 +621,16 @@ export function formatRelativeTime(
 }
 
 /**
- * Whether a target row is live: materialised by the app and not switched
- * off. A `disabled` row is the operator's "not on this Tool"; an `error` row
- * that was never synced (`synced_at` null — a failed first sync, D9) owns
- * nothing on disk, so the skill is not deployed there.
+ * Whether a Deployment folder is live: the app materialised something there
+ * that is not switched off. The backend's folder fact `deployed` (some row of
+ * the folder that is not `disabled` owns its artifact) says so outright —
+ * a folder whose Disable did not finish still holds a deployed copy. Short
+ * of that, a `disabled` folder is the operator's "not on this Tool"; an
+ * `error` row that was never synced (`synced_at` null — a failed first sync,
+ * D9) owns nothing on disk, so the skill is not deployed there.
  */
-export function isLiveTarget(target: Pick<SkillTargetDto, "status" | "synced_at">): boolean {
+export function isLiveTarget(target: Pick<SkillTargetDto, "status" | "synced_at" | "deployed">): boolean {
+  if (target.deployed) return true;
   if (target.status === "disabled") return false;
   return !(target.status === "error" && target.synced_at === null);
 }
@@ -645,9 +650,11 @@ export type DeployAction =
   | { kind: "sync" };
 export function deployAction(skill: {
   disabled_at: number | null;
-  targets: readonly Pick<SkillTargetDto, "status" | "synced_at">[];
+  targets: readonly Pick<SkillTargetDto, "status" | "synced_at" | "disabled" | "deployed">[];
 }): DeployAction {
-  const disabledTargets = skill.targets.filter((target) => target.status === "disabled").length;
+  // A folder's Disable holds when any row of it is `disabled` (the folder's
+  // `disabled` fact), whatever status it shows.
+  const disabledTargets = skill.targets.filter((target) => target.disabled).length;
   if (skill.disabled_at !== null) return { kind: "enable", disabledTargets };
   if (skill.targets.some(isLiveTarget)) return { kind: "deployed" };
   return disabledTargets > 0 ? { kind: "enable", disabledTargets } : { kind: "sync" };
@@ -681,7 +688,8 @@ export type HealthRowKind =
  * (`dismiss` = the `import_failed` Dismiss, `retryTargets` = a re-sync from
  * the central copy of the row's pairs — failed, missing or stale, never an
  * upstream fetch — `deploy` = a sync to the effective targets, `disable` =
- * finish a skill-grain Disable whose targets did not all settle).
+ * finish a Disable whose targets did not all settle: the skill-grain one, or
+ * the pair-grain one of each listed Tool a Disable holds on).
  */
 export type HealthRepair =
   | "restore"
@@ -872,14 +880,17 @@ export type SkillHealthFields = Pick<
   disabled_at: number | null;
   health: SkillHealth | null;
   invocation_override: { conflict: boolean } | null;
-  targets: readonly Pick<SkillTargetDto, "tool" | "status" | "synced_at">[];
+  targets: readonly Pick<SkillTargetDto, "tool" | "status" | "synced_at" | "disabled" | "deployed">[];
   /** The skill's projects and its deployments there (D41); absent = none. */
   projects?: readonly SkillProjectFields[];
 };
 
 /** The project fields the folds read (`SkillProjectDto`). */
 export type SkillProjectFields = Pick<SkillProjectDto, "project_id" | "project_name"> & {
-  deployments: readonly Pick<SkillProjectDto["deployments"][number], "tool" | "status" | "synced_at">[];
+  deployments: readonly Pick<
+    SkillProjectDto["deployments"][number],
+    "tool" | "status" | "synced_at" | "disabled" | "deployed"
+  >[];
 };
 
 /** What the fold answers: the rows by precedence, the loudest severity, the source line. */
@@ -910,14 +921,18 @@ const STORED_REPAIRS: Record<SkillOutcomeKind, (skill: SkillHealthFields) => Hea
  *   plus Remove), the stored outcome (`ManagedSkill.health`), an Edit
  *   conflict the override reports live (deduplicated with a stored one),
  *   skill-grain Disable.
- * - Target level: `error` rows (failed — a never-synced one is a failed first
- *   sync), `missing`, `stale` (copy drift), pair-grain `disabled` rows (only
- *   when the skill is not disabled as a whole), and "not deployed" when no
- *   target is live and nothing is disabled. A failed / missing / stale row is
- *   repaired from the central copy (`retryTargets` on its Tools) — for every
- *   provenance, since the central bytes are what a target should hold; under
- *   skill-grain Disable the only repair honouring the operator's policy is
- *   finishing the Disable (a re-sync would be skipped by the Disabled gate).
+ * - Target level, one per Deployment folder by the folder's displayed status
+ *   (failure ahead of muted): `error` (failed — a never-synced one is a
+ *   failed first sync), `missing`, `stale` (copy drift); pair-grain disabled
+ *   folders by the folder's `disabled` fact (only when the skill is not
+ *   disabled as a whole) — so a partly disabled folder shows its failure and
+ *   its disable alike; and "not deployed" when no target is live and nothing
+ *   is disabled. A failed / missing / stale folder is repaired from the
+ *   central copy (`retryTargets` on its Tools) — for every provenance, since
+ *   the central bytes are what a target should hold — unless a Disable holds
+ *   on it (skill grain, or the folder's own `disabled` fact): a re-sync would
+ *   be skipped by the Disabled gate, so the repair honouring the operator's
+ *   policy is finishing the Disable (`disable`).
  */
 export function skillHealth(
   skill: SkillHealthFields,
@@ -954,6 +969,7 @@ export function skillHealth(
 
   const byStatus = (status: SkillTargetDto["status"]) =>
     skill.targets.filter((target) => target.status === status).map((target) => target.tool);
+  const held = new Set(skill.targets.filter((target) => target.disabled).map((target) => target.tool));
   const inProjects = (status: SkillTargetDto["status"]) =>
     (skill.projects ?? []).flatMap((project) => {
       const tools = project.deployments.filter((d) => d.status === status).map((d) => d.tool);
@@ -965,15 +981,20 @@ export function skillHealth(
   };
   // A project deployment repairs from the project (the matrix's Re-deploy);
   // the row's retry is the global pairs' only, so it is offered only with them.
-  const targetRepairs = (tools: string[]): HealthRepair[] =>
-    skill.disabled_at !== null ? ["disable"] : tools.length > 0 ? ["retryTargets"] : [];
+  const targetRepairs = (tools: string[]): HealthRepair[] => {
+    if (skill.disabled_at !== null) return ["disable"];
+    const repairs: HealthRepair[] = [];
+    if (tools.some((tool) => !held.has(tool))) repairs.push("retryTargets");
+    if (tools.some((tool) => held.has(tool))) repairs.push("disable");
+    return repairs;
+  };
   const failedTools = byStatus("error");
   const missingTools = byStatus("missing");
   const staleTools = byStatus("stale");
   counted("targets_failed", failedTools, targetRepairs(failedTools), inProjects("error"));
   counted("targets_missing", missingTools, targetRepairs(missingTools), inProjects("missing"));
   counted("targets_stale", staleTools, targetRepairs(staleTools));
-  if (skill.disabled_at === null) counted("targets_disabled", byStatus("disabled"), ["enable"]);
+  if (skill.disabled_at === null) counted("targets_disabled", [...held], ["enable"]);
   if (skill.disabled_at === null && deployAction(skill).kind === "sync" && !skill.unlocatable) {
     rows.push(row("not_deployed", { repairs: ["deploy"] }));
   }
@@ -1027,6 +1048,7 @@ export const STRIP_MARK_NAME_KEY = {
   pending: "strip.pending",
   failed: "strip.failed",
   failed_first: "strip.failedFirst",
+  failed_disable: "strip.failedDisable",
   missing: "strip.missing",
   stale: "strip.stale",
   disabled: "strip.disabled",
@@ -1036,13 +1058,28 @@ export const STRIP_MARK_NAME_KEY = {
 
 export type StripMark = {
   tool: string;
+  /**
+   * The Deployment folder whose row the mark reads (`ToolInfoDto.folder_key`):
+   * two harnesses sharing a folder read one row.
+   */
+  folder: string;
   /** The Tool catalog's label — never a raw key. */
   label: string;
   state: StripMarkState;
   /** Which sentence names it (`STRIP_MARK_NAME_KEY`). */
   nameKey: keyof typeof STRIP_MARK_NAME_KEY;
-  /** False when detection no longer sees the Tool. */
+  /**
+   * False when detection no longer sees the Tool — for a mark standing for a
+   * folder outside the effective set, when no catalog harness the folder
+   * serves is detected (`ToolInfoDto.folder_key`, never a path).
+   */
   detected: boolean;
+  /**
+   * A Disable holds on the folder (`SkillTargetDto.disabled`) whatever it
+   * shows: a failure there is repaired by finishing the Disable, or Enable —
+   * a re-sync would be skipped.
+   */
+  held: boolean;
 };
 
 export type SyncedStrip = {
@@ -1057,8 +1094,9 @@ export type SyncedStrip = {
 
 /**
  * The Synced strip: one mark per Tool of the effective target set (in the
- * order given — the registry's), then any Tool the skill still has a row
- * for outside that set, so a failure is never hidden. A skill disabled at
+ * order given — the registry's), each reading the row of the folder serving
+ * it, then a mark for any folder the skill still has a row for outside that
+ * set, so a failure is never hidden. A skill disabled at
  * skill grain shows every mark disabled; a skill whose central copy is
  * missing never shows a filled mark (its links dangle: `broken`).
  */
@@ -1066,35 +1104,46 @@ export function syncedStrip(
   skill: {
     disabled_at: number | null;
     unlocatable: UnlocatableState | null;
-    targets: readonly Pick<SkillTargetDto, "tool" | "status" | "synced_at">[];
+    targets: readonly Pick<SkillTargetDto, "tool" | "status" | "synced_at" | "disabled">[];
   },
-  tools: readonly { id: string; label: string }[],
-  context: { labelOf: (tool: string) => string; isDetected: (tool: string) => boolean },
+  tools: readonly { id: string; label: string; folder: string }[],
+  context: {
+    labelOf: (tool: string) => string;
+    isDetected: (tool: string) => boolean;
+    /** Whether any catalog harness the folder serves is detected. */
+    isFolderDetected: (folder: string) => boolean;
+  },
 ): SyncedStrip {
-  const byTool = new Map(skill.targets.map((target) => [target.tool, target]));
-  const order = tools.map((tool) => ({ id: tool.id, label: tool.label }));
-  const shown = new Set(order.map((tool) => tool.id));
+  const byFolder = new Map(skill.targets.map((target) => [target.tool, target]));
+  const order = tools.map((tool) => ({ id: tool.id, label: tool.label, folder: tool.folder, standsForFolder: false }));
+  const shown = new Set(order.map((tool) => tool.folder));
   for (const target of skill.targets) {
     if (shown.has(target.tool)) continue;
     shown.add(target.tool);
-    order.push({ id: target.tool, label: context.labelOf(target.tool) });
+    order.push({ id: target.tool, label: context.labelOf(target.tool), folder: target.tool, standsForFolder: true });
   }
   const centralMissing = skill.unlocatable === "central_missing";
-  const marks = order.map(({ id, label }): StripMark => {
+  const marks = order.map(({ id, label, folder, standsForFolder }): StripMark => {
+    const target = byFolder.get(folder);
     const mark = (state: StripMarkState, nameKey: StripMark["nameKey"]): StripMark => ({
       tool: id,
+      folder,
       label,
       state,
       nameKey,
-      detected: context.isDetected(id),
+      // A mark outside the effective set stands for its folder: whichever
+      // detected harness the folder serves reaches it.
+      detected: standsForFolder ? context.isFolderDetected(folder) : context.isDetected(id),
+      held: target?.disabled ?? false,
     });
     if (skill.disabled_at !== null) return mark("disabled", "skill_disabled");
-    const target = byTool.get(id);
     if (!target) return mark("not_synced", "not_synced");
     switch (target.status) {
       case "disabled":
         return mark("disabled", "disabled");
       case "error":
+        // A Disable holds on the folder: its removal did not finish.
+        if (target.disabled) return mark("failed", "failed_disable");
         return mark("failed", target.synced_at === null ? "failed_first" : "failed");
       case "missing":
         return mark("missing", "missing");
@@ -1138,13 +1187,15 @@ const WRITES_TO_HARNESS: ReadonlySet<TargetAction> = new Set(["retry", "enable",
 /**
  * What a harness's row offers, by its mark (D22): a failed / missing / stale
  * copy is retried from the central copy (a folder in the way raises the one
- * overwrite ask) and can be disabled; a live copy disabled; a disabled pair
- * enabled; a harness without a copy deployed. A skill off everywhere, or whose
+ * overwrite ask) and can be disabled — unless a Disable holds on its folder
+ * (`held`: a removal that did not finish), where the repair is finishing the
+ * Disable, or Enable; a live copy disabled; a disabled pair enabled; a
+ * harness without a copy deployed. A skill off everywhere, or whose
  * central copy is gone, offers nothing here — Health carries its repair. On a
  * harness that is not detected, every verb that writes to it is refused.
  */
 export function targetActions(
-  mark: Pick<StripMark, "state" | "detected">,
+  mark: Pick<StripMark, "state" | "detected" | "held">,
   skill: Pick<SkillHealthFields, "disabled_at" | "unlocatable">,
 ): OfferedTargetAction[] {
   if (skill.disabled_at !== null || skill.unlocatable === "central_missing") return [];
@@ -1153,7 +1204,7 @@ export function targetActions(
       case "failed":
       case "missing":
       case "stale":
-        return ["retry", "disable"];
+        return mark.held ? ["disable", "enable"] : ["retry", "disable"];
       case "synced":
         return ["disable"];
       case "disabled":
@@ -1223,7 +1274,7 @@ export const SKILL_FILTERS: Readonly<Record<Exclude<SkillFilter, "all">, (skill:
   issues: skillHasIssues,
   edited: (skill) => skill.invocation_override !== null,
   disabled: (skill) =>
-    skill.disabled_at !== null || skill.targets.some((target) => target.status === "disabled"),
+    skill.disabled_at !== null || skill.targets.some((target) => target.disabled),
 };
 
 /**

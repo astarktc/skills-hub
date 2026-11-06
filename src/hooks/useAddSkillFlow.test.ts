@@ -156,6 +156,7 @@ function stubBackend(overrides?: {
                       skill_id,
                       skill_name: name,
                       tool_key: tool,
+                      folder_key: tool,
                       status: overrides?.occupied?.includes(tool)
                         ? { status: "failed" as const, error: { code: "TARGET_EXISTS" as const, path: `/${tool}/${name}`, modifiedAt: 1, sameContent: false } }
                         : overrides?.unwritable?.has(tool)
@@ -280,13 +281,13 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
   const catalog = {
     toolLabelById: { claude: "CLAUDE", cursor: "CURSOR" },
     tools: [
-      { id: "claude", label: "CLAUDE" },
-      { id: "cursor", label: "CURSOR" },
-      { id: "goose", label: "GOOSE" },
+      { id: "claude", label: "CLAUDE", folder: "claude" },
+      { id: "cursor", label: "CURSOR", folder: "cursor" },
+      { id: "goose", label: "GOOSE", folder: "goose" },
     ],
     installedTools: [
-      { id: "claude", label: "CLAUDE" },
-      { id: "cursor", label: "CURSOR" },
+      { id: "claude", label: "CLAUDE", folder: "claude" },
+      { id: "cursor", label: "CURSOR", folder: "cursor" },
     ],
   };
   const library = {
@@ -1392,6 +1393,7 @@ describe("useAddSkillFlow import flow", () => {
           skill_id: "imported-id",
           skill_name: "alpha",
           tool_key: "cursor",
+          folder_key: "cursor",
           status: { status: "failed", error: { code: "TARGET_EXISTS", path: "/home/.cursor/skills/alpha", modifiedAt: null, sameContent: false } },
         },
       ],

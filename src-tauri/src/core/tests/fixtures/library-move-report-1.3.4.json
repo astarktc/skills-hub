@@ -1,0 +1,67 @@
+{
+  "from": "/Users/op/.skillshub",
+  "to": "/Volumes/Data/skillshub",
+  "skills": [
+    {
+      "skill_id": "skill-alpha",
+      "name": "alpha",
+      "status": {
+        "status": "moved",
+        "from": "/Users/op/.skillshub/alpha",
+        "to": "/Volumes/Data/skillshub/alpha"
+      }
+    },
+    {
+      "skill_id": "skill-beta",
+      "name": "beta",
+      "status": { "status": "skipped", "reason": "missing" }
+    }
+  ],
+  "deployments": [
+    {
+      "skill_id": "skill-alpha",
+      "name": "alpha",
+      "path": "/Users/op/.config/agents/skills/alpha",
+      "rows": [
+        { "scope": "global_target", "id": "t-amp", "skill_id": "skill-alpha", "tool": "amp" },
+        { "scope": "global_target", "id": "t-kimi", "skill_id": "skill-alpha", "tool": "kimi_cli" }
+      ],
+      "status": { "status": "relinked", "mode": "symlink" }
+    },
+    {
+      "skill_id": "skill-alpha",
+      "name": "alpha",
+      "path": "/Users/op/.claude/skills/alpha",
+      "rows": [
+        { "scope": "global_target", "id": "t-claude", "skill_id": "skill-alpha", "tool": "claude_code" }
+      ],
+      "status": {
+        "status": "failed",
+        "error": { "code": "OTHER", "message": "permission denied" }
+      }
+    },
+    {
+      "skill_id": "skill-alpha",
+      "name": "alpha",
+      "path": "/Users/op/code/app/.agents/skills/alpha",
+      "rows": [
+        { "scope": "assignment", "id": "a-kimi", "project_id": "project-app", "skill_id": "skill-alpha", "tool": "kimi_cli" },
+        { "scope": "assignment", "id": "a-amp", "project_id": "project-app", "skill_id": "skill-alpha", "tool": "amp" }
+      ],
+      "status": { "status": "skipped", "reason": "not_ours" }
+    },
+    {
+      "skill_id": "skill-alpha",
+      "name": "alpha",
+      "path": "/Users/op/code/app/.trae/skills/alpha",
+      "rows": [
+        { "scope": "assignment", "id": "a-trae-cn", "project_id": "project-app", "skill_id": "skill-alpha", "tool": "trae_cn" }
+      ],
+      "status": { "status": "unchanged", "reason": "copy" }
+    }
+  ],
+  "left_behind": [
+    { "path": "/Users/op/.skillshub", "reason": "old_library", "skill_id": null, "error": null },
+    { "path": "/Users/op/.skillshub/alpha", "reason": "still_linked", "skill_id": "skill-alpha", "error": null }
+  ]
+}

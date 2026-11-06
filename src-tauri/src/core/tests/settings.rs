@@ -6,11 +6,11 @@ use crate::core::errors::SignalError;
 use crate::core::settings::{
     apply_setting, effective_global_tool_targets, featured_skills_cache, git_cache_cleanup_days,
     git_cache_ttl_secs, github_token, load_settings, migrate_github_token_to_credential_store,
-    onboarding_scan_selection, record_installed_tools, resolve_central_repo_path,
-    set_featured_skills_cache, ui_zoom_level, SettingUpdate, TokenMigration,
-    DEFAULT_AUTO_SYNC_ENABLED, DEFAULT_GIT_CACHE_CLEANUP_DAYS, DEFAULT_GIT_CACHE_TTL_SECS,
-    DEFAULT_SCAN_SELECTED_TOOLS_ONLY, DEFAULT_UI_ZOOM_LEVEL, GIT_CACHE_CLEANUP_DAYS_RANGE,
-    GIT_CACHE_TTL_SECS_RANGE, UI_ZOOM_LEVEL_RANGE,
+    migrate_tool_selection_to_folders, onboarding_scan_selection, record_installed_tools,
+    resolve_central_repo_path, set_featured_skills_cache, ui_zoom_level, SettingUpdate,
+    TokenMigration, DEFAULT_AUTO_SYNC_ENABLED, DEFAULT_GIT_CACHE_CLEANUP_DAYS,
+    DEFAULT_GIT_CACHE_TTL_SECS, DEFAULT_SCAN_SELECTED_TOOLS_ONLY, DEFAULT_UI_ZOOM_LEVEL,
+    GIT_CACHE_CLEANUP_DAYS_RANGE, GIT_CACHE_TTL_SECS_RANGE, UI_ZOOM_LEVEL_RANGE,
 };
 use crate::core::skill_store::{SkillRecord, SkillStore};
 
@@ -347,6 +347,168 @@ fn effective_global_tool_targets_refuses_a_corrupt_selection() {
             }
             other => panic!("raw {stored:?}: expected SettingCorrupt, got {other:?}"),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The selection as Deployment folder keys (round 20 ticket 09, spec Q26)
+// ---------------------------------------------------------------------------
+
+/// The pre-1.4.0 harness row translates to folders: a folder is on when any
+/// harness it serves was selected — Kimi Code alone turns on Amp's folder.
+#[test]
+fn the_old_harness_selection_translates_to_folders() {
+    let (dir, store) = make_store();
+    let home = dir.path().join("home");
+    raw(
+        &store,
+        "global_selected_tools_v1",
+        r#"["kimi_cli","claude_code","ghost"]"#,
+    );
+
+    assert_eq!(
+        effective_global_tool_targets(&store, &HostRoots::under_home(&home)).unwrap(),
+        vec!["amp".to_string(), "claude_code".to_string()],
+        "folder keys; an unknown key is dropped"
+    );
+    // The wire spells the folder selection as every harness it serves.
+    assert_eq!(
+        load_settings(&store, &MemoryStore::new(), &home)
+            .unwrap()
+            .global_selected_tools,
+        Some(vec![
+            "amp".to_string(),
+            "kimi_cli".to_string(),
+            "claude_code".to_string()
+        ])
+    );
+
+    // The startup migration writes the translation once, under the new key;
+    // the old row stays for a downgrade and is never read again.
+    assert!(migrate_tool_selection_to_folders(&store).unwrap());
+    assert_eq!(
+        store
+            .get_setting("global_selected_folders_v2")
+            .unwrap()
+            .as_deref(),
+        Some(r#"["amp","claude_code"]"#)
+    );
+    raw(&store, "global_selected_tools_v1", r#"["cursor"]"#);
+    assert!(
+        !migrate_tool_selection_to_folders(&store).unwrap(),
+        "only once"
+    );
+    assert_eq!(
+        effective_global_tool_targets(&store, &HostRoots::under_home(&home)).unwrap(),
+        vec!["amp".to_string(), "claude_code".to_string()],
+        "the folder row wins over the old one"
+    );
+}
+
+/// A corrupt old row is not translated: it stays a refusal naming that row
+/// (never a fallback to detection) until a save writes the folder row.
+#[test]
+fn a_corrupt_old_selection_stays_a_refusal_until_saved() {
+    let (dir, store) = make_store();
+    let home = dir.path().join("home");
+    install_tool(&home, "claude_code");
+    raw(&store, "global_selected_tools_v1", "not json");
+
+    assert!(!migrate_tool_selection_to_folders(&store).unwrap());
+    assert!(store
+        .get_setting("global_selected_folders_v2")
+        .unwrap()
+        .is_none());
+    let loaded = load_settings(&store, &MemoryStore::new(), &home).unwrap();
+    assert_eq!(loaded.global_selected_tools, None);
+    assert!(loaded.global_selected_tools_corrupt);
+    let err = effective_global_tool_targets(&store, &HostRoots::under_home(&home))
+        .expect_err("a corrupt old row refuses");
+    match err.downcast_ref::<SignalError>() {
+        Some(SignalError::SettingCorrupt { key, .. }) => {
+            assert_eq!(key, "global_selected_tools_v1")
+        }
+        other => panic!("expected SettingCorrupt, got {other:?}"),
+    }
+
+    let saved = apply_setting(
+        &store,
+        &MemoryStore::new(),
+        &home,
+        SettingUpdate::GlobalToolConfig {
+            selected_tools: vec!["claude_code".to_string()],
+            scan_selected_only: true,
+        },
+    )
+    .unwrap();
+    assert!(!saved.global_selected_tools_corrupt);
+    assert_eq!(
+        saved.global_selected_tools,
+        Some(vec!["claude_code".to_string()])
+    );
+    assert_eq!(
+        effective_global_tool_targets(&store, &HostRoots::under_home(&home)).unwrap(),
+        vec!["claude_code".to_string()]
+    );
+}
+
+/// A save stores the folders serving the named harnesses; a corrupt folder
+/// row refuses under its own key; an unknown folder key is pruned on read.
+#[test]
+fn the_folder_selection_is_saved_as_folder_keys() {
+    let (dir, store) = make_store();
+    let home = dir.path().join("home");
+    apply_setting(
+        &store,
+        &MemoryStore::new(),
+        &home,
+        SettingUpdate::GlobalToolConfig {
+            selected_tools: vec!["kimi_cli".to_string(), "amp".to_string(), "pi".to_string()],
+            scan_selected_only: false,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        store
+            .get_setting("global_selected_folders_v2")
+            .unwrap()
+            .as_deref(),
+        Some(r#"["amp","pi"]"#)
+    );
+    assert!(
+        store
+            .get_setting("global_selected_tools_v1")
+            .unwrap()
+            .is_none(),
+        "the old key is never written"
+    );
+    // The onboarding scan reads every harness a selected folder serves.
+    assert_eq!(
+        onboarding_scan_selection(&store).unwrap(),
+        None,
+        "scan-selected-only is off"
+    );
+
+    raw(
+        &store,
+        "global_selected_folders_v2",
+        r#"["kimi_cli","pi","ghost"]"#,
+    );
+    assert_eq!(
+        effective_global_tool_targets(&store, &HostRoots::under_home(&home)).unwrap(),
+        vec!["pi".to_string()],
+        "a harness key that is not a folder key, and an unknown key, are pruned"
+    );
+
+    raw(&store, "global_selected_folders_v2", "[1]");
+    match effective_global_tool_targets(&store, &HostRoots::under_home(&home))
+        .expect_err("corrupt")
+        .downcast_ref::<SignalError>()
+    {
+        Some(SignalError::SettingCorrupt { key, .. }) => {
+            assert_eq!(key, "global_selected_folders_v2")
+        }
+        other => panic!("expected SettingCorrupt, got {other:?}"),
     }
 }
 

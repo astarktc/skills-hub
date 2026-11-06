@@ -210,7 +210,7 @@ fn import_of_a_variant_installed_by_npx_skills_add_records_its_upstream_as_git()
 }
 
 #[test]
-fn auto_sync_on_overwrites_the_source_tool_in_place_across_its_shared_dir_group() {
+fn auto_sync_on_overwrites_the_source_tool_in_place_in_its_shared_folder() {
     // amp and kimi_cli share `.config/agents/skills` (one detect dir, one
     // artifact): the source variant's own path IS one of the sync targets.
     let f = fixture();
@@ -245,7 +245,7 @@ fn auto_sync_on_overwrites_the_source_tool_in_place_across_its_shared_dir_group(
         "a source Tool the policy already names is not a forced inclusion: {:?}",
         forced_tools
     );
-    // One artifact, one attempted pair (shared dir dedupe), both rows written.
+    // One artifact, one attempted pair, one row: the folder's (`amp`).
     assert_eq!(targets.len(), 1, "shared dir attempted once: {:?}", targets);
     assert!(
         matches!(
@@ -255,14 +255,20 @@ fn auto_sync_on_overwrites_the_source_tool_in_place_across_its_shared_dir_group(
         "source tool overwritten in place: {:?}",
         targets[0].status
     );
-    for key in ["amp", "kimi_cli"] {
-        let row = f
-            .store
-            .get_skill_target(skill_id, key)
+    assert_eq!(targets[0].tool_key, "amp");
+    let row = f
+        .store
+        .get_skill_target(skill_id, "amp")
+        .expect("query")
+        .expect("the folder's row");
+    assert_eq!(row.target_path, original.to_string_lossy());
+    assert!(
+        f.store
+            .get_skill_target(skill_id, "kimi_cli")
             .expect("query")
-            .unwrap_or_else(|| panic!("row for {}", key));
-        assert_eq!(row.target_path, original.to_string_lossy());
-    }
+            .is_none(),
+        "no row per sibling"
+    );
     // The central copy holds the bytes and the original path now carries the
     // Sync target (a link on this platform, a copy elsewhere).
     let central = f.paths.central_dir.join("alpha");

@@ -250,8 +250,12 @@ export type AppSettings = {
 	github_token_set: boolean | null,
 	auto_sync_enabled: boolean,
 	/**
-	 *  `None` = never configured (distinct from an empty selection). Keys
-	 *  the Tool registry no longer knows are pruned on read (round 12 D2).
+	 *  `None` = never configured (distinct from an empty selection). The
+	 *  selection is stored as Deployment folder keys; this is every harness a
+	 *  selected folder serves (`core::placement`) — folder by folder in the
+	 *  stored order, each folder's harnesses in registry order — so two
+	 *  harnesses sharing one folder are on or off together. Keys the registry
+	 *  no longer knows are pruned on read (round 12 D2).
 	 */
 	global_selected_tools: string[] | null,
 	/**
@@ -306,10 +310,19 @@ export type BatchSyncSkillDto = {
 	source_path: string,
 };
 
+/**
+ *  One row's result. `tool_key` is the raw row the outcome settled (a
+ *  pre-1.4.0 shared-dir sibling's row keeps its own key) — the key an
+ *  overwrite answer names. `folder_key` is the Deployment folder that row
+ *  describes (`placement::row_folder`): the backend's answer to "which
+ *  Deployment is this", so a report reader counts one Deployment per (skill,
+ *  folder) however many legacy rows describe it, and never derives a folder.
+ */
 export type BatchTargetOutcome = {
 	skill_id: string,
 	skill_name: string,
 	tool_key: string,
+	folder_key: string,
 	status: BatchTargetStatus,
 };
 
@@ -520,8 +533,9 @@ export type ConfigureProjectToolsResultDto = {
  */
 export type DisableScope =
 /**
- *  One (skill, Tool) pair at global scope (fanned out across the Tool's
- *  shared skills dir by `artifact_removal`).
+ *  One (skill, folder) pair at global scope: `tool` names a harness (or a
+ *  folder key), and the Deployment folder serving it is what turns off —
+ *  one folder, one row (`core::placement`).
  */
 { kind: "skill_tool"; skill_id: string; tool: string } |
 /**  One skill, everywhere: global targets and project assignments. */
@@ -1258,11 +1272,26 @@ export type ProjectSkillAssignmentDto = {
 	skill_name: string,
 	tool: string,
 	mode: SyncMode,
+	/**
+	 *  The folder's displayed status (`placement::FolderFacts::status`:
+	 *  failure ahead of muted).
+	 */
 	status: SyncStatus,
 	last_error: string | null,
 	synced_at: number | null,
 	content_hash: string | null,
 	created_at: number,
+	/**
+	 *  The Disabled rule holds on the folder: some row of it is `disabled`
+	 *  (`placement::FolderFacts::disabled`).
+	 */
+	disabled: boolean,
+	/**
+	 *  Some row of the folder that is not `disabled` owns its artifact — what
+	 *  a Disable or unassign would remove (`placement::FolderFacts::deployed`;
+	 *  presentation only).
+	 */
+	deployed: boolean,
 };
 
 /**  Why a project sync left a whole project alone. */
@@ -1296,8 +1325,18 @@ export type ProjectSyncOutcome = {
 	project_id: string,
 	skill_id: string,
 	skill_name: string,
-	/**  Registry key of the project Tool. */
+	/**
+	 *  Registry key of the project Tool: the raw row the outcome settled (a
+	 *  pre-1.4.0 shared-dir sibling's row keeps its own key) — the key an
+	 *  overwrite answer names.
+	 */
 	tool: string,
+	/**
+	 *  The project Deployment folder that row describes
+	 *  (`placement::row_folder`): a report reader counts one Deployment per
+	 *  (project, skill, folder) however many legacy rows describe it.
+	 */
+	folder_key: string,
 	status: ProjectSyncOutcomeStatus,
 };
 
@@ -1354,6 +1393,12 @@ export type ProjectToolDto = {
 	id: string,
 	project_id: string,
 	tool: string,
+	/**
+	 *  The project Deployment folder serving `tool` (`core::placement`): the
+	 *  key its assignment rows carry, so a matrix column reads its cells by it
+	 *  (Trae and Trae CN share `trae`) and never derives a folder from a path.
+	 */
+	folder_key: string,
 };
 
 /**
@@ -1384,8 +1429,17 @@ export type ProjectViewDto = {
 	rewrote_statuses: boolean,
 };
 
+/**
+ *  One row's outcome. `scope` names the raw row (a pre-1.4.0 shared-dir
+ *  sibling's row keeps its own key); `folder_key` is the Deployment folder
+ *  that row describes (`placement::row_folder`) — the backend's answer to
+ *  "which Deployment is this", so a report reader counts one Deployment per
+ *  (scope, project, skill, folder) however many legacy rows describe it, and
+ *  never derives a folder itself.
+ */
 export type PropagationOutcome = {
 	scope: PropagationScope,
+	folder_key: string,
 	status: PropagationStatus,
 };
 
@@ -1695,12 +1749,21 @@ export type RevealPathFailure =
 /**  The file manager could not show it. */
 "opener";
 
-/**  Where a row lives — the two tables that record Sync targets. */
+/**
+ *  Where a row lives — the two tables that record Sync targets.
+ *
+ *  `id` / `tool` are the raw row reference settlement acts on (a pre-1.4.0
+ *  row written once per shared-dir sibling keeps its own key). `folder_key`
+ *  is the Deployment folder the row describes (`placement::row_folder`): the
+ *  backend's answer to "which Deployment is this", so a report reader counts
+ *  one Deployment per (skill, folder) — and per project for an assignment —
+ *  however many legacy rows describe it, and never derives a folder itself.
+ */
 export type RowRef =
 /**  A `skill_targets` row (global scope). */
-{ scope: "global_target"; id: string; skill_id: string; tool: string } |
+{ scope: "global_target"; id: string; skill_id: string; tool: string; folder_key: string } |
 /**  A `project_skill_assignments` row (project scope). */
-{ scope: "assignment"; id: string; project_id: string; skill_id: string; tool: string };
+{ scope: "assignment"; id: string; project_id: string; skill_id: string; tool: string; folder_key: string };
 
 /**  One setting write, as sent by the frontend: `{ key, value }`. */
 export type SettingUpdate =
@@ -1798,15 +1861,26 @@ export type SkillOutcomeKind =
  */
 "import_failed";
 
-/**  One project assignment row of the skill: its Tool key and lifecycle. */
+/**
+ *  One project Deployment folder of the skill: its folder key, the folder's
+ *  displayed status and facts (`core::placement::FolderFacts`).
+ */
 export type SkillProjectDeploymentDto = {
 	tool: string,
+	/**  The folder's displayed status: failure ahead of muted. */
 	status: SyncStatus,
 	/**
 	 *  Set once a sync of ours succeeded there; a never-synced `error` row
 	 *  owns nothing and is not a live deployment.
 	 */
 	synced_at: number | null,
+	/**  The Disabled rule holds on the folder: some row of it is `disabled`. */
+	disabled: boolean,
+	/**
+	 *  Some row of the folder that is not `disabled` owns its artifact — what
+	 *  a Disable would remove (presentation only).
+	 */
+	deployed: boolean,
 };
 
 /**  One project a Managed skill is assigned to (`core::skill_catalog::SkillProject`). */
@@ -1847,12 +1921,32 @@ export type SkillRefreshStatus =
  */
 { status: "cancelled" };
 
+/**
+ *  One global Deployment folder of the skill: the row standing for it (keyed
+ *  by the folder key; its mode, path and `synced_at` are that row's own) and
+ *  the folder's facts over all its rows (`core::placement::FolderFacts`).
+ */
 export type SkillTargetDto = {
 	tool: string,
 	mode: SyncMode,
+	/**
+	 *  The folder's displayed status: failure ahead of muted (`error` ›
+	 *  `missing` › `stale` › `disabled` › `pending` › `synced`).
+	 */
 	status: SyncStatus,
 	target_path: string,
 	synced_at: number | null,
+	/**
+	 *  The Disabled rule holds on the folder: some row of it is `disabled`,
+	 *  so a re-sync is skipped; its repair is finishing the Disable, or Enable.
+	 */
+	disabled: boolean,
+	/**
+	 *  Some row of the folder that is not `disabled` owns its artifact — what
+	 *  a Disable or Delete would remove (presentation only, never a row's
+	 *  ownership).
+	 */
+	deployed: boolean,
 };
 
 /**
@@ -1913,6 +2007,13 @@ export type ToolInfoDto = {
 	key: string,
 	label: string,
 	installed: boolean,
+	/**
+	 *  The folder key of the Deployment folder serving this harness at the
+	 *  list's scope (`core::placement`). Deployment rows, the project matrix
+	 *  and the saved selection are keyed by folder: the frontend matches a
+	 *  harness to its rows through this key, never through a path.
+	 */
+	folder_key: string,
 	/**
 	 *  Keys of every listed tool sharing this tool's skills dir (global dir
 	 *  for the global list, project dir for the project list), in adapter

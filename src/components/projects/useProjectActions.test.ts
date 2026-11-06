@@ -48,7 +48,7 @@ const PROJECT: ProjectDto = {
 };
 const VIEW: ProjectViewDto = {
   project: PROJECT,
-  tools: ["claude_code", "cursor"].map((tool) => ({ id: `p1:${tool}`, project_id: "p1", tool })),
+  tools: ["claude_code", "cursor"].map((tool) => ({ id: `p1:${tool}`, project_id: "p1", tool, folder_key: tool })),
   assignments: [
     {
       id: "a1",
@@ -62,6 +62,8 @@ const VIEW: ProjectViewDto = {
       synced_at: 1,
       content_hash: null,
       created_at: 1,
+      disabled: false,
+      deployed: true,
     },
   ],
   reconciled: true,

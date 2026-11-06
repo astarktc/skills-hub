@@ -845,7 +845,7 @@ describe("useSettingsState a resumed Library move", () => {
         skill_id: "a",
         name: "a",
         path: "/home/op/.claude/skills/a",
-        rows: [{ scope: "global_target", id: "a-row", skill_id: "a", tool: "claude_code" }],
+        rows: [{ scope: "global_target", id: "a-row", skill_id: "a", tool: "claude_code", folder_key: "claude_code" }],
         status: { status: "relinked", mode: "symlink" },
       },
     ],

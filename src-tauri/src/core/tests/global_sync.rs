@@ -66,29 +66,29 @@ fn claude() -> &'static ToolAdapter {
     adapter_by_key("claude_code").expect("claude_code adapter")
 }
 
+/// One folder, one row: the sync records the folder's row and nothing per
+/// sibling (the per-sharer record fan-out is retired).
 #[test]
-fn sync_creates_target_and_records_for_all_group_tools() {
+fn sync_creates_target_and_records_one_row_for_the_folder() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = make_store(dir.path());
     seed_skill(&store, "skill-1");
     let source = make_skill_dir(dir.path(), "central-skill", "# Skill");
     let tool_root = dir.path().join("skills-root");
 
-    let adapter = claude();
-    // Simulate a shared-dir group of two installed tools.
+    // Amp and Kimi Code share one folder, keyed `amp`.
     let amp = adapter_by_key("amp").expect("amp adapter");
-    let record_tools = vec![adapter, amp];
 
     let outcome = sync_skill_into_root(
         &store,
         &central_repo_of(&store),
-        adapter,
+        amp,
         &tool_root,
         &source,
         "skill-1",
         "my-skill",
         &no_overwrite(),
-        &record_tools,
+        "amp",
         1000,
     )
     .expect("sync");
@@ -96,16 +96,22 @@ fn sync_creates_target_and_records_for_all_group_tools() {
     assert_eq!(outcome.target_path, tool_root.join("my-skill"));
     assert!(outcome.target_path.exists());
 
-    for key in ["claude_code", "amp"] {
-        let record = store
-            .get_skill_target("skill-1", key)
+    let record = store
+        .get_skill_target("skill-1", "amp")
+        .expect("query")
+        .expect("the folder's row");
+    assert_eq!(record.target_path, outcome.target_path.to_string_lossy());
+    assert_eq!(record.mode, outcome.mode_used);
+    assert_eq!(record.status, SyncStatus::Synced);
+    assert_eq!(record.synced_at, Some(1000));
+    assert!(
+        store
+            .get_skill_target("skill-1", "kimi_cli")
             .expect("query")
-            .unwrap_or_else(|| panic!("record for {}", key));
-        assert_eq!(record.target_path, outcome.target_path.to_string_lossy());
-        assert_eq!(record.mode, outcome.mode_used);
-        assert_eq!(record.status, SyncStatus::Synced);
-        assert_eq!(record.synced_at, Some(1000));
-    }
+            .is_none(),
+        "no row per sibling"
+    );
+    assert_eq!(store.list_skill_targets("skill-1").expect("list").len(), 1);
 }
 
 #[test]
@@ -129,7 +135,7 @@ fn sync_without_overwrite_fails_with_target_exists() {
         "skill-1",
         "my-skill",
         &no_overwrite(),
-        std::slice::from_ref(&adapter),
+        adapter.key(),
         1000,
     )
     .expect_err("must fail");
@@ -176,7 +182,7 @@ fn sync_with_overwrite_replaces_existing_target() {
             overwrite: true,
             overwrite_if_same_content: false,
         },
-        std::slice::from_ref(&adapter),
+        adapter.key(),
         1000,
     )
     .expect("sync");
@@ -225,7 +231,7 @@ fn overwrite_if_same_content_only_replaces_identical_targets() {
         "skill-1",
         "my-skill",
         &policy,
-        std::slice::from_ref(&adapter),
+        adapter.key(),
         1000,
     )
     .expect("same-content sync must succeed");
@@ -241,7 +247,7 @@ fn overwrite_if_same_content_only_replaces_identical_targets() {
         "skill-2",
         "other-skill",
         &policy,
-        std::slice::from_ref(&adapter),
+        adapter.key(),
         1000,
     )
     .expect_err("different content must not be replaced");
@@ -282,7 +288,7 @@ fn the_collision_fact_reads_the_stored_identity_like_the_policy() {
         "skill-1",
         "my-skill",
         &same_content_policy,
-        std::slice::from_ref(&adapter),
+        adapter.key(),
         1000,
     )
     .expect_err("the stored identity differs: not replaced");
@@ -309,7 +315,7 @@ fn the_collision_fact_reads_the_stored_identity_like_the_policy() {
         "no-such-skill",
         "ghost",
         &same_content_policy,
-        std::slice::from_ref(&adapter),
+        adapter.key(),
         1000,
     )
     .expect_err("unknown identity: not replaced");
@@ -330,7 +336,7 @@ fn the_collision_fact_reads_the_stored_identity_like_the_policy() {
         "skill-1",
         "same",
         &same_content_policy,
-        std::slice::from_ref(&adapter),
+        adapter.key(),
         1000,
     )
     .expect("same content: replaced silently");
@@ -359,7 +365,7 @@ fn copy_only_capability_gets_copy_mode() {
         "skill-1",
         "my-skill",
         &no_overwrite(),
-        std::slice::from_ref(&cursor),
+        cursor.key(),
         1000,
     )
     .expect("sync");
@@ -387,9 +393,12 @@ fn batch_skill(id: &str, name: &str, source: &Path) -> BatchSkill {
 fn planned(adapter: &'static ToolAdapter, root: &Path, installed: bool) -> PlannedToolTarget {
     PlannedToolTarget {
         adapter,
+        folder_key: adapter.key().to_string(),
         root: root.to_path_buf(),
         installed,
-        record_tools: vec![adapter],
+        detected: crate::core::placement::InstalledSet::from_keys(
+            installed.then_some(adapter.key()),
+        ),
     }
 }
 
@@ -450,7 +459,7 @@ fn batch_syncs_each_skill_to_each_installed_tool() {
 }
 
 #[test]
-fn batch_dedupes_installed_tools_sharing_a_root_and_fans_out_records() {
+fn batch_dedupes_targets_naming_one_folder_and_records_one_row() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = make_store(dir.path());
     seed_skill(&store, "skill-1");
@@ -458,10 +467,9 @@ fn batch_dedupes_installed_tools_sharing_a_root_and_fans_out_records() {
 
     let shared_root = dir.path().join("shared-root");
     let amp = adapter_by_key("amp").expect("amp adapter");
-    // Both targets resolve to the same root; the second must be deduped, but
-    // the first target's record_tools covers both keys.
-    let mut first = planned(claude(), &shared_root, true);
-    first.record_tools = vec![claude(), amp];
+    // Amp and Kimi Code asked for: both name the folder `amp`, so the second
+    // is deduped and one row is recorded, keyed by the folder.
+    let first = planned(amp, &shared_root, true);
     let second = planned(amp, &shared_root, true);
 
     let skills = vec![batch_skill("skill-1", "my-skill", &source)];
@@ -475,19 +483,17 @@ fn batch_dedupes_installed_tools_sharing_a_root_and_fans_out_records() {
         |_| {},
     );
 
-    // One attempted pair only — the duplicate root produced no second outcome.
+    // One attempted pair only — the duplicate folder produced no second outcome.
     assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].tool_key, "amp");
     assert!(matches!(
         outcomes[0].status,
         BatchTargetStatus::Synced { .. }
     ));
-    // …but records exist for every tool sharing the dir.
-    for key in ["claude_code", "amp"] {
-        assert!(store
-            .get_skill_target("skill-1", key)
-            .expect("query")
-            .is_some());
-    }
+    // …and one row, the folder's.
+    let rows = store.list_skill_targets("skill-1").expect("list");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].tool, "amp");
 }
 
 #[test]
@@ -577,7 +583,7 @@ fn batch_isolates_per_target_failures() {
 }
 
 #[test]
-fn batch_override_applies_to_named_tool_and_its_shared_dir_group() {
+fn batch_override_applies_to_the_folder_its_key_names() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = make_store(dir.path());
     seed_skill(&store, "skill-1");
@@ -613,8 +619,9 @@ fn batch_override_applies_to_named_tool_and_its_shared_dir_group() {
         }
     ));
 
-    // Override naming amp while the target is kimi_cli — they share
-    // ~/.config/agents/skills — must apply and replace the target.
+    // Override naming kimi_cli while the target is the folder `amp` — Kimi
+    // Code is served by it (they share ~/.config/agents/skills) — must apply
+    // and replace the target.
     let kimi = adapter_by_key("kimi_cli");
     let amp = adapter_by_key("amp").expect("amp adapter");
     if let Some(kimi) = kimi {
@@ -629,7 +636,7 @@ fn batch_override_applies_to_named_tool_and_its_shared_dir_group() {
             overwrite_if_same_content: false,
             overrides: vec![BatchOverride {
                 skill_id: "skill-1".to_string(),
-                tool_key: "amp".to_string(),
+                tool_key: kimi.key().to_string(),
                 decision: OverrideDecision::Overwrite,
             }],
         };
@@ -637,7 +644,7 @@ fn batch_override_applies_to_named_tool_and_its_shared_dir_group() {
             &store,
             &central_repo_of(&store),
             &skills,
-            &[planned(kimi, &root_b, true)],
+            &[planned(amp, &root_b, true)],
             &policy_shared,
             1000,
             |_| {},
@@ -778,46 +785,40 @@ fn install_tool(home: &Path, key: &str) {
 }
 
 #[test]
-fn plan_resolves_root_installedness_and_installed_shared_group_from_home() {
+fn plan_resolves_each_key_to_its_folder_root_and_installedness_from_home() {
     let home = tempfile::tempdir().expect("home");
     install_tool(home.path(), "claude_code");
     // amp and kimi_cli share ~/.config/agents/skills but are detected by
-    // their own config roots; install both so the shared group is complete.
-    install_tool(home.path(), "amp");
+    // their own config roots; only Kimi Code is installed here.
     install_tool(home.path(), "kimi_cli");
 
-    let keys = ["claude_code", "cursor", "amp", "nope"]
+    let keys = ["claude_code", "cursor", "kimi_cli", "amp", "nope"]
         .iter()
         .map(|k| k.to_string())
         .collect::<Vec<_>>();
     let plans = plan_batch_tool_targets(&HostRoots::under_home(home.path()), &keys);
-    assert_eq!(plans.len(), 4);
+    assert_eq!(plans.len(), 5);
 
     let claude = plans[0].as_ref().expect("claude plan");
     assert!(claude.installed);
+    assert_eq!(claude.folder_key, "claude_code");
     assert_eq!(claude.root, home.path().join(".claude/skills"));
-    assert_eq!(
-        claude
-            .record_tools
-            .iter()
-            .map(|a| a.id.as_key())
-            .collect::<Vec<_>>(),
-        vec!["claude_code"]
-    );
 
     let cursor = plans[1].as_ref().expect("cursor plan");
     assert!(!cursor.installed);
+    assert_eq!(cursor.folder_key, "cursor");
     assert_eq!(cursor.root, home.path().join(".cursor/skills"));
-    assert!(cursor.record_tools.is_empty());
 
-    let amp = plans[2].as_ref().expect("amp plan");
-    assert!(amp.installed);
-    assert_eq!(amp.root, home.path().join(".config/agents/skills"));
-    let group: Vec<&str> = amp.record_tools.iter().map(|a| a.id.as_key()).collect();
-    assert!(group.contains(&"amp"), "got {:?}", group);
-    assert!(group.contains(&"kimi_cli"), "got {:?}", group);
+    // Kimi Code is served by the folder `amp`; so is Amp, which is reachable
+    // because a harness it serves (Kimi Code) is installed.
+    for plan in [&plans[2], &plans[3]] {
+        let plan = plan.as_ref().expect("shared folder plan");
+        assert!(plan.installed);
+        assert_eq!(plan.folder_key, "amp");
+        assert_eq!(plan.root, home.path().join(".config/agents/skills"));
+    }
 
-    let (key, err) = plans[3].as_ref().expect_err("unknown tool fails planning");
+    let (key, err) = plans[4].as_ref().expect_err("unknown tool fails planning");
     assert_eq!(key, "nope");
     assert!(matches!(err, GlobalSyncError::Other(_)));
 }
@@ -925,7 +926,7 @@ fn an_overwrite_never_removes_a_folder_inside_the_central_library() {
             overwrite: true,
             overwrite_if_same_content: false,
         },
-        std::slice::from_ref(&adapter),
+        adapter.key(),
         1000,
     )
     .expect_err("the overwrite must be refused");
@@ -983,7 +984,7 @@ fn an_overwrite_never_removes_an_unrecorded_folder_of_the_configured_repo() {
             overwrite: true,
             overwrite_if_same_content: false,
         },
-        std::slice::from_ref(&adapter),
+        adapter.key(),
         1000,
     )
     .expect_err("the overwrite must be refused");
@@ -1036,7 +1037,7 @@ fn an_overwrite_blocked_by_permission_keeps_the_typed_removal_failure() {
             overwrite: true,
             overwrite_if_same_content: false,
         },
-        std::slice::from_ref(&adapter),
+        adapter.key(),
         1000,
     );
     fs::set_permissions(occupant.join("locked"), fs::Permissions::from_mode(0o755))
@@ -1141,4 +1142,256 @@ fn a_detected_reader_makes_its_group_deployable_before_the_group_folder_exists()
         "no reader row"
     );
     assert!(targets.iter().any(|t| t.tool == agents_key));
+}
+
+/// Sol's finding 101, global arm, under Astra's 201: every stored row of a
+/// folder is written where the registry places the skill now (the folder root
+/// plus its current name, as on `main`), never at a stale recorded path, and
+/// an answer applies to the row it names. Two pre-1.4.0 rows of Amp's folder
+/// record `my-skill` (a foreign folder) and `previous` (another foreign
+/// folder): an Overwrite naming `kimi_cli` replaces the destination for
+/// Kimi's row only — Amp's row, unanswered, asks — and `previous` is never
+/// touched. A Keep naming `amp` then records Amp's row `disabled` alone.
+#[test]
+fn every_row_writes_the_skills_place_and_an_answer_reaches_the_row_it_names() {
+    use crate::core::skill_store::SkillTargetRecord;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = make_store(dir.path());
+    seed_skill(&store, "skill-1");
+    let source = make_skill_dir(dir.path(), "central-skill", "# New");
+    let amp = adapter_by_key("amp").expect("amp adapter");
+    let root = dir.path().join("shared-root");
+    let destination = make_skill_dir(&root, "my-skill", "# Foreign A");
+    let stale = make_skill_dir(&root, "previous", "# Foreign K");
+    for (tool, path) in [("amp", &destination), ("kimi_cli", &stale)] {
+        store
+            .upsert_skill_target(&SkillTargetRecord {
+                id: format!("t-{tool}"),
+                skill_id: "skill-1".to_string(),
+                tool: tool.to_string(),
+                target_path: path.to_string_lossy().into_owned(),
+                mode: SyncMode::Symlink,
+                status: SyncStatus::Error,
+                last_error: Some("an earlier first sync failed".to_string()),
+                synced_at: None,
+            })
+            .expect("seed row");
+    }
+    let skills = vec![batch_skill("skill-1", "my-skill", &source)];
+    let answer = |tool: &str, decision| BatchPolicy {
+        overwrite: false,
+        overwrite_if_same_content: false,
+        overrides: vec![BatchOverride {
+            skill_id: "skill-1".to_string(),
+            tool_key: tool.to_string(),
+            decision,
+        }],
+    };
+    let row = |tool: &str| {
+        store
+            .get_skill_target("skill-1", tool)
+            .expect("query")
+            .expect("row")
+    };
+    let both_detected = || {
+        let mut target = planned(amp, &root, true);
+        target.detected = crate::core::placement::InstalledSet::from_keys(["amp", "kimi_cli"]);
+        target
+    };
+
+    let outcomes = sync_skills_to_planned_tools(
+        &store,
+        &central_repo_of(&store),
+        &skills,
+        &[both_detected()],
+        &answer("kimi_cli", OverrideDecision::Overwrite),
+        1000,
+        |_| {},
+    );
+
+    assert_eq!(outcomes.len(), 2, "one outcome per row: {outcomes:?}");
+    let status_of = |outcomes: &[crate::core::global_sync::BatchTargetOutcome], tool: &str| {
+        outcomes
+            .iter()
+            .find(|o| o.tool_key == tool)
+            .map(|o| format!("{:?}", o.status))
+            .unwrap_or_default()
+    };
+    // Rows are visited in store order: Amp's, unanswered, meets the foreign
+    // folder at the destination and asks; Kimi's answer replaces it.
+    assert!(
+        status_of(&outcomes, "amp").contains("TargetExists"),
+        "{outcomes:?}"
+    );
+    assert!(
+        status_of(&outcomes, "kimi_cli").starts_with("Synced"),
+        "{outcomes:?}"
+    );
+    assert_ne!(
+        fs::read_to_string(destination.join("SKILL.md"))
+            .ok()
+            .as_deref(),
+        Some("# Foreign A"),
+        "the asked destination is replaced"
+    );
+    assert_eq!(
+        fs::read_to_string(stale.join("SKILL.md")).unwrap(),
+        "# Foreign K",
+        "nothing is ever written at a stale recorded path"
+    );
+    assert_eq!(
+        std::path::Path::new(&row("kimi_cli").target_path),
+        destination.as_path()
+    );
+    assert!(row("kimi_cli").owns_artifact());
+    assert!(!row("amp").owns_artifact(), "Amp's own row was not settled");
+
+    let outcomes = sync_skills_to_planned_tools(
+        &store,
+        &central_repo_of(&store),
+        &skills,
+        &[both_detected()],
+        &answer("amp", OverrideDecision::Keep),
+        1100,
+        |_| {},
+    );
+    assert!(
+        status_of(&outcomes, "amp").starts_with("Declined"),
+        "{outcomes:?}"
+    );
+    assert_eq!(row("amp").status, SyncStatus::Disabled);
+    assert!(!row("amp").owns_artifact());
+    assert_eq!(row("kimi_cli").status, SyncStatus::Synced);
+    assert_eq!(
+        fs::read_to_string(stale.join("SKILL.md")).unwrap(),
+        "# Foreign K"
+    );
+}
+
+/// Astra 201, the differential against `main`: a row whose recorded path is
+/// stale — outside every harness folder, under an old name — is written where
+/// the registry places the skill now (`~/.claude/skills/<current name>`) and
+/// re-recorded there; nothing is created at the stale path.
+#[test]
+fn a_stale_recorded_path_is_never_a_destination() {
+    use crate::core::skill_store::SkillTargetRecord;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let home = dir.path().join("home");
+    install_tool(&home, "claude_code");
+    let store = make_store(dir.path());
+    seed_skill(&store, "skill-1");
+    let source = make_skill_dir(dir.path(), "central-a", "# A");
+    let stale = dir.path().join("elsewhere").join("old-name");
+    store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "t-claude".to_string(),
+            skill_id: "skill-1".to_string(),
+            tool: "claude_code".to_string(),
+            target_path: stale.to_string_lossy().into_owned(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Synced,
+            last_error: None,
+            synced_at: Some(1),
+        })
+        .expect("seed row");
+
+    let outcomes = sync_skills_to_tools(
+        &HostRoots::under_home(&home),
+        &store,
+        &central_repo_of(&store),
+        &[batch_skill("skill-1", "current-name", &source)],
+        &["claude_code".to_string()],
+        &BatchPolicy {
+            overwrite: false,
+            overwrite_if_same_content: true,
+            overrides: vec![],
+        },
+        42,
+        |_| {},
+    );
+
+    assert!(
+        matches!(
+            outcomes.as_slice(),
+            [o] if matches!(o.status, BatchTargetStatus::Synced { .. })
+        ),
+        "{outcomes:?}"
+    );
+    let destination = home.join(".claude/skills/current-name");
+    assert!(
+        destination.symlink_metadata().is_ok(),
+        "written at the skill's place"
+    );
+    assert!(
+        stale.symlink_metadata().is_err(),
+        "nothing at the stale path"
+    );
+    assert!(!dir.path().join("elsewhere").exists());
+    let row = store
+        .get_skill_target("skill-1", "claude_code")
+        .expect("query")
+        .expect("row");
+    assert_eq!(
+        std::path::Path::new(&row.target_path),
+        destination.as_path()
+    );
+}
+
+/// A legacy row (Kimi Code's, on Amp's folder) is reached through its own
+/// harness, as before rows were per folder: with only Amp installed the batch
+/// leaves it untouched and records the folder's write under the folder key.
+#[test]
+fn a_legacy_row_of_an_uninstalled_harness_is_left_as_it_was() {
+    use crate::core::skill_store::SkillTargetRecord;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let home = dir.path().join("home");
+    install_tool(&home, "amp");
+    let store = make_store(dir.path());
+    seed_skill(&store, "skill-1");
+    let source = make_skill_dir(dir.path(), "central-a", "# A");
+    let legacy = SkillTargetRecord {
+        id: "t-kimi".to_string(),
+        skill_id: "skill-1".to_string(),
+        tool: "kimi_cli".to_string(),
+        target_path: home
+            .join(".config/agents/skills/previous")
+            .to_string_lossy()
+            .into_owned(),
+        mode: SyncMode::Copy,
+        status: SyncStatus::Error,
+        last_error: Some("an earlier sync failed".to_string()),
+        synced_at: None,
+    };
+    store.upsert_skill_target(&legacy).expect("seed row");
+
+    let outcomes = sync_skills_to_tools(
+        &HostRoots::under_home(&home),
+        &store,
+        &central_repo_of(&store),
+        &[batch_skill("skill-1", "skill-1", &source)],
+        &["amp".to_string()],
+        &BatchPolicy {
+            overwrite: false,
+            overwrite_if_same_content: true,
+            overrides: vec![],
+        },
+        42,
+        |_| {},
+    );
+
+    assert!(
+        matches!(
+            outcomes.as_slice(),
+            [o] if o.tool_key == "amp" && matches!(o.status, BatchTargetStatus::Synced { .. })
+        ),
+        "{outcomes:?}"
+    );
+    let kimi = store
+        .get_skill_target("skill-1", "kimi_cli")
+        .expect("query")
+        .expect("row");
+    assert_eq!(
+        (kimi.status, kimi.target_path.as_str(), kimi.synced_at),
+        (SyncStatus::Error, legacy.target_path.as_str(), None)
+    );
 }

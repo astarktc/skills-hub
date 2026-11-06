@@ -31,9 +31,22 @@ export const CENTRAL_DIR = `${HOME}/.skillshub`;
 
 export type FixtureFile = { path: string; content: string };
 
+/**
+ * The facts the folder fold derives over a folder's rows (Rust
+ * `placement::FolderFacts`): stored rows never carry them, the listing adds
+ * them.
+ */
+export type FolderFacts = { disabled: boolean; deployed: boolean };
+/** A stored global target row (the wire row less the folder's facts). */
+export type StoredTarget = Omit<SkillTargetDto, keyof FolderFacts>;
+/** A stored project assignment row (the wire row less the folder's facts). */
+export type StoredAssignment = Omit<ProjectSkillAssignmentDto, keyof FolderFacts>;
+/** A Managed skill's stored record: its global rows unfolded. */
+export type StoredSkill = Omit<ManagedSkillDto, "targets"> & { targets: StoredTarget[] };
+
 /** One Managed skill: its wire record plus the bytes and faults behind it. */
 export type FixtureSkill = {
-  dto: ManagedSkillDto;
+  dto: StoredSkill;
   /** The central copy; `SKILL.md` first. Empty when the copy is gone. */
   files: FixtureFile[];
   contentHash: string;
@@ -80,7 +93,7 @@ export type FixtureProject = {
   updated_at: number;
   path_exists: boolean;
   tools: string[];
-  assignments: ProjectSkillAssignmentDto[];
+  assignments: StoredAssignment[];
   gitignore: GitignoreStatusDto;
 };
 
@@ -180,6 +193,109 @@ export function globalRoot(key: string): string {
 export function globalSharers(key: string): string[] {
   const dir = toolByKey(key)?.globalDir;
   return TOOL_REGISTRY.filter((tool) => tool.globalDir === dir).map((t) => t.key);
+}
+
+/**
+ * The global Deployment folder a row keyed `key` describes and the folder
+ * serving the harness `key` (Rust `placement::own_folder` /
+ * `serving_folder`): `agents_skills` for `.agents`, `claude_code` for
+ * `.claude`, otherwise the first registry entry sharing the dir. An unknown
+ * key stands for itself.
+ */
+export function globalFolderOf(key: string): string {
+  const dir = toolByKey(key)?.globalDir;
+  if (dir === undefined) return key;
+  return TOOL_REGISTRY.find((tool) => tool.globalDir === dir)?.key ?? key;
+}
+
+/**
+ * Rust `placement::is_folder_row` (global scope): a row keyed by its own
+ * folder key is a folder row; any other key — a pre-1.4.0 sibling's, an
+ * unknown one — is a legacy row, reached through its own harness alone.
+ */
+export function isFolderRow(key: string): boolean {
+  return toolByKey(key) !== undefined && globalFolderOf(key) === key;
+}
+
+/** Every registry key served by the global folder `folder`, in registry order. */
+export function folderHarnesses(folder: string): string[] {
+  return TOOL_REGISTRY.filter((tool) => globalFolderOf(tool.key) === folder).map((tool) => tool.key);
+}
+
+/**
+ * The project Deployment folder of `key` (Rust `placement::own_folder` at
+ * project scope): the virtual group owns `.agents/skills`, otherwise the
+ * first registry entry sharing the project dir. Unknown keys stand for
+ * themselves.
+ */
+export function projectFolderOf(key: string): string {
+  const dir = toolByKey(key)?.projectDir;
+  if (dir === undefined || dir === null) return key;
+  if (dir === toolByKey(VIRTUAL_GROUP_KEY)?.projectDir) return VIRTUAL_GROUP_KEY;
+  return TOOL_REGISTRY.find((tool) => tool.projectDir === dir)?.key ?? key;
+}
+
+/**
+ * Rust `placement::fold_status`: one Deployment folder's facts over all its
+ * rows — the displayed status, failure ahead of muted (`error` › `missing` ›
+ * `stale` › `disabled` › `pending` › `synced`), the disabled intent (any row
+ * `disabled`) and whether a live row owns its artifact (`synced_at` set, not
+ * `disabled`). `undefined` for no rows.
+ */
+const DISPLAY_RANK: Record<string, number> = { error: 6, missing: 5, stale: 4, disabled: 3, pending: 2, synced: 1 };
+export function foldStatus<S extends string>(
+  rows: readonly { status: S; synced_at: number | null }[],
+): ({ status: S } & FolderFacts) | undefined {
+  let facts: ({ status: S } & FolderFacts) | undefined;
+  for (const row of rows) {
+    const disabled = row.status === "disabled";
+    const deployed = !disabled && row.synced_at !== null;
+    facts =
+      facts === undefined
+        ? { status: row.status, disabled, deployed }
+        : {
+            status: (DISPLAY_RANK[row.status] ?? 0) > (DISPLAY_RANK[facts.status] ?? 0) ? row.status : facts.status,
+            disabled: facts.disabled || disabled,
+            deployed: facts.deployed || deployed,
+          };
+  }
+  return facts;
+}
+
+/**
+ * Rust `FolderFacts::total_status`: what a folder adds to a project total —
+ * its displayed status, except a `disabled` folder with a live artifact on
+ * disk counts as `synced`.
+ */
+export function totalStatus<S extends string>(facts: { status: S } & FolderFacts): S | "synced" {
+  return facts.status === "disabled" && facts.deployed ? "synced" : facts.status;
+}
+
+/**
+ * Rust `placement::fold_folder_rows`, for display and counting only: per
+ * owner, one row per folder keyed by the folder — its first row whose status
+ * is the folder's displayed status, every other field its own — with the
+ * folder's facts, in the order each folder first appears. Mutations never
+ * read it: they act on every row by itself.
+ */
+export function foldFolderRows<R extends { tool: string; status: string; synced_at: number | null }>(
+  rows: readonly R[],
+  folderOf: (tool: string) => string,
+  ownerOf: (row: R) => string = () => "",
+): (R & FolderFacts)[] {
+  const groups = new Map<string, { folder: string; rows: R[] }>();
+  for (const row of rows) {
+    const folder = folderOf(row.tool);
+    const key = `${ownerOf(row)}\n${folder}`;
+    const group = groups.get(key) ?? { folder, rows: [] };
+    group.rows.push(row);
+    groups.set(key, group);
+  }
+  return [...groups.values()].map(({ folder, rows: members }) => {
+    const facts = foldStatus(members)!;
+    const pick = members.find((row) => row.status === facts.status) ?? members[0];
+    return { ...pick, tool: folder, disabled: facts.disabled, deployed: facts.deployed };
+  });
 }
 
 /** Project-scope catalog entries (virtual-group constituents absorbed). */
@@ -385,8 +501,8 @@ export function makeSkill(spec: SkillSpec, now: number, index: number): FixtureS
       : spec.source.kind === "local"
         ? spec.source.path
         : null;
-  const targets: SkillTargetDto[] = [];
-  const row = (tool: string, status: SyncStatus): SkillTargetDto => ({
+  const targets: StoredTarget[] = [];
+  const row = (tool: string, status: SyncStatus): StoredTarget => ({
     tool,
     mode: spec.copyTools?.includes(tool) ? "copy" : (spec.mode ?? "symlink"),
     status,

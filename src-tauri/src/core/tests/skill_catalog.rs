@@ -360,10 +360,13 @@ fn seed_assignment(
 }
 
 fn deployment(tool: &str, status: SyncStatus, synced_at: Option<i64>) -> SkillProjectDeployment {
+    // A folder of one row: its facts are that row's.
     SkillProjectDeployment {
         tool: tool.to_string(),
         status,
         synced_at,
+        disabled: status == SyncStatus::Disabled,
+        deployed: status != SyncStatus::Disabled && synced_at.is_some(),
     }
 }
 
@@ -480,4 +483,118 @@ fn a_failing_project_query_fails_the_catalog() {
 
     let err = managed_skill_catalog(&store).expect_err("the catalog must fail loudly");
     assert!(format!("{err:#}").contains("list project deployments"));
+}
+
+/// Rows written once per shared-dir sibling before rows were per folder (Amp
+/// and Kimi Code's `~/.config/agents/skills`) read as one Deployment, keyed by
+/// the folder; a lone sibling row comes out keyed by its folder too.
+#[test]
+fn the_catalog_reads_sibling_rows_as_one_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = tmp.path().join("central");
+    let alpha = write_manifest(&central, "alpha", "---\nname: alpha\n---\n");
+    let beta = write_manifest(&central, "beta", "---\nname: beta\n---\n");
+    seed_skill(&store, "s1", "alpha", &alpha);
+    seed_skill(&store, "s2", "beta", &beta);
+    seed_target(&store, "s1", "amp");
+    seed_target(&store, "s1", "kimi_cli");
+    seed_target(&store, "s1", "claude_code");
+    seed_target(&store, "s2", "kimi_cli");
+
+    let catalog = managed_skill_catalog(&store).unwrap();
+    let tools = |id: &str| -> Vec<String> {
+        let entry = catalog.iter().find(|e| e.skill.id == id).unwrap();
+        let mut tools: Vec<String> = entry.targets.iter().map(|t| t.tool.clone()).collect();
+        tools.sort();
+        tools
+    };
+    assert_eq!(tools("s1"), vec!["amp", "claude_code"]);
+    assert_eq!(tools("s2"), vec!["amp"]);
+    let one = managed_skill_entry(&store, "s1").unwrap().unwrap();
+    assert_eq!(one.targets.len(), 2);
+}
+
+/// A folder's state on the catalog is the one fold over all its rows
+/// (`placement::fold_status`): an error on any row of the folder shows,
+/// whichever row is keyed by the folder — the global batch's Retry of the
+/// folder reaches every one of them.
+#[test]
+fn the_catalog_shows_a_folders_state_folded_over_every_row() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = tmp.path().join("central");
+    let alpha = write_manifest(&central, "alpha", "---\nname: alpha\n---\n");
+    seed_skill(&store, "s1", "alpha", &alpha);
+    seed_target(&store, "s1", "amp");
+    store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "s1-kimi_cli".to_string(),
+            skill_id: "s1".to_string(),
+            tool: "kimi_cli".to_string(),
+            target_path: "/tmp/elsewhere/s1".to_string(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Error,
+            last_error: Some("an earlier first sync failed".to_string()),
+            synced_at: None,
+        })
+        .unwrap();
+
+    let entry = managed_skill_entry(&store, "s1").unwrap().unwrap();
+    assert_eq!(entry.targets.len(), 1);
+    assert_eq!(entry.targets[0].tool, "amp");
+    assert_eq!(entry.targets[0].status, SyncStatus::Error);
+    assert_eq!(entry.targets[0].id, "s1-kimi_cli", "the row the fold shows");
+}
+
+/// Astra 204 / Sol 301–302: the catalog carries whole-folder facts. After a
+/// partial Disable — Kimi Code's legacy row settled `disabled`, the folder
+/// row's removal failed and it still owns its artifact — the folder shows the
+/// failure (failure ahead of muted), carries the disabled intent, and counts
+/// the artifact a finished Disable would remove; the row standing for it is
+/// the failed one, with its own timestamp.
+#[test]
+fn the_catalog_carries_a_partially_disabled_folders_facts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = tmp.path().join("central");
+    let alpha = write_manifest(&central, "alpha", "---\nname: alpha\n---\n");
+    seed_skill(&store, "s1", "alpha", &alpha);
+    seed_target(&store, "s1", "amp");
+    store
+        .transition_skill_target(
+            "s1-amp",
+            crate::core::skill_store::TargetTransition::SyncFailed {
+                error: "removal failed",
+            },
+        )
+        .unwrap();
+    store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "s1-kimi_cli".to_string(),
+            skill_id: "s1".to_string(),
+            tool: "kimi_cli".to_string(),
+            target_path: "/tmp/amp/s1".to_string(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Disabled,
+            last_error: None,
+            synced_at: Some(3),
+        })
+        .unwrap();
+
+    let entry = managed_skill_entry(&store, "s1").unwrap().unwrap();
+    assert_eq!(entry.targets.len(), 1);
+    let folder = &entry.targets[0];
+    assert_eq!(
+        (folder.id.as_str(), folder.tool.as_str(), folder.synced_at),
+        ("s1-amp", "amp", Some(9))
+    );
+    assert_eq!(
+        folder.facts,
+        crate::core::placement::FolderFacts {
+            status: SyncStatus::Error,
+            disabled: true,
+            deployed: true,
+        }
+    );
 }

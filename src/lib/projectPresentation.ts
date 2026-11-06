@@ -71,7 +71,12 @@ export type MatrixCellInput = {
   skill: {
     name: string;
     disabled_at: number | null;
-    targets: readonly { tool: string; status: ProjectSkillAssignmentDto["status"]; synced_at: number | null }[];
+    targets: readonly {
+      tool: string;
+      status: ProjectSkillAssignmentDto["status"];
+      synced_at: number | null;
+      deployed: boolean;
+    }[];
   };
   /** The project Tool: its key and the Tool catalog's label. */
   tool: { key: string; label: string };
@@ -150,16 +155,22 @@ export function projectToolLabel(tool: { label: string; constituents: readonly s
 }
 
 /** A project Tool's column header: the catalog's label, and whether detection sees it. */
-export type MatrixColumn = { key: string; label: string; detected: boolean };
+/**
+ * One matrix column: a configured project Tool, and the Deployment folder
+ * whose assignment row its cells read (`ProjectToolDto.folder_key` — Trae and
+ * Trae CN share one).
+ */
+export type MatrixColumn = { key: string; folder: string; label: string; detected: boolean };
 
 export function matrixColumns(
-  tools: readonly { tool: string }[],
+  tools: readonly { tool: string; folder_key: string }[],
   labelOf: (tool: string) => string,
   /** Installed project Tool keys; null while the catalog has not loaded (nothing is called "not detected"). */
   installed: readonly string[] | null,
 ): MatrixColumn[] {
-  return tools.map(({ tool }) => ({
+  return tools.map(({ tool, folder_key }) => ({
     key: tool,
+    folder: folder_key,
     label: labelOf(tool),
     detected: installed === null || installed.includes(tool),
   }));

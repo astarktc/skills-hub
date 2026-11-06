@@ -201,7 +201,13 @@ describe("rich", () => {
     const prisma = await byName(handlers, "prisma-review");
     expect([prisma.targets.length, names(prisma)]).toEqual([0, ["quartermaster"]]);
     const plans = await byName(handlers, "writing-plans");
-    expect(plans.projects[0].deployments).toContainEqual({ tool: "agents_skills", status: "error", synced_at: null });
+    expect(plans.projects[0].deployments).toContainEqual({
+      tool: "agents_skills",
+      status: "error",
+      synced_at: null,
+      disabled: false,
+      deployed: false,
+    });
     expect((await byName(handlers, "pdf")).projects).toEqual([]);
 
     await handlers.toggleProjectSkillAssignment("prj-quartermaster", (await byName(handlers, "pdf")).id, "claude_code");
@@ -227,7 +233,7 @@ describe("rich", () => {
     expect(retry[0].status).toMatchObject({ status: "synced", outcome: { replaced: true } });
   });
 
-  it("dedupes a shared skills dir and records every detected sharer", async () => {
+  it("writes a shared skills dir once and records one row, keyed by its folder", async () => {
     const { handlers } = backendFor("rich");
     const vitest = (await handlers.getManagedSkills()).find((s) => s.name === "vitest-migration")!;
     const report = await handlers.syncSkillsToTools(
@@ -238,7 +244,8 @@ describe("rich", () => {
     );
     expect(report.map((r) => r.tool_key)).toEqual(["amp"]);
     const after = (await handlers.getManagedSkills()).find((s) => s.id === vitest.id)!;
-    expect(after.targets.map((t) => t.tool)).toEqual(expect.arrayContaining(["amp", "kimi_cli"]));
+    expect(after.targets.map((t) => t.tool)).toContain("amp");
+    expect(after.targets.map((t) => t.tool)).not.toContain("kimi_cli");
   });
 
   it("streams both Refresh phases and reports every refreshable skill", async () => {
@@ -261,7 +268,8 @@ describe("rich", () => {
     const global = Object.fromEntries(
       status.targets.flatMap((o) => (o.scope.scope === "global" ? [[o.scope.tool, o.status]] : [])),
     );
-    // amp/kimi_cli are copies (one shared artifact): rewritten, recovered.
+    // amp/kimi_cli are pre-1.4.0 rows of one folder (`amp`), copies: each row
+    // is rewritten by itself and reported by itself (Rust per-row Propagation).
     expect(global.amp).toEqual({ status: "synced", mode_used: "symlink" });
     expect(global.kimi_cli).toEqual({ status: "synced", mode_used: "symlink" });
     // Synced links are skipped: the central copy was refreshed in place.
@@ -370,12 +378,14 @@ describe("failures", () => {
       );
     };
 
+    // Amp and Kimi Code's pre-1.4.0 rows are one folder (`amp`) to readers,
+    // and each its own row to Propagation, reported by itself.
     const links = await statusOf(worktrees.id);
     for (const tool of ["amp", "kimi_cli", "cursor"]) {
       expect(links[tool]).toEqual({ status: "skipped", reason: { reason: "link_follows_source" } });
     }
     const linkRows = (await byName(handlers, "using-git-worktrees")).targets;
-    for (const tool of ["amp", "kimi_cli", "cursor"]) {
+    for (const tool of ["amp", "cursor"]) {
       expect(linkRows.find((r) => r.tool === tool)).toMatchObject({ mode: "symlink", status: "error" });
     }
 
@@ -670,17 +680,22 @@ describe("D34: an Update only reaches deployments that exist (auto-sync on)", ()
     expect(state.settings.auto_sync_enabled).toBe(true);
     const zod = await byName(handlers, "zod-schema-first");
     const before = zod.targets.map((row) => row.tool);
+    // Propagation reports each stored row (pre-1.4.0 sibling rows included);
+    // the catalog reads them as their folders.
+    const stored = () => state.skills.find((s) => s.dto.id === zod.id)!.dto.targets.map((row) => row.tool);
+    const storedBefore = stored();
     // Cursor holds a foreign zod-schema-first folder in this scenario: an
     // Update never goes there, so nothing collides.
     const updated = await handlers.updateManagedSkill(zod.id, sink().channel);
-    expect(globalTools(updated.report.skills[0].status)).toEqual(before);
+    expect(globalTools(updated.report.skills[0].status)).toEqual(storedBefore);
     const refreshed = await handlers.refreshManagedSkills([zod.id], sink().channel);
-    expect(globalTools(refreshed.skills[0].status)).toEqual(before);
+    expect(globalTools(refreshed.skills[0].status)).toEqual(storedBefore);
     const repointed = await handlers.repointSkillSource(zod.id, {
       kind: "git",
       url: "https://github.com/mattpocock/skills/tree/main/skills/engineering/zod-schema-first",
     });
-    expect(globalTools(repointed.report.skills[0].status)).toEqual(before);
+    expect(globalTools(repointed.report.skills[0].status)).toEqual(storedBefore);
+    expect(stored()).toEqual(storedBefore);
     expect((await byName(handlers, "zod-schema-first")).targets.map((row) => row.tool)).toEqual(before);
     const fold = refreshOutcome(updated.report, { t, single: { name: zod.name, success: "UPDATED" } });
     expect(fold.toast?.tone).toBe("success");
@@ -768,7 +783,7 @@ describe("D35 boundary of Refresh all (ticket 33 audit F2)", () => {
   });
 });
 
-describe("D34 amendment: a shared skills dir records every installed sharer on every write path (audit F1)", () => {
+describe("one folder, one row: a shared skills dir records no sibling on any write path (round 20 ticket 09, audit F1)", () => {
   /**
    * The audit's state: json-canvas with only Amp's never-owned `error` row (a
    * first sync that failed before Kimi was installed); Kimi shares Amp's dir
@@ -801,20 +816,16 @@ describe("D34 amendment: a shared skills dir records every installed sharer on e
     return status.targets.flatMap((o) => (o.scope.scope === "global" ? [[o.scope.tool, o.status]] : []));
   };
 
-  it("the Update's own first sync records Amp and Kimi on the one shared artifact", async () => {
+  it("the Update's own first sync records the shared folder's one row", async () => {
     const { handlers, skill, rows, tools } = canvasOnAmp();
     const { report } = await handlers.updateManagedSkill(skill.dto.id, sink().channel);
-    expect(globalOutcomes(report.skills[0].status)).toEqual([
-      ["amp", { status: "synced", mode_used: "symlink" }],
-      ["kimi_cli", { status: "synced", mode_used: "symlink" }],
-    ]);
-    expect(await tools()).toEqual(["amp", "kimi_cli"]);
-    const [amp, kimi] = await rows();
-    expect(kimi.target_path).toBe(amp.target_path);
-    expect([amp.owned, kimi.owned]).toEqual([true, true]);
+    expect(globalOutcomes(report.skills[0].status)).toEqual([["amp", { status: "synced", mode_used: "symlink" }]]);
+    expect(await tools()).toEqual(["amp"]);
+    const [amp] = await rows();
+    expect(amp.owned).toBe(true);
   });
 
-  it("the audit's repro: a collision records no sharer; the confirmed retry records [amp, kimi_cli], the same rows", async () => {
+  it("the audit's repro: a collision records nothing new; the confirmed retry records the folder's row, the same rows", async () => {
     const { handlers, skill, rows, tools } = canvasOnAmp({ foreign: true });
     const before = await tools();
     expect(before).toEqual(["amp"]);
@@ -831,7 +842,7 @@ describe("D34 amendment: a shared skills dir records every installed sharer on e
       { overwrite_if_same_content: true, overrides: [{ skill_id: skill.dto.id, tool: "amp", decision: "overwrite" }] },
       sink<SyncProgressDto>().channel,
     );
-    expect(await tools()).toEqual(["amp", "kimi_cli"]);
+    expect(await tools()).toEqual(["amp"]);
     // Whichever writer settled the shared dir, the catalog reads the same.
     const control = canvasOnAmp();
     await control.handlers.updateManagedSkill(control.skill.dto.id, sink().channel);
@@ -1125,14 +1136,21 @@ describe("N1: progress ticks only the work that reached each phase", () => {
 
 describe("F2: unwritable dirs refuse removal too (ADR-0002)", () => {
   it("disable from a shared unwritable dir: one failed target, both rows kept as error", async () => {
-    const { handlers } = backendFor("failures");
+    const { handlers, state } = backendFor("failures");
     const docx = await byName(handlers, "docx");
     const report = await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: docx.id, tool: "amp" });
     expect(report.targets).toHaveLength(1);
+    // The scenario's pre-1.4.0 sibling rows are both the folder's.
     expect(report.targets[0].rows.map((r) => r.tool).sort()).toEqual(["amp", "kimi_cli"]);
     expect(report.targets[0].status).toMatchObject({ status: "failed", error: { code: "REMOVAL_PERMISSION_DENIED" } });
+    const stored = state.skills.find((s) => s.dto.id === docx.id)!.dto.targets;
+    expect(stored.filter((r) => r.tool === "amp" || r.tool === "kimi_cli").map((r) => r.status)).toEqual([
+      "error",
+      "error",
+    ]);
+    // The catalog reads them as the one folder they are.
     const rows = (await byName(handlers, "docx")).targets.filter((r) => r.tool === "amp" || r.tool === "kimi_cli");
-    expect(rows.map((r) => r.status)).toEqual(["error", "error"]);
+    expect(rows.map((r) => [r.tool, r.status])).toEqual([["amp", "error"]]);
   });
 
   it("remove_project keeps the project and the row whose artifact stayed", async () => {
@@ -1192,7 +1210,7 @@ describe("ticket-01 review: ownership, partial Disable, artifact presence", () =
     expect(tddAssignment().last_error).toBe(failure);
   });
 
-  it("F3: a failed shared-dir removal mints no disabled sibling; the retry settles both", async () => {
+  it("F3: a failed shared-dir removal mints no marker; the retry settles the folder's row", async () => {
     const { state, handlers } = fixture();
     const docx = state.skills.find((s) => s.dto.name === "docx")!;
     docx.dto.targets = docx.dto.targets.filter((t) => t.tool !== "amp");
@@ -1204,7 +1222,8 @@ describe("ticket-01 review: ownership, partial Disable, artifact presence", () =
     state.unwritableTools = state.unwritableTools.filter((tool) => tool !== "amp" && tool !== "kimi_cli");
     const retried = await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: docx.dto.id, tool: "amp" });
     expect(retried.targets.map((t) => t.status.status)).toEqual(["removed"]);
-    expect(shared()).toEqual([["kimi_cli", "disabled"], ["amp", "disabled"]]);
+    // Kimi Code's pre-1.4.0 row is the folder's record: no second row is minted.
+    expect(shared()).toEqual([["kimi_cli", "disabled"]]);
   });
 
   it("F4: presence is independent of status — a repeated Disable, then Delete, on a locked path keeps failing", async () => {
@@ -1355,11 +1374,10 @@ describe("D9: Skill health and the failed / declined first sync (ticket 02)", ()
       expect(typeof s.health.error.code).toBe("string");
       expect(s.health.at).toBeLessThanOrEqual(NOW);
     }
-    // A failed first sync's rows own nothing.
+    // A failed first sync's rows own nothing (Amp and Kimi Code's, one folder).
     const canvas = await byName(handlers, "json-canvas");
     expect(canvas.targets.filter((t) => t.status === "error")).toEqual([
       expect.objectContaining({ tool: "amp", synced_at: null }),
-      expect.objectContaining({ tool: "kimi_cli", synced_at: null }),
     ]);
   });
 
@@ -1466,9 +1484,9 @@ describe("D9: Skill health and the failed / declined first sync (ticket 02)", ()
 
     const unwritable = await handlers.syncSkillsToTools(batch, ["amp"], { overwrite_if_same_content: true }, sink().channel);
     expect(unwritable[0].status).toMatchObject({ status: "skipped", error: { code: "TOOL_NOT_WRITABLE" } });
-    for (const tool of ["amp", "kimi_cli"]) {
-      expect(zod.dto.targets.find((t) => t.tool === tool)).toMatchObject({ status: "error", synced_at: null });
-    }
+    // One folder, one row: Kimi Code reads Amp's.
+    expect(zod.dto.targets.find((t) => t.tool === "amp")).toMatchObject({ status: "error", synced_at: null });
+    expect(zod.dto.targets.some((t) => t.tool === "kimi_cli")).toBe(false);
 
     const asked = await handlers.syncSkillsToTools(batch, ["cursor"], { overwrite_if_same_content: true }, sink().channel);
     expect(asked[0].status).toMatchObject({ status: "failed", error: { code: "TARGET_EXISTS" } });
@@ -1984,9 +2002,118 @@ describe("fixture parity with Rust (#90)", () => {
           skill_id: "s-any",
           skill_name: "",
           tool: "claude_code",
+          folder_key: "claude_code",
           status: { status: "failed", error: { code: "NOT_FOUND", kind: "assignment", id: "prj-gone/s-any/claude_code" } },
         },
       ],
     });
+  });
+});
+
+describe("one Deployment row per folder (round 20 ticket 09)", () => {
+  it("saves a harness selection as folders: Kimi Code turns on Amp's folder, and both read on", async () => {
+    const { handlers } = backendFor("rich");
+    const saved = await handlers.updateSetting({
+      key: "global_tool_config",
+      value: { selected_tools: ["kimi_cli", "claude_code"], scan_selected_only: false },
+    });
+    expect(saved.global_selected_tools).toEqual(["amp", "kimi_cli", "claude_code"]);
+  });
+
+  it("assigns two Tools sharing a project folder as one row, keyed by the folder", async () => {
+    const { handlers } = backendFor("rich");
+    const pdf = (await handlers.getManagedSkills()).find((s) => s.name === "pdf")!;
+    const { view } = await handlers.configureProjectTools("prj-quartermaster", ["trae", "trae_cn"], null);
+    expect(view.tools.map((tool) => [tool.tool, tool.folder_key])).toEqual([
+      ["trae", "trae"],
+      ["trae_cn", "trae"],
+    ]);
+    const { report, view: assigned } = await handlers.bulkAssignSkill("prj-quartermaster", pdf.id);
+    expect(report.items.map((item) => item.tool)).toEqual(["trae"]);
+    expect(assigned.assignments.filter((a) => a.skill_id === pdf.id).map((a) => a.tool)).toEqual(["trae"]);
+
+    // Dropping one of the two keeps the folder's Deployment.
+    const { view: kept, report: removed } = await handlers.configureProjectTools("prj-quartermaster", ["trae"], null);
+    expect(removed.targets).toEqual([]);
+    expect(kept.assignments.filter((a) => a.skill_id === pdf.id).map((a) => a.tool)).toEqual(["trae"]);
+
+    // Toggling the sibling's cell takes the folder's row off.
+    const off = await handlers.toggleProjectSkillAssignment("prj-quartermaster", pdf.id, "trae_cn");
+    expect(off.kind).toBe("unassigned");
+    expect(off.view.assignments.some((a) => a.skill_id === pdf.id)).toBe(false);
+  });
+});
+
+// Round 20 t09 review round 4 (Sol 305, Astra 204): the fixture's project
+// count and total read the listing's own fold, and a folder's facts never let
+// a disabled sibling hide a failure or a live copy.
+describe("legacy two-row folders read through the one fold (round 4)", () => {
+  const fixture = (statuses: [string, string], owned: [boolean, boolean]) => {
+    const state = buildScenario("rich", NOW);
+    const { handlers } = createFixtureBackend(state, { latencyScale: 0, now: () => NOW });
+    const skill = state.skills[0];
+    const project: FixtureProject = {
+      id: "prj-trae",
+      name: "trae-app",
+      path: "/Users/alex/code/trae-app",
+      created_at: NOW,
+      updated_at: NOW,
+      path_exists: true,
+      tools: ["trae", "trae_cn"],
+      gitignore: { in_gitignore: false, in_exclude: false },
+      // A pre-1.4.0 project wrote one row per sibling of `.trae/skills`.
+      assignments: (["trae", "trae_cn"] as const).map((tool, i) => ({
+        id: `prj-trae-${tool}`,
+        project_id: "prj-trae",
+        skill_id: skill.dto.id,
+        skill_name: skill.dto.name,
+        tool,
+        mode: "symlink" as const,
+        status: statuses[i] as FixtureProject["assignments"][number]["status"],
+        last_error: null,
+        synced_at: owned[i] ? NOW : null,
+        content_hash: null,
+        created_at: NOW,
+      })),
+    };
+    state.projects.push(project);
+    const listed = async () => (await handlers.listProjects()).find((p) => p.id === "prj-trae")!;
+    return { handlers, skill, listed };
+  };
+
+  it("a live link beside a disabled row: one Deployment, matrix disabled, total still synced", async () => {
+    const { handlers, listed } = fixture(["synced", "disabled"], [true, true]);
+    const view = await handlers.getProjectView("prj-trae");
+    expect(view.assignments).toHaveLength(1);
+    expect(view.assignments[0]).toMatchObject({ tool: "trae", status: "disabled", disabled: true, deployed: true });
+    expect(await listed()).toMatchObject({ assignment_count: 1, sync_status: "synced" });
+  });
+
+  it("a failed removal beside a disabled row shows the error in the matrix and the total", async () => {
+    const { handlers, listed } = fixture(["error", "disabled"], [true, true]);
+    const view = await handlers.getProjectView("prj-trae");
+    expect(view.assignments[0]).toMatchObject({ status: "error", disabled: true, deployed: true });
+    expect(await listed()).toMatchObject({ assignment_count: 1, sync_status: "error" });
+  });
+
+  it("the library's project deployments carry the same facts", async () => {
+    const { handlers, skill } = fixture(["error", "disabled"], [true, true]);
+    const listedSkill = (await handlers.getManagedSkills()).find((s) => s.id === skill.dto.id)!;
+    const trae = listedSkill.projects.find((p) => p.project_id === "prj-trae")!;
+    expect(trae.deployments).toEqual([
+      { tool: "trae", status: "error", synced_at: NOW, disabled: true, deployed: true },
+    ]);
+  });
+
+  it("a global folder whose removal failed beside a disabled legacy row shows the failure", async () => {
+    const { handlers, skill } = fixture(["synced", "synced"], [true, true]);
+    skill.dto.targets = [
+      { tool: "amp", mode: "symlink", status: "error", target_path: "/a", synced_at: NOW },
+      { tool: "kimi_cli", mode: "symlink", status: "disabled", target_path: "/a", synced_at: NOW },
+    ];
+    const listedSkill = (await handlers.getManagedSkills()).find((s) => s.id === skill.dto.id)!;
+    expect(listedSkill.targets.filter((t) => t.tool === "amp" || t.tool === "kimi_cli")).toEqual([
+      expect.objectContaining({ tool: "amp", status: "error", disabled: true, deployed: true }),
+    ]);
   });
 });

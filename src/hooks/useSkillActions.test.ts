@@ -71,6 +71,8 @@ function skill(id: string, name: string, targets: string[] = []): ManagedSkill {
       status: "synced",
       target_path: `/tools/${tool}/${name}`,
       synced_at: 1,
+      disabled: false,
+      deployed: true,
     })),
     disabled_at: null,
     refreshable: true,
@@ -171,7 +173,7 @@ function useDoor(s: Setup) {
     t,
     reporter,
     sync: s.sync,
-    catalog: { toolLabelById: { claude: "CLAUDE", cursor: "CURSOR" } },
+    catalog: { toolLabelById: { claude: "CLAUDE", cursor: "CURSOR" }, folderOf: (key: string) => key },
     surface,
     library,
     projects: s.projects,
@@ -285,7 +287,7 @@ describe("the door, verb by verb", () => {
     mockInvoke.mockImplementation((command) =>
       Promise.resolve(
         command === "disableSkillTargets"
-          ? { ...EMPTY_REMOVAL, disabled_markers: [{ scope: "global_target", id: "m", skill_id: "s2", tool: "cursor" }] }
+          ? { ...EMPTY_REMOVAL, disabled_markers: [{ scope: "global_target", id: "m", skill_id: "s2", tool: "cursor", folder_key: "cursor" }] }
           : command === "getManagedSkills"
             ? s.skills
             : null,
@@ -636,7 +638,7 @@ describe("where confirmation happens", () => {
       targets: [
         {
           path: "/tools/claude/beta",
-          rows: [{ scope: "global_target", id: "t", skill_id: "s2", tool: "claude" }],
+          rows: [{ scope: "global_target", id: "t", skill_id: "s2", tool: "claude", folder_key: "claude" }],
           status: { status: "failed", error: { code: "OTHER", message: "Permission denied" } },
         },
       ],
@@ -905,7 +907,7 @@ describe("report data (D11)", () => {
 
 describe("one operator action, one overwrite ask (the real sync world)", () => {
   const TOOL_STATUS: ToolStatusDto = {
-    tools: ["claude", "cursor"].map((key) => ({ key, label: key.toUpperCase(), installed: true, shared_with: [key], constituents: [], readers: [], placement: null, duplicate_readers: null })),
+    tools: ["claude", "cursor"].map((key) => ({ key, label: key.toUpperCase(), installed: true, folder_key: key, shared_with: [key], constituents: [], readers: [], placement: null, duplicate_readers: null })),
     installed: ["claude", "cursor"],
     newly_installed: [],
   };
@@ -928,6 +930,7 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
   const exists = (path: string) => ({ code: "TARGET_EXISTS" as const, path, modifiedAt: 7, sameContent: false });
   const occupiedTarget = (tool: string, project?: string): PropagationOutcome => ({
     scope: project ? { scope: "project", project_id: project, tool } : { scope: "global", tool },
+    folder_key: tool,
     // Propagation's first sync of a row that owns nothing met a foreign folder.
     status: { status: "failed", error: exists(`/${project ?? "tools"}/${tool}/alpha`), first_deploy: true },
   });
@@ -935,6 +938,7 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     skill_id,
     skill_name: skill_id === "s1" ? "alpha" : skill_id === "s2" ? "beta" : "gamma",
     tool_key,
+    folder_key: tool_key,
     status,
   });
   const collided = (skill_id: string, tool: string) => pair(skill_id, tool, { status: "failed", error: exists(`/tools/${tool}/${skill_id}`) });
@@ -1182,7 +1186,17 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     const before = () => ({
       ...skill("s1", "alpha", ["claude"]),
       disabled_at: 3,
-      targets: [{ tool: "claude", mode: "symlink" as const, status: "disabled" as const, target_path: "/tools/claude/alpha", synced_at: null }],
+      targets: [
+        {
+          tool: "claude",
+          mode: "symlink" as const,
+          status: "disabled" as const,
+          target_path: "/tools/claude/alpha",
+          synced_at: null,
+          disabled: true,
+          deployed: false,
+        },
+      ],
     });
     const after = () => ({ ...before(), disabled_at: null });
 
@@ -1300,6 +1314,26 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     });
     expect(calls("updateManagedSkill")).toEqual([]);
     expect(calls("syncSkillsToTools")[0]!.slice(1, 3)).toEqual([[{ skill_id: "s1", name: "alpha", source_path: "/hub/alpha" }], ["cursor"]]);
+  });
+
+  it("a partly disabled folder's repair finishes its pair Disable, never a re-sync the gate would skip (round 4)", async () => {
+    const held = { ...skill("s1", "alpha", ["claude", "cursor"]) };
+    held.targets = held.targets.map((target) =>
+      target.tool === "claude" ? { ...target, status: "error" as const, disabled: true, deployed: true } : target,
+    );
+    const skills = [held];
+    backend(skills, { disableSkillTargets: [EMPTY_REMOVAL] });
+    const rendered = renderReal();
+    await ready(rendered, skills);
+    const row = skillHealth(held, { t }).rows[0]!;
+    expect(row).toMatchObject({ kind: "targets_failed", tools: ["claude"], repairs: ["disable"] });
+    await act(async () => {
+      await rendered.result.current.actions.repair(held, row, "disable");
+    });
+    expect(calls("syncSkillsToTools")).toEqual([]);
+    expect(calls("disableSkillTargets").map((call) => call[1])).toEqual([
+      { kind: "skill_tool", skill_id: "s1", tool: "claude" },
+    ]);
   });
 });
 

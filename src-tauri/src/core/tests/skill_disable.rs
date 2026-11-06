@@ -1567,10 +1567,28 @@ fn partial_skill_disable_resync_skips_error_assignments() {
 /// a row; disabling Amp while the shared artifact cannot be removed must not
 /// mint an Amp `disabled` row beside it. The retry settles both.
 #[cfg(unix)]
+/// A row a pre-1.4.0 sibling wrote (Kimi Code's, on Amp's folder) is the
+/// folder's record: a pair Disable of the folder settles it — kept `error`
+/// while the artifact stays, `disabled` once it is gone — and mints no marker
+/// beside it.
 #[test]
-fn missing_shared_sibling_disable_failure_does_not_mint_disabled() {
+fn a_legacy_sibling_row_is_the_folders_record_for_a_failed_and_retried_disable() {
     let f = fixture(&["kimi_cli"]);
     f.sync(&["kimi_cli"]);
+    // Re-key the folder's row as the pre-1.4.0 per-sharer write left it.
+    let row = f
+        .store
+        .get_skill_target(&f.skill_id, "amp")
+        .unwrap()
+        .expect("folder row");
+    f.store
+        .upsert_skill_target(&crate::core::skill_store::SkillTargetRecord {
+            id: "legacy-kimi".into(),
+            tool: "kimi_cli".into(),
+            ..row
+        })
+        .unwrap();
+    f.store.delete_skill_target(&f.skill_id, "amp").unwrap();
     mark_installed_in(
         &HostRoots::under_home(f.home()),
         adapter_by_key("amp").unwrap(),
@@ -1610,7 +1628,50 @@ fn missing_shared_sibling_disable_failure_does_not_mint_disabled() {
     assert_eq!((retried.removed_rows(), retried.failed_rows()), (1, 0));
     assert!(!exists_any(&shared));
     assert_eq!(f.status("kimi_cli"), Some(SyncStatus::Disabled));
+    assert_eq!(
+        f.status("amp"),
+        None,
+        "the legacy row records the folder; no second row is minted"
+    );
+}
+
+/// One folder, one row: Kimi Code's Deploy, Disable and Enable all settle the
+/// row of the folder serving it (`amp`), and never a row of its own.
+#[test]
+fn a_harness_on_a_shared_folder_is_disabled_and_enabled_through_the_folders_row() {
+    let f = fixture(&["kimi_cli", "amp"]);
+    let outcomes = f.sync(&["kimi_cli", "amp"]);
+    assert_eq!(outcomes.len(), 1, "one folder, one outcome: {outcomes:?}");
+    assert_eq!(outcomes[0].tool_key, "amp");
+    assert_eq!(f.status("amp"), Some(SyncStatus::Synced));
+    assert_eq!(f.status("kimi_cli"), None);
+
+    let report = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &HostRoots::under_home(f.home()),
+        &f.pair("kimi_cli"),
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(report.failed_rows(), 0, "{report}");
     assert_eq!(f.status("amp"), Some(SyncStatus::Disabled));
+    assert_eq!(f.status("kimi_cli"), None);
+    assert!(!exists_any(&f.global_path(".config/agents/skills")));
+
+    let enabled = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &HostRoots::under_home(f.home()),
+        &f.pair("kimi_cli"),
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(enabled.global.len(), 1, "{:?}", enabled.global);
+    assert_eq!(enabled.global[0].tool_key, "amp");
+    assert_eq!(f.status("amp"), Some(SyncStatus::Synced));
+    assert_eq!(f.status("kimi_cli"), None);
+    assert!(exists_any(&f.global_path(".config/agents/skills")));
 }
 
 /// Sketch 7: a project assignment on the `.agents/skills` virtual group is
@@ -2025,4 +2086,449 @@ fn enable_admission_keeps_the_ownership_of_a_failed_removal() {
         .unwrap();
     assert_eq!(row(&f).status, SyncStatus::Disabled);
     assert!(!row(&f).owns_artifact(), "admission clears a disabled row");
+}
+
+/// Seed the pre-1.4.0 per-sharer state: the folder's row plus a sibling row
+/// of Kimi Code's at the same path.
+fn seed_legacy_sibling(f: &Fixture) {
+    let row = f
+        .store
+        .get_skill_target(&f.skill_id, "amp")
+        .unwrap()
+        .expect("folder row");
+    f.store
+        .upsert_skill_target(&crate::core::skill_store::SkillTargetRecord {
+            id: "legacy-kimi".into(),
+            tool: "kimi_cli".into(),
+            ..row
+        })
+        .unwrap();
+}
+
+/// Existing per-sharer rows on a dir shared today are each their own row: a
+/// pair Disable of either harness's folder settles both rows, the batch skips
+/// every row of the folder while one is disabled, and Enable admits each row
+/// and syncs it by itself at its own recorded path — no row minted, none lost.
+#[test]
+fn legacy_sibling_rows_are_disabled_gated_and_enabled_each_by_itself() {
+    let f = fixture(&["amp", "kimi_cli"]);
+    f.sync(&["amp"]);
+    seed_legacy_sibling(&f);
+    let shared = f.global_path(".config/agents/skills");
+
+    let report = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &HostRoots::under_home(f.home()),
+        &f.pair("kimi_cli"),
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(
+        (report.removed_rows(), report.failed_rows()),
+        (2, 0),
+        "{report}"
+    );
+    assert!(!exists_any(&shared));
+    assert_eq!(f.status("amp"), Some(SyncStatus::Disabled));
+    assert_eq!(f.status("kimi_cli"), Some(SyncStatus::Disabled));
+
+    let outcomes = f.sync(&["amp"]);
+    assert_eq!(outcomes.len(), 2, "one outcome per row: {outcomes:?}");
+    assert!(outcomes.iter().all(skipped_disabled), "{outcomes:?}");
+    assert!(!exists_any(&shared));
+
+    let enabled = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &HostRoots::under_home(f.home()),
+        &f.pair("amp"),
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(enabled.global.len(), 2, "{:?}", enabled.global);
+    assert!(exists_any(&shared));
+    for tool in ["amp", "kimi_cli"] {
+        let row = f
+            .store
+            .get_skill_target(&f.skill_id, tool)
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.status, SyncStatus::Synced, "{tool}");
+        assert!(row.owns_artifact(), "{tool}");
+        assert_eq!(
+            std::path::Path::new(&row.target_path),
+            shared.as_path(),
+            "{tool}"
+        );
+    }
+}
+
+/// A Kimi Code Keep marker recorded under another name over a foreign folder
+/// is its own row, and Enable treats it as `main` did: every disabled row of
+/// the folder in scope is taken and synced again as a first sync, each under
+/// its own key at the skill's place in the folder (Astra 201/202) — never at
+/// the stale name, whose foreign folder is left as it is.
+#[test]
+fn global_enable_re_records_each_taken_row_under_its_own_key_at_the_skills_place() {
+    let f = fixture(&["amp", "kimi_cli"]);
+    f.sync(&["amp"]);
+    let shared = f.global_path(".config/agents/skills");
+    let old_name = shared.with_file_name("old-name");
+    std::fs::create_dir_all(&old_name).unwrap();
+    std::fs::write(old_name.join("SKILL.md"), "foreign").unwrap();
+    f.store
+        .upsert_skill_target(&crate::core::skill_store::SkillTargetRecord {
+            id: "legacy-kimi-keep".into(),
+            skill_id: f.skill_id.clone(),
+            tool: "kimi_cli".into(),
+            target_path: old_name.to_string_lossy().into(),
+            mode: crate::core::sync_status::SyncMode::Symlink,
+            status: SyncStatus::Disabled,
+            last_error: None,
+            synced_at: None,
+        })
+        .unwrap();
+    let roots = HostRoots::under_home(f.home());
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &roots,
+        &f.pair("amp"),
+        NOW,
+    )
+    .unwrap();
+    assert!(!exists_any(&shared));
+
+    let enabled = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &roots,
+        &f.pair("amp"),
+        NOW,
+    )
+    .unwrap();
+
+    assert_eq!(enabled.global.len(), 2, "{:?}", enabled.global);
+    assert!(enabled
+        .global
+        .iter()
+        .all(|o| matches!(o.status, BatchTargetStatus::Synced { .. })));
+    assert!(exists_any(&shared));
+    for tool in ["amp", "kimi_cli"] {
+        let row = f
+            .store
+            .get_skill_target(&f.skill_id, tool)
+            .unwrap()
+            .unwrap_or_else(|| panic!("{tool} is re-recorded under its own key"));
+        assert_eq!(row.status, SyncStatus::Synced, "{tool}");
+        assert_eq!(
+            std::path::Path::new(&row.target_path),
+            shared.as_path(),
+            "{tool}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(old_name.join("SKILL.md")).unwrap(),
+        "foreign"
+    );
+}
+
+/// Astra's finding 9 / Sol's 103, the reported key order: the folder key's
+/// row (`amp`) records another path, while a pre-1.4.0 `kimi_cli` row owns
+/// the folder's artifact.
+///
+/// - A successful global batch syncs each row by itself, at the skill's place
+///   (as on `main`, Astra 201): Amp's row is settled by its own write there,
+///   never by Kimi's, and the foreign folder at its stale path is untouched.
+/// - Enable acts on exactly the rows it took (its in-memory first-sync plan):
+///   a folder-key record outside its scope — Amp's live `error` row at
+///   another path — is never rewritten.
+#[test]
+fn a_global_write_or_enable_never_repurposes_another_rows_record() {
+    let f = fixture(&["amp", "kimi_cli"]);
+    f.sync(&["amp"]);
+    seed_legacy_sibling(&f);
+    let shared = f.global_path(".config/agents/skills");
+    let independent = shared.with_file_name("independent");
+    foreign_folder(&independent);
+    // The folder key's row: never synced, recording another path.
+    f.store.delete_skill_target(&f.skill_id, "amp").unwrap();
+    let seed_amp = |status: SyncStatus| {
+        f.store
+            .upsert_skill_target(&crate::core::skill_store::SkillTargetRecord {
+                id: "amp-record".into(),
+                skill_id: f.skill_id.clone(),
+                tool: "amp".into(),
+                target_path: independent.to_string_lossy().into(),
+                mode: crate::core::sync_status::SyncMode::Symlink,
+                status,
+                last_error: None,
+                synced_at: None,
+            })
+            .unwrap();
+    };
+    let amp_record = |f: &Fixture| {
+        f.store
+            .get_skill_target(&f.skill_id, "amp")
+            .unwrap()
+            .unwrap()
+    };
+    let kimi_record = |f: &Fixture| {
+        f.store
+            .get_skill_target(&f.skill_id, "kimi_cli")
+            .unwrap()
+            .unwrap()
+    };
+
+    // A successful global batch (Sol 103): an `error` record is not gated.
+    seed_amp(SyncStatus::Error);
+    let outcomes = f.sync(&["kimi_cli"]);
+    for tool in ["amp", "kimi_cli"] {
+        assert!(
+            outcomes
+                .iter()
+                .any(|o| o.tool_key == tool && matches!(o.status, BatchTargetStatus::Synced { .. })),
+            "{tool}: {outcomes:?}"
+        );
+    }
+    let amp = amp_record(&f);
+    assert_eq!(
+        std::path::Path::new(&amp.target_path),
+        shared.as_path(),
+        "its own write"
+    );
+    assert!(foreign_bytes_survive(&independent));
+    let kimi = kimi_record(&f);
+    assert_eq!(std::path::Path::new(&kimi.target_path), shared.as_path());
+    assert_eq!(kimi.status, SyncStatus::Synced);
+
+    // Disable the folder, then a live Amp record at another path appears
+    // (outside any Enable scope: it is not `disabled`); Enable the folder
+    // (Astra 9).
+    let roots = HostRoots::under_home(f.home());
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &roots,
+        &f.pair("kimi_cli"),
+        NOW,
+    )
+    .unwrap();
+    assert!(!exists_any(&shared));
+    assert_eq!(kimi_record(&f).status, SyncStatus::Disabled);
+    seed_amp(SyncStatus::Error);
+    let enabled = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &roots,
+        &f.pair("kimi_cli"),
+        NOW,
+    )
+    .unwrap();
+
+    assert!(
+        enabled.global.iter().all(|o| o.tool_key == "kimi_cli"),
+        "only the taken row is synced: {:?}",
+        enabled.global
+    );
+    let amp = amp_record(&f);
+    assert_eq!(
+        (amp.target_path.as_str(), amp.status, amp.synced_at),
+        (&*independent.to_string_lossy(), SyncStatus::Error, None),
+        "a record outside the Enable's scope is never rewritten"
+    );
+    assert!(foreign_bytes_survive(&independent));
+    let kimi = kimi_record(&f);
+    assert_eq!(std::path::Path::new(&kimi.target_path), shared.as_path());
+    assert_eq!(kimi.status, SyncStatus::Synced);
+    assert!(kimi.owns_artifact());
+    assert!(exists_any(&shared));
+}
+
+/// Astra 202: Enable leaves no lasting state of its own. A pair whose folder
+/// no installed harness reads any more is enabled as `main` did it: its
+/// disabled row is taken, the first sync skips `ToolNotInstalled`, and no row
+/// remains (no `pending` row is left behind).
+#[test]
+fn enabling_a_pair_whose_harness_is_gone_leaves_no_row() {
+    let f = fixture(&["cursor"]);
+    f.sync(&["cursor"]);
+    let roots = HostRoots::under_home(f.home());
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &roots,
+        &f.pair("cursor"),
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(f.status("cursor"), Some(SyncStatus::Disabled));
+    // The harness is uninstalled.
+    fs::remove_dir_all(f.home().join(".cursor")).unwrap();
+
+    let enabled = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &roots,
+        &f.pair("cursor"),
+        NOW,
+    )
+    .unwrap();
+
+    assert!(
+        matches!(
+            enabled.global.as_slice(),
+            [BatchTargetOutcome {
+                status: BatchTargetStatus::Skipped {
+                    error: CommandError::ToolNotInstalled { .. }
+                },
+                ..
+            }]
+        ),
+        "{:?}",
+        enabled.global
+    );
+    assert_eq!(f.status("cursor"), None, "no row is left behind");
+    assert!(f.store.list_skill_targets(&f.skill_id).unwrap().is_empty());
+}
+
+/// Astra 202, a legacy row: a disabled Kimi Code row (its own harness gone,
+/// Amp still reading the folder) is taken by a skill-grain Enable and skipped
+/// `ToolNotInstalled` under its own key, as before rows were per folder — no
+/// row is left behind and nothing is written for it.
+#[test]
+fn enabling_a_legacy_row_whose_own_harness_is_gone_leaves_no_row() {
+    let f = fixture(&["amp"]);
+    f.store
+        .upsert_skill_target(&crate::core::skill_store::SkillTargetRecord {
+            id: "legacy-kimi".into(),
+            skill_id: f.skill_id.clone(),
+            tool: "kimi_cli".into(),
+            target_path: f
+                .global_path(".config/agents/skills")
+                .to_string_lossy()
+                .into(),
+            mode: crate::core::sync_status::SyncMode::Symlink,
+            status: SyncStatus::Disabled,
+            last_error: None,
+            synced_at: Some(1),
+        })
+        .unwrap();
+
+    let enabled = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &HostRoots::under_home(f.home()),
+        &f.skill(),
+        NOW,
+    )
+    .unwrap();
+
+    assert!(
+        matches!(
+            enabled.global.as_slice(),
+            [BatchTargetOutcome {
+                tool_key,
+                status: BatchTargetStatus::Skipped {
+                    error: CommandError::ToolNotInstalled { .. }
+                },
+                ..
+            }] if tool_key == "kimi_cli"
+        ),
+        "{:?}",
+        enabled.global
+    );
+    assert!(f.store.list_skill_targets(&f.skill_id).unwrap().is_empty());
+    assert!(!exists_any(&f.global_path(".config/agents/skills")));
+}
+
+/// The batch's Disabled rule reads a sibling's disabled row as its folder's.
+#[test]
+fn a_disabled_legacy_sibling_row_gates_the_folder() {
+    let f = fixture(&["amp", "kimi_cli"]);
+    f.store
+        .upsert_skill_target(&crate::core::skill_store::SkillTargetRecord {
+            id: "legacy-kimi".into(),
+            skill_id: f.skill_id.clone(),
+            tool: "kimi_cli".into(),
+            target_path: f
+                .global_path(".config/agents/skills")
+                .to_string_lossy()
+                .into(),
+            mode: crate::core::sync_status::SyncMode::Symlink,
+            status: SyncStatus::Disabled,
+            last_error: None,
+            synced_at: None,
+        })
+        .unwrap();
+
+    let outcomes = f.sync(&["amp"]);
+
+    assert!(
+        matches!(outcomes.as_slice(), [o] if skipped_disabled(o)),
+        "{outcomes:?}"
+    );
+    assert!(!exists_any(&f.global_path(".config/agents/skills")));
+    assert_eq!(f.status("amp"), None);
+}
+
+/// Delete takes every row of the folder with its one artifact.
+#[test]
+fn delete_removes_legacy_sibling_rows_with_their_one_artifact() {
+    let f = fixture(&["amp", "kimi_cli"]);
+    f.sync(&["amp"]);
+    seed_legacy_sibling(&f);
+
+    let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
+
+    assert!(report.failures().is_empty(), "{report}");
+    assert_eq!(report.targets.len(), 1, "one artifact: {report}");
+    assert!(!exists_any(&f.global_path(".config/agents/skills")));
+    assert!(f.store.list_skill_targets(&f.skill_id).unwrap().is_empty());
+}
+
+/// A pair Enable turns its folder back on, as `main` did for the folder it
+/// named: a taken legacy row whose own harness is gone (Kimi Code) is dropped,
+/// and the folder — reachable through Amp — gets its one new row.
+#[test]
+fn a_pair_enable_of_a_reachable_folder_deploys_it_when_only_a_gone_harnesss_row_was_disabled() {
+    let f = fixture(&["amp"]);
+    f.store
+        .upsert_skill_target(&crate::core::skill_store::SkillTargetRecord {
+            id: "legacy-kimi".into(),
+            skill_id: f.skill_id.clone(),
+            tool: "kimi_cli".into(),
+            target_path: f
+                .global_path(".config/agents/skills")
+                .to_string_lossy()
+                .into(),
+            mode: crate::core::sync_status::SyncMode::Symlink,
+            status: SyncStatus::Disabled,
+            last_error: None,
+            synced_at: Some(1),
+        })
+        .unwrap();
+
+    let enabled = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &HostRoots::under_home(f.home()),
+        &f.pair("amp"),
+        NOW,
+    )
+    .unwrap();
+
+    assert!(
+        matches!(
+            enabled.global.as_slice(),
+            [BatchTargetOutcome { tool_key, status: BatchTargetStatus::Synced { .. }, .. }]
+                if tool_key == "amp"
+        ),
+        "{:?}",
+        enabled.global
+    );
+    assert_eq!(f.status("amp"), Some(SyncStatus::Synced));
+    assert_eq!(f.status("kimi_cli"), None);
+    assert!(exists_any(&f.global_path(".config/agents/skills")));
 }

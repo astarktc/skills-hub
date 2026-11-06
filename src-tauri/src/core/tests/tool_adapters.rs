@@ -3,11 +3,10 @@ use std::fs;
 use crate::core::environment::{HostOs, HostRoot, HostRoots};
 use crate::core::errors::SignalError;
 use crate::core::tool_adapters::{
-    adapter_by_key, adapters_sharing_skills_dir, constituents_of, default_tool_adapters,
-    detect_dirs_in, ensure_path_within_tool_dirs, former_skills_dirs_in, is_installed_in,
-    mark_installed_in, project_adapter_by_key, project_skills_dir_in, reader_only_harnesses,
-    scan_tool_dir, skills_dir_in, test_overrides, tool_holding_path, ToolAdapter, ToolId,
-    VirtualGroup,
+    adapter_by_key, constituents_of, default_tool_adapters, detect_dirs_in,
+    ensure_path_within_tool_dirs, former_skills_dirs_in, is_installed_in, mark_installed_in,
+    project_adapter_by_key, project_skills_dir_in, reader_only_harnesses, scan_tool_dir,
+    skills_dir_in, test_overrides, tool_holding_path, ToolAdapter, ToolId, VirtualGroup,
 };
 use crate::core::tool_adapters::{OsOverride, RegistryPath};
 
@@ -656,7 +655,11 @@ fn no_adapter_is_detected_by_a_shared_skills_convention_dir() {
         if adapter.as_virtual_group().is_some() {
             continue;
         }
-        let shared = adapters_sharing_skills_dir(adapter).len() > 1;
+        let shared = default_tool_adapters()
+            .iter()
+            .filter(|other| other.skills_dir.same_location(&adapter.skills_dir))
+            .count()
+            > 1;
         let (skills_root, skills_rel) = adapter.skills_dir.effective(HostOs::CURRENT);
         let convention_root = std::path::Path::new(skills_rel).parent();
         for detect_dir in adapter.detect_dirs {
@@ -689,13 +692,10 @@ fn adapter_by_key_finds_new_tools() {
 }
 
 #[test]
-fn adapters_sharing_skills_dir_groups_amp_and_kimi() {
-    let amp = adapter_by_key("amp").unwrap();
-    let group = adapters_sharing_skills_dir(amp);
-    let keys: std::collections::HashSet<&'static str> =
-        group.into_iter().map(|a| a.id.as_key()).collect();
-    assert!(keys.contains("amp"));
-    assert!(keys.contains("kimi_cli"));
+fn amp_and_kimi_share_one_deployment_folder() {
+    use crate::core::placement::{own_folder, ScopeKind};
+    assert_eq!(own_folder(ScopeKind::Global, "amp"), Some("amp"));
+    assert_eq!(own_folder(ScopeKind::Global, "kimi_cli"), Some("amp"));
 }
 
 /// A placeholder detect dir for adapters only `scan_tool_dir` reads.

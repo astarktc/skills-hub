@@ -35,16 +35,8 @@ fn removal_report_keeps_shared_rows_and_classified_failure_on_the_wire() {
         targets: vec![RemovalTargetOutcome {
             path: PathBuf::from("refused"),
             rows: vec![
-                RowRef::GlobalTarget {
-                    id: "t1".into(),
-                    skill_id: "s1".into(),
-                    tool: "amp".into(),
-                },
-                RowRef::GlobalTarget {
-                    id: "t2".into(),
-                    skill_id: "s1".into(),
-                    tool: "kimi_cli".into(),
-                },
+                RowRef::global("t1", "s1", "amp"),
+                RowRef::global("t2", "s1", "kimi_cli"),
             ],
             status: RemovalTargetStatus::Failed { error },
         }],
@@ -60,8 +52,8 @@ fn removal_report_keeps_shared_rows_and_classified_failure_on_the_wire() {
             "targets": [{
                 "path": "refused",
                 "rows": [
-                    { "scope": "global_target", "id": "t1", "skill_id": "s1", "tool": "amp" },
-                    { "scope": "global_target", "id": "t2", "skill_id": "s1", "tool": "kimi_cli" }
+                    { "scope": "global_target", "id": "t1", "skill_id": "s1", "tool": "amp", "folder_key": "amp" },
+                    { "scope": "global_target", "id": "t2", "skill_id": "s1", "tool": "kimi_cli", "folder_key": "amp" }
                 ],
                 "status": { "status": "failed", "error": { "code": "PATH_OUTSIDE_TOOL_DIRS", "path": "refused" } }
             }],
@@ -75,12 +67,7 @@ fn removal_report_keeps_shared_rows_and_classified_failure_on_the_wire() {
 
 #[test]
 fn merge_preserves_target_order_rows_statuses_and_deletion_flags() {
-    let row = RowRef::Assignment {
-        id: "a1".into(),
-        project_id: "p1".into(),
-        skill_id: "s1".into(),
-        tool: "pi".into(),
-    };
+    let row = RowRef::assignment("a1", "p1", "s1", "pi");
     let first = RemovalReport {
         scope: RemovalScope::Project {
             project_id: "p1".into(),
@@ -127,7 +114,8 @@ fn merge_preserves_target_order_rows_statuses_and_deletion_flags() {
     assert_eq!(
         serde_json::to_value(&row).unwrap(),
         serde_json::json!({
-            "scope": "assignment", "id": "a1", "project_id": "p1", "skill_id": "s1", "tool": "pi"
+            "scope": "assignment", "id": "a1", "project_id": "p1", "skill_id": "s1", "tool": "pi",
+            "folder_key": crate::core::placement::row_folder(crate::core::placement::ScopeKind::Project, "pi")
         })
     );
     let empty = RemovalReport::merge([]);
@@ -1534,4 +1522,87 @@ fn a_central_copy_permission_failure_is_typed() {
     // levels may, in the OS's own order).
     assert!(store.get_skill_by_id(&skill.id).unwrap().is_some());
     assert!(central.join("SKILL.md").is_file());
+}
+
+/// Removal reports keep every raw row for settlement and name each row's
+/// Deployment folder (`RowRef.folder_key`, the backend's answer): rows written
+/// once per shared-dir sibling — owned rows on one artifact, and a marker that
+/// owns nothing — all name one folder, so a reader counts one Deployment.
+#[test]
+fn removal_rows_and_markers_name_the_deployment_folder_they_describe() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let home = home_with(tmp.path(), &["amp", "kimi_cli"]);
+    let central = make_skill_dir(&tmp.path().join("central"), "shared");
+    let skill = seed_skill(&store, "shared", &central);
+    let shared = home.join(".config/agents/skills/shared");
+    seed_global_target_at(&store, &skill, "amp", &shared);
+    seed_global_target_at(&store, &skill, "kimi_cli", &shared);
+    let project = seed_project(&store, tmp.path(), "proj");
+    for (tool, owned) in [("trae", true), ("trae_cn", false)] {
+        store
+            .add_project_skill_assignment(&ProjectSkillAssignmentRecord {
+                id: format!("pa-{tool}"),
+                project_id: project.id.clone(),
+                skill_id: skill.id.clone(),
+                skill_name: skill.name.clone(),
+                tool: tool.to_string(),
+                mode: SyncMode::Symlink,
+                status: SyncStatus::Synced,
+                last_error: None,
+                synced_at: owned.then_some(1),
+                content_hash: None,
+                created_at: 1,
+            })
+            .unwrap();
+    }
+    fs::create_dir_all(Path::new(&project.path).join(".trae/skills/shared")).unwrap();
+
+    let report = execute_unlocked(
+        &store,
+        &central_repo_of(&store),
+        plan(
+            &store,
+            &RemovalScope::Skill {
+                skill_id: skill.id.clone(),
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let folders = |rows: &[RowRef]| -> Vec<(String, String)> {
+        rows.iter()
+            .map(|row| match row {
+                RowRef::GlobalTarget {
+                    tool, folder_key, ..
+                }
+                | RowRef::Assignment {
+                    tool, folder_key, ..
+                } => (tool.clone(), folder_key.clone()),
+            })
+            .collect()
+    };
+    let target_rows: Vec<(String, String)> = report
+        .targets
+        .iter()
+        .flat_map(|t| folders(&t.rows))
+        .collect();
+    assert_eq!(
+        target_rows,
+        vec![
+            ("amp".to_string(), "amp".to_string()),
+            ("kimi_cli".to_string(), "amp".to_string()),
+            ("trae".to_string(), "trae".to_string()),
+        ],
+        "raw row keys kept, one folder named"
+    );
+    assert_eq!(
+        folders(&report.cleared_markers),
+        vec![("trae_cn".to_string(), "trae".to_string())]
+    );
+    assert_eq!(
+        serde_json::to_value(&report.cleared_markers[0]).unwrap()["folder_key"],
+        "trae"
+    );
 }

@@ -69,14 +69,15 @@ use crate::core::{
     environment::HostRoots,
     errors::{CommandError, SignalError},
     mutation_guard,
+    placement::{self, row_folder, ScopeKind},
     project_sync::resolve_assignment_artifact,
     removal_fence::{Claim, Fence, ProtectedLibrary},
     skill_health::{self, SkillOutcomeKind},
     skill_store::{AssignmentTransition, ProjectRecord, SkillRecord, SkillStore, TargetTransition},
     sync_engine::{remove_central_copy, remove_path_any},
     tool_adapters::{
-        adapter_by_key, adapters_sharing_skills_dir, ensure_path_within_tool_dirs,
-        former_skills_dirs_in, is_installed_in, ToolAdapter,
+        adapter_by_key, ensure_path_within_tool_dirs, former_skills_dirs_in, installed_set_in,
+        ToolAdapter,
     },
 };
 
@@ -91,12 +92,14 @@ pub enum RemovalScope {
     /// are untouched. Planned by a skill-grain Disable (with a `ProjectSkill`
     /// scope per project for the assignments).
     SkillGlobal { skill_id: String },
-    /// One skill × Tool pair at global scope, expanded across the tool's
-    /// shared skills dir group — or, when the registry can no longer locate
-    /// the Tool, planned as the single row by its own stored path (fenced by
-    /// the registry's deletion rule). Carries the host roots because it
-    /// is the only scope whose planning depends on Tool installedness; every
-    /// other scope resolves its paths from stored rows.
+    /// One skill × folder pair at global scope: every row of the skill that
+    /// describes the folder `tool_key`'s row does (`placement::row_folder` —
+    /// rows written once per shared-dir sibling before 1.4.0 included). When
+    /// no harness sharing that folder is installed any more, the rows are
+    /// planned by their own stored paths, fenced by the registry's deletion
+    /// rule. Carries the host roots because it is the only scope whose
+    /// planning depends on Tool installedness; every other scope resolves its
+    /// paths from stored rows.
     SkillTool {
         skill_id: String,
         tool_key: String,
@@ -105,14 +108,19 @@ pub enum RemovalScope {
     /// Every Sync target of one Project. Planned by
     /// `project_ops::remove_project_and_artifacts`.
     Project { project_id: String },
-    /// One Project × Tool pair. Planned by
+    /// One Project × Tool pair: the project's assignment rows keyed exactly
+    /// `tool_key` — a harness's legacy rows, or a folder's rows when
+    /// `tool_key` is its folder key. Which keys a dropped harness takes with
+    /// it is `project_ops::configure_project_tools`' decision
+    /// (`placement::is_folder_row`). Planned by
     /// `project_ops::remove_project_tool_and_artifacts`.
     ProjectTool {
         project_id: String,
         tool_key: String,
     },
-    /// One Project × skill × Tool triple — a single assignment row. Planned
-    /// by `project_sync::unassign_and_remove_artifacts`.
+    /// One Project × skill × folder triple — the assignment row of that
+    /// folder (and any row written per sibling before 1.4.0). Planned by
+    /// `project_sync::unassign_and_remove_artifacts`.
     ProjectSkillTool {
         project_id: String,
         skill_id: String,
@@ -132,6 +140,13 @@ pub enum RemovalScope {
 }
 
 /// Where a row lives — the two tables that record Sync targets.
+///
+/// `id` / `tool` are the raw row reference settlement acts on (a pre-1.4.0
+/// row written once per shared-dir sibling keeps its own key). `folder_key`
+/// is the Deployment folder the row describes (`placement::row_folder`): the
+/// backend's answer to "which Deployment is this", so a report reader counts
+/// one Deployment per (skill, folder) — and per project for an assignment —
+/// however many legacy rows describe it, and never derives a folder itself.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(tag = "scope", rename_all = "snake_case")]
 pub enum RowRef {
@@ -140,6 +155,7 @@ pub enum RowRef {
         id: String,
         skill_id: String,
         tool: String,
+        folder_key: String,
     },
     /// A `project_skill_assignments` row (project scope).
     Assignment {
@@ -147,6 +163,7 @@ pub enum RowRef {
         project_id: String,
         skill_id: String,
         tool: String,
+        folder_key: String,
     },
 }
 
@@ -154,6 +171,27 @@ impl RowRef {
     pub fn tool(&self) -> &str {
         match self {
             RowRef::GlobalTarget { tool, .. } | RowRef::Assignment { tool, .. } => tool,
+        }
+    }
+
+    /// The reference to a global target row.
+    pub fn global(id: &str, skill_id: &str, tool: &str) -> Self {
+        RowRef::GlobalTarget {
+            id: id.to_string(),
+            skill_id: skill_id.to_string(),
+            tool: tool.to_string(),
+            folder_key: row_folder(ScopeKind::Global, tool),
+        }
+    }
+
+    /// The reference to a project assignment row.
+    pub fn assignment(id: &str, project_id: &str, skill_id: &str, tool: &str) -> Self {
+        RowRef::Assignment {
+            id: id.to_string(),
+            project_id: project_id.to_string(),
+            skill_id: skill_id.to_string(),
+            tool: tool.to_string(),
+            folder_key: row_folder(ScopeKind::Project, tool),
         }
     }
 }
@@ -341,30 +379,29 @@ pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPl
             tool_key,
             roots,
         } => {
-            let rows = store.list_skill_targets(skill_id)?;
-            match global_group_keys(roots, tool_key) {
-                Some(group_keys) => {
-                    for row in rows {
-                        if group_keys.iter().any(|k| k == &row.tool) {
-                            builder.push_global(&row);
-                        }
-                    }
+            let folder = row_folder(ScopeKind::Global, tool_key);
+            let rows: Vec<_> = store
+                .list_skill_targets(skill_id)?
+                .into_iter()
+                .filter(|row| row_folder(ScopeKind::Global, &row.tool) == folder)
+                .collect();
+            if folder_locatable(roots, &folder) {
+                for row in &rows {
+                    builder.push_global(row);
                 }
-                // The Tool is gone from this machine, so the registry can no
-                // longer locate it — but the row records the path of an
-                // artifact *we* created. Cleaning up after ourselves is not
-                // "touching an uninstalled tool's directory": plan the row
-                // itself, by its own stored path, with no group fan-out
-                // (there is no group left to fan out to). Because that path
-                // is a stored string rather than a registry-derived one, it
-                // is fenced by the registry's deletion rule — a row pointing
-                // outside every Tool skills dir is refused, and refusing
-                // planning keeps every row.
-                None => {
-                    for row in rows.iter().filter(|row| &row.tool == tool_key) {
-                        ensure_path_within_tool_dirs(roots, Path::new(&row.target_path))?;
-                        builder.push_global(row);
-                    }
+            } else {
+                // No harness sharing the folder is on this machine any more,
+                // so the registry can no longer locate it — but each row
+                // records the path of an artifact *we* created. Cleaning up
+                // after ourselves is not "touching an uninstalled tool's
+                // directory": plan the rows by their own stored paths. Because
+                // such a path is a stored string rather than a registry-derived
+                // one, it is fenced by the registry's deletion rule — a row
+                // pointing outside every Tool skills dir is refused, and
+                // refusing planning keeps every row.
+                for row in &rows {
+                    ensure_path_within_tool_dirs(roots, Path::new(&row.target_path))?;
+                    builder.push_global(row);
                 }
             }
         }
@@ -385,8 +422,15 @@ pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPl
             skill_id,
             tool_key,
         } => {
-            let assignment = store.get_project_skill_assignment(project_id, skill_id, tool_key)?;
-            push_assignments(store, &mut builder, assignment.into_iter().collect())?;
+            let folder = row_folder(ScopeKind::Project, tool_key);
+            let assignments = store
+                .list_project_skill_assignments(project_id)?
+                .into_iter()
+                .filter(|a| {
+                    &a.skill_id == skill_id && row_folder(ScopeKind::Project, &a.tool) == folder
+                })
+                .collect();
+            push_assignments(store, &mut builder, assignments)?;
         }
         RemovalScope::ProjectSkill {
             project_id,
@@ -435,21 +479,16 @@ pub(crate) fn recorded_target_paths(store: &SkillStore) -> Result<Vec<PathBuf>> 
     Ok(paths)
 }
 
-/// The global tool keys one Tool's artifact is shared with: every tool
-/// resolving to the same global skills dir. `None` means the registry can no
-/// longer locate the Tool — no member of the group is installed for this
-/// operator — so no path may be *derived* for it; the caller falls back to
-/// the row's own recorded `target_path`. An unknown key stands for itself:
-/// its rows still carry their own paths.
-fn global_group_keys(roots: &HostRoots, tool_key: &str) -> Option<Vec<String>> {
-    let Some(adapter) = adapter_by_key(tool_key) else {
-        return Some(vec![tool_key.to_string()]);
-    };
-    let group = adapters_sharing_skills_dir(adapter);
-    if !group.iter().any(|a| is_installed_in(roots, a)) {
-        return None;
+/// Whether the registry can still locate the global folder `folder`: some
+/// harness whose own folder it is, is installed for this operator. When none
+/// is, no path may be *derived* for it and the rows' own recorded paths are
+/// planned instead, fenced. An unknown key stands for itself: its rows still
+/// carry their own paths.
+fn folder_locatable(roots: &HostRoots, folder: &str) -> bool {
+    if adapter_by_key(folder).is_none() {
+        return true;
     }
-    Some(group.into_iter().map(|a| a.key().to_string()).collect())
+    placement::folder_reachable(ScopeKind::Global, folder, &installed_set_in(roots))
 }
 
 /// Resolve each assignment row's project-scope artifact path. A row whose
@@ -464,12 +503,12 @@ fn push_assignments(
     let mut projects: HashMap<String, Option<ProjectRecord>> = HashMap::new();
     for assignment in assignments {
         if !assignment.owns_artifact() {
-            builder.markers.push(RowRef::Assignment {
-                id: assignment.id,
-                project_id: assignment.project_id,
-                skill_id: assignment.skill_id,
-                tool: assignment.tool,
-            });
+            builder.markers.push(RowRef::assignment(
+                &assignment.id,
+                &assignment.project_id,
+                &assignment.skill_id,
+                &assignment.tool,
+            ));
             continue;
         }
         let project = match projects.get(&assignment.project_id) {
@@ -514,12 +553,12 @@ fn push_assignments(
         };
         builder.push(
             path,
-            RowRef::Assignment {
-                id: assignment.id,
-                project_id: assignment.project_id,
-                skill_id: assignment.skill_id,
-                tool: assignment.tool,
-            },
+            RowRef::assignment(
+                &assignment.id,
+                &assignment.project_id,
+                &assignment.skill_id,
+                &assignment.tool,
+            ),
         );
     }
     Ok(())
@@ -547,11 +586,7 @@ impl TargetBuilder {
     }
 
     fn push_global(&mut self, row: &crate::core::skill_store::SkillTargetRecord) {
-        let row_ref = RowRef::GlobalTarget {
-            id: row.id.clone(),
-            skill_id: row.skill_id.clone(),
-            tool: row.tool.clone(),
-        };
+        let row_ref = RowRef::global(&row.id, &row.skill_id, &row.tool);
         if !row.owns_artifact() {
             self.markers.push(row_ref);
         } else {

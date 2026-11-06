@@ -88,4 +88,10 @@ export type {
 export type ToolOption = {
   id: string;
   label: string;
+  /**
+   * The folder key of the Deployment folder serving this harness
+   * (`ToolInfoDto.folder_key`): its Deployment rows are keyed by it, so a
+   * harness reads its row through this key, never through a path.
+   */
+  folder: string;
 };

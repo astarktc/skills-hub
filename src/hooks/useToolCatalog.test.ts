@@ -27,7 +27,7 @@ const t = (key: string, opts?: Record<string, unknown>) =>
   key === "tools.cursor" ? "Cursor (i18n)" : String(opts?.defaultValue ?? key);
 
 function toolInfo(key: string, shared_with: string[] = [key]): ToolInfoDto {
-  return { key, label: key.toUpperCase(), installed: true, shared_with, constituents: [], readers: [], placement: null, duplicate_readers: null };
+  return { key, label: key.toUpperCase(), installed: true, folder_key: shared_with[0], shared_with, constituents: [], readers: [], placement: null, duplicate_readers: null };
 }
 
 const GLOBAL: ToolStatusDto = {
@@ -93,12 +93,22 @@ describe("useToolCatalog", () => {
     rerender();
 
     expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === "getToolStatus")).toHaveLength(1);
+    // Each carries the Deployment folder serving it (`folder_key`): Claude
+    // and Pi share one here.
     expect(result.current.tools).toEqual([
-      { id: "claude", label: "CLAUDE" },
-      { id: "pi", label: "PI" },
-      { id: "cursor", label: "Cursor (i18n)" },
-      { id: "goose", label: "GOOSE" },
+      { id: "claude", label: "CLAUDE", folder: "claude" },
+      { id: "pi", label: "PI", folder: "claude" },
+      { id: "cursor", label: "Cursor (i18n)", folder: "cursor" },
+      { id: "goose", label: "GOOSE", folder: "goose" },
     ]);
+    expect(result.current.folderOf("pi")).toBe("claude");
+    expect(result.current.folderOf("cursor")).toBe("cursor");
+    // A key the catalog does not list (a row of an unknown Tool) stands for itself.
+    expect(result.current.folderOf("gone_tool")).toBe("gone_tool");
+    // A folder is detected through any detected harness it serves (Sol 303).
+    expect(result.current.isFolderDetected("claude")).toBe(true);
+    expect(result.current.isFolderDetected("goose")).toBe(false);
+    expect(result.current.isFolderDetected("gone_tool")).toBe(false);
     expect(result.current.toolLabelById).toMatchObject({ cursor: "Cursor (i18n)", goose: "GOOSE" });
     expect(result.current.installedToolIds).toEqual(["claude", "pi", "cursor"]);
     expect(result.current.installedTools.map((tool) => tool.id)).toEqual(["claude", "pi", "cursor"]);

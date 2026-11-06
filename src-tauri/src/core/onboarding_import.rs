@@ -75,6 +75,7 @@ use super::mutation_guard;
 use super::onboarding::{
     build_onboarding_plan, OnboardingGroup, OnboardingScanScope, OnboardingVariant,
 };
+use super::placement::{row_folder, ScopeKind};
 use super::removal_fence::{Claim, Fence, ProtectedLibrary};
 use super::skill_discovery::require_skill_md;
 use super::skill_store::SkillStore;
@@ -516,10 +517,9 @@ fn apply_one_unlocked(
 /// reports it. Returns the outcomes, the Tools included beyond the policy,
 /// and the divergent originals.
 ///
-/// The identical Tools are appended *after* the policy's Tools so the
-/// batch's shared-skills-dir dedupe keeps its caller-order semantics: a
-/// forced Tool sharing its dir with a policy Tool is covered by that Tool's
-/// record fan-out, exactly as before.
+/// The identical Tools are appended *after* the policy's Tools; a Tool whose
+/// Deployment folder a policy Tool already names is covered by it (one folder,
+/// one row — the batch dedupes by folder key) and is not "forced".
 fn sync_imported_unlocked(
     paths: &InstallerPaths,
     store: &SkillStore,
@@ -564,9 +564,15 @@ fn sync_imported_unlocked(
             });
         }
     }
+    // A harness is covered when its folder is already among the targets (the
+    // batch writes a folder once, whichever harness named it).
+    let requested_folders: Vec<String> = tools
+        .iter()
+        .map(|tool| row_folder(ScopeKind::Global, tool))
+        .collect();
     let forced_tools: Vec<String> = identical_tools
         .iter()
-        .filter(|tool_key| !tools.contains(tool_key))
+        .filter(|tool_key| !requested_folders.contains(&row_folder(ScopeKind::Global, tool_key)))
         .cloned()
         .collect();
     tools.extend(forced_tools.iter().cloned());

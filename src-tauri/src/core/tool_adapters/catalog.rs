@@ -7,9 +7,10 @@
 
 use super::reads::{DuplicateBehaviour, ReadFacts};
 use super::{
-    adapters_sharing_skills_dir, catalog_rows, constituents_of, is_installed_in,
-    reader_installed_in, readers_of, HostRoots, RegistryPath, ToolAdapter,
+    catalog_rows, constituents_of, is_installed_in, reader_installed_in, readers_of, HostRoots,
+    RegistryPath, ToolAdapter,
 };
+use crate::core::placement::{own_folder, serving_folder, PlacementSettings, ScopeKind};
 
 /// One row of a tool list, with every backend-owned fact already resolved.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -17,9 +18,15 @@ pub struct ToolCatalogEntry {
     pub key: &'static str,
     pub label: &'static str,
     pub installed: bool,
+    /// The folder key of the Deployment folder serving this entry at the
+    /// catalog's scope (`core::placement::serving_folder`): its rows, the
+    /// saved selection and the project matrix are keyed by it, and the
+    /// frontend matches a harness to its rows through it, never through a path.
+    pub folder_key: &'static str,
     /// Keys of every entry in this list sharing this entry's skills dir — the
     /// global dir for the global catalog, the project dir for the project
-    /// catalog — in registry order, including the entry itself (len >= 1).
+    /// catalog — in registry order, including the entry itself (len >= 1):
+    /// the entries whose own folder (`core::placement::own_folder`) is its.
     ///
     /// The dir itself is not a field of the entry: it is home-relative at
     /// global scope but project-relative at project scope, so one field could
@@ -107,8 +114,12 @@ pub fn global_tool_entries(roots: &HostRoots) -> Vec<ToolCatalogEntry> {
             key: adapter.key(),
             label: adapter.display_name,
             installed: is_installed_in(roots, adapter),
-            shared_with: adapters_sharing_skills_dir(adapter)
-                .into_iter()
+            folder_key: folder_key_of(ScopeKind::Global, adapter),
+            shared_with: catalog_rows()
+                .filter(|other| {
+                    own_folder(ScopeKind::Global, other.key())
+                        == own_folder(ScopeKind::Global, adapter.key())
+                })
                 .map(ToolAdapter::key)
                 .collect(),
             constituents: vec![],
@@ -218,6 +229,7 @@ pub fn project_tool_entries(roots: &HostRoots) -> Vec<ToolCatalogEntry> {
                 key: adapter.key(),
                 label: adapter.display_name,
                 installed,
+                folder_key: folder_key_of(ScopeKind::Project, adapter),
                 shared_with: listed
                     .iter()
                     .filter(|a| a.project_skills_dir == adapter.project_skills_dir)
@@ -230,6 +242,12 @@ pub fn project_tool_entries(roots: &HostRoots) -> Vec<ToolCatalogEntry> {
             }
         })
         .collect()
+}
+
+/// The folder serving `adapter` at `scope` (an entry the scope lists always
+/// has one; its own key is the fallback the registry tests rule out).
+fn folder_key_of(scope: ScopeKind, adapter: &ToolAdapter) -> &'static str {
+    serving_folder(scope, adapter.key(), &PlacementSettings::default()).unwrap_or(adapter.key())
 }
 
 /// Keys of the installed entries, in catalog order.
