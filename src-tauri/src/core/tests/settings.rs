@@ -644,14 +644,22 @@ fn cleanup_marker(store: &SkillStore) -> Option<String> {
     store.get_setting(CLEANUP_MARKER).unwrap()
 }
 
+/// `sentinel` padded past a page (SQLite's default page is 4 KiB), so it
+/// lands in overflow pages: deleting the row sends those to the freelist,
+/// where nothing but `secure_delete` (or a compaction) zeroes them. A small
+/// value would stay in its leaf page, whose freed cell the very next small
+/// insert may overwrite — hiding the bytes without `secure_delete`.
+fn page_spanning(sentinel: &str) -> String {
+    format!("{}{sentinel}", "x".repeat(16 * 1024))
+}
+
 /// Leave `sentinel` in freed pages the way an unsecured deletion does:
-/// insert it under `key`, then DELETE it with `secure_delete` off. Padded
-/// past a page so the bytes land in overflow pages, which go to the freelist
-/// (a small freed cell is reused by the very next small insert).
+/// insert it page-spanning under `key`, then DELETE it with `secure_delete`
+/// off.
 fn leave_freed_bytes(dir: &tempfile::TempDir, key: &str, sentinel: &str) {
     let conn = rusqlite::Connection::open(dir.path().join("test.db")).unwrap();
     conn.pragma_update(None, "secure_delete", false).unwrap();
-    let value = format!("{}{sentinel}", "x".repeat(16 * 1024));
+    let value = page_spanning(sentinel);
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)",
         rusqlite::params![key, value],
@@ -745,9 +753,17 @@ fn failed_compaction_keeps_a_marker_that_the_next_startup_completes() {
     let (dir, store) = make_store();
     let old = "SENTINEL_OLD_ghp_1111111111111111";
     let current = "SENTINEL_NEW_ghp_2222222222222222";
-    // An earlier token left in a freed region by a pre-1.2.18 change.
-    leave_freed_bytes(&dir, "github_token", old);
-    raw(&store, "github_token", current);
+    // Page-spanning, so only `secure_delete` can zero the live row below:
+    // the compaction is faulted and the marker insert cannot reuse an
+    // overflow page (the control is
+    // `without_secure_delete_the_deleted_row_stays_on_disk`).
+    let current_value = page_spanning(current);
+    raw(&store, "github_token", &current_value);
+    // An earlier token left in a freed region by a pre-1.2.18 change. Freed
+    // after the live row is written, so that row's overflow pages do not
+    // reuse (and overwrite) the freed ones; the key only has to differ from
+    // the live row's.
+    leave_freed_bytes(&dir, "github_token.earlier", old);
     let credentials = MemoryStore::new();
 
     crate::core::skill_store::compaction_fault::fail_next();
@@ -760,11 +776,11 @@ fn failed_compaction_keeps_a_marker_that_the_next_startup_completes() {
     assert_eq!(cleanup_marker(&store).as_deref(), Some("1"));
     assert_eq!(
         credentials.get("github_token").unwrap().as_deref(),
-        Some(current)
+        Some(current_value.as_str())
     );
     // `secure_delete` was in force inside the transaction: the live row's
-    // bytes are zeroed. The earlier value in a freed region is what the
-    // compaction still owes.
+    // bytes are zeroed, overflow pages included, with no compaction. The
+    // earlier value in a freed region is what the compaction still owes.
     assert!(!db_files_contain(&dir, current), "live row not zeroed");
     assert!(
         db_files_contain(&dir, old),
@@ -786,10 +802,40 @@ fn failed_compaction_keeps_a_marker_that_the_next_startup_completes() {
     }
     assert_eq!(
         credentials.get("github_token").unwrap().as_deref(),
-        Some(current)
+        Some(current_value.as_str())
     );
     // Nothing left to do on the launch after that.
     assert!(!store.finish_pending_secure_cleanup().unwrap());
+}
+
+/// Sensitivity control for the test above: the same deletion transaction
+/// (DELETE + marker in one commit, no compaction) with `secure_delete` off
+/// leaves the page-spanning row on disk. So when that test finds the live
+/// row gone, `secure_delete` alone removed it.
+#[test]
+fn without_secure_delete_the_deleted_row_stays_on_disk() {
+    let (dir, store) = make_store();
+    let current = "SENTINEL_NEW_ghp_7777777777777777";
+    raw(&store, "github_token", &page_spanning(current));
+
+    let mut conn = rusqlite::Connection::open(dir.path().join("test.db")).unwrap();
+    conn.pragma_update(None, "secure_delete", false).unwrap();
+    let tx = conn.transaction().unwrap();
+    tx.execute("DELETE FROM settings WHERE key = 'github_token'", [])
+        .unwrap();
+    tx.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, '1')",
+        [CLEANUP_MARKER],
+    )
+    .unwrap();
+    tx.commit().unwrap();
+    drop(conn);
+
+    assert_eq!(store.get_setting("github_token").unwrap(), None);
+    assert!(
+        db_files_contain(&dir, current),
+        "an unsecured deletion must leave the bytes, or the test above proves nothing"
+    );
 }
 
 /// B2a: an explicit Save or Remove finishes a pending cleanup even when no
