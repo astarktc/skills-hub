@@ -1,6 +1,6 @@
 # 08: Release 1.3.4
 
-Status: ready-for-agent (orchestrator)
+Status: done — ed8e442 (v1.3.4)
 
 **Blocked by:** 01–07.
 
@@ -36,4 +36,9 @@ Status: ready-for-agent (orchestrator)
 - 2026-11-06 (orchestrator): every lane is merged; the CHANGELOG `[1.3.4]` and the smoke list are committed. The final
   review (Astra) failed on the ChatGPT usage limit before it started, so the release is held. See
   `handoffs/2026-11-06-1.3.4-ready-awaiting-final-review.md`.
+- 2026-11-06 (orchestrator): released as **v1.3.4**: tag `v1.3.4` = `ed8e442`, release run 42246044318, published
+  2026-11-06 16:09 UTC, 14 assets. `updater.json` lists darwin-aarch64/x86_64, linux-x86_64 and windows-aarch64/x86_64.
+  The operator resumed the final review after a false-positive usage-limit error. It was fix-then-ship and its fixes
+  are in PR #20 (`reviews/round20-1.3.4-release-review.md`). The round's worktrees and branches are removed; only
+  `t3/registry-truth-pass` is kept.
 

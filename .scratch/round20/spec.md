@@ -386,3 +386,4 @@ The operator keeps one skill Library and deploys it to many harnesses. Three thi
 - 03 merged as `26ce2b6` (PR #12) after five review rounds. 04 dispatched.
 - 04 merged as `6a8c235` (PR #19). All of Wave A is on `main`. Final release review dispatched.
 - Final review blocked (OpenAI usage limit); release held. The CHANGELOG is committed. Handoff `handoffs/2026-11-06-1.3.4-ready-awaiting-final-review.md`.
+- **Wave A released as v1.3.4** (`ed8e442`, 2026-11-06). Next: the Wave B grill in this effort.
