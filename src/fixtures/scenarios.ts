@@ -1,4 +1,4 @@
-// The four fixture scenarios, selected with `?scenario=` (default `rich`).
+// The five fixture scenarios, selected with `?scenario=` (default `rich`).
 //
 // - `rich`       the round-18 prototype roster (`.scratch/round18/prototypes/
 //                BRIEF.md`): 60 skills, 7 detected harnesses, 3 projects, mixed
@@ -428,6 +428,26 @@ function rich(now: number): FixtureState {
 }
 
 // ---------------------------------------------------------------------------
+// registry — the Harnesses pane's shapes (round 20 ticket 02)
+// ---------------------------------------------------------------------------
+
+/**
+ * The rich library on a machine that also has `~/.agents` (its folder read by
+ * Zed, a detected reader-only member), OpenCode and WorkBuddy (no project
+ * skills dir). Cursor, Claude Code and Codex are selected, so Cursor's
+ * cross-read pairs warn; `.agents/skills` is detected but off, so turning it
+ * on (auto-deploy on) asks with the warning; Goose is selected but not
+ * detected, so the closed "Not detected" group says "1 selected".
+ */
+function registry(now: number): FixtureState {
+  const state: FixtureState = { ...rich(now), scenario: "registry" };
+  state.installedTools = [...DETECTED_TOOLS, "agents_skills", "opencode", "workbuddy"];
+  state.seenTools = [...state.installedTools];
+  state.settings = defaultSettings([...ALL, "opencode", "workbuddy", "goose"]);
+  return state;
+}
+
+// ---------------------------------------------------------------------------
 // empty / first-run
 // ---------------------------------------------------------------------------
 
@@ -663,6 +683,7 @@ const BUILDERS: Record<ScenarioName, (now: number) => FixtureState> = {
   empty,
   "first-run": firstRun,
   failures,
+  registry,
 };
 
 export function buildScenario(name: ScenarioName, now = Date.now()): FixtureState {
