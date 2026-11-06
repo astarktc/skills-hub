@@ -2,6 +2,90 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.4] - 2026-11-06
+
+Round 20, wave A. Skills Hub learns about the wider field of AI coding tools: 28 new harnesses, plus 9 that read
+`~/.agents/skills` without a folder of their own. It warns when two harnesses would make one of them see a skill twice.
+Moving the Library folder is now one safe action instead of a step that broke every harness link.
+
+### Harnesses
+
+- **28 new harnesses with their own skills folder:**
+  - DeepSeek Harness, ZCode, Codewhale and WorkBuddy, the four 1.3.1 promised;
+  - Grok Build, Deep Agents Code, Reasonix, Cortex Code, Rovo Dev, IBM Bob, ForgeCode, Firebender, MiniMax Code,
+    Posit Assistant, AiderDesk and Autohand Code CLI;
+  - Letta Code, Muse Code, Poolside, Dirac, Code Studio, CodeArts Agent, Qoder CN, Qoder CN CLI, Kimchi, AstrBot,
+    oh-my-pi and Stakpak.
+
+  Each was checked against its vendor's documentation or source. Details:
+  - Deep Agents Code is deployed as a copy, because it rejects links that point outside its own folders.
+  - On Windows, Reasonix's skills go under `%APPDATA%\reasonix`.
+  - WorkBuddy and AstrBot have no project folder, so they don't appear in a project's harness list.
+  - Letta Code, Muse Code, Poolside and Dirac read a project's shared `.agents/skills` folder.
+- **Harnesses that read `~/.agents/skills` without a folder of their own:** Warp, Zed, Dexto, fx, Sarvam Code,
+  VT Code, DimCode, crow-cli and Corust Agent. They're listed under the `.agents/skills` entry in Settings → Harnesses
+  with their detected state, and they're reached by deploying to `.agents/skills`. A folder that holds nothing but
+  skills (left behind by a skill installer) doesn't count as the harness being installed.
+- **New names for existing harnesses; no skill moves:** Mux is now **Xum**, Windsurf **Devin (Windsurf)**, Copaw
+  **QwenPaw**, and Zencoder **Zencoder / Zenflow**. Stored selections and deployments keep working unchanged.
+- **The duplicate warning.** Settings → Harnesses warns when two selected harnesses would make one of them load a
+  skill twice. Cursor, for example, also reads Claude Code's and Codex's folders. The same line appears in the "Deploy
+  your skills now?" prompt. The wording depends on the harness: fx can't invoke a duplicated skill by name, Cortex Code
+  flags a conflict, and most harnesses just show it twice. Nothing is ever deselected for you.
+- **Undetected harnesses** are kept in one collapsed "Not detected (N)" group, so the pane shows what is on this
+  computer first. A selected harness that isn't detected is marked inside it.
+- The `.agents/skills (N harnesses)` count in projects is now counted automatically.
+
+### Library folder
+
+- **Settings → General → Browse… now moves your Library as one confirmed action.** It asks first ("Move N skills to …?
+  Every harness link is re-pointed"), and the destination must be an empty folder. It refuses:
+  - a folder inside your Library, or one containing it;
+  - a folder inside a harness or project skills folder;
+  - a folder inside the app's download cache;
+  - a folder it cannot write to.
+
+  A cloud storage folder (iCloud Drive, `~/Library/CloudStorage`, OneDrive) gets a warning before you confirm,
+  because online-only files can break harness links.
+- **How the move works.** Skills Hub copies every skill exactly, including `.git` history, dotfiles, links,
+  permissions, extended attributes and hardlinks. It checks each copy, switches every record at once, then re-points
+  every harness and project link. It removes an old copy only if it is directly inside the old Library folder and still
+  matches its new copy at the moment of removal.
+  - **Copies that stay behind.** Anything that changed, was replaced, is still linked, or lives elsewhere stays
+    where it is and is listed in the report.
+  - **Failures.** A failure before the switch leaves your Library exactly as it was.
+  - **Interruptions.** If a crash interrupts a move, the next launch finishes it and records what it did in
+    Notifications. A toast appears only if something needs your attention.
+- **What the move cannot carry is never lost.**
+  - **Kept in place:** a skill holding content the move can't check stays where it is, named in the report. That
+    means an alternate data stream on Windows, an ACL or file capabilities on Linux, or an extended ACL on macOS. A
+    skill Unlocatable before the move stays Unlocatable.
+  - **Not preserved:** BSD file flags, Windows ACLs, sparse-file holes, file ownership and creation times.
+- **Clean Now (Settings → General) now runs like every other action.** While another action is running it is refused, with the reason shown. It and the startup cache cleanup skip any cached repository an install, update or listing is still reading, and the result reads "Cleared N cached repos; M in use, skipped".
+
+### Smoke list for this release
+
+1. Settings → General → Browse…: move the Library to a new empty folder. Run `ls -la ~/.claude/skills` and check
+   that the links point into the new folder. Move it back the same way.
+2. Settings → Harnesses with Cursor and Claude Code both on: Cursor's row warns that it also reads Claude Code's
+   folder.
+3. Settings → Harnesses: open "Not detected" and check it closes again when Settings reopens. A reader-only harness
+   you have installed (Zed, Warp…) shows under `.agents/skills`.
+
+### Internal
+
+- Registry paths have typed roots: home, roaming or local app data, with per-OS overrides. The resolved `HostRoots`
+  is passed in from the command seam. The project skills folder is optional.
+- Reader-only harnesses get their own registry table (`READER_ONLY_HARNESSES`).
+- Every registry row records its shared-folder read facts (`reads`), restated from the research briefs by a snapshot
+  test. A README table test keeps the supported-tools table in step with the registry.
+- New `core/library_move.rs`:
+  - one serialized move with a crash journal, resumed at startup;
+  - removal only through `artifact_removal` and the removal fence;
+  - identity checks by device and inode, or the Windows file id.
+- New commands `move_library`, `preview_library_move` and `take_resumed_library_move`. `central_repo_path` is no
+  longer a generic setting update.
+
 ## [1.3.3] - 2026-11-05
 
 A hygiene patch that clears the small and bug-shaped backlog before new features. It closes a data-safety hole in how

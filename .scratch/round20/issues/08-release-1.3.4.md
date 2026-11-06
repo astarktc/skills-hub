@@ -33,3 +33,7 @@ Status: ready-for-agent (orchestrator)
 - [ ] Wave A residue is recorded in BACKLOG or the spec's Status, and a handoff points at Wave B's grill.
 
 ## Comments
+- 2026-11-06 (orchestrator): every lane is merged; the CHANGELOG `[1.3.4]` and the smoke list are committed. The final
+  review (Astra) failed on the ChatGPT usage limit before it started, so the release is held. See
+  `handoffs/2026-11-06-1.3.4-ready-awaiting-final-review.md`.
+
