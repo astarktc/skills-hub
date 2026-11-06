@@ -1006,16 +1006,19 @@ new primitive options are ConfirmDialog `initialFocus` and PopoverContent `ancho
   SKILL.md reader, where they stay native keys (⌘A selects text); while expanded Files cover the list only Escape
   runs. Escape's hierarchy runs from the reader too. Clearing from inside the rail hands focus to the row last
   toggled (the rail goes with the selection).
-- **Bulk rail** (`card`, `border-strong` top edge, at the foot of the list; first in the DOM, so `/` then Tab reaches
-  it): "N selected" (`sm` semibold, a `role="status"`) · the `x` / `Esc` hints (kbd, hidden below the shell
+- **Bulk rail** (`card`, at the foot of the list; first in the DOM, so `/` then Tab reaches it). It wears the
+  selection's mark — a `ring` top edge and a selected row's 3 px `ring` leading edge — so the bar at the window's foot
+  reads as the selection's (BACKLOG #72: it was found only after three other paths): "N selected" (`sm` semibold, a `role="status"`) · the `x` / `Esc` hints (kbd, hidden below the shell
   breakpoint) · `outline sm` Buttons Deploy to harnesses… · Deploy to project… · Disable on all harnesses · Enable · Update ·
   Remove… (`danger`) · Clear (`ghost icon-sm`). A verb that would change nothing is disabled with the reason as its
   title; every rail Button keeps focus while disabled (`focusableWhenDisabled`), so D21's "same control" holds after
   it ran. Text on the rail: ≥ 5.86 dark (`faint` on `card`, ticket 35) / 4.85 light.
-- **Count-bearing confirmation** (`confirmCount`): ConfirmDialog, focus on Cancel, one sentence of counts from
-  `bulkCounts` ("Disable 25 skills on 8 harnesses — 80 global deployments are removed and kept disabled; 12 project
-  deployments for these skills are disabled too. Updates will not re-add them."), a `muted-foreground` second line for
-  what changes nothing. Deploy to harnesses carries its harness pick (a two-column checkbox FieldSet) and the counts
+- **Count-bearing confirmation** (`confirmCount`): ConfirmDialog, focus on Cancel, its sentences from `bulkCounts`
+  (`disableConfirmLines` / `enableConfirmLines`, BACKLOG #73): first what changes ("Removes 80 global deployments from
+  8 harnesses. Turns off 12 project deployments." · "Redeploys 80 global deployments on 8 harnesses and 12 project
+  deployments."; a zero says what it means — "None of these skills is deployed to a project."), then in
+  `muted-foreground` what follows from it ("The skills stay in your library, switched off: updates won't redeploy them
+  until you enable them.") and what changes nothing. Deploy to harnesses carries its harness pick (a two-column checkbox FieldSet) and the counts
   follow the pick.
 - **Row switch**: Disable is never asked; Enable that will deploy the skill to harnesses again asks in a quiet anchored
   Popover ("Enable retired-playbook and deploy it to 2 harnesses again?" · Not now `ghost` · Enable `outline accent`).

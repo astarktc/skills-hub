@@ -29,6 +29,10 @@ const kbd =
  * project pick, Remove the Delete dialog). The rows' own controls stay the
  * row's. It is drawn at the foot (`order-last`) but comes first in the DOM,
  * so its verbs are one Tab from the filter bar and read before the rows.
+ * It wears the selection's own mark — the `ring` edge a selected row has on
+ * its leading side, and a `ring` top edge — so the bar at the window's foot
+ * reads as the selection's (BACKLOG #72: it was found only after three
+ * other paths).
  */
 const BulkRail = ({ selected, actions, blockedReason, onClear, t }: BulkRailProps) => {
   const { run } = actions;
@@ -45,7 +49,7 @@ const BulkRail = ({ selected, actions, blockedReason, onClear, t }: BulkRailProp
       role="group"
       aria-label={t("bulk.rail")}
       data-bulk-rail=""
-      className="order-last flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-t border-border-strong bg-card px-4 py-2 transition-[opacity,translate] duration-(--motion-fast) ease-out starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none"
+      className="relative order-last flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-t border-ring bg-card px-4 py-2 transition-[opacity,translate] duration-(--motion-fast) ease-out before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-ring starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none"
     >
       <p role="status" className="m-0 flex min-w-0 items-center gap-2 text-sm">
         <span className="font-semibold text-foreground tabular-nums">{t("bulk.selected", { count: selected.length })}</span>
