@@ -13,17 +13,38 @@ import type { DuplicateBehaviour, ReaderHarnessDto, ToolInfoDto } from "../compo
 
 type Translate = (key: string, opts?: Record<string, unknown>) => string;
 
-/** One cross-read: `reader` also reads `other`'s deploy dir, so a skill deployed to both shows up twice in it. */
-export type DuplicatePair = { reader: string; other: string; behaviour: DuplicateBehaviour };
+/**
+ * One cross-read: `reader` also reads `other`'s deploy dir, so a skill deployed to both shows up twice in it.
+ * `folder` (present only when `other` shares its skills dir with another selected harness) is every selected
+ * harness deploying to that one folder, `other` included — the backend's `shared_with`, never re-derived.
+ */
+export type DuplicatePair = { reader: string; other: string; behaviour: DuplicateBehaviour; folder?: string[] };
 
 /** Every cross-read pair whose two harnesses are both in `selected`, in catalog then backend order. */
 export function duplicatePairs(tools: readonly ToolInfoDto[], selected: ReadonlySet<string>): DuplicatePair[] {
+  const sharedWith = new Map(tools.map((tool) => [tool.key, tool.shared_with]));
   return tools.flatMap((tool) => {
     const reads = tool.duplicate_readers;
     if (!reads || !selected.has(tool.key)) return [];
     return reads.keys
       .filter((other) => selected.has(other))
-      .map((other) => ({ reader: tool.key, other, behaviour: reads.behaviour }));
+      .map((other) => {
+        const folder = (sharedWith.get(other) ?? [other]).filter((key) => selected.has(key));
+        const pair: DuplicatePair = { reader: tool.key, other, behaviour: reads.behaviour };
+        if (folder.length > 1) pair.folder = folder;
+        return pair;
+      });
+  });
+}
+
+/** The reader's pairs, one per folder: selected harnesses sharing one skills dir are one folder, named once. */
+function byFolder(pairs: readonly DuplicatePair[]): DuplicatePair[] {
+  const seen = new Set<string>();
+  return pairs.filter((pair) => {
+    const id = (pair.folder ?? [pair.other]).slice().sort().join("\u0000");
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
   });
 }
 
@@ -95,14 +116,17 @@ export function duplicateWarning(
   t: Translate,
 ): string | null {
   const sentences: string[] = [];
-  const reads = pairs.filter((pair) => pair.reader === subject);
+  const reads = byFolder(pairs.filter((pair) => pair.reader === subject));
   if (reads.length > 0) {
     sentences.push(
       readsSentence(
         consequenceOf(reads[0].behaviour),
         {
           reader: labelOf(subject),
-          harnesses: listOf(reads.map((pair) => labelOf(pair.other)), t),
+          harnesses: listOf(
+            reads.map((pair) => (pair.folder ?? [pair.other]).map(labelOf).join(" / ")),
+            t,
+          ),
           count: reads.length,
         },
         t,

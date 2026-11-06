@@ -1349,7 +1349,7 @@ fn every_row_restates_its_brief_read_facts() {
             "Mux → Xum",
             [Yes, U],
             ALL_UNKNOWN,
-            P::Shared,
+            P::Own,
             D::Shadows,
             &[(".xum/skills", M::Default)],
         ),

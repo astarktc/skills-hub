@@ -916,6 +916,8 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         supports_symlink: true,
         // Read facts: brief § Part 2, row "Mux → Xum".
         // VERIFIED B02:S42 (`~/.xum` > `~/.agents` > this row's legacy `~/.mux`).
+        // `precedence` is the harness's own fact (its own current dir, `~/.xum`,
+        // wins), independent of this row's legacy deploy dir — #108 moves that.
         reads: ReadFacts {
             global: ScopeReads {
                 agents: Yes,
@@ -925,7 +927,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
                 agents: Unknown,
                 claude: Unknown,
             },
-            precedence: Precedence::Shared,
+            precedence: Precedence::Own,
             duplicates: DuplicateBehaviour::Shadows,
             also_reads: &[AlsoRead {
                 dir: home(".xum/skills"),

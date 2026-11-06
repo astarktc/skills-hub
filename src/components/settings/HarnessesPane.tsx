@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { ChevronRight, TriangleAlert } from "lucide-react";
 import type { TFunction } from "i18next";
 import { Badge } from "@/components/ui/badge";
@@ -224,6 +224,8 @@ function HarnessRow({
   t: TFunction;
 }) {
   const detailsId = useId();
+  /** The row's disclosure: where focus goes when Remove (which then unmounts) is pressed. */
+  const disclosureRef = useRef<HTMLButtonElement>(null);
   const detected = tool.installed;
   const stray = selected && !detected;
   const placement = tool.placement;
@@ -234,6 +236,7 @@ function HarnessRow({
         <Button
           variant="ghost"
           className="min-w-0 flex-1 justify-start"
+          ref={disclosureRef}
           aria-expanded={expanded}
           aria-controls={detailsId}
           onClick={onToggleExpanded}
@@ -316,7 +319,11 @@ function HarnessRow({
               <p className="m-0 text-xs text-muted-foreground">{t("settingsDialog.harnesses.undetectedSelected")}</p>
               <Button
                 size="sm"
-                onClick={() => onSelectedChange(false)}
+                onClick={() => {
+                  // Remove unmounts itself once the row is no longer selected: hand focus to the row first.
+                  disclosureRef.current?.focus();
+                  onSelectedChange(false);
+                }}
                 disabled={blockedReason !== null}
                 focusableWhenDisabled
                 title={blockedReason ?? undefined}

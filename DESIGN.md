@@ -1285,7 +1285,8 @@ tokens; two variants were added (Dialog `size="settings"`, Tabs `variant="pane"`
   `supports_symlink`: a link, a copy where the system refuses links — or a copy) · Detected by `~/…`. A **selected but
   undetected** harness explains itself — "Selected, but not detected on this computer: every deploy skips it, and the
   Deployments strip shows it hollow. Remove it unless you are about to install it." — with **Remove from selection**
-  (`outline sm`); the row stays put (the list splits by detection, never by selection), so focus stays on it.
+  (`outline sm`); the row stays put (the list splits by detection, never by selection), and since the button
+  itself goes once the row is deselected, pressing it hands focus to the row's disclosure first (never `<body>`).
   The placement facts are the backend's (`ToolInfoDto.placement`, global list only), never re-derived. Below, its own
   group **Import scan**: "Only scan for existing skills within selected harnesses" (Checkbox) — "Which harness folders
   Import reviews for skills that are already there. It deploys nothing."

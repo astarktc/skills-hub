@@ -129,6 +129,23 @@ describe("duplicateWarning", () => {
     );
   });
 
+  it("names one folder once when two selected harnesses share it (backend shared_with)", () => {
+    // Crush reads Amp's folder, which Kimi deploys to too: one folder, not two.
+    const shared: ToolInfoDto[] = [
+      tool("crush", true, { keys: ["amp", "kimi"], behaviour: "unknown" }),
+      { ...tool("amp", true), shared_with: ["amp", "kimi"] },
+      { ...tool("kimi", true), shared_with: ["amp", "kimi"] },
+    ];
+    const names = (key: string) => ({ crush: "Crush", amp: "Amp", kimi: "Kimi" })[key] ?? key;
+    const line = duplicateWarning(duplicatePairs(shared, new Set(["crush", "amp", "kimi"])), "crush", names, t);
+    expect(line).toBe(
+      `settingsDialog.harnesses.duplicates.reads.showsTwice ${JSON.stringify({ reader: "Crush", harnesses: "Amp / Kimi", count: 1 })}`,
+    );
+    // Only Kimi selected beside Crush: the folder is named by the one selected sharer.
+    const lone = duplicateWarning(duplicatePairs(shared, new Set(["crush", "kimi"])), "crush", names, t);
+    expect(lone).toContain('"harnesses":"Kimi"');
+  });
+
   it("is null without a pair involving the harness", () => {
     const pairs = duplicatePairs(TOOLS, new Set(["cursor", "claude_code"]));
     expect(duplicateWarning(pairs, "codex", labelOf, t)).toBeNull();
