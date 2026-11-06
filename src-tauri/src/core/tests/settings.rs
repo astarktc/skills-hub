@@ -1286,6 +1286,7 @@ fn switch_library_flips_records_and_the_setting_together() {
         &store,
         &[("s1".to_string(), new_copy.to_string_lossy().to_string())],
         &new_root,
+        "{\"journal\":1}",
         now,
     )
     .unwrap();
@@ -1294,6 +1295,18 @@ fn switch_library_flips_records_and_the_setting_together() {
     assert_eq!(PathBuf::from(&record.central_path), new_copy);
     assert_eq!(record.updated_at, now);
     assert_eq!(resolve_central_repo_path(&store, &home).unwrap(), new_root);
+    assert_eq!(
+        crate::core::settings::pending_library_move(&store)
+            .unwrap()
+            .as_deref(),
+        Some("{\"journal\":1}"),
+        "the journal lands with the switch"
+    );
+    crate::core::settings::finish_library_move(&store).unwrap();
+    assert_eq!(
+        crate::core::settings::pending_library_move(&store).unwrap(),
+        None
+    );
 }
 
 /// A switch naming a record that is not there changes nothing at all.
@@ -1310,6 +1323,7 @@ fn switch_library_is_all_or_nothing() {
             new_root.join("ghost").to_string_lossy().to_string(),
         )],
         &new_root,
+        "{}",
         5,
     );
 
@@ -1318,6 +1332,11 @@ fn switch_library_is_all_or_nothing() {
         resolve_central_repo_path(&store, &home).unwrap(),
         home.join(".skillshub"),
         "the setting did not flip"
+    );
+    assert_eq!(
+        crate::core::settings::pending_library_move(&store).unwrap(),
+        None,
+        "no journal without a switch"
     );
 }
 

@@ -45,6 +45,9 @@ mod keys {
     pub const UI_ZOOM_LEVEL: &str = "ui_zoom_level";
     pub const FEATURED_SKILLS_CACHE: &str = "featured_skills_cache";
     pub const INSTALLED_TOOLS: &str = "installed_tools_v1";
+    /// Move Library folder's journal of a switched move whose Re-point and
+    /// Clean have not settled yet (`core::library_move` owns its format).
+    pub const LIBRARY_MOVE_JOURNAL: &str = "library_move_journal";
 }
 
 /// Default central repo dir name under `fallback_root`.
@@ -482,19 +485,36 @@ pub fn migrate_github_token_to_credential_store(
 
 /// Move Library folder's switch — the one writer of the Library folder
 /// setting: in one transaction, point every moved skill (`(skill_id, new
-/// central_path)`) at its new copy and record `new_root` as the configured
-/// central repo. Either all of it lands or none of it does.
+/// central_path)`) at its new copy, record `new_root` as the configured
+/// central repo, and record `journal` — what Re-point and Clean still owe —
+/// so a crash after the switch is finished, never forgotten. Either all of
+/// it lands or none of it does.
 pub(crate) fn switch_library(
     store: &SkillStore,
     moves: &[(String, String)],
     new_root: &Path,
+    journal: &str,
     now: i64,
 ) -> Result<()> {
     store.switch_library_records(
         moves,
-        (keys::CENTRAL_REPO_PATH, new_root.to_string_lossy().as_ref()),
+        &[
+            (keys::CENTRAL_REPO_PATH, new_root.to_string_lossy().as_ref()),
+            (keys::LIBRARY_MOVE_JOURNAL, journal),
+        ],
         now,
     )
+}
+
+/// The journal of a switched Library move whose Re-point and Clean have not
+/// settled (see [`switch_library`]), if any.
+pub(crate) fn pending_library_move(store: &SkillStore) -> Result<Option<String>> {
+    store.get_setting(keys::LIBRARY_MOVE_JOURNAL)
+}
+
+/// The switched Library move's Re-point and Clean settled: drop its journal.
+pub(crate) fn finish_library_move(store: &SkillStore) -> Result<()> {
+    store.delete_setting(keys::LIBRARY_MOVE_JOURNAL)
 }
 
 // ---------------------------------------------------------------------------

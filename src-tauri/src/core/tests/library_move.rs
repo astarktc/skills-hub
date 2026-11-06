@@ -1019,3 +1019,142 @@ fn an_old_copy_another_skills_deployment_reaches_is_kept() {
         .collect();
     assert_eq!(kept, vec![(alpha_old, Some(alpha))]);
 }
+
+/// A move interrupted — as a crash would — at the first progress step of
+/// `phase` numbered `at`. Answers whether it was interrupted.
+fn crash_move(f: &Fixture, dest: &Path, phase: crate::core::library_move::LibraryMovePhase, at: u32) -> bool {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        move_library(&f.store, &f.paths, dest, NOW + 1, |step| {
+            if step.phase == phase && step.done == at {
+                panic!("simulated crash at {phase:?} {at}");
+            }
+        })
+    }))
+    .is_err()
+}
+
+/// The paths the command seam resolves after a switch: the configured
+/// Library is the setting's value now.
+fn paths_now(f: &Fixture) -> InstallerPaths {
+    InstallerPaths {
+        home: f.paths.home.clone(),
+        central_dir: resolve_central_repo_path(&f.store, f.home()).unwrap(),
+        cache_dir: f.paths.cache_dir.clone(),
+    }
+}
+
+/// A library of two skills, each deployed by link to Claude Code and one to
+/// a project: the shape every crash test interrupts.
+fn crash_fixture() -> (Fixture, Vec<(String, PathBuf, PathBuf)>, PathBuf) {
+    let mut f = fixture(&["claude_code"]);
+    let alpha = f.install("alpha");
+    let beta = f.install("beta");
+    f.sync(&alpha, &["claude_code"]);
+    f.sync(&beta, &["claude_code"]);
+    let project = f.project("p1", "claude_code");
+    f.assign("p1", &alpha);
+    let skills = [alpha, beta]
+        .into_iter()
+        .map(|id| {
+            let old = f.central(&id);
+            let name = f.store.get_skill_by_id(&id).unwrap().unwrap().name;
+            let link = f.home().join(".claude/skills").join(name);
+            (id, old, link)
+        })
+        .collect();
+    (f, skills, project)
+}
+
+/// Review #4 (the reviewer's probe): a crash after the switch used to lose
+/// which old copies the links still reach, so a move to a third folder read
+/// them as `not_ours` and harnesses kept reading stale bytes. The next move
+/// first finishes the interrupted one.
+#[test]
+fn crash_after_switch_is_recovered_by_the_next_move() {
+    use crate::core::library_move::LibraryMovePhase;
+    let (f, skills, project) = crash_fixture();
+    assert!(crash_move(&f, &f.dest(), LibraryMovePhase::Relinking, 0));
+    let third = f.dir.path().join("third-library");
+
+    let report = move_library(&f.store, &paths_now(&f), &third, NOW + 2, |_| {}).expect("move");
+
+    assert!(report.deployments.iter().all(|d| matches!(d.status, RelinkStatus::Relinked { .. })));
+    for (id, old, link) in &skills {
+        let now = f.central(id);
+        assert!(now.starts_with(&third), "{id} is in the third Library");
+        assert!(resolves_to(link, &now), "{link:?} follows the Library");
+        assert!(!old.exists(), "the first old copy was cleaned");
+    }
+    assert!(resolves_to(&project.join(".claude/skills/alpha"), &f.central(&skills[0].0)));
+}
+
+/// Review #4: a crash at any boundary after the switch is finished by the
+/// startup resume — every link follows the Library, every old copy is
+/// cleaned, nothing reads as `not_ours` — and the journal is dropped.
+#[test]
+fn a_crash_after_the_switch_is_finished_by_the_resume_at_every_boundary() {
+    use crate::core::library_move::{resume_library_move, test_seams, LibraryMovePhase};
+    let boundaries: [(&str, Option<(LibraryMovePhase, u32)>); 5] = [
+        ("before any re-point", Some((LibraryMovePhase::Relinking, 0))),
+        ("mid re-point", Some((LibraryMovePhase::Relinking, 1))),
+        ("before any clean", Some((LibraryMovePhase::Cleaning, 0))),
+        ("mid clean", Some((LibraryMovePhase::Cleaning, 1))),
+        ("before the journal is dropped", None),
+    ];
+    for (boundary, at) in boundaries {
+        let (f, skills, project) = crash_fixture();
+        let crashed = match at {
+            Some((phase, done)) => crash_move(&f, &f.dest(), phase, done),
+            None => {
+                test_seams::crash_before_journal_clear();
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f.run())).is_err()
+            }
+        };
+        assert!(crashed, "{boundary}: interrupted");
+        for (id, _, _) in &skills {
+            assert!(f.central(id).starts_with(f.dest()), "{boundary}: switched");
+        }
+
+        let report = resume_library_move(&f.store, NOW + 2)
+            .expect("resume")
+            .unwrap_or_else(|| panic!("{boundary}: a move is pending"));
+
+        for d in &report.deployments {
+            assert!(
+                matches!(d.status, RelinkStatus::Relinked { .. }),
+                "{boundary}: {:?} {:?}",
+                d.path,
+                d.status
+            );
+        }
+        for (id, old, link) in &skills {
+            assert!(resolves_to(link, &f.central(id)), "{boundary}: {link:?} re-pointed");
+            assert!(!old.exists(), "{boundary}: {old:?} cleaned");
+        }
+        assert!(resolves_to(
+            &project.join(".claude/skills/alpha"),
+            &f.central(&skills[0].0)
+        ));
+        assert!(
+            resume_library_move(&f.store, NOW + 3).unwrap().is_none(),
+            "{boundary}: the journal was dropped"
+        );
+    }
+}
+
+/// A crash before the switch leaves the Library as it was and nothing to
+/// resume: at most orphan copies in the destination.
+#[test]
+fn a_crash_before_the_switch_leaves_the_library_as_it_was() {
+    use crate::core::library_move::{resume_library_move, LibraryMovePhase};
+    let (f, skills, _) = crash_fixture();
+    let setting = resolve_central_repo_path(&f.store, f.home()).unwrap();
+    assert!(crash_move(&f, &f.dest(), LibraryMovePhase::Copying, 1));
+
+    assert!(resume_library_move(&f.store, NOW + 2).unwrap().is_none());
+    for (id, old, link) in &skills {
+        assert_eq!(&f.central(id), old);
+        assert!(resolves_to(link, old));
+    }
+    assert_eq!(resolve_central_repo_path(&f.store, f.home()).unwrap(), setting);
+}

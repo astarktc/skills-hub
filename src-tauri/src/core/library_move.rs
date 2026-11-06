@@ -34,10 +34,15 @@
 //! record keeps its old path.
 //!
 //! Crash safety: a crash before the switch leaves orphan copies in the
-//! destination and the Library untouched; after it, old copies the next
-//! clean would have removed — duplicates, never a missing skill. A link left
-//! pointing at an old copy still resolves, because that copy stays until
-//! nothing deployed reaches it.
+//! destination and the Library untouched. The switch's own transaction also
+//! records a **journal** — old and new copy per moved skill, both Library
+//! folders — so a crash after it is finished, never forgotten:
+//! [`resume_library_move`] (run at startup, and first thing by every
+//! [`move_library`]) re-runs Re-point and Clean from the journal — a link
+//! reaching a journaled old copy is ours, one already re-pointed is re-made
+//! into the same new copy, an old copy already removed is absent — and drops
+//! the journal once both settle. Until then a link left pointing at an old
+//! copy still resolves: duplicates, never a missing skill.
 //!
 //! Core never resolves roots: the caller passes `InstallerPaths` (home, the
 //! configured central repo, the app cache dir).
@@ -298,6 +303,9 @@ pub fn preview_library_move(
 /// Move the Library (`paths.central_dir`) to `dest`. See the module docs for
 /// the phases. A refusal or a copy failure is an error and changes nothing;
 /// from the switch on, per-Deployment and per-copy outcomes are report data.
+/// A move interrupted after its switch is finished first (see
+/// [`resume_library_move`]); `paths.central_dir` is then the Library it
+/// switched to.
 ///
 /// Mutation entry point: serialised against every other Sync-target
 /// mutation.
@@ -309,6 +317,9 @@ pub fn move_library(
     mut on_progress: impl FnMut(LibraryMoveProgress),
 ) -> Result<LibraryMoveReport> {
     mutation_guard::serialized(|| {
+        if let Some(resumed) = resume_unlocked(store, now, &mut on_progress)? {
+            log_resumed(&resumed);
+        }
         let skills = store.list_skills()?;
         admit(store, paths, &skills, dest, Probe::Write)?;
 
@@ -320,15 +331,127 @@ pub fn move_library(
             .iter()
             .map(|m| (m.skill.id.clone(), m.new.to_string_lossy().into_owned()))
             .collect();
-        if let Err(err) = settings::switch_library(store, &switch, dest, now) {
+        let journal = Journal {
+            from: paths.central_dir.to_string_lossy().into_owned(),
+            to: dest.to_string_lossy().into_owned(),
+            moves: moved
+                .iter()
+                .map(|m| JournaledMove {
+                    skill_id: m.skill.id.clone(),
+                    old: m.old.to_string_lossy().into_owned(),
+                    new: m.new.to_string_lossy().into_owned(),
+                })
+                .collect(),
+        };
+        let switched = serde_json::to_string(&journal)
+            .map_err(anyhow::Error::from)
+            .and_then(|journal| settings::switch_library(store, &switch, dest, &journal, now));
+        if let Err(err) = switched {
             rollback(store, paths, dest, moved.iter().map(|m| m.new.as_path()));
             return Err(err);
         }
 
-        let deployments = relink_phase(store, dest, &moved, now, &mut on_progress)?;
-        let left_behind = clean_phase(store, &paths.central_dir, dest, &moved, &mut on_progress)?;
+        let mut report = settle(store, &paths.central_dir, dest, &moved, now, &mut on_progress)?;
+        report.skills.extend(kept.into_iter().map(|(skill, reason)| SkillMoveOutcome {
+            skill_id: skill.id,
+            name: skill.name,
+            status: SkillMoveStatus::Kept { reason },
+        }));
+        report.skills.extend(missing.into_iter().map(|skill| SkillMoveOutcome {
+            skill_id: skill.id,
+            name: skill.name,
+            status: SkillMoveStatus::Skipped {
+                reason: SkillMoveSkip::Missing,
+            },
+        }));
+        Ok(report)
+    })
+}
 
-        let mut outcomes: Vec<SkillMoveOutcome> = moved
+/// Finish a Library move a crash interrupted after its switch: Re-point and
+/// Clean every skill its journal names (idempotent — a link already
+/// re-pointed is re-made into the same copy, an old copy already removed is
+/// absent), then drop the journal. `None` when no move is pending. Run once
+/// at startup, before anything else can mutate; [`move_library`] also runs
+/// it first.
+///
+/// Mutation entry point: serialised against every other Sync-target
+/// mutation.
+pub fn resume_library_move(store: &SkillStore, now: i64) -> Result<Option<LibraryMoveReport>> {
+    mutation_guard::serialized(|| resume_unlocked(store, now, &mut |_| {}))
+}
+
+/// What a switched move still owes: the Library folders on either side and,
+/// per moved skill, its old and new copy. Written in the switch's own
+/// transaction (`settings::switch_library`), dropped once Re-point and Clean
+/// settle. The Re-point treats a link reaching a journaled old copy as ours.
+#[derive(Debug, Serialize, serde::Deserialize)]
+struct Journal {
+    from: String,
+    to: String,
+    moves: Vec<JournaledMove>,
+}
+
+#[derive(Debug, Serialize, serde::Deserialize)]
+struct JournaledMove {
+    skill_id: String,
+    old: String,
+    new: String,
+}
+
+fn resume_unlocked(
+    store: &SkillStore,
+    now: i64,
+    on_progress: &mut impl FnMut(LibraryMoveProgress),
+) -> Result<Option<LibraryMoveReport>> {
+    let Some(raw) = settings::pending_library_move(store)? else {
+        return Ok(None);
+    };
+    let journal: Journal = serde_json::from_str(&raw)
+        .with_context(|| "read the journal of an interrupted Library move")?;
+    let mut moved = Vec::with_capacity(journal.moves.len());
+    for entry in journal.moves {
+        // A record the journal names is still the one the switch wrote: no
+        // mutation runs before the resume. Anything else is not ours to
+        // re-point.
+        let Some(mut skill) = store.get_skill_by_id(&entry.skill_id)? else {
+            continue;
+        };
+        if skill.central_path != entry.new {
+            continue;
+        }
+        skill.central_path = entry.old.clone();
+        let old = PathBuf::from(&entry.old);
+        moved.push(Moved {
+            old_place: Place::of(&old)?,
+            skill,
+            old,
+            new: PathBuf::from(&entry.new),
+        });
+    }
+    let (from, to) = (PathBuf::from(&journal.from), PathBuf::from(&journal.to));
+    settle(store, &from, &to, &moved, now, on_progress).map(Some)
+}
+
+/// After the switch: Re-point, Clean, then drop the journal. Answers the
+/// report for `moved` (the caller adds the skills that did not move).
+fn settle(
+    store: &SkillStore,
+    old_root: &Path,
+    new_root: &Path,
+    moved: &[Moved],
+    now: i64,
+    on_progress: &mut impl FnMut(LibraryMoveProgress),
+) -> Result<LibraryMoveReport> {
+    let deployments = relink_phase(store, new_root, moved, now, on_progress)?;
+    let left_behind = clean_phase(store, old_root, new_root, moved, on_progress)?;
+    #[cfg(test)]
+    test_seams::before_journal_clear();
+    settings::finish_library_move(store)?;
+    Ok(LibraryMoveReport {
+        from: old_root.to_string_lossy().into_owned(),
+        to: new_root.to_string_lossy().into_owned(),
+        skills: moved
             .iter()
             .map(|m| SkillMoveOutcome {
                 skill_id: m.skill.id.clone(),
@@ -338,27 +461,54 @@ pub fn move_library(
                     to: m.new.to_string_lossy().into_owned(),
                 },
             })
-            .collect();
-        outcomes.extend(kept.into_iter().map(|(skill, reason)| SkillMoveOutcome {
-            skill_id: skill.id,
-            name: skill.name,
-            status: SkillMoveStatus::Kept { reason },
-        }));
-        outcomes.extend(missing.into_iter().map(|skill| SkillMoveOutcome {
-            skill_id: skill.id,
-            name: skill.name,
-            status: SkillMoveStatus::Skipped {
-                reason: SkillMoveSkip::Missing,
-            },
-        }));
-        Ok(LibraryMoveReport {
-            from: paths.central_dir.to_string_lossy().into_owned(),
-            to: dest.to_string_lossy().into_owned(),
-            skills: outcomes,
-            deployments,
-            left_behind,
-        })
+            .collect(),
+        deployments,
+        left_behind,
     })
+}
+
+fn log_resumed(report: &LibraryMoveReport) {
+    let relinked = report
+        .deployments
+        .iter()
+        .filter(|d| matches!(d.status, RelinkStatus::Relinked { .. }))
+        .count();
+    let failed = report
+        .deployments
+        .iter()
+        .filter(|d| matches!(d.status, RelinkStatus::Failed { .. }))
+        .count();
+    log::info!(
+        "[library move] finished an interrupted move from {} to {}: {} skill(s), {} link(s) re-pointed, {} failed, {} item(s) left behind",
+        report.from,
+        report.to,
+        report.skills.len(),
+        relinked,
+        failed,
+        report.left_behind.len()
+    );
+}
+
+/// Test seams: interrupt a move where no progress step marks the boundary.
+#[cfg(test)]
+pub(crate) mod test_seams {
+    use std::cell::Cell;
+
+    thread_local! {
+        static CRASH_BEFORE_JOURNAL_CLEAR: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// The next settle on this thread panics — as a crash would — after
+    /// Clean and before its journal is dropped.
+    pub(crate) fn crash_before_journal_clear() {
+        CRASH_BEFORE_JOURNAL_CLEAR.with(|cell| cell.set(true));
+    }
+
+    pub(super) fn before_journal_clear() {
+        if CRASH_BEFORE_JOURNAL_CLEAR.with(|cell| cell.replace(false)) {
+            panic!("simulated crash before the journal is dropped");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -926,8 +1076,9 @@ fn same_file_bytes(a: &Path, b: &Path) -> Result<bool> {
 
 /// What sits at a Deployment's path, against the skill's old copy.
 enum Occupant {
-    /// A link (a junction counts) that resolves to the old copy.
-    LinkToOld,
+    /// A link (a junction counts) that resolves to the old copy — or to the
+    /// new one, already re-pointed before a crash: re-made into it again.
+    Ours,
     /// A real folder: a copy-mode Deployment.
     Copy,
     /// Anything else: nothing there, a link elsewhere, or a real folder
@@ -935,16 +1086,18 @@ enum Occupant {
     NotOurs,
 }
 
-fn occupant(path: &Path, old_place: &Place) -> Result<Occupant> {
+fn occupant(path: &Path, old_place: &Place, new_place: &Place) -> Result<Occupant> {
     let meta = match std::fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Occupant::NotOurs),
         Err(err) => return Err(err.into()),
     };
     // Physically, by identity: a link that dangles reaches nothing.
-    let reaches_old = Place::of(path)?.same(old_place);
-    Ok(match (meta.file_type().is_symlink(), reaches_old) {
-        (true, true) => Occupant::LinkToOld,
+    let at = Place::of(path)?;
+    let reaches_old = at.same(old_place);
+    let reaches_new = at.same(new_place);
+    Ok(match (meta.file_type().is_symlink(), reaches_old || reaches_new) {
+        (true, true) => Occupant::Ours,
         (false, false) => Occupant::Copy,
         _ => Occupant::NotOurs,
     })
@@ -1108,10 +1261,10 @@ fn relink_one(
     now: i64,
 ) -> Result<RelinkStatus> {
     let attempt = (|| -> Result<Option<SyncOutcome>> {
-        match occupant(path, &m.old_place)? {
+        match occupant(path, &m.old_place, &Place::of(&m.new)?)? {
             Occupant::Copy => return Ok(None),
             Occupant::NotOurs => anyhow::bail!(NotOurs),
-            Occupant::LinkToOld => {}
+            Occupant::Ours => {}
         }
         let adapter: &ToolAdapter = adapter_by_key(tool).ok_or_else(|| {
             anyhow::anyhow!(SignalError::UnknownTool {

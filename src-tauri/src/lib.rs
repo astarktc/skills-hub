@@ -143,6 +143,21 @@ pub fn run() {
                 ),
             }
 
+            // Finish a Move Library folder that a crash interrupted after its
+            // switch (its journal is in the database): re-point every link the
+            // journal's old copies still hold and clean them, before any other
+            // action can run. Serialised like every Sync-target mutation; no
+            // journal, no work.
+            match core::library_move::resume_library_move(&store, core::clock::now_ms()) {
+                Ok(None) => {}
+                Ok(Some(_)) => log::info!("finished an interrupted Library move"),
+                Err(err) => log::warn!(
+                    "finishing an interrupted Library move failed; retried next launch \
+                     or by the next move: {:#}",
+                    err
+                ),
+            }
+
             // The central repo must exist before any install/sync flow runs.
             // This is app setup, not a getter side effect: `get_settings`
             // only reads.

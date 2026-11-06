@@ -684,6 +684,15 @@ impl SkillStore {
     /// leaves the marker, so [`Self::finish_pending_secure_cleanup`] — run at
     /// startup and by every token Save/Remove — completes it later even
     /// though the row is gone. Plaintext is never restored to obtain a retry.
+    /// Delete a settings row that holds no secret (a secret goes through
+    /// [`Self::delete_setting_securely`]).
+    pub(super) fn delete_setting(&self, key: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute("DELETE FROM settings WHERE key = ?1", params![key])?;
+            Ok(())
+        })
+    }
+
     pub(super) fn delete_setting_securely(&self, key: &str) -> Result<()> {
         self.with_conn(|conn| {
             // Per connection; set before the transaction so it is in force
@@ -901,13 +910,13 @@ impl SkillStore {
 
     /// Move Library folder's switch: in **one transaction**, point every
     /// moved skill (`(skill_id, new central_path)`) at its new copy and write
-    /// the settings row `setting` (`(key, value)` — the key is
+    /// the settings rows `settings` (`(key, value)` — each key is
     /// `core::settings`'s to spell). Either everything flips or nothing does.
     /// Raw adapter; `settings::switch_library` is its only caller.
     pub(super) fn switch_library_records(
         &self,
         moves: &[(String, String)],
-        setting: (&str, &str),
+        settings: &[(&str, &str)],
         updated_at: i64,
     ) -> Result<()> {
         self.with_conn(|conn| {
@@ -921,11 +930,13 @@ impl SkillStore {
                     anyhow::bail!("skill {skill_id} vanished during the library switch");
                 }
             }
-            tx.execute(
-                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+            for (key, value) in settings {
+                tx.execute(
+                    "INSERT INTO settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                params![setting.0, setting.1],
-            )?;
+                    params![key, value],
+                )?;
+            }
             tx.commit()?;
             Ok(())
         })
