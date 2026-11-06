@@ -34,7 +34,7 @@ vi.mock("../lib/platform", () => ({
 import { toast } from "sonner";
 import { invokeTauri, type CommandName } from "../lib/tauri";
 import * as folds from "../lib/reportOutcome";
-import { useSkillActions, RELOAD_ON_THROW, type SkillVerb } from "./useSkillActions";
+import { useSkillActions, type SkillVerb } from "./useSkillActions";
 import { useSkillLibrary } from "./useSkillLibrary";
 import { useStatusReporter } from "./useStatusReporter";
 import { useSurfaceState } from "./useSurfaceState";
@@ -214,39 +214,51 @@ type Row = {
   reaches: CommandName | "syncSkillsToTools" | "enableSkillTargets" | "assignToProject" | "unassignFromProject";
   /** Whether the catalog is re-read after a settled run (vs. replaced from the response). */
   reloadsOnSuccess: boolean;
+  /**
+   * Whether a thrown request re-reads the catalog (it may have settled rows
+   * first). Written out here, never read from the code's own
+   * `RELOAD_ON_THROW`: the table is the specification the door is held to.
+   * A Delete never throws as a whole — a thrown skill is a settlement of its
+   * run, which folds and reloads like any Delete.
+   */
+  reloadsOnThrow: boolean;
 };
 
 const VERBS: Row[] = [
-  { name: "sync to the effective targets", verb: "syncToTargets", selection: "one", opts: { confirmed: true }, fold: "syncOutcome", reaches: "syncSkillsToTools", reloadsOnSuccess: true },
-  { name: "sync one pair (pill)", verb: "syncToTargets", selection: "one", opts: { tool: "cursor" }, fold: "syncOutcome", reaches: "syncSkillsToTools", reloadsOnSuccess: true },
-  { name: "retry a failed first sync", verb: "retry", selection: "one", prepare: (s) => { s[0].targets[0] = { ...s[0].targets[0], status: "error", synced_at: null }; }, fold: "syncOutcome", reaches: "syncSkillsToTools", reloadsOnSuccess: true },
-  { name: "disable a skill", verb: "disable", selection: "one", fold: "removalOutcome", reaches: "disableSkillTargets", reloadsOnSuccess: true },
-  { name: "disable a pair", verb: "disable", selection: "one", opts: { tool: "claude" }, fold: "removalOutcome", reaches: "disableSkillTargets", reloadsOnSuccess: true },
-  { name: "disable the library", verb: "disable", selection: "all", opts: { confirmed: true }, fold: "removalOutcome", reaches: "disableSkillTargets", reloadsOnSuccess: true },
-  { name: "enable a skill", verb: "enable", selection: "one", fold: "enableOutcome", reaches: "enableSkillTargets", reloadsOnSuccess: true },
-  { name: "update one", verb: "update", selection: "one", fold: "refreshOutcome", reaches: "updateManagedSkill", reloadsOnSuccess: false },
-  { name: "refresh all", verb: "update", selection: "all", opts: { confirmed: true }, fold: "refreshOutcome", reaches: "refreshManagedSkills", reloadsOnSuccess: true },
-  { name: "restore", verb: "restore", selection: "one", fold: "refreshOutcome", reaches: "updateManagedSkill", reloadsOnSuccess: false },
-  { name: "re-point", verb: "repoint", selection: "one", opts: { target: { kind: "git", url: " https://github.com/o/r " } }, fold: "refreshOutcome", reaches: "repointSkillSource", reloadsOnSuccess: false },
-  { name: "delete (confirmed)", verb: "delete", selection: "one", opts: { confirmed: true }, fold: "deleteOutcome", reaches: "deleteManagedSkill", reloadsOnSuccess: true },
-  { name: "edit invocation", verb: "editInvocation", selection: "one", opts: { mode: "user-only" }, fold: "invocationEditOutcome", reaches: "setSkillInvocationOverride", reloadsOnSuccess: false },
-  { name: "assign to a project", verb: "assignToProject", selection: "two", opts: { projectId: "p1" }, fold: "projectSyncOutcome", reaches: "assignToProject", reloadsOnSuccess: false },
-  { name: "unassign from a project", verb: "unassignFromProject", selection: "two", opts: { projectId: "p1" }, fold: "removalOutcome", reaches: "unassignFromProject", reloadsOnSuccess: false },
-  { name: "deploy a group", verb: "deployGroup", selection: "two", fold: "syncOutcome", reaches: "syncSkillsToTools", reloadsOnSuccess: true },
+  { name: "sync to the effective targets", verb: "syncToTargets", selection: "one", opts: { confirmed: true }, fold: "syncOutcome", reaches: "syncSkillsToTools", reloadsOnSuccess: true, reloadsOnThrow: true },
+  { name: "sync one pair (pill)", verb: "syncToTargets", selection: "one", opts: { tool: "cursor" }, fold: "syncOutcome", reaches: "syncSkillsToTools", reloadsOnSuccess: true, reloadsOnThrow: true },
+  { name: "retry a failed first sync", verb: "retry", selection: "one", prepare: (s) => { s[0].targets[0] = { ...s[0].targets[0], status: "error", synced_at: null }; }, fold: "syncOutcome", reaches: "syncSkillsToTools", reloadsOnSuccess: true, reloadsOnThrow: true },
+  { name: "disable a skill", verb: "disable", selection: "one", fold: "removalOutcome", reaches: "disableSkillTargets", reloadsOnSuccess: true, reloadsOnThrow: false },
+  { name: "disable a pair", verb: "disable", selection: "one", opts: { tool: "claude" }, fold: "removalOutcome", reaches: "disableSkillTargets", reloadsOnSuccess: true, reloadsOnThrow: false },
+  { name: "disable the library", verb: "disable", selection: "all", opts: { confirmed: true }, fold: "removalOutcome", reaches: "disableSkillTargets", reloadsOnSuccess: true, reloadsOnThrow: false },
+  { name: "enable a skill", verb: "enable", selection: "one", fold: "enableOutcome", reaches: "enableSkillTargets", reloadsOnSuccess: true, reloadsOnThrow: true },
+  { name: "update one", verb: "update", selection: "one", fold: "refreshOutcome", reaches: "updateManagedSkill", reloadsOnSuccess: false, reloadsOnThrow: true },
+  { name: "refresh all", verb: "update", selection: "all", opts: { confirmed: true }, fold: "refreshOutcome", reaches: "refreshManagedSkills", reloadsOnSuccess: true, reloadsOnThrow: true },
+  { name: "restore", verb: "restore", selection: "one", fold: "refreshOutcome", reaches: "updateManagedSkill", reloadsOnSuccess: false, reloadsOnThrow: true },
+  { name: "re-point", verb: "repoint", selection: "one", opts: { target: { kind: "git", url: " https://github.com/o/r " } }, fold: "refreshOutcome", reaches: "repointSkillSource", reloadsOnSuccess: false, reloadsOnThrow: true },
+  { name: "delete (confirmed)", verb: "delete", selection: "one", opts: { confirmed: true }, fold: "deleteOutcome", reaches: "deleteManagedSkill", reloadsOnSuccess: true, reloadsOnThrow: true },
+  { name: "edit invocation", verb: "editInvocation", selection: "one", opts: { mode: "user-only" }, fold: "invocationEditOutcome", reaches: "setSkillInvocationOverride", reloadsOnSuccess: false, reloadsOnThrow: false },
+  { name: "assign to a project", verb: "assignToProject", selection: "two", opts: { projectId: "p1" }, fold: "projectSyncOutcome", reaches: "assignToProject", reloadsOnSuccess: false, reloadsOnThrow: false },
+  { name: "unassign from a project", verb: "unassignFromProject", selection: "two", opts: { projectId: "p1" }, fold: "removalOutcome", reaches: "unassignFromProject", reloadsOnSuccess: false, reloadsOnThrow: false },
+  { name: "deploy a group", verb: "deployGroup", selection: "two", fold: "syncOutcome", reaches: "syncSkillsToTools", reloadsOnSuccess: true, reloadsOnThrow: true },
 ];
 
 const pick = (row: Row, skills: ManagedSkill[]) =>
   row.selection === "all" ? ("all" as const) : row.selection === "two" ? skills : [skills[0]];
 
-const reached = (s: Setup, reaches: Row["reaches"]) => {
+/** When each call that reached the row's backend happened (vitest's global call order). */
+const reachedAt = (s: Setup, reaches: Row["reaches"]): number[] => {
   if (reaches === "syncSkillsToTools")
-    return s.sync.syncSkillsToTools.mock.calls.length + s.sync.collectSync.mock.calls.length;
+    return [...s.sync.syncSkillsToTools.mock.invocationCallOrder, ...s.sync.collectSync.mock.invocationCallOrder];
   if (reaches === "enableSkillTargets")
-    return s.sync.enableSkillTargets.mock.calls.length + s.sync.collectEnable.mock.calls.length;
-  if (reaches === "assignToProject") return s.projects.assignToProject.mock.calls.length;
-  if (reaches === "unassignFromProject") return s.projects.unassignFromProject.mock.calls.length;
-  return commands().filter((command) => command === reaches).length;
+    return [...s.sync.enableSkillTargets.mock.invocationCallOrder, ...s.sync.collectEnable.mock.invocationCallOrder];
+  if (reaches === "assignToProject") return s.projects.assignToProject.mock.invocationCallOrder;
+  if (reaches === "unassignFromProject") return s.projects.unassignFromProject.mock.invocationCallOrder;
+  return mockInvoke.mock.calls.flatMap(([command], i) =>
+    command === reaches ? [mockInvoke.mock.invocationCallOrder[i]] : [],
+  );
 };
+const reached = (s: Setup, reaches: Row["reaches"]) => reachedAt(s, reaches).length;
 
 describe("the door, verb by verb", () => {
   it.each(VERBS)("$name: reaches the backend once, settles through its fold, keeps the reload rule", async (row) => {
@@ -257,8 +269,12 @@ describe("the door, verb by verb", () => {
     await act(async () => {
       await result.current.actions.run(row.verb, pick(row, s.skills), row.opts as never);
     });
-    expect(spy).toHaveBeenCalled();
-    expect(reached(s, row.reaches)).toBeGreaterThan(0);
+    // One request, one fold, in that order: the fold settles what the
+    // backend answered, never a report it made up before the call.
+    const calls = reachedAt(s, row.reaches);
+    expect(calls).toHaveLength(1);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.invocationCallOrder[0]).toBeGreaterThan(calls[0]);
     expect(reloads() > 0).toBe(row.reloadsOnSuccess);
     // The lifecycle ended: nothing pending, nothing refused.
     expect(result.current.reporter.pending).toBeNull();
@@ -699,8 +715,59 @@ describe("a Delete answered CANCELLED (audit A4)", () => {
   });
 });
 
+/**
+ * The verbs whose reports the door passes through the one overwrite ask
+ * (D12, `settleCollisionParts`). Literal, like the table: after an ask whose
+ * retry ran, the catalog read before it is stale — the door re-reads it,
+ * then the views of the projects the retry touched, and only then folds
+ * once. (A one-batch sync goes through the sync world's asking seam, which
+ * settles its own ask.)
+ */
+const ASKING = [
+  "retry a failed first sync",
+  "update one",
+  "refresh all",
+  "restore",
+  "re-point",
+  "edit invocation",
+  "deploy a group",
+];
+
+describe("after an answered ask: retry → catalog read → refreshView → fold", () => {
+  it("the literal list names rows of the verb table", () => {
+    expect(ASKING.filter((name) => !VERBS.some((row) => row.name === name))).toEqual([]);
+  });
+
+  it.each(VERBS.filter((row) => ASKING.includes(row.name)))("$name", async (row) => {
+    const s = setup();
+    row.prepare?.(s.skills);
+    vi.mocked(s.sync.settleCollisionParts).mockImplementation((async (parts: readonly CollisionPart[]) => ({
+      parts: parts.map((part) => ({ ...part, declined: [] })),
+      retried: true,
+      projectIds: ["p1", "p2"],
+    })) as unknown as SyncOrchestration["settleCollisionParts"]);
+    const spy = vi.spyOn(folds, row.fold);
+    const { result } = await render(s);
+    await act(async () => {
+      await result.current.actions.run(row.verb, pick(row, s.skills), row.opts as never);
+    });
+    const [retry] = vi.mocked(s.sync.settleCollisionParts).mock.invocationCallOrder;
+    const reads = mockInvoke.mock.calls.flatMap(([command], i) =>
+      command === "getManagedSkills" ? [mockInvoke.mock.invocationCallOrder[i]] : [],
+    );
+    const views = s.projects.refreshView.mock.invocationCallOrder;
+    const [fold] = spy.mock.invocationCallOrder;
+    expect(retry).toBeDefined();
+    const read = reads.find((at) => at > retry);
+    expect(read).toBeDefined();
+    expect(s.projects.refreshView.mock.calls.map(([id]) => id)).toEqual(["p1", "p2"]);
+    expect(views.every((at) => at > read!)).toBe(true);
+    expect(fold).toBeGreaterThan(Math.max(...views));
+  });
+});
+
 describe("the reload rule on a thrown request", () => {
-  it.each(VERBS)("$name: reloads iff RELOAD_ON_THROW says so, and the failure is reported", async (row) => {
+  it.each(VERBS)("$name: reloads iff the table says so, and the failure is reported", async (row) => {
     const s = setup();
     row.prepare?.(s.skills);
     const failure = { code: "OTHER", message: "request failed" };
@@ -721,9 +788,7 @@ describe("the reload rule on a thrown request", () => {
     await act(async () => {
       answer = await rendered.result.current.actions.run(row.verb, pick(row, s.skills), row.opts as never);
     });
-    // A thrown skill of a Delete is a settlement, not a thrown action: the
-    // run folds and reloads like any Delete.
-    expect(reloads() > 0).toBe(row.verb === "delete" ? true : RELOAD_ON_THROW[row.verb]);
+    expect(reloads() > 0).toBe(row.reloadsOnThrow);
     if (row.verb === "repoint") {
       // Re-point's final refusal is answered to its dialog (D15, I4): shown
       // by the chosen target, never a toast over it.
