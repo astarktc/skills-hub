@@ -471,7 +471,8 @@ than re-tagging.
   removal is admitted by **physical entry identity** (canonical parent; a link leaf never resolved, any other leaf
   resolved to its real spelling; compared by device + inode on Unix, never by spelling) against the library
   (`ProtectedLibrary::new(store, central_dir)`: the **configured central repo's whole subtree** plus every recorded
-  copy), an overwrite's source (`sparing`) and the caller's `Claim`, then removed at that physical location; a refusal
+  copy), an overwrite's source (`sparing`) and the caller's `Claim`, a directory's subtree walked (links unfollowed) and
+  refused when its recursion would cross a mount (`ContainsMount`), then removed at that physical location; a refusal
   is the typed `REMOVAL_REFUSED` (BACKLOG #107). So every removal entry point takes the configured `central_dir`,
   resolved at the command seam (`resolve_central_repo_path_for_app` / `InstallerPaths::central_dir`) — core never
   derives it — and a test fixture keeps Tool and Project dirs outside it (`removal_fence::central_repo_of`). The git

@@ -159,6 +159,14 @@ describe("describeCommandError", () => {
     expect(describeCommandError({ ...refused, reason: "resolvesElsewhere" }, t)).toBe(
       'errors.removalRefusedResolvesElsewhere {"path":"/home/u/.claude/skills/alpha","resolved":"/home/u/.skillshub/alpha"}',
     );
+    expect(
+      describeCommandError(
+        { ...refused, reason: "containsMount", resolved: "/home/u/.claude/skills/alpha/attached" },
+        t,
+      ),
+    ).toBe(
+      'errors.removalRefusedContainsMount {"path":"/home/u/.claude/skills/alpha","resolved":"/home/u/.claude/skills/alpha/attached"}',
+    );
   });
 
   it("names the path and what to check for REMOVAL_PERMISSION_DENIED, keeping the I/O chain out of the copy", () => {

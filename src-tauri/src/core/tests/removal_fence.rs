@@ -6,9 +6,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{admit, admit_central_copy, Claim, Entry, Fence, OwnedDir, ProtectedLibrary};
+use super::{
+    admit, admit_central_copy, test_seams, Claim, Entry, Fence, OwnedDir, ProtectedLibrary,
+};
 use crate::core::errors::{RemovalRefusal, SignalError};
 use crate::core::skill_store::{SkillRecord, SkillStore};
+use crate::core::sync_engine::remove_path_any;
 
 fn store_with_copy(base: &Path, central: &Path) -> SkillStore {
     let store = SkillStore::new(base.join("test.db"));
@@ -350,4 +353,244 @@ fn an_absent_leaf_or_parent_is_absent() {
 fn a_relative_path_is_refused() {
     let library = ProtectedLibrary::unrecorded();
     assert!(admit(Path::new("relative/skill"), &Fence::new(&library)).is_err());
+}
+
+/// A Tool target with a nested folder and a file in it — the shape a
+/// recursive removal walks.
+fn target_with_nested(base: &Path) -> (PathBuf, PathBuf) {
+    let target = base.join("home/.claude/skills/alpha");
+    let attached = target.join("attached-library");
+    fs::create_dir_all(&attached).unwrap();
+    fs::write(target.join("SKILL.md"), "---\nname: alpha\n---\n").unwrap();
+    (target, attached)
+}
+
+fn removal_refusal(result: anyhow::Result<()>) -> RemovalRefusal {
+    let err = result.expect_err("the removal is refused");
+    match err.downcast_ref::<SignalError>() {
+        Some(SignalError::RemovalRefused { reason, .. }) => *reason,
+        _ => panic!("expected a typed refusal, got {err:#}"),
+    }
+}
+
+/// Re-check P1 (BACKLOG #107): a folder inside a Tool target that is a bind
+/// mount of the library reports the library's identity. A recursive removal
+/// of the target would cross it and delete the library's bytes, so the
+/// removal is refused before anything is deleted — the target's own files
+/// included.
+#[test]
+fn a_folder_inside_the_entry_with_the_library_identity_refuses_the_removal() {
+    let tmp = tempfile::tempdir().unwrap();
+    let central_dir = tmp.path().join("central");
+    let alpha = central_dir.join("alpha");
+    fs::create_dir_all(&alpha).unwrap();
+    fs::write(alpha.join("keep"), "library bytes").unwrap();
+    let store = store_with_copy(tmp.path(), &alpha);
+    let library = ProtectedLibrary::new(&store, &central_dir);
+    let (target, attached) = target_with_nested(tmp.path());
+
+    // The library's own root, a recorded copy, and a folder around the
+    // library — each one mounted inside the target.
+    for mounted in [central_dir.clone(), alpha.clone(), tmp.path().to_path_buf()] {
+        let _mount = test_seams::mount_identity_of(&attached, &mounted);
+
+        assert_eq!(
+            refusal(admit(&target, &Fence::new(&library))),
+            Some(RemovalRefusal::ContainsMount),
+            "{mounted:?}"
+        );
+        assert_eq!(
+            removal_refusal(remove_path_any(&target, &Fence::new(&library))),
+            RemovalRefusal::ContainsMount
+        );
+        assert!(target.join("SKILL.md").is_file(), "nothing is deleted");
+        assert!(alpha.join("keep").is_file(), "the library survives");
+    }
+
+    // Without the mount the same target is an ordinary removal.
+    remove_path_any(&target, &Fence::new(&library)).unwrap();
+    assert!(!target.exists());
+    assert!(alpha.join("keep").is_file());
+}
+
+/// A folder inside the entry that is a mount of the entry itself, or of a
+/// folder around it (the Tool's skills dir), would loop the recursion or
+/// carry it out of the entry into its siblings: refused the same way.
+#[test]
+fn a_folder_inside_the_entry_with_the_identity_of_the_entry_or_around_it_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let library = ProtectedLibrary::unrecorded();
+    let (target, attached) = target_with_nested(tmp.path());
+    let sibling = target.with_file_name("beta");
+    fs::create_dir_all(&sibling).unwrap();
+
+    for mounted in [target.clone(), target.parent().unwrap().to_path_buf()] {
+        let _mount = test_seams::mount_identity_of(&attached, &mounted);
+        assert_eq!(
+            removal_refusal(remove_path_any(&target, &Fence::new(&library))),
+            RemovalRefusal::ContainsMount,
+            "{mounted:?}"
+        );
+    }
+    assert!(sibling.is_dir());
+    assert!(target.join("SKILL.md").is_file());
+}
+
+/// Re-check P1: a folder inside the entry that sits on another device is a
+/// mounted filesystem — never part of a skill folder — so a recursive removal
+/// never reaches into it, whatever it holds.
+#[cfg(unix)]
+#[test]
+fn a_folder_inside_the_entry_on_another_device_refuses_the_removal() {
+    let tmp = tempfile::tempdir().unwrap();
+    let library = ProtectedLibrary::unrecorded();
+    let (target, attached) = target_with_nested(tmp.path());
+    let deeper = attached.join("deeper");
+    fs::create_dir_all(&deeper).unwrap();
+    fs::write(deeper.join("keep"), "another volume's bytes").unwrap();
+
+    let _mount = test_seams::mount_other_device(&deeper);
+
+    assert_eq!(
+        removal_refusal(remove_path_any(&target, &Fence::new(&library))),
+        RemovalRefusal::ContainsMount
+    );
+    assert!(deeper.join("keep").is_file());
+    assert!(target.join("SKILL.md").is_file());
+}
+
+/// The Delete settlement's own central copy is walked too: a copy holding a
+/// mount of the configured repo (or of another skill's copy) is refused
+/// before its own bytes go.
+#[test]
+fn a_central_copy_holding_a_mount_of_the_library_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let central_dir = tmp.path().join("central");
+    let alpha = central_dir.join("alpha");
+    let attached = alpha.join("attached");
+    fs::create_dir_all(&attached).unwrap();
+    fs::write(alpha.join("SKILL.md"), "---\nname: alpha\n---\n").unwrap();
+    let store = store_with_copy(tmp.path(), &alpha);
+    let library = ProtectedLibrary::new(&store, &central_dir);
+
+    let _mount = test_seams::mount_identity_of(&attached, &central_dir);
+
+    assert_eq!(
+        refusal(admit_central_copy(&alpha, "s1", &library)),
+        Some(RemovalRefusal::ContainsMount)
+    );
+    assert!(alpha.join("SKILL.md").is_file());
+}
+
+/// Linux mounts: the `/proc/self/mountinfo` rule, and real bind mounts.
+#[cfg(target_os = "linux")]
+mod linux_mounts {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    use super::{store_with_copy, target_with_nested};
+    use crate::core::errors::{RemovalRefusal, SignalError};
+    use crate::core::removal_fence::{mounts, Fence, ProtectedLibrary};
+    use crate::core::sync_engine::remove_path_any;
+
+    /// A mount point at the entry or below it is found, escaped as the
+    /// kernel writes it; one beside it or above it is not.
+    #[test]
+    fn a_mount_point_at_or_below_the_entry_is_found_in_mountinfo() {
+        let mountinfo = "\
+22 1 8:1 / / rw,relatime shared:1 - ext4 /dev/sda1 rw
+40 22 8:1 /central /home/me/.claude/skills/my\\040skill/attached rw shared:1 - ext4 /dev/sda1 rw
+41 22 0:5 / /home/me/.claude/skills/my\\040skills rw - tmpfs tmpfs rw
+";
+        let entry = Path::new("/home/me/.claude/skills/my skill");
+        assert_eq!(
+            mounts::at_or_below(mountinfo, entry),
+            Some(PathBuf::from("/home/me/.claude/skills/my skill/attached"))
+        );
+        assert_eq!(
+            mounts::at_or_below(mountinfo, Path::new("/home/me/.claude/skills/my skills")),
+            Some(PathBuf::from("/home/me/.claude/skills/my skills")),
+            "the entry itself mounted"
+        );
+        assert_eq!(
+            mounts::at_or_below(mountinfo, Path::new("/home/me/.claude/skills/beta")),
+            None
+        );
+    }
+
+    /// Unmounts on drop, so a failed assertion never leaves the test's temp
+    /// dir cleanup to recurse into the library.
+    struct BindMount(PathBuf);
+
+    impl BindMount {
+        /// `mount --bind source at`; `None` when this process may not mount.
+        fn new(source: &Path, at: &Path) -> Option<Self> {
+            let mounted = Command::new("mount")
+                .arg("--bind")
+                .arg(source)
+                .arg(at)
+                .status()
+                .is_ok_and(|status| status.success());
+            mounted.then(|| Self(at.to_path_buf()))
+        }
+    }
+
+    impl Drop for BindMount {
+        fn drop(&mut self) {
+            let _ = Command::new("umount").arg(&self.0).status();
+        }
+    }
+
+    /// Re-check P1 for real: a bind mount of the library — or of a folder
+    /// inside it — nested in a Tool target is never crossed by the target's
+    /// removal. Needs mount privileges, so it is ignored by default; run it
+    /// with `sudo -E cargo test --lib real_bind_mount -- --ignored`,
+    /// unprivileged in a user + mount namespace with
+    /// `unshare -rm cargo test --lib real_bind_mount -- --ignored`, or in a
+    /// `docker run --privileged` container. Where mounting is refused it
+    /// says so and passes.
+    #[test]
+    #[ignore = "needs mount privileges: sudo, `unshare -rm`, or a privileged container"]
+    fn a_real_bind_mount_inside_a_target_is_never_crossed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let central_dir = tmp.path().join("central");
+        let alpha = central_dir.join("alpha");
+        let scripts = alpha.join("scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        fs::write(alpha.join("keep"), "library bytes").unwrap();
+        fs::write(scripts.join("run.sh"), "echo ok").unwrap();
+        let store = store_with_copy(tmp.path(), &alpha);
+        let library = ProtectedLibrary::new(&store, &central_dir);
+        let (target, attached) = target_with_nested(tmp.path());
+
+        for source in [&central_dir, &scripts] {
+            let Some(_mount) = BindMount::new(source, &attached) else {
+                eprintln!(
+                    "skipped: this process may not bind-mount (run under sudo or unshare -rm)"
+                );
+                return;
+            };
+            match remove_path_any(&target, &Fence::new(&library)) {
+                Err(err) => assert!(
+                    matches!(
+                        err.downcast_ref::<SignalError>(),
+                        Some(SignalError::RemovalRefused {
+                            reason: RemovalRefusal::ContainsMount,
+                            ..
+                        })
+                    ),
+                    "{source:?}: {err:#}"
+                ),
+                Ok(()) => panic!("{source:?}: the removal crossed the mount"),
+            }
+            assert!(target.join("SKILL.md").is_file(), "nothing is deleted");
+            assert!(alpha.join("keep").is_file(), "the library survives");
+            assert!(scripts.join("run.sh").is_file(), "the library survives");
+        }
+
+        remove_path_any(&target, &Fence::new(&library)).unwrap();
+        assert!(!target.exists());
+        assert!(alpha.join("keep").is_file());
+    }
 }

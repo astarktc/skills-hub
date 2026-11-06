@@ -1217,7 +1217,14 @@ export type RemovalRefusal =
  *  The entry physically lies outside the directory the removal claims to
  *  act in (an aliased folder on the way leads elsewhere).
  */
-"resolvesElsewhere";
+"resolvesElsewhere" |
+/**
+ *  A folder inside the entry is a mount the recursive removal would cross
+ *  — a bind mount of the library or of a folder around the entry, another
+ *  device, or (Linux) any mount point at or below the entry; `resolved`
+ *  is that folder.
+ */
+"containsMount";
 
 export type RemovalReport = {
 	targets: RemovalTargetOutcome[],

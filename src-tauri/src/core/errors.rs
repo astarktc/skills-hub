@@ -126,11 +126,13 @@ pub enum SignalError {
     /// was refused at physical admission: the entry `path` physically names —
     /// its parent resolved through every link or junction, its leaf never —
     /// is `resolved`, which lies in the central library or outside the
-    /// directory the removal claims (`reason`). Nothing was touched. The
-    /// operator causes it by aliasing a folder on the way (a Tool's skills dir
-    /// linked onto the library, a linked cache folder) or by configuring the
-    /// central repo inside the git cache, and repairs it by replacing that
-    /// link or moving the library. Owned by `core::removal_fence`.
+    /// directory the removal claims (`reason`) — or, for `ContainsMount`,
+    /// `resolved` is the mount found inside the entry. Nothing was touched.
+    /// The operator causes it by aliasing a folder on the way (a Tool's skills
+    /// dir linked onto the library, a linked cache folder), by configuring the
+    /// central repo inside the git cache, or by mounting a folder inside a
+    /// skill folder, and repairs it by replacing that link, moving the
+    /// library or unmounting. Owned by `core::removal_fence`.
     RemovalRefused {
         path: String,
         resolved: String,
@@ -315,6 +317,11 @@ pub enum RemovalRefusal {
     /// The entry physically lies outside the directory the removal claims to
     /// act in (an aliased folder on the way leads elsewhere).
     ResolvesElsewhere,
+    /// A folder inside the entry is a mount the recursive removal would cross
+    /// — a bind mount of the library or of a folder around the entry, another
+    /// device, or (Linux) any mount point at or below the entry; `resolved`
+    /// is that folder.
+    ContainsMount,
 }
 
 /// Structured command failure crossing the IPC seam. `Deserialize` because a
