@@ -83,6 +83,19 @@ describe("useListLens", () => {
     expect(result.current.groups?.[1].skills.map((s) => s.name)).toEqual(["beta"]);
   });
 
+  // BACKLOG #72: Problems first reads the surface's rank, flat and grouped.
+  it("sorts Problems first by the surface's rank, groups by their loudest row", () => {
+    const rank: Record<string, number> = { beta: 2, delta: 1 };
+    const { result } = render({ problemRank: (row) => rank[row.name] ?? 0 });
+    act(() => result.current.setSort("issues"));
+    expect(result.current.visible.map((s) => s.name)).toEqual(["beta", "delta", "alpha", "gamma"]);
+    act(() => result.current.setGroupByRepo(true));
+    expect(result.current.groups?.map((g) => g.label)).toEqual(["solo/one", "Local", "acme/tools"]);
+    // Another sort keeps the groups' own order.
+    act(() => result.current.setSort("name"));
+    expect(result.current.groups?.map((g) => g.label)).toEqual(["acme/tools", "solo/one", "Local"]);
+  });
+
   it("persists Grouped/Flat and view mode under the surface's own keys", () => {
     const { result } = render();
     act(() => result.current.setGroupByRepo(true));

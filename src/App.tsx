@@ -68,7 +68,7 @@ import {
   resolveFirst,
   resolveFocusTarget,
 } from "./lib/actionLifecycle";
-import { SKILL_FILTERS, libraryExceptions } from "./lib/skillPresentation";
+import { SKILL_FILTERS, libraryExceptions, problemRank } from "./lib/skillPresentation";
 import { openKeyboardShortcuts, openSettingsPane } from "./lib/commandPalette";
 import type { SettingsPane, ShortcutPane } from "./lib/settingsPanes";
 import type { ManagedSkill } from "./components/skills/types";
@@ -145,8 +145,9 @@ function App() {
     isReviewWanted: reviewIsWanted,
   });
 
-  // My Skills' list lens: query, filter chips, sort, Grouped/Flat (single-
-  // skill sources fold into "Individual sources"), view mode.
+  // My Skills' list lens: query, filter chips, sort (Problems first reads the
+  // health fold's rank), Grouped/Flat (single-skill sources fold into
+  // "Individual sources"), view mode.
   const lens = useListLens({
     items: library.managedSkills,
     labels: {
@@ -159,6 +160,7 @@ function App() {
     viewModePreference,
     collapsePreference: collapsedSourcesPreference,
     foldSingletons: true,
+    problemRank,
     filters: SKILL_FILTERS,
     selection: surface.selection.skills,
   });

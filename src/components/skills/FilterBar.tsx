@@ -31,6 +31,7 @@ const SORT_LABEL_KEY: Record<SortMode, string> = {
   name: "sortName",
   updated: "sortUpdated",
   added: "sortAdded",
+  issues: "sortIssues",
 };
 
 const VIEW_LABEL_KEY: Record<ViewMode, string> = {

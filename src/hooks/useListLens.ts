@@ -67,6 +67,12 @@ type ListLensBase<T extends LensSubject> = {
   collapsePreference?: PersistedPreference<readonly string[]>;
   /** Fold every single-skill source into one "Individual sources" group. */
   foldSingletons?: boolean;
+  /**
+   * The Problems first sort's key (higher first; My Skills passes
+   * `problemRank`): rows, and while Grouped the groups by their loudest row.
+   * Pass a module constant. Without it Problems first sorts by name.
+   */
+  problemRank?: (item: T) => number;
   /** The surface's selection (surface state); the lens answers its visible subset. */
   selection?: ReadonlySet<string>;
   /**
@@ -106,6 +112,7 @@ export function useListLens<T extends LensSubject>(options: ListLensOptions<T>) 
     viewModePreference,
     collapsePreference,
     foldSingletons = false,
+    problemRank,
     selection,
     filters,
     defaultFilter = "all",
@@ -128,9 +135,13 @@ export function useListLens<T extends LensSubject>(options: ListLensOptions<T>) 
     // default fold returns a subset of the very items it was given.
     const kept = fold
       ? fold(items, query)
-      : (filterAndSortSkills([...items] as unknown as LensItem[], { query, sort }) as unknown as T[]);
+      : (filterAndSortSkills([...items] as unknown as LensItem[], {
+          query,
+          sort,
+          problemRank: problemRank as ((item: LensItem) => number) | undefined,
+        }) as unknown as T[]);
     return predicate ? kept.filter(predicate) : kept;
-  }, [fold, items, predicate, query, sort]);
+  }, [fold, items, predicate, problemRank, query, sort]);
 
   /** How many items each filter keeps, over the whole list (not the query). */
   const filterCounts = useMemo(() => {
@@ -147,9 +158,13 @@ export function useListLens<T extends LensSubject>(options: ListLensOptions<T>) 
   const groups: RepoGroup<T>[] | null = useMemo(
     () =>
       groupByRepo
-        ? groupSkillsByRepo(visible, { local, managed, ungrouped, individual }, { foldSingletons, catalog: items })
+        ? groupSkillsByRepo(
+            visible,
+            { local, managed, ungrouped, individual },
+            { foldSingletons, catalog: items, problemRank: sort === "issues" ? problemRank : undefined },
+          )
         : null,
-    [foldSingletons, groupByRepo, individual, items, local, managed, ungrouped, visible],
+    [foldSingletons, groupByRepo, individual, items, local, managed, problemRank, sort, ungrouped, visible],
   );
 
   // Collapse (D42). The stored state is the operator's; while a query or chip

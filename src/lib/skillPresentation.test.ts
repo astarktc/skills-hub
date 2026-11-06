@@ -23,6 +23,7 @@ import {
   skillScope,
   importedSourceLine,
   libraryExceptions,
+  problemRank,
   SKILL_FILTERS,
   syncedStrip,
   INDIVIDUAL_GROUP_KEY,
@@ -1067,6 +1068,53 @@ describe("My Skills folds (ticket 11)", () => {
       };
       expect(libraryExceptions([inProject])).toEqual({ failedTargets: 1, staleTargets: 0, skillsWithIssues: 1 });
       expect(SKILL_FILTERS.issues(inProject)).toBe(true);
+    });
+  });
+
+  // BACKLOG #72: the Problems first sort lifts failed, then stale, skills to
+  // the top of the list — and of a grouped list, by each group's loudest skill.
+  describe("the Problems first sort", () => {
+    type Row = Fields & { name: string; created_at: number | null; updated_at: number | null };
+    const at = (over: Partial<Row> & { name: string }): Row => ({ ...base, created_at: 0, updated_at: 0, ...over });
+    const fetchFailed = { kind: "fetch_failed", error: { code: "OTHER", message: "x" }, at: 1 } as const;
+    const healthyA = at({ name: "a-healthy", targets: [row("cursor", "synced")] });
+    const staleB = at({ name: "b-stale", targets: [row("cursor", "stale")] });
+    const failedC = at({ name: "c-failed", targets: [row("cursor", "error")] });
+    const offD = at({ name: "d-off", disabled_at: 2, targets: [row("cursor", "disabled")] });
+    const fetchE = at({ name: "e-fetch", health: fetchFailed, targets: [row("cursor", "synced")] });
+
+    it("ranks a skill failed 2, stale 1, anything else 0", () => {
+      expect([healthyA, staleB, failedC, offD, fetchE].map(problemRank)).toEqual([0, 1, 2, 0, 1]);
+    });
+
+    it("orders failed, then stale, then the rest, each by name", () => {
+      const sorted = filterAndSortSkills([healthyA, offD, fetchE, failedC, staleB], { query: "", sort: "issues", problemRank });
+      expect(sorted.map((s) => s.name)).toEqual(["c-failed", "b-stale", "e-fetch", "a-healthy", "d-off"]);
+    });
+
+    it("orders groups by their loudest skill, then as before", () => {
+      const repo = (name: string, over: Partial<Row>) =>
+        at({ name, source_type: "git", source_ref: `https://github.com/${name.split("-")[0]}/r`, ...over });
+      const rows = [
+        repo("acme-1", { targets: [row("cursor", "synced")] }),
+        repo("acme-2", { targets: [row("cursor", "synced")] }),
+        repo("zoo-1", { targets: [row("cursor", "error")] }),
+        repo("zoo-2", { targets: [row("cursor", "synced")] }),
+        repo("moss-1", { targets: [row("cursor", "stale")] }),
+        repo("moss-2", { targets: [row("cursor", "synced")] }),
+        at({ name: "folder", source_type: "local", source_ref: "/skills/folder", targets: [row("cursor", "error")] }),
+      ];
+      const labels = { local: "Local", managed: "Managed here", ungrouped: "Ungrouped" };
+      const sorted = filterAndSortSkills(rows, { query: "", sort: "issues", problemRank });
+      const groups = groupSkillsByRepo(sorted, labels, { problemRank });
+      expect(groups.map((g) => [g.label, g.skills.map((s) => s.name)])).toEqual([
+        ["zoo/r", ["zoo-1", "zoo-2"]],
+        ["Local", ["folder"]],
+        ["moss/r", ["moss-1", "moss-2"]],
+        ["acme/r", ["acme-1", "acme-2"]],
+      ]);
+      // Without a rank the groups keep their order: repos A–Z, then Local.
+      expect(groupSkillsByRepo(sorted, labels).map((g) => g.label)).toEqual(["acme/r", "moss/r", "zoo/r", "Local"]);
     });
   });
 

@@ -53,6 +53,7 @@ export const resources = {
       sortUpdated: "Most recent",
       sortName: "Name A–Z",
       sortAdded: "Date added",
+      sortIssues: "Problems first",
       viewList: "List",
       viewAutoGrid: "Grid",
       viewDenseGrid: "Dense grid",

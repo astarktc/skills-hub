@@ -53,7 +53,12 @@ export type Translate = (
   opts?: Record<string, unknown>,
 ) => string;
 
-export type SortMode = "name" | "updated" | "added";
+/**
+ * The list's orders. `issues` is Problems first (BACKLOG #72): failed skills,
+ * then stale, then the rest, each by name — a grouped list orders its groups
+ * by their loudest skill too (`problemRank`).
+ */
+export type SortMode = "name" | "updated" | "added" | "issues";
 
 export type RepoGroup<T> = {
   /**
@@ -315,7 +320,15 @@ function repoGroupOf(skill: GroupingFields): { key: string; repo: RepoInfo | nul
 export function groupSkillsByRepo<T extends GroupingFields>(
   skills: T[],
   labels: { local: string; managed: string; ungrouped: string; individual?: string },
-  options: { foldSingletons?: boolean; catalog?: readonly GroupingFields[] } = {},
+  options: {
+    foldSingletons?: boolean;
+    catalog?: readonly GroupingFields[];
+    /**
+     * Problems first: groups are ordered by their loudest skill's rank
+     * (higher first) before the order above.
+     */
+    problemRank?: (skill: T) => number;
+  } = {},
 ): RepoGroup<T>[] {
   const map = new Map<string, { href: string | null; owner: string | null; skills: T[] }>();
   for (const skill of skills) {
@@ -357,7 +370,16 @@ export function groupSkillsByRepo<T extends GroupingFields>(
       skills: skills.filter((skill) => members.has(skill)),
     });
   }
+  const { problemRank } = options;
+  const loudest = new Map(
+    entries.map((group) => [
+      group.key,
+      problemRank ? group.skills.reduce((max, skill) => Math.max(max, problemRank(skill)), 0) : 0,
+    ]),
+  );
   entries.sort((a, b) => {
+    const byProblem = (loudest.get(b.key) ?? 0) - (loudest.get(a.key) ?? 0);
+    if (byProblem !== 0) return byProblem;
     const byRank = rank(a.key) - rank(b.key);
     if (byRank !== 0) return byRank;
     return a.label.toLowerCase().localeCompare(b.label.toLowerCase());
@@ -391,11 +413,12 @@ export function queryMatcher(rawQuery: string): (value: string) => boolean {
 
 /**
  * The My Skills search/sort fold: `queryMatcher` over a skill's name, source,
- * central path and source type, then the sort.
+ * central path and source type, then the sort. Problems first reads
+ * `problemRank` (higher first, then name); without one it sorts by name.
  */
 export function filterAndSortSkills<
   T extends SkillPresentationFields & { name: string },
->(skills: T[], options: { query: string; sort: SortMode }): T[] {
+>(skills: T[], options: { query: string; sort: SortMode; problemRank?: (skill: T) => number }): T[] {
   const query = options.query.trim();
   const matchesQuery = queryMatcher(query);
   const filtered = skills.filter((skill) => {
@@ -407,7 +430,15 @@ export function filterAndSortSkills<
       matchesQuery(skill.source_type.toLowerCase())
     );
   });
+  const { problemRank } = options;
+  // Ranked once per row, not per comparison (the rank runs the health fold).
+  const ranks =
+    options.sort === "issues" && problemRank ? new Map(filtered.map((skill) => [skill, problemRank(skill)])) : null;
   return [...filtered].sort((a, b) => {
+    if (options.sort === "issues") {
+      const byProblem = ranks ? (ranks.get(b) ?? 0) - (ranks.get(a) ?? 0) : 0;
+      return byProblem !== 0 ? byProblem : a.name.localeCompare(b.name);
+    }
     if (options.sort === "name") return a.name.localeCompare(b.name);
     if (options.sort === "added")
       return (b.created_at ?? 0) - (a.created_at ?? 0);
@@ -1092,8 +1123,17 @@ export function stripMarkName(mark: StripMark, t: Translate): string {
 
 /** A skill has an issue when its loudest health row is failed or stale. */
 export function skillHasIssues(skill: SkillHealthFields): boolean {
+  return problemRank(skill) > 0;
+}
+
+/**
+ * How loud a skill's problem is, for the Problems first sort: 2 failed, 1
+ * stale, 0 for anything else (muted — disabled, not deployed — is not an
+ * issue, as the Issues chip says).
+ */
+export function problemRank(skill: SkillHealthFields): number {
   const { severity } = skillHealth(skill, { t: KEY_ONLY });
-  return severity === "failed" || severity === "stale";
+  return severity === "failed" ? 2 : severity === "stale" ? 1 : 0;
 }
 
 /**
