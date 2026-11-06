@@ -117,8 +117,8 @@ Harness research behind #92 and #108–#110: `docs/design-inputs/2026-11-05-harn
   (not a round-19 regression); designed in round 20 (operator 2026-11-05). Source: `archive/round19/review/ticket-20-audit.md:161`;
   `archive/round19/closure/extract-E.md` E1–E2.
 (Retired: #88 — split 2026-11-05 (operator): physical identity in every destructive seam, onboarding's physical-path
-exclusion included → #107; resumable moves, dir corrections, the launch pass, F14–F16 and the smoke line → #108; the
-#83 preference and its UI → #109. #89 — the lexical launch relocation pass is no longer called (1.3.2, PR #5,
+exclusion included → #107; resumable moves, dir corrections, the launch pass, F14–F16 and the smoke line → #108;
+the #83 preference and its UI → #109. #89 — the lexical launch relocation pass is no longer called (1.3.2, PR #5,
 `fc277aa`); re-enabling it is #108's.
 Absorbed: #79 → round 19 ticket 29, #71 → 33, #78 → 30, #80 #81 #82 → 31 — all shipped; #67 #45 #83 and #40's detection
 half → ticket 34, superseded 2026-11-04 → #88 (relocation, the preference) and #92 (registry facts, rows, warning).)
