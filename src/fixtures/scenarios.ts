@@ -599,6 +599,11 @@ function failures(now: number): FixtureState {
     { name: "api-style", description: "House style for REST and RPC endpoints", source: git("some-org/api-style"), synced: ["claude_code", "codex"], invocation: "model-only", override: { mode: "user-only", conflict: true }, health: { kind: "edit_conflict", error: { code: "EDIT_CONFLICT", baseMode: "user-and-model", upstreamMode: "model-only", overrideMode: "user-only" }, hoursAgo: 20 } },
     { name: "shell-aliases", description: "Imported from Amp; the original could not be removed", source: { kind: "imported", fromTool: "amp" }, synced: ["claude_code"], health: { kind: "import_failed", error: { code: "REMOVAL_PERMISSION_DENIED", path: `${globalRoot("amp")}/shell-aliases`, detail: `Permission denied (os error 13): ${globalRoot("amp")}/shell-aliases` }, hoursAgo: 48 } },
     { name: "json-canvas", description: "Read and write JSON Canvas files", source: git("some-org/json-canvas"), synced: ["claude_code", "pi"], failedFirstSync: ["amp", "kimi_cli"] },
+    // A partial Disable of Amp's folder (round 20 t09 review round 4): the
+    // pre-1.4.0 Kimi Code row settled `disabled`, the folder row's removal
+    // failed and it still owns its copy. The folder shows the failure and
+    // offers finishing the Disable.
+    { name: "half-off", description: "Switched off on Amp's folder; one removal did not finish", source: git("some-org/half-off"), synced: ["claude_code"], errored: ["amp"], disabled: ["kimi_cli"] },
   ];
   state.skills = specs.map((spec, i) => makeSkill(spec, now, i));
   state.projects = [
