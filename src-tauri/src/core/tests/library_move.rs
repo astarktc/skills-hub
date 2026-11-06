@@ -880,6 +880,7 @@ fn the_move_keeps_internal_links_as_links() {
 }
 
 /// What a skill the move kept in place says about it.
+#[cfg(unix)]
 fn kept_reason(report: &LibraryMoveReport, id: &str) -> crate::core::library_move::SkillKept {
     match &report
         .skills
