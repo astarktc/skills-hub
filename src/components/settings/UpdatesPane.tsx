@@ -1,4 +1,5 @@
 import type { TFunction } from "i18next";
+import { ExternalLink } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
@@ -6,6 +7,9 @@ import { Label } from "@/components/ui/field";
 import type { AppUpdate, AppUpdateStatus } from "../../hooks/useAppUpdate";
 import { updateCheckOffered } from "../../lib/settingsPanes";
 import { PaneHeader, SettingGroup, SettingRow } from "./PaneDialog";
+
+/** Where a failed check sends the operator (#106): the newest release's page. */
+const LATEST_RELEASE_URL = "https://github.com/astarktc/skills-hub/releases/latest";
 
 /** The status line for each lifecycle state (an error adds its own line below). */
 const STATUS_LINE: Record<AppUpdateStatus, string> = {
@@ -54,7 +58,28 @@ export function UpdatesPane({ update, versionText, isTauri, t }: UpdatesPaneProp
           <p className="m-0 text-xs text-muted-foreground" role="status">
             {t(STATUS_LINE[status], { version })}
           </p>
-          {error ? <p className="m-0 text-xs text-destructive">{error}</p> : null}
+          {error?.kind === "install" ? <p className="m-0 text-xs text-destructive">{error.message}</p> : null}
+          {error?.kind === "check" ? (
+            <>
+              <p className="m-0 text-xs text-destructive">
+                {t("settingsDialog.updates.checkFailed")}{" "}
+                <a
+                  href={LATEST_RELEASE_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 rounded-sm text-foreground underline decoration-border-strong underline-offset-3 hover:decoration-foreground"
+                >
+                  {t("settingsDialog.updates.releasesLink")}
+                  <ExternalLink aria-hidden="true" className="size-3 shrink-0 text-faint" />
+                </a>
+              </p>
+              {error.detail ? (
+                <p className="m-0 font-mono text-xs break-words text-faint">
+                  {t("settingsDialog.updates.checkFailedDetail", { detail: error.detail })}
+                </p>
+              ) : null}
+            </>
+          ) : null}
         </SettingRow>
         {status === "available" ? (
           <SettingRow

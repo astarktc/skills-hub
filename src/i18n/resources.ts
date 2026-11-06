@@ -1607,6 +1607,9 @@ export const resources = {
           version: "Skills Hub {{version}}",
           notes: "Release notes",
           ignoreHint: "Don\u2019t remind again stops the sidebar announcing this version; it stays listed here.",
+          checkFailed: "Couldn\u2019t check for updates \u2014 download the latest release from GitHub.",
+          releasesLink: "Latest release on GitHub",
+          checkFailedDetail: "Details: {{detail}}",
         },
         diagnostics: {
           description: "What to look at when something went wrong, and the GitHub token.",

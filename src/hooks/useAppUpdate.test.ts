@@ -135,7 +135,31 @@ describe("useAppUpdate — one state for Settings and the notice", () => {
       await result.current.check();
     });
     expect(result.current.status).toBe("error");
-    expect(result.current.error).toBe("formatted:offline");
+    // #106: a failed check is one friendly line in the pane; the plugin's
+    // raw text is only its detail.
+    expect(result.current.error).toEqual({ kind: "check", detail: "formatted:offline" });
+  });
+
+  it("a failed check keeps the updater's raw text as detail, even a plugin's bare string (#106)", async () => {
+    checkForUpdate.mockResolvedValueOnce(null);
+    const reporter = makeReporter();
+    reporter.formatError = vi.fn((err: unknown) => (typeof err === "string" ? err : null));
+    const { result } = renderUpdate(reporter);
+    await waitFor(() => expect(checkForUpdate).toHaveBeenCalledTimes(1));
+    const raw = 'None of the fallback platforms `["windows-x86_64-nsis"]` were found in the response `platforms` object';
+    checkForUpdate.mockRejectedValueOnce(raw);
+    await act(async () => {
+      await result.current.check();
+    });
+    expect(result.current.status).toBe("error");
+    expect(result.current.error).toEqual({ kind: "check", detail: raw });
+    expect(reporter.notify).not.toHaveBeenCalled();
+    // A later check clears it.
+    checkForUpdate.mockResolvedValueOnce(null);
+    await act(async () => {
+      await result.current.check();
+    });
+    expect(result.current.error).toBeNull();
   });
 
   it("installing from either place drives the one status to done", async () => {
@@ -166,7 +190,7 @@ describe("useAppUpdate — one state for Settings and the notice", () => {
       await result.current.install();
     });
     expect(result.current.status).toBe("available");
-    expect(result.current.error).toBe("formatted:disk full");
+    expect(result.current.error).toEqual({ kind: "install", message: "formatted:disk full" });
     expect(reporter.notify).toHaveBeenCalledWith("error", "formatted:disk full");
   });
 

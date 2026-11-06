@@ -24,6 +24,16 @@ export type AppUpdateStatus =
   | "error";
 
 /**
+ * Why the last check or install failed. A check failure is shown as one
+ * friendly line pointing at the releases page (#106) — the updater's own text
+ * (a plugin's raw English, e.g. a feed missing this platform) is only its
+ * `detail`; an install failure's `message` is the formatted error.
+ */
+export type AppUpdateError =
+  | { kind: "check"; detail: string }
+  | { kind: "install"; message: string };
+
+/**
  * App-update world — the one updater lifecycle, read by Settings, the
  * passive header item (`UpdateAffordance`, D8) and the update dialog it
  * opens (`UpdateDialog`). A version found at startup is the version Settings
@@ -53,7 +63,7 @@ export function useAppUpdate({
   const [status, setStatus] = useState<AppUpdateStatus>("idle");
   const [version, setVersion] = useState<string | null>(null);
   const [notes, setNotes] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AppUpdateError | null>(null);
   const [currentVersion, setCurrentVersion] = useState<string | null>(null);
   // "Don't remind me" this session: the passive item stops announcing it.
   const [ignoredVersion, setIgnoredVersion] = useState<string | null>(null);
@@ -100,7 +110,7 @@ export function useAppUpdate({
           setStatus("idle");
           return;
         }
-        setError(formatError(err) ?? "");
+        setError({ kind: "check", detail: formatError(err) ?? "" });
         setStatus("error");
       }
     },
@@ -136,7 +146,7 @@ export function useAppUpdate({
       setStatus("done");
     } catch (err) {
       const message = formatError(err);
-      setError(message ?? "");
+      setError(message ? { kind: "install", message } : null);
       // The release is still there to retry.
       setStatus("available");
       if (message) notify("error", message);
