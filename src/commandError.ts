@@ -45,6 +45,7 @@ const COMMAND_ERROR_CODE_MAP = {
   SETTING_CORRUPT: true,
   CREDENTIAL_STORE_UNAVAILABLE: true,
   IDENTITY_UNKNOWN: true,
+  REMOVAL_REFUSED: true,
   EDIT_CONFLICT: true,
   OTHER: true,
 } as const satisfies Record<CommandError["code"], true>;
@@ -158,6 +159,15 @@ export function describeCommandError(
       return t("errors.invalidGithubUrl", { url: e.url });
     case "PATH_OUTSIDE_TOOL_DIRS":
       return t("errors.pathOutsideToolDirs", { path: e.path });
+    case "REMOVAL_REFUSED":
+      // Physical admission refused the removal: a folder on the way is an
+      // alias, and the copy says where the path really leads.
+      return t(
+        e.reason === "centralLibrary"
+          ? "errors.removalRefusedCentralLibrary"
+          : "errors.removalRefusedResolvesElsewhere",
+        { path: e.path, resolved: e.resolved },
+      );
     case "SKILL_MANIFEST_IO":
       return withDetail(t("errors.skillManifestIo", { path: e.path }), e.detail);
     case "SOURCE_PATH_MISSING":

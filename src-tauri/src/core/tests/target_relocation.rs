@@ -402,8 +402,8 @@ fn the_superseded_artifact_seam_refuses_anything_outside_a_former_dir() {
     copy_of_central(&f, &f.current());
 
     for path in [f.current(), f.home().join(".augment/rules/nested/skill")] {
-        let err =
-            remove_superseded_artifact_unlocked(f.home(), augment(), &path).expect_err("refused");
+        let err = remove_superseded_artifact_unlocked(&f.store, f.home(), augment(), &path)
+            .expect_err("refused");
         assert!(
             matches!(
                 err.downcast_ref::<SignalError>(),

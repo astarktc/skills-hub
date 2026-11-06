@@ -463,8 +463,13 @@ than re-tagging.
 - Never commit `.claude/`, `.agents/`, `.pi/`, `.mcp.json`, or `docs/conversation-logs/` (all gitignored). `.scratch/` **is**
   tracked; its `**/evidence/`, `**/worktrees/`, `*.log` and `*.diff` are not.
 - Removal goes through `artifact_removal`: `sync_engine::remove_path_any` is called only from that module, from
-  `onboarding_import`'s original-removal step (paired with `ensure_path_within_tool_dirs`), and inside
-  `sync_engine`'s own overwrite-replacement path — never from `project_ops`, `project_sync` or a command.
+  `onboarding_import`'s original-removal step (paired with `ensure_path_within_tool_dirs`), inside
+  `sync_engine`'s own overwrite-replacement path, and from the git cache's clean retry and age-out (`git_cache`,
+  `cache_cleanup`) — never from `project_ops`, `project_sync` or a command. It takes a `removal_fence::Fence`: every
+  removal is admitted by **physical entry identity** (canonical parent + leaf name, the leaf never resolved) against
+  the recorded central library (`ProtectedLibrary::recorded(store)`), an overwrite's source (`sparing`) and the
+  caller's `Claim`, then removed at that physical location; a refusal is the typed `REMOVAL_REFUSED` (BACKLOG #107).
+  A lexical `starts_with` fence alone is never an admission — a Tool dir linked onto the library passes it.
 - Confirmations go through the Dialog primitive (`src/components/ui/dialog.tsx` / `confirm-dialog.tsx`) —
   `useSharedDirConfirmation` owns the shared-skills-dir one;
   the app uses no native browser dialog.

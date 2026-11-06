@@ -44,6 +44,7 @@ use anyhow::Result;
 use super::artifact_removal::remove_superseded_artifact_unlocked;
 use super::content_identity::{self, Source};
 use super::mutation_guard;
+use super::removal_fence::ProtectedLibrary;
 use super::skill_store::{SkillRecord, SkillStore, TargetTransition};
 use super::sync_engine::{self, SyncOutcome};
 use super::sync_status::SyncStatus;
@@ -160,7 +161,7 @@ pub(crate) fn relocate_unlocked(
 
         for relocated in moves.iter().filter(|m| m.outcome.is_some()) {
             if let Err(err) =
-                remove_superseded_artifact_unlocked(home, relocated.adapter, &relocated.old)
+                remove_superseded_artifact_unlocked(store, home, relocated.adapter, &relocated.old)
             {
                 log::warn!(
                     "relocated {} but could not remove its former target {}: {:#}",
@@ -214,7 +215,12 @@ fn materialise(
         skill_id: &skill.id,
     };
     match sync_engine::sync_dir_for_tool_with_overwrite(
-        adapter, central, identity, &target, overwrite,
+        adapter,
+        central,
+        identity,
+        &target,
+        overwrite,
+        &ProtectedLibrary::recorded(store),
     ) {
         Ok(outcome) => Some(outcome),
         Err(err) => {

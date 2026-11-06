@@ -4,6 +4,8 @@ use std::time::{Duration, SystemTime};
 use anyhow::{Context, Result};
 
 use super::clock::now_ms;
+use super::removal_fence::{Claim, Fence, ProtectedLibrary};
+use super::sync_engine::remove_path_any;
 use serde::Deserialize;
 use tauri::Manager;
 
@@ -37,6 +39,11 @@ fn cleanup_git_cache_dirs_in(cache_dir: &Path, max_age: Duration) -> Result<usiz
         .checked_sub(max_age)
         .unwrap_or(SystemTime::UNIX_EPOCH);
 
+    // An entry is removed only as a direct child of the cache root the app
+    // owns — a real directory, never an alias leading elsewhere
+    // (`removal_fence`); a refused entry is skipped like any failed one.
+    let library = ProtectedLibrary::unrecorded();
+    let fence = Fence::new(&library).claiming(Claim::ChildOfOwned(&cache_root));
     let mut removed = 0usize;
     let rd = match std::fs::read_dir(&cache_root) {
         Ok(v) => v,
@@ -81,7 +88,7 @@ fn cleanup_git_cache_dirs_in(cache_dir: &Path, max_age: Duration) -> Result<usiz
             }
         }
 
-        if should_remove && std::fs::remove_dir_all(&path).is_ok() {
+        if should_remove && remove_path_any(&path, &fence).is_ok() {
             removed += 1;
         }
     }

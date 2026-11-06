@@ -1210,3 +1210,164 @@ fn unsync_skill_from_tool_with_an_installed_group_still_fans_out_across_the_grou
     assert_eq!(report.removed_rows(), 2, "both member rows settled");
     assert!(store.list_skill_targets(&skill.id).unwrap().is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// Physical admission (BACKLOG #107): a removal acts on the entry its path
+// physically names — the parent resolved through any alias, the leaf never —
+// and never inside the central library.
+// ---------------------------------------------------------------------------
+
+/// A central skill with a nested file, so "intact" covers more than one level.
+#[cfg(unix)]
+fn central_skill_with_nested(base: &Path, name: &str) -> PathBuf {
+    let dir = make_skill_dir(&base.join("central"), name);
+    fs::create_dir_all(dir.join("nested")).unwrap();
+    fs::write(dir.join("nested").join("keep"), "central bytes").unwrap();
+    dir
+}
+
+#[cfg(unix)]
+fn assert_central_intact(dir: &Path) {
+    assert_eq!(
+        fs::read_to_string(dir.join("SKILL.md")).expect("central SKILL.md survives"),
+        "# Test Skill\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.join("nested").join("keep")).expect("nested bytes survive"),
+        "central bytes"
+    );
+}
+
+/// The 1.3.2 review's differential probe: a Tool's skills dir that is a link
+/// onto the central repo makes the recorded target's *real* leaf the central
+/// skill itself. Delete refuses it with the typed refusal, keeps the skill,
+/// its central bytes and the row (`error`), and never touches the alias.
+#[cfg(unix)]
+#[test]
+fn a_real_leaf_under_a_parent_aliased_onto_the_central_repo_is_refused_and_central_survives() {
+    use crate::core::errors::RemovalRefusal;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = central_skill_with_nested(tmp.path(), "alpha");
+    let skill = seed_skill(&store, "alpha", &central);
+    let tool_dir = tmp.path().join("tools").join("claude_code");
+    fs::create_dir_all(tool_dir.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(tmp.path().join("central"), &tool_dir).unwrap();
+    let target = tool_dir.join("alpha");
+    seed_global_target_at(&store, &skill, "claude_code", &target);
+
+    let report = remove_skill(&store, &skill.id).expect("delete settles as report data");
+
+    assert_central_intact(&central);
+    assert!(
+        tool_dir
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the alias itself stays"
+    );
+    assert!(
+        !report.central_removed && !report.record_deleted,
+        "{report}"
+    );
+    match &report.targets[..] {
+        [RemovalTargetOutcome {
+            status:
+                RemovalTargetStatus::Failed {
+                    error:
+                        CommandError::RemovalRefused {
+                            path,
+                            reason: RemovalRefusal::CentralLibrary,
+                            ..
+                        },
+                },
+            ..
+        }] => assert_eq!(path, &target.to_string_lossy()),
+        other => panic!("expected the central-library refusal, got {other:?}"),
+    }
+    let rows = store.list_skill_targets(&skill.id).unwrap();
+    assert_eq!(rows.len(), 1, "the row is kept");
+    assert_eq!(rows[0].status, SyncStatus::Error);
+    assert!(store.get_skill_by_id(&skill.id).unwrap().is_some());
+}
+
+/// The same alias seen from a Project: a project's Tool dir linked onto the
+/// central repo is refused for the assignment's artifact too.
+#[cfg(unix)]
+#[test]
+fn a_project_artifact_under_a_dir_aliased_onto_the_central_repo_is_refused() {
+    use crate::core::errors::RemovalRefusal;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = central_skill_with_nested(tmp.path(), "alpha");
+    let skill = seed_skill(&store, "alpha", &central);
+    let project = seed_project(&store, tmp.path(), "proj");
+    let target = seed_assignment(&store, &project, &skill, "claude_code", SyncStatus::Synced);
+    // Replace the project's Tool dir with a link onto the central repo.
+    let tool_dir = target.parent().unwrap().to_path_buf();
+    fs::remove_dir_all(&tool_dir).unwrap();
+    std::os::unix::fs::symlink(tmp.path().join("central"), &tool_dir).unwrap();
+
+    let scope = RemovalScope::Project {
+        project_id: project.id.clone(),
+    };
+    let report = execute_unlocked(&store, plan(&store, &scope).unwrap()).unwrap();
+
+    assert_central_intact(&central);
+    assert!(
+        matches!(
+            &report.targets[0].status,
+            RemovalTargetStatus::Failed {
+                error: CommandError::RemovalRefused {
+                    reason: RemovalRefusal::CentralLibrary,
+                    ..
+                }
+            }
+        ),
+        "{report}"
+    );
+    let rows = store.list_project_skill_assignments(&project.id).unwrap();
+    assert_eq!(rows[0].status, SyncStatus::Error);
+}
+
+/// A leaf *link* under an aliased parent is removed as itself: the link entry
+/// goes from the directory the alias names, its referent (the central skill)
+/// and the alias stay. Referent safety is unchanged by physical admission.
+#[cfg(unix)]
+#[test]
+fn a_leaf_link_under_an_aliased_parent_is_removed_and_its_referent_survives() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = central_skill_with_nested(tmp.path(), "alpha");
+    let skill = seed_skill(&store, "alpha", &central);
+    let real_dir = tmp.path().join("dotfiles").join("skills");
+    fs::create_dir_all(&real_dir).unwrap();
+    let tool_dir = tmp.path().join("tools").join("claude_code");
+    fs::create_dir_all(tool_dir.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&real_dir, &tool_dir).unwrap();
+    std::os::unix::fs::symlink(&central, real_dir.join("alpha")).unwrap();
+    let target = tool_dir.join("alpha");
+    seed_global_target_at(&store, &skill, "claude_code", &target);
+
+    let report = unsync_skill_targets(&store, &skill.id).expect("unsync");
+
+    assert_eq!(
+        (report.removed_rows(), report.failed_rows()),
+        (1, 0),
+        "{report}"
+    );
+    assert!(
+        !exists_any(&real_dir.join("alpha")),
+        "the link entry is gone"
+    );
+    assert!(tool_dir
+        .symlink_metadata()
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_central_intact(&central);
+    assert!(store.list_skill_targets(&skill.id).unwrap().is_empty());
+}

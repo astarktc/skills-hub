@@ -70,3 +70,27 @@ fn an_orphaned_recordless_pre_policy_entry_ages_out_by_its_directory_time() {
     assert!(!old_entry.exists(), "the orphaned entry is reclaimed");
     assert!(current.exists(), "the current policy's entry stays");
 }
+
+/// BACKLOG #107, the cleanup's side of R1: a cache root that is a link to a
+/// directory outside the cache never makes the age-out delete what lives
+/// there — however old its `.git` folders are.
+#[cfg(unix)]
+#[test]
+fn an_aliased_cache_root_is_never_reclaimed_through() {
+    let cache = tempfile::tempdir().expect("tempdir");
+    let outside = tempfile::tempdir().expect("tempdir");
+    std::os::unix::fs::symlink(outside.path(), cache.path().join("skills-hub-git-cache"))
+        .expect("alias root");
+    let victim = outside.path().join("a-real-checkout");
+    fs::create_dir_all(victim.join(".git")).expect("mkdir");
+    fs::write(
+        victim.join(".skills-hub-cache.json"),
+        serde_json::json!({ "last_fetched_ms": 1, "head": "h" }).to_string(),
+    )
+    .expect("record");
+
+    let removed = cleanup_git_cache_dirs_in(cache.path(), 30 * DAY).expect("cleanup");
+
+    assert_eq!(removed, 0);
+    assert!(victim.join(".git").is_dir(), "the outside folder survives");
+}

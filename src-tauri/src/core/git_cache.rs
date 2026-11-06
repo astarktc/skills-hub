@@ -59,7 +59,9 @@ use super::errors::SignalError;
 use super::git_fetcher::{
     clone_or_pull, clone_or_pull_sparse, reshape_checkout, CHECKOUT_POLICY_VERSION,
 };
+use super::removal_fence::{Claim, Fence, ProtectedLibrary};
 use super::repo_subpath::normalize_subpath;
+use super::sync_engine::remove_path_any;
 
 /// Freshness record written next to each cached clone.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -277,9 +279,16 @@ pub(crate) fn fetch_through_cache(
                 return Err(err);
             }
             // Otherwise assume the entry is unusable and retry once clean.
-            if repo_dir.exists() {
-                let _ = std::fs::remove_dir_all(&repo_dir);
-            }
+            // The entry is removed only as a direct child of the cache root
+            // the app owns — a real directory, never an alias leading
+            // elsewhere (`removal_fence`) — and a refusal ends the fetch.
+            let cache_root = repo_dir.parent().unwrap_or(&repo_dir);
+            let library = ProtectedLibrary::unrecorded();
+            remove_path_any(
+                &repo_dir,
+                &Fence::new(&library).claiming(Claim::ChildOfOwned(cache_root)),
+            )
+            .with_context(|| format!("{:#}", err))?;
             fetch_into(&repo_dir, req, &checkout).with_context(|| format!("{:#}", err))?
         }
     };

@@ -231,6 +231,10 @@ export const resources = {
           "The update failed and the incomplete copy at {{central}} could not be removed. No previous-copy backup is available; check this path before retrying.",
         pathOutsideToolDirs:
           "Refused to delete {{path}}: it is not inside a known harness skills folder.",
+        removalRefusedCentralLibrary:
+          "Refused to remove {{path}}: it leads into your Skills Hub library ({{resolved}}), so removing it would delete the skill's own files. A folder on that path is probably a link to the library — replace the link with a real folder, then try again.",
+        removalRefusedResolvesElsewhere:
+          "Refused to remove {{path}}: it leads to {{resolved}}, outside the folder Skills Hub manages there. A folder on that path is probably a link — check where it points, then try again.",
         skillManifestIo: "Could not read or save the skill manifest at {{path}}.",
         sourcePathMissing:
           "The source folder does not exist. It may have been moved, renamed or mistyped:",
