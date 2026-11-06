@@ -3,14 +3,16 @@
 // only has to be plausible, so drift is harmless. Regenerate it from mod.rs when
 // adapters change and the fixture app should show the new Tool.
 
+import type { DuplicateBehaviour } from "../bindings";
+
 export type FixtureTool = {
   key: string;
   /** Global-scope label (`display_name`). */
   label: string;
   /** Global skills dir, relative to home. */
   globalDir: string;
-  /** Project skills dir, relative to the project root. */
-  projectDir: string;
+  /** Project skills dir, relative to the project root; `null` for a harness with none (no project scope). */
+  projectDir: string | null;
   /** Absorbed into the AGENTS-standard virtual group at project scope. */
   grouped: boolean;
 };
@@ -77,4 +79,41 @@ export const TOOL_REGISTRY: readonly FixtureTool[] = [
   { key: "windsurf", label: "Devin (Windsurf)", globalDir: ".codeium/windsurf/skills", projectDir: ".windsurf/skills", grouped: false },
   { key: "moltbot", label: "MoltBot", globalDir: ".moltbot/skills", projectDir: ".moltbot/skills", grouped: false },
   { key: "hermes-agent", label: "Hermes Agent", globalDir: ".hermes/skills", projectDir: ".hermes/skills", grouped: false },
+  // Fixture-only stand-in for a harness with no project skills dir until the
+  // real WorkBuddy row lands (round 20 ticket 05).
+  { key: "workbuddy", label: "WorkBuddy", globalDir: ".workbuddy/skills", projectDir: null, grouped: false },
 ];
+
+/**
+ * Snapshot of the registry's cross-read facts as Rust resolves them with
+ * every harness installed (`catalog::duplicate_reads`, round 20 ticket 02):
+ * reader key → the entries whose deploy dir it reads by default, beside its
+ * own, and its duplicate behaviour. The fixture backend keeps the installed
+ * ones, as Rust does. Drift is harmless; regenerate from the Rust catalog.
+ */
+export const DUPLICATE_READS: Readonly<Record<string, { keys: readonly string[]; behaviour: DuplicateBehaviour }>> = {
+  cursor: { keys: ["agents_skills", "claude_code", "codex"], behaviour: "shows_all" },
+  codex: { keys: ["agents_skills"], behaviour: "shows_all" },
+  opencode: { keys: ["agents_skills", "claude_code"], behaviour: "shows_all" },
+  amp: { keys: ["agents_skills", "claude_code"], behaviour: "shadows" },
+  augment: { keys: ["agents_skills", "claude_code"], behaviour: "shadows" },
+  cline: { keys: ["agents_skills"], behaviour: "unknown" },
+  command_code: { keys: ["agents_skills"], behaviour: "shadows" },
+  crush: { keys: ["agents_skills", "claude_code", "amp", "kimi_cli"], behaviour: "unknown" },
+  junie: { keys: ["agents_skills"], behaviour: "unknown" },
+  mcpjam: { keys: ["agents_skills", "claude_code"], behaviour: "unknown" },
+  mistral_vibe: { keys: ["agents_skills"], behaviour: "unknown" },
+  mux: { keys: ["agents_skills"], behaviour: "shadows" },
+  openhands: { keys: ["agents_skills"], behaviour: "shadows" },
+  pi: { keys: ["agents_skills"], behaviour: "shadows" },
+  qwen_code: { keys: ["agents_skills"], behaviour: "shadows" },
+  zencoder: { keys: ["agents_skills"], behaviour: "unknown" },
+  neovate: { keys: ["claude_code"], behaviour: "shadows" },
+  pochi: { keys: ["agents_skills"], behaviour: "shadows" },
+  roo_code: { keys: ["agents_skills"], behaviour: "shadows" },
+  goose: { keys: ["agents_skills", "claude_code"], behaviour: "unknown" },
+  gemini_cli: { keys: ["agents_skills"], behaviour: "shadows" },
+  github_copilot: { keys: ["agents_skills"], behaviour: "unknown" },
+  droid: { keys: ["agents_skills"], behaviour: "shadows" },
+  windsurf: { keys: ["agents_skills", "github_copilot"], behaviour: "unknown" },
+};

@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use crate::core::environment::HostRoots;
-use crate::core::tool_adapters::catalog::ReaderEntry;
+use crate::core::tool_adapters::catalog::{DuplicateReads, ReaderEntry};
+use crate::core::tool_adapters::reads::DuplicateBehaviour;
 use crate::core::tool_adapters::{
     adapter_by_key, constituents_of, default_tool_adapters, global_tool_entries, installed_keys,
     mark_installed_in, mark_reader_installed_in, project_tool_entries, skills_dir_in,
@@ -348,4 +349,126 @@ fn the_project_agents_group_absorbs_reader_only_harnesses() {
         entry(&project, agents_key).installed,
         "a detected reader makes the project folder worth deploying to"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The cross-read warning's pairs (round 20 ticket 02)
+// ---------------------------------------------------------------------------
+
+fn duplicate_readers_of(roots: &HostRoots, key: &str) -> Option<DuplicateReads> {
+    entry(&global_tool_entries(roots), key)
+        .duplicate_readers
+        .clone()
+}
+
+/// Cursor reads `~/.claude/skills` and `~/.codex/skills` by default beside
+/// its own folder: with Claude Code and Codex installed, a skill deployed to
+/// Cursor and either one shows twice in Cursor.
+#[test]
+fn cursor_with_claude_code_and_codex_installed_sees_both() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    for key in ["cursor", "claude_code", "codex"] {
+        install(home.path(), key);
+    }
+
+    assert_eq!(
+        duplicate_readers_of(&roots, "cursor"),
+        Some(DuplicateReads {
+            keys: vec!["claude_code", "codex"],
+            behaviour: DuplicateBehaviour::ShowsAll,
+        })
+    );
+    assert_eq!(
+        duplicate_readers_of(&roots, "claude_code"),
+        None,
+        "Claude Code reads only its own folder"
+    );
+    assert_eq!(
+        duplicate_readers_of(&roots, "codex"),
+        None,
+        "Codex reads ~/.agents/skills, but nothing deploys there here"
+    );
+}
+
+/// Kimi Code reads `~/.agents/skills`, but its own deploy dir and its
+/// `~/.claude` / `~/.codex` reads are legacy `kimi-cli`'s only: no pair.
+/// Codex, which reads `~/.agents/skills` and its own folder by default, does.
+#[test]
+fn kimis_legacy_only_reads_make_no_pair() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    for key in ["kimi_cli", "claude_code", "codex", "agents_skills"] {
+        install(home.path(), key);
+    }
+
+    assert_eq!(duplicate_readers_of(&roots, "kimi_cli"), None);
+    assert_eq!(
+        duplicate_readers_of(&roots, "codex"),
+        Some(DuplicateReads {
+            keys: vec!["agents_skills"],
+            behaviour: DuplicateBehaviour::ShowsAll,
+        })
+    );
+}
+
+/// A harness that is not installed deploys nothing: no pair names it.
+#[test]
+fn an_uninstalled_harness_makes_no_pair() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    install(home.path(), "cursor");
+    assert_eq!(duplicate_readers_of(&roots, "cursor"), None);
+
+    install(home.path(), "claude_code");
+    assert_eq!(
+        duplicate_readers_of(&roots, "cursor").map(|d| d.keys),
+        Some(vec!["claude_code"])
+    );
+}
+
+/// An uninstalled reader sees nothing, so it carries no pair either.
+#[test]
+fn an_uninstalled_reader_carries_no_pair() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    install(home.path(), "claude_code");
+    install(home.path(), "codex");
+    assert_eq!(duplicate_readers_of(&roots, "cursor"), None);
+}
+
+/// Amp reads `~/.config/agents/skills`, which is also Kimi's deploy dir:
+/// they share one folder, deployed to once (the shared-dir dedupe), so it is
+/// not a pair. Crush reads the same folder beside its own: a pair with both.
+#[test]
+fn shared_dir_siblings_are_not_a_pair() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    for key in ["amp", "kimi_cli"] {
+        install(home.path(), key);
+    }
+    assert_eq!(duplicate_readers_of(&roots, "amp"), None);
+    assert_eq!(duplicate_readers_of(&roots, "kimi_cli"), None);
+
+    install(home.path(), "crush");
+    assert_eq!(
+        duplicate_readers_of(&roots, "crush"),
+        Some(DuplicateReads {
+            keys: vec!["amp", "kimi_cli"],
+            behaviour: DuplicateBehaviour::Unknown,
+        })
+    );
+}
+
+/// The pairs are a global fact: the project catalog carries none.
+#[test]
+fn the_project_catalog_carries_no_pairs() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    for key in ["cursor", "claude_code", "codex"] {
+        install(home.path(), key);
+    }
+    assert!(project_tool_entries(&roots)
+        .iter()
+        .all(|e| e.duplicate_readers.is_none()));
 }

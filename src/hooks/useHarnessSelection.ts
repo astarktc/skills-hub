@@ -1,6 +1,7 @@
 import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
-import type { ManagedSkill } from "../components/skills/types";
+import type { ManagedSkill, ToolInfoDto } from "../components/skills/types";
 import { harnessArrivals } from "../lib/bulkCounts";
+import { duplicatePairs, pairsInvolving } from "../lib/harnessPresentation";
 import type { RunSkillAction } from "./useSkillActions";
 import type { StatusReporter } from "./useStatusReporter";
 import type { SurfaceState } from "./useSurfaceState";
@@ -14,6 +15,8 @@ export type HarnessSelectionDeps = {
   sync: Pick<SyncOrchestration, "setHarnessSelected" | "autoSyncEnabled" | "readSavedSelection">;
   /** The harnesses detected on this computer — the Tool catalog's installedness, as a value. */
   installed: readonly string[];
+  /** The Tool catalog's global list: its cross-read pairs (`duplicate_readers`), as a value. */
+  catalog: readonly ToolInfoDto[];
   /** The library (the skills world's catalog). */
   skills: readonly ManagedSkill[];
   /** Tool key → display label (the Tool catalog). */
@@ -42,6 +45,10 @@ export type HarnessSelectionDeps = {
  * the import-plan rescan the save started has settled (`whenIdle`); no, or a
  * dismissed ask, does nothing — the marks stay hollow until Deploy all.
  * Auto-deploy off never asks: nothing is ever deployed automatically.
+ * The ask carries the cross-read pairs turning the harness on completes —
+ * the other harness of each already in the saved selection — so it can
+ * repeat the Harnesses pane's warning (round 20 ticket 02); nothing is
+ * deselected.
  *
  * **Latest intent only** (audit F3): an "on" asks — and, confirmed, deploys
  * — only while the harness's last **admitted** gesture is still "on" (a
@@ -53,15 +60,24 @@ export type HarnessSelectionDeps = {
  * **not** a gesture: the lifecycle refused it and nothing changed (D19), so
  * the saved "on" still asks and the operator answers the ask.
  */
-export function useHarnessSelection({ sync, installed, skills, labelOf, surface, actions, reporter }: HarnessSelectionDeps) {
+export function useHarnessSelection({
+  sync,
+  installed,
+  catalog,
+  skills,
+  labelOf,
+  surface,
+  actions,
+  reporter,
+}: HarnessSelectionDeps) {
   const { setHarnessSelected, autoSyncEnabled, readSavedSelection } = sync;
   const { whenIdle } = reporter;
   const { ask, layer, dismissDialog } = surface;
   const { run } = actions;
   // The world as it stands when each check runs (an ask and a rescan wait).
-  const latest = useRef({ skills, installed, autoSyncEnabled, layer });
+  const latest = useRef({ skills, installed, catalog, autoSyncEnabled, layer });
   useLayoutEffect(() => {
-    latest.current = { skills, installed, autoSyncEnabled, layer };
+    latest.current = { skills, installed, catalog, autoSyncEnabled, layer };
   });
   // Per harness: its last admitted gesture, and the "on" gestures the
   // lifecycle did not refuse (the newest of them is the one that may ask).
@@ -108,7 +124,9 @@ export function useHarnessSelection({ sync, installed, skills, labelOf, surface,
         if (!stillWanted()) return;
         const count = harnessArrivals(latest.current.skills, toolId).length;
         if (count === 0) return;
-        const answer = await ask({ kind: "deployHarness", toolKey: toolId, toolLabel: labelOf(toolId), count });
+        const selection = new Set(readSavedSelection() ?? []);
+        const duplicates = pairsInvolving(duplicatePairs(latest.current.catalog, selection), toolId);
+        const answer = await ask({ kind: "deployHarness", toolKey: toolId, toolLabel: labelOf(toolId), count, duplicates });
         if (answer !== "confirmed" || !(await whenIdle()) || !stillWanted()) return;
         const arrivals = harnessArrivals(latest.current.skills, toolId);
         if (arrivals.length === 0) return;

@@ -107,12 +107,13 @@ export type FixtureLocalFolder = {
   candidates: LocalSkillCandidate[];
 };
 
-export type ScenarioName = "rich" | "empty" | "first-run" | "failures";
+export type ScenarioName = "rich" | "empty" | "first-run" | "failures" | "registry";
 export const SCENARIOS: readonly ScenarioName[] = [
   "rich",
   "empty",
   "first-run",
   "failures",
+  "registry",
 ];
 
 export type FixtureState = {
@@ -181,7 +182,7 @@ export function globalSharers(key: string): string[] {
 
 /** Project-scope catalog entries (virtual-group constituents absorbed). */
 export function projectCatalog(): FixtureTool[] {
-  return TOOL_REGISTRY.filter((tool) => !tool.grouped);
+  return TOOL_REGISTRY.filter((tool) => !tool.grouped && tool.projectDir !== null);
 }
 
 export function isProjectToolInstalled(state: FixtureState, key: string): boolean {

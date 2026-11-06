@@ -448,6 +448,31 @@ export type DisableScope =
  */
 { kind: "skills"; skill_ids: string[] };
 
+/**
+ *  What a harness does when it reads the same skill twice — the consequence
+ *  the cross-read warning names.
+ */
+export type DuplicateBehaviour =
+/**  Every copy is listed. */
+"shows_all" |
+/**  One copy wins; the other is hidden (often with a warning). */
+"shadows" |
+/**  An ambiguous name loads neither copy: invocation by name breaks (fx). */
+"loads_none" |
+/**  Differing copies are flagged as a conflict (Cortex Code). */
+"flags_conflict" | "unknown";
+
+/**  One harness's cross-read pairs (`ToolInfoDto::duplicate_readers`). */
+export type DuplicateReadsDto = {
+	/**
+	 *  The other installed harnesses whose deploy dir this one reads, in
+	 *  registry order (len >= 1). Never a shared skills dir sibling.
+	 */
+	keys: string[],
+	/**  What this harness does with the second copy. */
+	behaviour: DuplicateBehaviour,
+};
+
 /**  What Enable re-synced. */
 export type EnableReport = {
 	/**
@@ -1614,6 +1639,15 @@ export type ToolInfoDto = {
 	 *  `null` in the project list (see `ToolCatalogEntry::placement`).
 	 */
 	placement: ToolPlacementDto | null,
+	/**
+	 *  The cross-read warning's pairs: set when this installed harness also
+	 *  reads, by default, the deploy dirs of the installed harnesses `keys`,
+	 *  so a skill deployed to it and to one of them shows up twice here (or
+	 *  worse — `behaviour`). Resolved by the backend from the registry; the
+	 *  frontend intersects `keys` with the selection and never re-derives a
+	 *  read from a dir. `null` without a pair, and always in the project list.
+	 */
+	duplicate_readers: DuplicateReadsDto | null,
 };
 
 /**  A global tool's registry placement (the Settings → Harnesses row). */

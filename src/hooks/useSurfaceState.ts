@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { RepointKind } from "../lib/skillPresentation";
 import type { OverwriteChoice, OverwriteRow } from "../lib/overwriteAsk";
 import type { DeleteSettlement } from "../lib/reportOutcome";
+import type { DuplicatePair } from "../lib/harnessPresentation";
 import {
   legacySettingsLink,
   type SettingsField,
@@ -114,8 +115,12 @@ export type DialogState =
 export type AskRequest =
   | { kind: "sharedDir"; toolKey: string; toolLabel: string; labels: string[] }
   | { kind: "overwrite"; rows: OverwriteRow[] }
-  /** D48: a harness just turned on with auto-deploy on — deploy the library's `count` skills to it now? */
-  | { kind: "deployHarness"; toolKey: string; toolLabel: string; count: number };
+  /**
+   * D48: a harness just turned on with auto-deploy on — deploy the library's
+   * `count` skills to it now? `duplicates`: the cross-read pairs turning it on
+   * completes (round 20 ticket 02), repeated as one warning line.
+   */
+  | { kind: "deployHarness"; toolKey: string; toolLabel: string; count: number; duplicates: DuplicatePair[] };
 
 export type AskLayer = AskRequest & { askId: number };
 

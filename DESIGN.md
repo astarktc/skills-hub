@@ -1267,16 +1267,26 @@ tokens; two variants were added (Dialog `size="settings"`, Tabs `variant="pane"`
   your skills to it." / "…off: turning a harness on deploys nothing until you choose Deploy all.", `xs muted`, with a
   `ghost accent sm` **Change in General**) and "Turning a harness off removes nothing: skills already deployed there
   stay, and Update keeps them current." (true: a saved selection writes no target; Propagation ignores it). The list
-  (a `rounded-lg` bordered card, `divide-y`) has one 36 px row per Tool catalog entry — `ghost` disclosure button
-  (chevron, name; `aria-expanded` / `aria-controls`) · Badge **Detected** (`soft neutral`) / **Not detected**
-  (`outline neutral`; `soft stale` when it is selected — the one that needs a decision) · Switch `sm` "Deploy to
-  {harness}" (the saved global selection = the Effective target set; held while an action runs). "Show detected
-  harnesses only" (Checkbox, on by default) hides undetected rows **unless selected**. Expanded (`xs`, a `8rem / 1fr`
+  (a `rounded-lg` bordered card, `divide-y`) has one 36 px row per **detected** Tool catalog entry, in catalog order —
+  `ghost` disclosure button (chevron, name; `aria-expanded` / `aria-controls`) · Badge **Detected** (`soft neutral`) /
+  **Not detected** (`outline neutral`; `soft stale` when it is selected — the one that needs a decision) · Switch `sm`
+  "Deploy to {harness}" (the saved global selection = the Effective target set; held while an action runs). Every
+  undetected harness — a selected one and the reader-only ones included — sits below in one **Not detected (N)**
+  group (round 20 ticket 02; it replaced the "Show detected harnesses only" checkbox): a `ghost` disclosure button
+  (chevron; `aria-expanded` / `aria-controls`), closed whenever Settings opens and never persisted, with a `soft stale`
+  "N selected" Badge when it holds a selected harness; open, the same card of rows, then each undetected reader-only
+  harness as a switchless row ("Reads .agents/skills", Badge **Not detected**). **Cross-read warning**: a row whose
+  harness is in a cross-read pair with both harnesses selected (the backend's `ToolInfoDto.duplicate_readers`,
+  folded by `lib/harnessPresentation.ts`) carries one line under it — `xs`, `text-stale`, a `TriangleAlert` icon —
+  naming what it also reads and who reads its folder, with the consequence from the reader's duplicate behaviour
+  (shows twice · can't be invoked by name · flagged as a conflict); the Switch is `aria-describedby` it. Nothing is
+  deselected. Expanded (`xs`, a `8rem / 1fr`
   grid): Skills folder `~/…` (`font-mono`) with "Shared with …" when the dir is shared · Deploys as (the registry's
   `supports_symlink`: a link, a copy where the system refuses links — or a copy) · Detected by `~/…`. A **selected but
   undetected** harness explains itself — "Selected, but not detected on this computer: every deploy skips it, and the
   Deployments strip shows it hollow. Remove it unless you are about to install it." — with **Remove from selection**
-  (`outline sm`); when that takes the row out of the list, focus moves to the next row (else the previous) first.
+  (`outline sm`); the row stays put (the list splits by detection, never by selection), and since the button
+  itself goes once the row is deselected, pressing it hands focus to the row's disclosure first (never `<body>`).
   The placement facts are the backend's (`ToolInfoDto.placement`, global list only), never re-derived. Below, its own
   group **Import scan**: "Only scan for existing skills within selected harnesses" (Checkbox) — "Which harness folders
   Import reviews for skills that are already there. It deploys nothing."
@@ -1287,7 +1297,8 @@ tokens; two variants were added (Dialog `size="settings"`, Tabs `variant="pane"`
   your N skills to {harness} now?" — **Deploy now** (`solid accent`, initial focus) / **Not now**. Deploy now waits
   out the rescan (`reporter.whenIdle`) and runs one global batch of exactly those skills to that harness through the
   door (`run("syncToTargets", skills, { tools: [harness], confirmed: true })`: the one overwrite ask, the header
-  progress at the frame's foot, one report). Not now, Escape or Auto-deploy off: nothing (hollow marks; Deploy all per
+  progress at the frame's foot, one report). When turning the harness on completes a cross-read pair, the ask's body
+  repeats the row's warning line under its sentence (same `xs text-stale` + icon). Not now, Escape or Auto-deploy off: nothing (hollow marks; Deploy all per
   group). Turning a harness off never asks. Focus returns to the switch, which stays focused while the batch runs.
   Only the harness's **latest** gesture asks or deploys: before the ask and again after the rescan, the gesture must
   still be current, the saved selection must still include the harness, and Auto-deploy and detection must still

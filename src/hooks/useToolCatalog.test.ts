@@ -27,7 +27,7 @@ const t = (key: string, opts?: Record<string, unknown>) =>
   key === "tools.cursor" ? "Cursor (i18n)" : String(opts?.defaultValue ?? key);
 
 function toolInfo(key: string, shared_with: string[] = [key]): ToolInfoDto {
-  return { key, label: key.toUpperCase(), installed: true, shared_with, constituents: [], readers: [], placement: null };
+  return { key, label: key.toUpperCase(), installed: true, shared_with, constituents: [], readers: [], placement: null, duplicate_readers: null };
 }
 
 const GLOBAL: ToolStatusDto = {

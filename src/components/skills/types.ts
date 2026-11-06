@@ -42,7 +42,7 @@ export type { SettingsBounds } from "../../bindings";
 export type { FeaturedSkillDto } from "../../bindings";
 export type { OnlineSkillDto } from "../../bindings";
 export type { SkillFileEntry } from "../../bindings";
-export type { ReaderHarnessDto, ToolInfoDto } from "../../bindings";
+export type { DuplicateBehaviour, DuplicateReadsDto, ReaderHarnessDto, ToolInfoDto } from "../../bindings";
 export type { ToolStatusDto } from "../../bindings";
 export type { BatchSyncSkillDto } from "../../bindings";
 export type { BatchSyncOverrideDto } from "../../bindings";
