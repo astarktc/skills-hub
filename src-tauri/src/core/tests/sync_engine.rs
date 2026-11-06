@@ -1,12 +1,37 @@
 use std::fs;
 
 use crate::core::content_identity::Source;
+use crate::core::errors::CommandError;
 use crate::core::removal_fence::ProtectedLibrary;
 use crate::core::sync_engine::{
-    copy_dir_recursive, sync_dir_for_tool_with_overwrite, sync_dir_hybrid,
+    copy_dir_recursive, remove_admitted, sync_dir_for_tool_with_overwrite, sync_dir_hybrid,
     sync_dir_hybrid_with_overwrite, SyncMode,
 };
 use crate::core::tool_adapters::adapter_by_key;
+
+/// Re-check P2 (BACKLOG #76): a removal the OS refuses because the volume is
+/// read-only (EROFS, os error 30) is the typed permission failure with its
+/// next step — never `OTHER`.
+#[test]
+fn a_read_only_filesystem_refusal_is_the_typed_permission_failure() {
+    let path = std::env::temp_dir().join("read-only-volume").join("alpha");
+    #[cfg(unix)]
+    let read_only = std::io::Error::from_raw_os_error(30);
+    #[cfg(not(unix))]
+    let read_only = std::io::Error::from(std::io::ErrorKind::ReadOnlyFilesystem);
+    assert_eq!(read_only.kind(), std::io::ErrorKind::ReadOnlyFilesystem);
+    let failed = Err(anyhow::Error::new(read_only).context("remove dir"));
+
+    let err = remove_admitted(&path, failed).expect_err("the removal failed");
+
+    match CommandError::from_anyhow(err) {
+        CommandError::RemovalPermissionDenied { path: at, detail } => {
+            assert_eq!(at, path.to_string_lossy());
+            assert!(detail.contains("remove dir"), "{detail}");
+        }
+        other => panic!("expected REMOVAL_PERMISSION_DENIED, got {other:?}"),
+    }
+}
 
 #[cfg(unix)]
 #[test]
