@@ -87,6 +87,14 @@ export const TOOL_REGISTRY: readonly FixtureTool[] = [
   { key: "muse_code", label: "Muse Code", globalDir: ".config/muse/skills", projectDir: ".agents/skills", grouped: true },
   { key: "poolside", label: "Poolside", globalDir: ".config/poolside/skills", projectDir: ".agents/skills", grouped: true },
   { key: "dirac", label: "Dirac", globalDir: ".dirac/skills", projectDir: ".agents/skills", grouped: true },
+  { key: "code_studio", label: "Code Studio", globalDir: ".codestudio/skills", projectDir: ".codestudio/skills", grouped: false },
+  { key: "codearts_agent", label: "CodeArts Agent", globalDir: ".codeartsdoer/skills", projectDir: ".codeartsdoer/skills", grouped: false },
+  { key: "qoder_cn", label: "Qoder CN", globalDir: ".lingma/skills", projectDir: ".lingma/skills", grouped: false },
+  { key: "qoder_cn_cli", label: "Qoder CN CLI", globalDir: ".qoder-cn/skills", projectDir: ".qoder/skills", grouped: false },
+  { key: "kimchi", label: "Kimchi", globalDir: ".config/kimchi/harness/skills", projectDir: ".kimchi/skills", grouped: false },
+  { key: "astrbot", label: "AstrBot", globalDir: ".astrbot/data/skills", projectDir: null, grouped: false },
+  { key: "oh_my_pi", label: "oh-my-pi", globalDir: ".omp/agent/skills", projectDir: ".omp/skills", grouped: false },
+  { key: "stakpak", label: "Stakpak", globalDir: ".stakpak/skills", projectDir: ".stakpak/skills", grouped: false },
 ];
 
 /**
@@ -125,4 +133,7 @@ export const DUPLICATE_READS: Readonly<Record<string, { keys: readonly string[];
   muse_code: { keys: ["agents_skills", "claude_code", "codex"], behaviour: "unknown" },
   poolside: { keys: ["agents_skills"], behaviour: "unknown" },
   dirac: { keys: ["agents_skills", "claude_code"], behaviour: "shadows" },
+  code_studio: { keys: ["agents_skills", "claude_code", "github_copilot"], behaviour: "unknown" },
+  kimchi: { keys: ["agents_skills", "cursor", "codex", "pi", "gemini_cli", "github_copilot", "droid"], behaviour: "shadows" },
+  oh_my_pi: { keys: ["agents_skills", "claude_code", "codex", "opencode"], behaviour: "shadows" },
 };

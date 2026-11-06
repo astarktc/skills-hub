@@ -269,7 +269,7 @@ Legend:
 | Dexto (AGENTS) | Y | N | Y | N | legacy `~/.dexto/skills`, Claude plugin skills | ? ("no source precedence rules") | — | ? | **Yes** | **No** | — | VERIFIED · T34 |
 | fx (AGENTS) | Y | Y | Y | Y | `~/.fx`, `~/.config/opencode`, `~/.codex`, `~/.claw` | **both**: an ambiguous `$name` loads **none** | `skill_symlink_authorities` (symlinks outside home) | ? | **Yes** | **Yes** | Duplicates break explicit invocation; symlink targets must resolve inside home or be listed | VERIFIED · T35 |
 | Sarvam Code (AGENTS) | Y (LIKELY) | ? | ? | ? | — | ? | — | — | LIKELY yes | ? | Invite-gated | LIKELY · T1, T37 |
-| oh-my-pi (extra) | Y | Y | Y | Y | `~/.agent`, `~/.codex`, `~/.config/opencode`, Pi user dir (`enablePiUser`) | **own** LIKELY (blog: `.omp/skills` > `~/.omp/agent/skills` > `.claude/skills`) | `skills.enable{Pi,Agents,Claude,Codex}{User,Project}` | ? | **Yes** | **Yes** | — | VERIFIED dirs · T41; LIKELY prec. |
+| oh-my-pi (extra) | Y | Y | Y | Y | `~/.agent`, `~/.codex`, `~/.config/opencode`; Pi user dir (`enablePiUser`) ? (not among the listed locations) | **own** ("highest-priority provider: native `.omp`, …, Claude, Agent/Codex-compatible, OpenCode, GitHub"; `/extensions` shows the shadowed copy) | `skills.enable{Pi,Agents,Claude,Codex}{User,Project}` | ? | **Yes** | **Yes** | — | VERIFIED · T41 (precedence re-read 2026-11-06; was LIKELY from the blog) |
 | Letta Code (extra) | N | N | Y | N | agent-memory skills | project > agent > global > bundled | — | — | **No** | **No** | — | VERIFIED · T40 |
 | VT Code (extra) | Y (only) | N | Y | N | `/etc/codex/skills`; disabled list in `~/.codex/config.toml` | n/a | — | ? | **Yes** | **No** | Reads Codex's config file | VERIFIED · T42 |
 
@@ -435,7 +435,7 @@ blocked or JS-rendered.
 | T38 | https://docs.zencoder.ai/features/skills (via search; direct fetch 403) ; https://docs.zencoder.ai/zenflow/skills (via search) | P | User-level `~/.agents/skills`; `.zencoder/skills` deprecated |
 | T39 | https://github.com/agentskills/agentskills `docs/snippets/clients.jsx` | S | Client showcase list |
 | T40 | https://docs.letta.com/configuration/skills/index.md | P | Skill scopes |
-| T41 | https://omp.sh/docs/skills ; https://maxtokens.ai/posts/oh-my-pi-setup/ (S) | P | Locations, per-source switches; precedence (S) |
+| T41 | https://omp.sh/docs/skills ; https://maxtokens.ai/posts/oh-my-pi-setup/ (S) | P | Locations, per-source switches; precedence (re-fetched 2026-11-06: "keeps the highest-priority provider: native `.omp` …"; the blog (S) agrees) |
 | T42 | https://github.com/vinhnx/VTCode/blob/main/docs/skills/SKILLS_GUIDE.md | P | Discovery order |
 | T43 | https://github.com/zeroclaw-labs/zeroclaw/discussions/2149 ; https://github.com/HKUDS/nanobot/blob/main/nanobot/agent/skills.py | P/S | Workspace skill dirs |
 | T44 | https://www.mcpjam.com/blog/skills ; https://docs.mcpjam.com/inspector/skills | P | Global and project dirs |

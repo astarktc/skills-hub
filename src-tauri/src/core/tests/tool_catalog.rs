@@ -477,3 +477,25 @@ fn the_project_catalog_carries_no_pairs() {
         .iter()
         .all(|e| e.duplicate_readers.is_none()));
 }
+
+// round 20 ticket 07 rows
+/// Kimchi reads another agent's folder "if installed" — the very condition a
+/// pair requires, so the read counts: Kimchi with Pi installed sees a Pi
+/// deployment beside its own. Its `~/.claude/skills` read is opt-in, so
+/// Claude Code makes no pair.
+#[test]
+fn kimchi_reads_an_installed_agents_folder_but_not_claudes_by_default() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    for key in ["kimchi", "pi", "claude_code"] {
+        install(home.path(), key);
+    }
+
+    assert_eq!(
+        duplicate_readers_of(&roots, "kimchi"),
+        Some(DuplicateReads {
+            keys: vec!["pi"],
+            behaviour: DuplicateBehaviour::Shadows,
+        })
+    );
+}

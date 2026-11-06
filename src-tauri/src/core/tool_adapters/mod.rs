@@ -67,6 +67,14 @@ pub enum ToolId {
     MuseCode,
     Poolside,
     Dirac,
+    CodeStudio,
+    CodeArtsAgent,
+    QoderCn,
+    QoderCnCli,
+    Kimchi,
+    AstrBot,
+    OhMyPi,
+    Stakpak,
 }
 
 impl ToolId {
@@ -122,6 +130,14 @@ impl ToolId {
             ToolId::MuseCode => "muse_code",
             ToolId::Poolside => "poolside",
             ToolId::Dirac => "dirac",
+            ToolId::CodeStudio => "code_studio",
+            ToolId::CodeArtsAgent => "codearts_agent",
+            ToolId::QoderCn => "qoder_cn",
+            ToolId::QoderCnCli => "qoder_cn_cli",
+            ToolId::Kimchi => "kimchi",
+            ToolId::AstrBot => "astrbot",
+            ToolId::OhMyPi => "oh_my_pi",
+            ToolId::Stakpak => "stakpak",
         }
     }
 }
@@ -1622,6 +1638,302 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
                 dir: home(".ai/skills"),
                 mode: ReadMode::Default,
             }],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::CodeStudio,
+        display_name: "Code Studio",
+        // Syncfusion Code Studio: personal skills `~/.codestudio/skills` (brief T7,
+        // re-read via search index 2026-11-06; the help URL now redirects to
+        // docs.boldcreate.ai). FLAG (brief I4, spec Q29): `.codestudio` is not
+        // verified to hold more than skills on a real install; the skills-only
+        // footprint rule makes the worst case "not detected".
+        skills_dir: home(".codestudio/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".codestudio")],
+        project_skills_dir: Some(".codestudio/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2, row "Code Studio".
+        // VERIFIED T7: setting "Skill File Locations" defaults to `.codestudio`,
+        // `.agents`, `.claude` (project and home) plus `~/.copilot/skills`.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[AlsoRead {
+                dir: home(".copilot/skills"),
+                mode: ReadMode::Default,
+            }],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::CodeArtsAgent,
+        display_name: "CodeArts Agent",
+        // Huawei Cloud: user skills `%USERPROFILE%/.codeartsdoer/skills` (brief T6,
+        // re-fetched 2026-11-06; macOS/Linux `~/.codeartsdoer/skills` is LIKELY).
+        // FLAG (brief I4, spec Q29): `.codeartsdoer` is not verified to hold more
+        // than skills; the skills-only footprint rule makes the worst case "not
+        // detected".
+        skills_dir: home(".codeartsdoer/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".codeartsdoer")],
+        project_skills_dir: Some(".codeartsdoer/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2, row "CodeArts Agent".
+        // VERIFIED T6: its priority list names no shared folder.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::QoderCn,
+        // The Qoder CN IDE, formerly Lingma (通义灵码). Its CLI is its own row
+        // (`qoder_cn_cli`), the Trae / Trae CN pattern.
+        display_name: "Qoder CN",
+        // docs.qoder.cn/user-guide/skills (brief T19, re-fetched 2026-11-06).
+        skills_dir: home(".lingma/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".lingma")],
+        project_skills_dir: Some(".lingma/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2, row "Qoder CN (IDE, ex-Lingma)".
+        // VERIFIED T19: the IDE page lists only `.lingma`. The CN *desktop app*
+        // reads `~/.agents/skills`, but that is not this surface.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::QoderCnCli,
+        display_name: "Qoder CN CLI",
+        // help.aliyun.com/zh/lingma/qodercli-cn/user-guide/skills (brief T19,
+        // re-read 2026-11-06): user `~/.qoder-cn/skills`, project `.qoder/skills`
+        // (shared with the Qoder row's project dir). `~/.qoder-cn` holds
+        // `settings.json` (docs.qoder.cn/cli/settings); `QODERCN_CONFIG_DIR` is not
+        // honoured.
+        skills_dir: home(".qoder-cn/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".qoder-cn")],
+        project_skills_dir: Some(".qoder/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2, row "Qoder CN CLI".
+        // VERIFIED T19: the CLI page lists only its own two dirs.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::Kimchi,
+        display_name: "Kimchi",
+        // Cast AI: docs.kimchi.dev/docs/coding-skills (brief T28, re-fetched
+        // 2026-11-06). `~/.config/kimchi` holds `config.json` (`skillPaths`).
+        skills_dir: home(".config/kimchi/harness/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".config/kimchi")],
+        project_skills_dir: Some(".kimchi/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2, row "Kimchi (optional)".
+        // VERIFIED T28. Each other agent's dir is read "if installed" — exactly the
+        // case a cross-read pair needs, so the reads are `Default`. Per agent, the
+        // project-local dir is checked first and home is the fallback. Earlier
+        // `skillPaths` entries win. `.claude` needs `extensions.claude-code-skills`.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: OptIn,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: OptIn,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[
+                AlsoRead {
+                    dir: home(".pi/agent/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".codex/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".cursor/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".warp/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".factory/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".gemini/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".copilot/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".github/skills"),
+                    mode: ReadMode::Default,
+                },
+            ],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::AstrBot,
+        display_name: "AstrBot",
+        // `<root>/data/skills`, root = `$ASTRBOT_ROOT`, else `~/.astrbot` **only in
+        // the packaged desktop runtime**, else the cwd (brief T26, `astrbot_path.py`
+        // re-read 2026-11-06). Only the desktop runtime is reachable: a source
+        // install is undetectable, and `ASTRBOT_ROOT` is not honoured. Detected
+        // only through `.astrbot` (brief I4).
+        skills_dir: home(".astrbot/data/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".astrbot")],
+        // No project dir: its `data/skills` is relative to the AstrBot root, which
+        // the detected (desktop) runtime fixes at `~/.astrbot`, and its workspace
+        // skills are per chat session (`data/workspaces/<umo>/skills`), never a
+        // repository's (brief Part 1 says `data/skills`; deviation, ticket 07).
+        project_skills_dir: None,
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2, row "AstrBot (optional)".
+        // VERIFIED T26: workspace > local > plugin > sandbox; no shared folder.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::OhMyPi,
+        display_name: "oh-my-pi",
+        // `omp`: omp.sh/docs/skills (brief T41, re-fetched 2026-11-06). User
+        // `~/.omp/agent/skills`, project `.omp/skills`; `~/.omp/agent` holds
+        // `config.yml`. Its managed `~/.omp/agent/managed-skills` is never a target.
+        skills_dir: home(".omp/agent/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".omp")],
+        project_skills_dir: Some(".omp/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2, row "oh-my-pi (extra)".
+        // VERIFIED T41: every `skills.enable*` switch defaults on; the highest-priority
+        // provider wins (native `.omp` first) and `/extensions` shows the shadowed
+        // copy. The Pi user dir behind `enablePiUser` is not listed among the
+        // compatible locations: `Unknown`.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[
+                AlsoRead {
+                    dir: home(".agent/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".codex/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".config/opencode/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".pi/agent/skills"),
+                    mode: ReadMode::Unknown,
+                },
+            ],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::Stakpak,
+        display_name: "Stakpak",
+        // `default_skill_directories()`: project `.stakpak/skills`, then
+        // `$HOME/.stakpak/skills` (addendum P9, re-read at main 2026-11-06).
+        // `~/.stakpak` holds `config.toml`. Low priority: last release 2026-06.
+        skills_dir: home(".stakpak/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".stakpak")],
+        project_skills_dir: Some(".stakpak/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: addendum § Shared-dir reads, row "Stakpak".
+        // VERIFIED P9 (complete dir list): no shared folder; first seen wins.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
         },
     },
 ];

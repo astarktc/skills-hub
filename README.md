@@ -82,13 +82,21 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 | `muse_code` | Muse Code | `.config/muse/skills` | `.agents/skills` | `.config/muse` |
 | `poolside` | Poolside | `.config/poolside/skills` | `.agents/skills` | `.config/poolside` |
 | `dirac` | Dirac | `.dirac/skills` | `.agents/skills` | `.dirac` |
+| `code_studio` | Code Studio | `.codestudio/skills` | `.codestudio/skills` | `.codestudio` |
+| `codearts_agent` | CodeArts Agent | `.codeartsdoer/skills` | `.codeartsdoer/skills` | `.codeartsdoer` |
+| `qoder_cn` | Qoder CN | `.lingma/skills` | `.lingma/skills` | `.lingma` |
+| `qoder_cn_cli` | Qoder CN CLI | `.qoder-cn/skills` | `.qoder/skills` | `.qoder-cn` |
+| `kimchi` | Kimchi | `.config/kimchi/harness/skills` | `.kimchi/skills` | `.config/kimchi` |
+| `astrbot` | AstrBot | `.astrbot/data/skills` | — | `.astrbot` |
+| `oh_my_pi` | oh-my-pi | `.omp/agent/skills` | `.omp/skills` | `.omp` |
+| `stakpak` | Stakpak | `.stakpak/skills` | `.stakpak/skills` | `.stakpak` |
 
 `agents_skills` is scope-dependent. **Globally** it is a plain, independently selectable target: it
 manages `~/.agents/skills` and nothing else — Cursor still reads `~/.cursor/skills`, Codex still reads
 `~/.codex/skills`, so those harnesses keep their own rows in the global list. **In a project** it is an
 aggregate shown as `.agents/skills (N harnesses)`: one folder, `<project>/.agents/skills`, that every harness
-in the group reads (today nine: Cursor, Codex, OpenCode, Antigravity, Amp, Kimi Code CLI, Cline, Gemini CLI,
-GitHub Copilot), so those harnesses have no separate project row. N is counted from the registry.
+in the group reads (today: Cursor, Codex, OpenCode, Antigravity, Amp, Kimi Code CLI, Cline, Gemini CLI,
+GitHub Copilot, Letta Code, Muse Code, Poolside, Dirac), so those harnesses have no separate project row. N is counted from the registry.
 
 A **reader-only harness** has no skills folder of its own: it reads `~/.agents/skills` (and
 `<project>/.agents/skills`), so Skills Hub lists it under the `.agents/skills` entry with its detected state
