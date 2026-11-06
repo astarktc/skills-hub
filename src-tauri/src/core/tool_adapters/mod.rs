@@ -7,8 +7,13 @@ use crate::core::errors::SignalError;
 use crate::core::skill_discovery::{manifest_validity, InvalidManifestReason};
 
 pub mod catalog;
+pub mod reads;
 
 pub use catalog::{global_tool_entries, installed_keys, project_tool_entries, ToolCatalogEntry};
+use reads::{
+    AlsoRead, DuplicateBehaviour, Precedence, ReadFacts, ReadMode, ScopeReads,
+    SharedRead::{Conditional, No, OptIn, Unknown, Yes},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolId {
@@ -172,6 +177,11 @@ pub struct ToolAdapter {
     /// `true`; the capability stays as the lever for a tool that regresses
     /// (Cursor was `false` until IDE 2.5 / CLI 2026-06 fixed discovery).
     pub supports_symlink: bool,
+    /// Which shared skills folders the harness reads, what wins, what it
+    /// does with a duplicate, and which other folders it also reads — each
+    /// value citing its brief row ([`reads`]). Not the deployment decision:
+    /// that is `group` (a test keeps the two consistent).
+    pub reads: ReadFacts,
 }
 
 impl ToolAdapter {
@@ -291,6 +301,22 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".agents/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "(omitted)".
+        // Not a harness: the AGENTS convention folder itself, which the brief's
+        // matrix omits. It reads only itself, so it is never a duplicate reader.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::Cursor,
@@ -303,6 +329,25 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         // Copy-only until Cursor IDE 2.5 (Feb 2026) fixed symlink discovery
         // under ~/.cursor/skills; flipped in v-next ticket 38.
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Cursor".
+        // VERIFIED T75. The brief's A-only caveat (local agents only, not Cloud
+        // Agents / SSH / self-hosted workers) is about surfaces, not this read.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::ShowsAll,
+            also_reads: &[AlsoRead {
+                dir: home(".codex/skills"),
+                mode: ReadMode::Default,
+            }],
+        },
     },
     ToolAdapter {
         id: ToolId::ClaudeCode,
@@ -313,6 +358,22 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".claude/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Claude Code".
+        // VERIFIED B02:S2. `~/.claude/skills` is its own folder. The managed-settings
+        // dir is outside home and not modelled.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: Yes,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::Codex,
@@ -323,6 +384,22 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".agents/skills"),
         group: Some(VirtualGroup::AgentsStandard),
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Codex".
+        // VERIFIED T49, B02:S4–S5. Its own `~/.codex/skills` is deprecated but still
+        // read; `/etc/codex/skills` is outside home and not modelled.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Both,
+            duplicates: DuplicateBehaviour::ShowsAll,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::OpenCode,
@@ -334,6 +411,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".agents/skills"),
         group: Some(VirtualGroup::AgentsStandard),
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "OpenCode".
+        // VERIFIED T64 ("up to 3 copies").
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::ShowsAll,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::Antigravity,
@@ -345,6 +437,35 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".agents/skills"),
         group: Some(VirtualGroup::AgentsStandard),
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Antigravity".
+        // VERIFIED T71. The CLI (an alias of this row) also reads Gemini CLI's
+        // folder; the IDE does not.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[
+                AlsoRead {
+                    dir: home(".gemini/skills"),
+                    mode: ReadMode::Conditional("Antigravity CLI only"),
+                },
+                AlsoRead {
+                    dir: home(".gemini/antigravity-cli/skills"),
+                    mode: ReadMode::Conditional("Antigravity CLI only"),
+                },
+                AlsoRead {
+                    dir: home(".gemini/antigravity/skills"),
+                    mode: ReadMode::Legacy,
+                },
+            ],
+        },
     },
     ToolAdapter {
         id: ToolId::Amp,
@@ -357,6 +478,35 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".agents/skills"),
         group: Some(VirtualGroup::AgentsStandard),
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Amp".
+        // VERIFIED T77. Rank 1 is its own `~/.config/agents/skills`, which wins over
+        // `~/.agents` (first name wins). The disable settings keep these default reads.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[
+                AlsoRead {
+                    dir: home(".config/agents/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".config/amp/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".claude/plugins/cache"),
+                    mode: ReadMode::Default,
+                },
+            ],
+        },
     },
     ToolAdapter {
         id: ToolId::KimiCli,
@@ -372,6 +522,35 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".agents/skills"),
         group: Some(VirtualGroup::AgentsStandard),
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Kimi Code CLI".
+        // VERIFIED T50, B02:S14. Current Kimi Code reads `~/.agents/skills`; every
+        // other read, this row's own folder included, is legacy `kimi-cli`'s.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Conditional("legacy kimi-cli only, when ~/.kimi/skills is absent"),
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[
+                AlsoRead {
+                    dir: home(".config/agents/skills"),
+                    mode: ReadMode::Legacy,
+                },
+                AlsoRead {
+                    dir: home(".kimi/skills"),
+                    mode: ReadMode::Legacy,
+                },
+                AlsoRead {
+                    dir: home(".codex/skills"),
+                    mode: ReadMode::Legacy,
+                },
+            ],
+        },
     },
     ToolAdapter {
         id: ToolId::Augment,
@@ -385,6 +564,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".augment/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Augment".
+        // VERIFIED T69 (`~/.augment` > workspace > `~/.claude` > `~/.agents`).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::OpenClaw,
@@ -396,6 +590,23 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some("skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "OpenClaw".
+        // VERIFIED T51 (`~/.agents` rank 3 beats `~/.openclaw` rank 4).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Conditional(
+                    "default state dir only: a non-default OPENCLAW_STATE_DIR drops it",
+                ),
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Shared,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::Copaw,
@@ -410,6 +621,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".copaw/skill_pool"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Copaw → QwenPaw".
+        // VERIFIED T46: only configured extra skill dirs; the primary pool wins.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::Cline,
@@ -421,6 +647,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".agents/skills"),
         group: Some(VirtualGroup::AgentsStandard),
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Cline".
+        // VERIFIED T70; precedence undocumented (scan order only).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::CodeBuddy,
@@ -432,6 +673,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".codebuddy/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "CodeBuddy".
+        // VERIFIED T78 for `.agents`; the `.claude` absence is LIKELY (third party).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: Unknown,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: Unknown,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::CommandCode,
@@ -443,6 +699,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".commandcode/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Command Code".
+        // VERIFIED T52 (`.commandcode` > `.agents`; the shadowed copy is reported).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::Continue,
@@ -454,6 +725,9 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".continue/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Continue".
+        // LIKELY B02:S43 only.
+        reads: ReadFacts::UNKNOWN,
     },
     ToolAdapter {
         id: ToolId::Crush,
@@ -465,6 +739,25 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".crush/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Crush".
+        // VERIFIED T76. Also reads Amp's `~/.config/agents/skills`; Windows adds
+        // `%LOCALAPPDATA%\agents\skills` and project `.cursor/skills` (not modelled).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[AlsoRead {
+                dir: home(".config/agents/skills"),
+                mode: ReadMode::Default,
+            }],
+        },
     },
     ToolAdapter {
         id: ToolId::Junie,
@@ -476,6 +769,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".junie/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Junie".
+        // VERIFIED T53. Project `.claude` is an import offer, not a read.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Conditional("trusted projects only"),
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::IflowCli,
@@ -487,6 +795,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".iflow/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "iFlow CLI".
+        // VERIFIED T67.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::KiroCli,
@@ -498,6 +821,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".kiro/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Kiro CLI".
+        // VERIFIED T68.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::Kode,
@@ -509,6 +847,9 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".kode/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Kode".
+        // LIKELY B02:S47 only.
+        reads: ReadFacts::UNKNOWN,
     },
     ToolAdapter {
         id: ToolId::McpJam,
@@ -520,6 +861,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".mcpjam/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "MCPJam".
+        // VERIFIED T44.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::MistralVibe,
@@ -531,6 +887,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".vibe/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Mistral Vibe".
+        // VERIFIED T54.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Conditional("trusted projects only"),
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::Mux,
@@ -543,6 +914,24 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".mux/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Mux → Xum".
+        // VERIFIED B02:S42 (`~/.xum` > `~/.agents` > this row's legacy `~/.mux`).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Unknown,
+            },
+            project: ScopeReads {
+                agents: Unknown,
+                claude: Unknown,
+            },
+            precedence: Precedence::Shared,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[AlsoRead {
+                dir: home(".xum/skills"),
+                mode: ReadMode::Default,
+            }],
+        },
     },
     ToolAdapter {
         id: ToolId::OpenClaude,
@@ -554,6 +943,9 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".openclaude/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "OpenClaude IDE".
+        // UNKNOWN: no vendor doc found.
+        reads: ReadFacts::UNKNOWN,
     },
     ToolAdapter {
         id: ToolId::OpenHands,
@@ -565,6 +957,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".openhands/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "OpenHands".
+        // VERIFIED T60 (`.agents` beats the legacy `.openhands` dirs, still read).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Shared,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::Pi,
@@ -576,6 +983,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".pi/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Pi".
+        // VERIFIED T59 (first discovered wins, with a warning); the order is LIKELY.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::Qoder,
@@ -587,6 +1009,23 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".qoder/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Qoder".
+        // VERIFIED T20 (own folder wins; a duplicate is shown once).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Conditional(
+                    "the Qoder desktop app only; the IDE and CLI read only ~/.qoder/skills",
+                ),
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::QoderWork,
@@ -598,6 +1037,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".qoderwork/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "QoderWork".
+        // VERIFIED T21.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::QwenCode,
@@ -609,6 +1063,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".qwen/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Qwen Code".
+        // VERIFIED T65 (`~/.qwen` wins).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: OptIn,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::Trae,
@@ -620,6 +1089,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".trae/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Trae".
+        // VERIFIED T48 for the project toggle; the global cells read "N / ?" and "?".
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Unknown,
+                claude: Unknown,
+            },
+            project: ScopeReads {
+                agents: OptIn,
+                claude: Unknown,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::TraeCn,
@@ -631,6 +1115,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".trae/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Trae CN".
+        // VERIFIED T48 ("as Trae").
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Unknown,
+                claude: Unknown,
+            },
+            project: ScopeReads {
+                agents: OptIn,
+                claude: Unknown,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::Zencoder,
@@ -644,6 +1143,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".zencoder/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Zencoder (+ Zenflow)".
+        // VERIFIED T38. This row's `.zencoder/skills` is deprecated but still read.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Unknown,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::Neovate,
@@ -655,6 +1169,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".neovate/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Neovate".
+        // VERIFIED T47 (`~/.neovate` loads after `~/.claude`; later wins).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: Yes,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::Pochi,
@@ -666,6 +1195,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".pochi/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Pochi".
+        // VERIFIED T66.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::AdaL,
@@ -677,6 +1221,9 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".adal/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "AdaL".
+        // VERIFIED T45 for its own folder only; every shared read is unknown.
+        reads: ReadFacts::UNKNOWN,
     },
     ToolAdapter {
         id: ToolId::KiloCode,
@@ -688,6 +1235,31 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".kilocode/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Kilo Code".
+        // VERIFIED T61, B02:S24. `~/.kilo/skills` is current; whether this row's
+        // legacy `.kilocode` is still read is unknown (#88).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: OptIn,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: OptIn,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[
+                AlsoRead {
+                    dir: home(".kilo/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".kilocode/skills"),
+                    mode: ReadMode::Unknown,
+                },
+            ],
+        },
     },
     ToolAdapter {
         id: ToolId::RooCode,
@@ -699,6 +1271,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".roo/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Roo Code".
+        // VERIFIED T55 (`~/.roo` > `~/.agents`).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::Goose,
@@ -710,6 +1297,24 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".goose/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Goose".
+        // VERIFIED T62. Project `.goose/skills` is not modelled (project scope).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[AlsoRead {
+                dir: home(".agents/plugins"),
+                mode: ReadMode::Default,
+            }],
+        },
     },
     ToolAdapter {
         id: ToolId::GeminiCli,
@@ -721,6 +1326,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".agents/skills"),
         group: Some(VirtualGroup::AgentsStandard),
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Gemini CLI".
+        // VERIFIED T56 (within a tier `.agents` beats `.gemini`).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Shared,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::GithubCopilot,
@@ -732,6 +1352,22 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".agents/skills"),
         group: Some(VirtualGroup::AgentsStandard),
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "GitHub Copilot".
+        // VERIFIED T57. The brief's A-only caveat (local surfaces only) is about
+        // surfaces, not this read.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
     },
     ToolAdapter {
         id: ToolId::Clawdbot,
@@ -743,6 +1379,9 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".clawdbot/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Clawdbot".
+        // Retires in #108 (former OpenClaw name).
+        reads: ReadFacts::UNKNOWN,
     },
     ToolAdapter {
         id: ToolId::Droid,
@@ -754,6 +1393,24 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".factory/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Droid".
+        // VERIFIED T58 (one personal tier; the manager shows "Overridden").
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[AlsoRead {
+                dir: home(".agent/skills"),
+                mode: ReadMode::Default,
+            }],
+        },
     },
     ToolAdapter {
         id: ToolId::Windsurf,
@@ -767,6 +1424,30 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".windsurf/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Windsurf → Devin".
+        // VERIFIED T9–T11. `read_config_from.{windsurf,copilot,claude}` default on.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[
+                AlsoRead {
+                    dir: home(".codeium/windsurf/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".copilot/skills"),
+                    mode: ReadMode::Default,
+                },
+            ],
+        },
     },
     ToolAdapter {
         id: ToolId::Moltbot,
@@ -778,6 +1459,9 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".moltbot/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "MoltBot".
+        // Retires in #108 (former OpenClaw name).
+        reads: ReadFacts::UNKNOWN,
     },
     ToolAdapter {
         id: ToolId::HermesAgent,
@@ -788,6 +1472,21 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         project_skills_dir: Some(".hermes/skills"),
         group: None,
         supports_symlink: true,
+        // Read facts: brief § Part 2, row "Hermes Agent".
+        // VERIFIED T63: shared folders only via `skills.external_dirs`.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: OptIn,
+                claude: OptIn,
+            },
+            project: ScopeReads {
+                agents: Unknown,
+                claude: Unknown,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
     },
 ];
 
