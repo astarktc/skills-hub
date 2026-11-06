@@ -102,11 +102,12 @@ pub struct EnableReport {
 /// Mutation entry point: serialised against every other Sync-target mutation.
 pub fn disable_targets(
     store: &SkillStore,
+    central_dir: &Path,
     home: &Path,
     scope: &DisableScope,
     now: i64,
 ) -> Result<RemovalReport> {
-    mutation_guard::serialized(|| disable_unlocked(store, home, scope, now))
+    mutation_guard::serialized(|| disable_unlocked(store, central_dir, home, scope, now))
 }
 
 /// Enable `scope`: clear the Disabled marker and re-sync as a first sync.
@@ -117,11 +118,12 @@ pub fn disable_targets(
 #[cfg(test)]
 pub fn enable_targets(
     store: &SkillStore,
+    central_dir: &Path,
     home: &Path,
     scope: &DisableScope,
     now: i64,
 ) -> Result<EnableReport> {
-    enable_targets_with(store, home, scope, &[], now)
+    enable_targets_with(store, central_dir, home, scope, &[], now)
 }
 
 /// [`enable_targets`] carrying the operator's answers to the overwrite ask
@@ -135,12 +137,13 @@ pub fn enable_targets(
 /// Mutation entry point: serialised against every other Sync-target mutation.
 pub fn enable_targets_with(
     store: &SkillStore,
+    central_dir: &Path,
     home: &Path,
     scope: &DisableScope,
     overrides: &[BatchOverride],
     now: i64,
 ) -> Result<EnableReport> {
-    mutation_guard::serialized(|| enable_unlocked(store, home, scope, overrides, now))
+    mutation_guard::serialized(|| enable_unlocked(store, central_dir, home, scope, overrides, now))
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +152,7 @@ pub fn enable_targets_with(
 
 fn disable_unlocked(
     store: &SkillStore,
+    central_dir: &Path,
     home: &Path,
     scope: &DisableScope,
     now: i64,
@@ -156,17 +160,17 @@ fn disable_unlocked(
     match scope {
         DisableScope::SkillTool { skill_id, tool } => {
             let skill = require_skill(store, skill_id)?;
-            disable_pair(store, home, &skill, tool)
+            disable_pair(store, central_dir, home, &skill, tool)
         }
         DisableScope::Skill { skill_id } => {
             let skill = require_skill(store, skill_id)?;
-            disable_skill(store, &skill, now)
+            disable_skill(store, central_dir, &skill, now)
         }
         DisableScope::Skills { skill_ids } => {
             let mut reports = Vec::new();
             for skill_id in skill_ids {
                 if let Some(skill) = store.get_skill_by_id(skill_id)? {
-                    reports.push(disable_skill(store, &skill, now)?);
+                    reports.push(disable_skill(store, central_dir, &skill, now)?);
                 }
             }
             Ok(RemovalReport::merge(reports))
@@ -178,6 +182,7 @@ fn disable_unlocked(
 /// record a marker row for the named Tool when it had none.
 fn disable_pair(
     store: &SkillStore,
+    central_dir: &Path,
     home: &Path,
     skill: &SkillRecord,
     tool: &str,
@@ -200,7 +205,7 @@ fn disable_pair(
             home: home.to_path_buf(),
         },
     )?;
-    let mut report = execute_disable(store, plan)?;
+    let mut report = execute_disable(store, central_dir, plan)?;
 
     if let (Some(adapter), false) = (adapter, has_row) {
         // Admitted only when the shared artifact settled: a failed removal
@@ -241,9 +246,15 @@ fn disable_pair(
 /// the skill-level marker. The marker records the operator's intent and is
 /// set even when a removal failed — the failed rows stay `error` (retryable
 /// by disabling again) and no automatic pass re-materialises the rest.
-fn disable_skill(store: &SkillStore, skill: &SkillRecord, now: i64) -> Result<RemovalReport> {
+fn disable_skill(
+    store: &SkillStore,
+    central_dir: &Path,
+    skill: &SkillRecord,
+    now: i64,
+) -> Result<RemovalReport> {
     let mut reports = vec![execute_disable(
         store,
+        central_dir,
         artifact_removal::plan(
             store,
             &RemovalScope::SkillGlobal {
@@ -264,7 +275,7 @@ fn disable_skill(store: &SkillStore, skill: &SkillRecord, now: i64) -> Result<Re
                 skill_id: skill.id.clone(),
             },
         )?;
-        reports.push(execute_disable(store, plan)?);
+        reports.push(execute_disable(store, central_dir, plan)?);
     }
     if store.skill_disabled_at(&skill.id)?.is_none() {
         store.set_skill_disabled_at(&skill.id, Some(now))?;
@@ -275,7 +286,11 @@ fn disable_skill(store: &SkillStore, skill: &SkillRecord, now: i64) -> Result<Re
 /// Execute a plan with the Disable settlement, after dropping rows that are
 /// already `disabled`: disabling twice is a no-op, and the report counts only
 /// the targets and markers this call settled.
-fn execute_disable(store: &SkillStore, mut plan: RemovalPlan) -> Result<RemovalReport> {
+fn execute_disable(
+    store: &SkillStore,
+    central_dir: &Path,
+    mut plan: RemovalPlan,
+) -> Result<RemovalReport> {
     let mut markers = Vec::with_capacity(plan.markers.len());
     for marker in plan.markers.drain(..) {
         if !row_is_disabled(store, &marker)? {
@@ -293,7 +308,7 @@ fn execute_disable(store: &SkillStore, mut plan: RemovalPlan) -> Result<RemovalR
         target.rows = kept;
     }
     plan.targets.retain(|target| !target.rows.is_empty());
-    artifact_removal::execute_settling_unlocked(store, plan, Settlement::Disable)
+    artifact_removal::execute_settling_unlocked(store, central_dir, plan, Settlement::Disable)
 }
 
 fn row_is_disabled(store: &SkillStore, row: &RowRef) -> Result<bool> {
@@ -319,6 +334,7 @@ fn row_is_disabled(store: &SkillStore, row: &RowRef) -> Result<bool> {
 
 fn enable_unlocked(
     store: &SkillStore,
+    central_dir: &Path,
     home: &Path,
     scope: &DisableScope,
     overrides: &[BatchOverride],
@@ -327,17 +343,17 @@ fn enable_unlocked(
     match scope {
         DisableScope::SkillTool { skill_id, tool } => {
             let skill = require_skill(store, skill_id)?;
-            enable_pair(store, home, &skill, tool, overrides, now)
+            enable_pair(store, central_dir, home, &skill, tool, overrides, now)
         }
         DisableScope::Skill { skill_id } => {
             let skill = require_skill(store, skill_id)?;
-            enable_skill(store, home, &skill, overrides, now)
+            enable_skill(store, central_dir, home, &skill, overrides, now)
         }
         DisableScope::Skills { skill_ids } => {
             let mut report = EnableReport::default();
             for skill_id in skill_ids {
                 if let Some(skill) = store.get_skill_by_id(skill_id)? {
-                    let one = enable_skill(store, home, &skill, overrides, now)?;
+                    let one = enable_skill(store, central_dir, home, &skill, overrides, now)?;
                     report.global.extend(one.global);
                     report.projects.absorb(one.projects);
                 }
@@ -354,6 +370,7 @@ fn enable_unlocked(
 /// and the pair is synced as a first sync.
 fn enable_pair(
     store: &SkillStore,
+    central_dir: &Path,
     home: &Path,
     skill: &SkillRecord,
     tool: &str,
@@ -394,7 +411,15 @@ fn enable_pair(
         }
     }
     Ok(EnableReport {
-        global: first_sync_global(store, home, skill, &[tool.to_string()], overrides, now),
+        global: first_sync_global(
+            store,
+            central_dir,
+            home,
+            skill,
+            &[tool.to_string()],
+            overrides,
+            now,
+        ),
         projects: ProjectSyncReport::default(),
     })
 }
@@ -404,6 +429,7 @@ fn enable_pair(
 /// them afresh), the assignments through `project_sync`.
 fn enable_skill(
     store: &SkillStore,
+    central_dir: &Path,
     home: &Path,
     skill: &SkillRecord,
     overrides: &[BatchOverride],
@@ -428,9 +454,9 @@ fn enable_skill(
         global: if tools.is_empty() {
             Vec::new()
         } else {
-            first_sync_global(store, home, skill, &tools, overrides, now)
+            first_sync_global(store, central_dir, home, skill, &tools, overrides, now)
         },
-        projects: first_sync_assignments_unlocked(store, &assignments, now)?,
+        projects: first_sync_assignments_unlocked(store, central_dir, &assignments, now)?,
     })
 }
 
@@ -439,6 +465,7 @@ fn enable_skill(
 /// plus the operator's per-pair answers to an earlier ask for this skill.
 fn first_sync_global(
     store: &SkillStore,
+    central_dir: &Path,
     home: &Path,
     skill: &SkillRecord,
     tools: &[String],
@@ -459,7 +486,16 @@ fn first_sync_global(
             .cloned()
             .collect(),
     };
-    let outcomes = sync_skills_to_tools_unlocked(home, store, &skills, tools, &policy, now, |_| {});
+    let outcomes = sync_skills_to_tools_unlocked(
+        home,
+        store,
+        central_dir,
+        &skills,
+        tools,
+        &policy,
+        now,
+        |_| {},
+    );
     // A folder in the way is asked about, never recorded as a failure (D9);
     // until the operator answers, the pair keeps the state it was enabled from:
     // `disabled`, re-recorded as a marker owning nothing at that path (the

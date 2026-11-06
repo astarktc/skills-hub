@@ -442,7 +442,28 @@ pub(crate) mod test_hooks {
 /// permission failure — of the removal or of the stat before it — is the
 /// typed `SignalError::RemovalPermissionDenied` over the I/O error.
 pub(crate) fn remove_path_any(path: &Path, fence: &Fence<'_>) -> Result<()> {
-    let removed = match removal_fence::admit(path, fence) {
+    remove_admitted(path, removal_fence::admit(path, fence))
+}
+
+/// Remove skill `skill_id`'s own central copy at its recorded `path` — the
+/// Delete settlement's last step (`artifact_removal`), its only caller.
+/// Authorised by the record ([`removal_fence::admit_central_copy`]), never by
+/// the [`Fence`] that keeps every other removal off central bytes; removed
+/// and typed exactly like any other removal.
+pub(crate) fn remove_central_copy(
+    path: &Path,
+    skill_id: &str,
+    library: &ProtectedLibrary<'_>,
+) -> Result<()> {
+    remove_admitted(
+        path,
+        removal_fence::admit_central_copy(path, skill_id, library),
+    )
+}
+
+/// Remove what admission found at `path`, typing a permission failure.
+fn remove_admitted(path: &Path, admitted: Result<Entry>) -> Result<()> {
+    let removed = match admitted {
         Ok(Entry::Absent) => Ok(()),
         Ok(Entry::Present {
             physical,

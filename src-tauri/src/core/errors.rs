@@ -122,14 +122,15 @@ pub enum SignalError {
     /// text, not user copy. Owned by `core::onboarding_import`.
     IdentityUnknown { path: String, detail: String },
     /// A removal (Delete, Disable, unassign, an overwrite's replacement,
-    /// Import's original removal, the git cache's clean retry) was refused at
-    /// physical admission: the entry `path` physically names — its parent
-    /// resolved through every link or junction, its leaf never — is
-    /// `resolved`, which lies in the central library or outside the directory
-    /// the removal claims (`reason`). Nothing was touched. The operator causes
-    /// it by aliasing a folder on the way (a Tool's skills dir linked onto the
-    /// library) and repairs it by replacing that link. Owned by
-    /// `core::removal_fence`.
+    /// Import's original removal, the git cache's clean retry and age-out)
+    /// was refused at physical admission: the entry `path` physically names —
+    /// its parent resolved through every link or junction, its leaf never —
+    /// is `resolved`, which lies in the central library or outside the
+    /// directory the removal claims (`reason`). Nothing was touched. The
+    /// operator causes it by aliasing a folder on the way (a Tool's skills dir
+    /// linked onto the library, a linked cache folder) or by configuring the
+    /// central repo inside the git cache, and repairs it by replacing that
+    /// link or moving the library. Owned by `core::removal_fence`.
     RemovalRefused {
         path: String,
         resolved: String,
@@ -307,8 +308,9 @@ pub enum RevealPathFailure {
 #[serde(rename_all = "camelCase")]
 pub enum RemovalRefusal {
     /// The entry physically is, lies inside, or contains the central library
-    /// (a Managed skill's central copy or the folder holding them) — reached
-    /// through an aliased folder on the way.
+    /// (the configured central repo with everything in it, or a recorded
+    /// central copy or the folder holding one) — reached through an aliased
+    /// folder on the way, or a cache that overlaps the library.
     CentralLibrary,
     /// The entry physically lies outside the directory the removal claims to
     /// act in (an aliased folder on the way leads elsewhere).

@@ -16,6 +16,7 @@ pub use super::install_finalize::InstallResult;
 use super::install_finalize::{
     ensure_name_available, finalize_install, NameIntent, SkillProvenance, StagingDir,
 };
+use super::removal_fence::ProtectedLibrary;
 use super::skill_discovery::{
     discover_skills, find_skill_md, is_skill_dir, parse_skill_md, parse_skill_md_with_reason,
     require_skill_md, DiscoveredSkill,
@@ -296,6 +297,7 @@ pub fn list_git_skills(
         |parsed| {
             fetch_through_cache(
                 &paths.cache_dir,
+                &ProtectedLibrary::new(store, &paths.central_dir),
                 &FetchRequest {
                     clone_url: &parsed.clone_url,
                     branch: parsed.branch.as_deref(),
@@ -459,11 +461,13 @@ pub(crate) fn stage_git_selection(
     ensure_name_available(central_dir, name.requested())?;
 
     let staged = StagingDir::new_in(central_dir);
+    let library = ProtectedLibrary::new(store, central_dir);
     let request = AcquireRequest {
         source: &source,
         intent: SkillIntent::Selection(selection),
         dest: staged.path(),
         cache_dir: &paths.cache_dir,
+        library: &library,
         ttl_ms: super::settings::git_cache_ttl_ms(store),
         cancel,
         allow_fast_path: true,
@@ -550,6 +554,7 @@ pub fn clone_for_explore_preview(
     skill_name: Option<&str>,
     cancel: Option<&CancelToken>,
 ) -> Result<PathBuf> {
+    let library = ProtectedLibrary::new(store, &paths.central_dir);
     clone_for_explore_preview_with(paths, source_url, skill_name, cancel, |dest| {
         acquire(
             &AcquireRequest {
@@ -557,6 +562,7 @@ pub fn clone_for_explore_preview(
                 intent: SkillIntent::ByName(skill_name),
                 dest,
                 cache_dir: &paths.cache_dir,
+                library: &library,
                 ttl_ms: super::settings::git_cache_ttl_ms(store),
                 cancel,
                 allow_fast_path: true,

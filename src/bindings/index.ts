@@ -1208,8 +1208,9 @@ export type RefreshSkipReason =
 export type RemovalRefusal =
 /**
  *  The entry physically is, lies inside, or contains the central library
- *  (a Managed skill's central copy or the folder holding them) — reached
- *  through an aliased folder on the way.
+ *  (the configured central repo with everything in it, or a recorded
+ *  central copy or the folder holding one) — reached through an aliased
+ *  folder on the way, or a cache that overlaps the library.
  */
 "centralLibrary" |
 /**

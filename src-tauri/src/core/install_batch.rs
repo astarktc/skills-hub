@@ -302,6 +302,7 @@ fn settle_unlocked(
         sync_skills_to_tools_unlocked(
             &paths.home,
             store,
+            &paths.central_dir,
             &[BatchSkill {
                 skill_id: skill.skill_id.clone(),
                 skill_name: skill.name.clone(),

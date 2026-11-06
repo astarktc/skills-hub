@@ -4,6 +4,7 @@
 //! Every case runs against a temp home / central dir / DB; installedness is
 //! faked through `mark_installed_in`. Nothing touches the operator's home.
 
+use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -44,7 +45,8 @@ impl Fixture {
             .expect("read target row")
     }
     fn relocate(&self) -> RelocationSummary {
-        relocate_unlocked(&self.store, self.home(), NOW).expect("relocation reads its rows")
+        relocate_unlocked(&self.store, self.home(), &central_repo_of(&self.store), NOW)
+            .expect("relocation reads its rows")
     }
 }
 
@@ -296,8 +298,8 @@ fn a_row_left_in_a_former_dir_can_be_disabled_after_the_tool_is_gone() {
         skill_id: "skill-1".into(),
         tool: "augment".into(),
     };
-    let report =
-        disable_targets(&f.store, f.home(), &scope, 1).expect("planning accepts a former-dir path");
+    let report = disable_targets(&f.store, &central_repo_of(&f.store), f.home(), &scope, 1)
+        .expect("planning accepts a former-dir path");
 
     assert_eq!(report.removed_rows(), 1);
     assert_eq!(f.row().expect("row kept").status, SyncStatus::Disabled);
@@ -371,7 +373,8 @@ fn partial_skill_disable_relocation_does_not_materialise() {
     let scope = DisableScope::Skill {
         skill_id: "skill-1".into(),
     };
-    let report = disable_targets(&f.store, f.home(), &scope, 1).expect("disable reports");
+    let report = disable_targets(&f.store, &central_repo_of(&f.store), f.home(), &scope, 1)
+        .expect("disable reports");
     fs::set_permissions(&rules, fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(report.failed_rows(), 1);
     assert!(f.store.skill_disabled_at("skill-1").unwrap().is_some());
@@ -402,8 +405,14 @@ fn the_superseded_artifact_seam_refuses_anything_outside_a_former_dir() {
     copy_of_central(&f, &f.current());
 
     for path in [f.current(), f.home().join(".augment/rules/nested/skill")] {
-        let err = remove_superseded_artifact_unlocked(&f.store, f.home(), augment(), &path)
-            .expect_err("refused");
+        let err = remove_superseded_artifact_unlocked(
+            &f.store,
+            f.home(),
+            &central_repo_of(&f.store),
+            augment(),
+            &path,
+        )
+        .expect_err("refused");
         assert!(
             matches!(
                 err.downcast_ref::<SignalError>(),

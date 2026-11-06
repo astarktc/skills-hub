@@ -7,6 +7,7 @@
 //! as report data — Propagation never fails the operation because one target
 //! failed.
 
+use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -884,6 +885,7 @@ fn a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_prop
     let retry = sync_skills_to_tools_unlocked(
         &f.paths.home,
         &f.store,
+        &central_repo_of(&f.store),
         &[BatchSkill {
             skill_id: f.skill_id.clone(),
             skill_name: "skill".to_string(),

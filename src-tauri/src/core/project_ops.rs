@@ -196,6 +196,7 @@ pub fn register_project_path(
 /// already taken the mutation guard (`mutation_guard`).
 pub(crate) fn remove_project_tool_and_artifacts(
     store: &SkillStore,
+    central_dir: &Path,
     project_id: &str,
     tool: &str,
 ) -> Result<RemovalReport> {
@@ -206,7 +207,7 @@ pub(crate) fn remove_project_tool_and_artifacts(
         tool_key: tool.to_string(),
     };
     let plan = artifact_removal::plan(store, &scope)?;
-    let report = artifact_removal::execute_unlocked(store, plan)?;
+    let report = artifact_removal::execute_unlocked(store, central_dir, plan)?;
 
     if report.failures().is_empty() {
         store.remove_project_tool(project_id, tool)?;
@@ -236,17 +237,19 @@ pub(crate) fn remove_project_tool_and_artifacts(
 /// Both composed steps use their unlocked seams — the guard is not reentrant.
 pub fn configure_project_tools(
     store: &SkillStore,
+    central_dir: &Path,
     project_id: &str,
     tools: &[String],
     ignore: Option<IgnoreUpdateOptions>,
 ) -> Result<Vec<RemovalReport>> {
     mutation_guard::serialized(|| {
-        configure_project_tools_unlocked(store, project_id, tools, ignore)
+        configure_project_tools_unlocked(store, central_dir, project_id, tools, ignore)
     })
 }
 
 pub(crate) fn configure_project_tools_unlocked(
     store: &SkillStore,
+    central_dir: &Path,
     project_id: &str,
     tools: &[String],
     ignore: Option<IgnoreUpdateOptions>,
@@ -277,6 +280,7 @@ pub(crate) fn configure_project_tools_unlocked(
         if !tools.contains(&record.tool) {
             removals.push(remove_project_tool_and_artifacts(
                 store,
+                central_dir,
                 project_id,
                 &record.tool,
             )?);
@@ -307,7 +311,11 @@ pub(crate) fn configure_project_tools_unlocked(
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
 /// No composite operation removes a project, so it has no unlocked seam.
-pub fn remove_project_and_artifacts(store: &SkillStore, project_id: &str) -> Result<RemovalReport> {
+pub fn remove_project_and_artifacts(
+    store: &SkillStore,
+    central_dir: &Path,
+    project_id: &str,
+) -> Result<RemovalReport> {
     mutation_guard::serialized(|| {
         require_project(store, project_id)?;
 
@@ -315,7 +323,7 @@ pub fn remove_project_and_artifacts(store: &SkillStore, project_id: &str) -> Res
             project_id: project_id.to_string(),
         };
         let plan = artifact_removal::plan(store, &scope)?;
-        let report = artifact_removal::execute_unlocked(store, plan)?;
+        let report = artifact_removal::execute_unlocked(store, central_dir, plan)?;
 
         if report.failures().is_empty() {
             store.delete_project(project_id)?;

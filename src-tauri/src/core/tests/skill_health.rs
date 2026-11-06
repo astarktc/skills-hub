@@ -5,6 +5,7 @@
 //! `disabled`, an unanswered `TARGET_EXISTS` records nothing, and a project
 //! collision is typed `TARGET_EXISTS`.
 
+use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -485,7 +486,7 @@ fn a_kept_delete_records_delete_incomplete_with_the_failed_targets_error() {
         return; // permissions not enforced (root)
     }
 
-    let report = remove_skill(&f.store, &f.id).unwrap();
+    let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.id).unwrap();
     fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(!report.record_deleted);
     let RemovalTargetStatus::Failed { error } = &report.targets[0].status else {
@@ -496,7 +497,7 @@ fn a_kept_delete_records_delete_incomplete_with_the_failed_targets_error() {
     assert_eq!(json(&health.error), json(error));
 
     // The retried Delete completes: the row, and its health, are gone.
-    let report = remove_skill(&f.store, &f.id).unwrap();
+    let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.id).unwrap();
     assert!(report.record_deleted);
     assert!(f.health().is_none());
 }
@@ -515,6 +516,7 @@ fn a_failed_first_sync_records_an_error_row_that_owns_nothing() {
 
     let outcomes = sync_skills_to_planned_tools(
         &f.store,
+        &central_repo_of(&f.store),
         &[f.batch_skill()],
         &[planned(claude(), &root)],
         &policy(Vec::new()),
@@ -554,7 +556,7 @@ fn a_failed_first_sync_records_an_error_row_that_owns_nothing() {
         ),
         "{propagation:?}"
     );
-    let report = remove_skill(&f.store, &f.id).unwrap();
+    let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.id).unwrap();
     assert!(report.record_deleted);
     assert_eq!(report.cleared_markers.len(), 1);
     assert_eq!(
@@ -572,6 +574,7 @@ fn a_target_exists_with_no_decision_records_no_row_and_a_kept_one_records_disabl
 
     let outcomes = sync_skills_to_planned_tools(
         &f.store,
+        &central_repo_of(&f.store),
         &[f.batch_skill()],
         &[planned(claude(), &root)],
         &policy(Vec::new()),
@@ -599,6 +602,7 @@ fn a_target_exists_with_no_decision_records_no_row_and_a_kept_one_records_disabl
     }];
     let outcomes = sync_skills_to_planned_tools(
         &f.store,
+        &central_repo_of(&f.store),
         &[f.batch_skill()],
         &[planned(claude(), &root)],
         &policy(keep),
@@ -626,6 +630,7 @@ fn a_target_exists_with_no_decision_records_no_row_and_a_kept_one_records_disabl
     // Every later pass skips it (the batch's Disabled gate) — no re-ask.
     let outcomes = sync_skills_to_planned_tools(
         &f.store,
+        &central_repo_of(&f.store),
         &[f.batch_skill()],
         &[planned(claude(), &root)],
         &policy(Vec::new()),
@@ -639,7 +644,7 @@ fn a_target_exists_with_no_decision_records_no_row_and_a_kept_one_records_disabl
         }
     ));
     // Delete never takes the kept folder.
-    remove_skill(&f.store, &f.id).unwrap();
+    remove_skill(&f.store, &central_repo_of(&f.store), &f.id).unwrap();
     assert!(root.join("alpha").join("SKILL.md").exists());
 }
 
@@ -656,6 +661,7 @@ fn an_overwrite_decision_still_replaces_the_folder() {
     }];
     let outcomes = sync_skills_to_planned_tools(
         &f.store,
+        &central_repo_of(&f.store),
         &[f.batch_skill()],
         &[planned(claude(), &root)],
         &policy(overwrite),
@@ -696,7 +702,14 @@ fn an_enable_meeting_a_folder_in_the_way_keeps_the_pair_disabled() {
         skill_id: f.id.clone(),
         tool: "claude_code".into(),
     };
-    disable_targets(&f.store, &f.paths.home, &scope, 1000).unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &f.paths.home,
+        &scope,
+        1000,
+    )
+    .unwrap();
     let marker = f
         .store
         .get_skill_target(&f.id, "claude_code")
@@ -707,7 +720,14 @@ fn an_enable_meeting_a_folder_in_the_way_keeps_the_pair_disabled() {
     fs::create_dir_all(&path).unwrap();
     fs::write(path.join("SKILL.md"), "foreign").unwrap();
 
-    let report = enable_targets(&f.store, &f.paths.home, &scope, 2000).unwrap();
+    let report = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &f.paths.home,
+        &scope,
+        2000,
+    )
+    .unwrap();
     assert!(matches!(
         report.global[0].status,
         BatchTargetStatus::Failed {
@@ -753,7 +773,9 @@ fn a_project_first_sync_collision_is_typed_target_exists() {
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("SKILL.md"), "foreign").unwrap();
 
-    let report = assign_skill_to_project_tools(&f.store, "p1", &f.id, 1000).unwrap();
+    let report =
+        assign_skill_to_project_tools(&f.store, &central_repo_of(&f.store), "p1", &f.id, 1000)
+            .unwrap();
     let ProjectSyncOutcomeStatus::Failed {
         error:
             CommandError::TargetExists {
@@ -787,6 +809,7 @@ fn onboarding_discovery_sees_past_a_row_that_owns_nothing() {
     }];
     sync_skills_to_planned_tools(
         &f.store,
+        &central_repo_of(&f.store),
         &[f.batch_skill()],
         &[planned(claude(), &root)],
         &policy(keep),

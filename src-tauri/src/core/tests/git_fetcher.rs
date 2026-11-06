@@ -362,6 +362,7 @@ fn ambient_child_a_pre_policy_cache_entry_is_left_alone() {
 
     let (dir, served) = fetch_through_cache(
         cache.path(),
+        &crate::core::removal_fence::ProtectedLibrary::unrecorded(),
         &FetchRequest {
             clone_url: &url,
             branch: None,
