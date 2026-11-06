@@ -13,7 +13,7 @@ import {
 import { useLayoutEffect, useRef, useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "./popover";
-import { closeLayer, openLayer } from "./layer-stack";
+import { closeLayer, openLayer, openLayerCount } from "./layer-stack";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -252,6 +252,81 @@ describe("Popover without a trigger (anchor)", () => {
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(anchor));
+  });
+
+  /**
+   * With no Trigger, Base UI's focus guards have no reference to hand focus
+   * to: a Tab out of the popup used to land on an unnamed `aria-hidden`
+   * guard and leave the popover open, still on the layer stack (#97). A Tab
+   * out now leaves the popover as it would a trigger's: it closes, forward to
+   * the control after the anchor, backward to the anchor itself.
+   */
+  function InlineInRow() {
+    const [open, setOpen] = useState(false);
+    const anchor = useRef<HTMLButtonElement>(null);
+    return (
+      <>
+        <button type="button">Before</button>
+        <button ref={anchor} type="button" onClick={() => setOpen(true)}>
+          Enable alpha
+        </button>
+        <button type="button">More actions</button>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverContent anchor={anchor} finalFocus={anchor}>
+            <PopoverTitle>Deploy again?</PopoverTitle>
+            <button type="button">Cancel</button>
+            <button type="button" disabled>
+              Refused
+            </button>
+            <button type="button">Enable</button>
+          </PopoverContent>
+        </Popover>
+      </>
+    );
+  }
+
+  async function openInline() {
+    render(<InlineInRow />);
+    const anchor = screen.getByRole("button", { name: "Enable alpha" });
+    anchor.focus();
+    fireEvent.click(anchor);
+    const popup = await screen.findByRole("dialog", { name: "Deploy again?" });
+    return { anchor, popup };
+  }
+
+  it("a Tab past its last control closes it (off the layer stack) and moves on past the anchor", async () => {
+    const { popup } = await openInline();
+    const last = within(popup).getByRole("button", { name: "Enable" });
+    last.focus();
+    fireEvent.keyDown(last, { key: "Tab", code: "Tab" });
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(openLayerCount()).toBe(0);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "More actions" })));
+    // Focus stays there: the close returns no focus to the anchor.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "More actions" }));
+  });
+
+  it("a Shift+Tab before its first control closes it and returns to the anchor", async () => {
+    const { anchor, popup } = await openInline();
+    const first = within(popup).getByRole("button", { name: "Cancel" });
+    first.focus();
+    fireEvent.keyDown(first, { key: "Tab", code: "Tab", shiftKey: true });
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(anchor));
+  });
+
+  it("a Tab between its controls stays inside and leaves it open", async () => {
+    const { popup } = await openInline();
+    const first = within(popup).getByRole("button", { name: "Cancel" });
+    first.focus();
+    const event = fireEvent.keyDown(first, { key: "Tab", code: "Tab" });
+    expect(event).toBe(true); // not prevented: the browser moves focus inside
+    expect(screen.getByRole("dialog", { name: "Deploy again?" })).toBe(popup);
   });
 });
 

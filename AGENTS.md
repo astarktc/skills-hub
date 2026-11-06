@@ -138,7 +138,9 @@ than re-tagging.
 - **New or changed UI primitive** (`src/components/ui/`, ADR-0006): its `variant` / `tone` / `size` values are its
   whole styling interface — document each in `DESIGN.md` in the same change; a styling need props cannot express
   becomes a new documented variant, never a call-site `className` override (`className` is layout only). New
-  tokens go in `src/styles/theme.css` alone, with a dark and a light value.
+  tokens go in `src/styles/theme.css` alone, with a dark and a light value. `@base-ui/react` is an exact pin (the
+  Popover leans on its focus internals): bump it deliberately, after `bun scripts/browser/popover-focus.ts` passes
+  against the fixture on the new version.
 
 ## Ambiguity resolution
 

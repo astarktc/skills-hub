@@ -574,7 +574,13 @@ ground). No primitive relied on its shadow alone; the shadow stays for light, wh
 - **Popover without a trigger** (`PopoverContent anchor`): a control that raises a popover on its own terms — the
   row switch's inline Enable confirmation — renders a controlled Popover with no Trigger, positioned on `anchor`,
   with `initialFocus` on its answer and `finalFocus` back on the control. Escape closes it; focus returns to the
-  anchor (ticket 13, `popover.test.tsx`).
+  anchor (ticket 13, `popover.test.tsx`). A Tab out of it leaves it as a trigger's popover is left (#97): it closes
+  (off the layer stack) — Tab past its last control lands on the next Tab stop after the anchor, Shift+Tab before its
+  first on the anchor — never on one of Base UI's unnamed focus guards, which have no trigger to hand focus to.
+- **Browser regression.** jsdom moves no focus on Tab and runs none of Base UI's guards, so the two focus behaviours
+  above that lean on Base UI internals (the tab-order restore, the triggerless Tab-out) are also driven in a real
+  browser by `scripts/browser/popover-focus.ts` against the fixture. `@base-ui/react` is pinned exactly; run the script
+  before bumping it.
 
 ### Toaster (`sonner.tsx`)
 
