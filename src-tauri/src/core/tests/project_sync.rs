@@ -2744,16 +2744,15 @@ fn a_project_root_that_vanishes_at_parent_creation_is_not_recreated() {
 
 /// A listing whose reconcile pass ran, with its rewrite flag (BACKLOG #96):
 /// the frontend converges the library only when the pass rewrote a status.
+/// On a private guard, so a parallel test holding the process-wide one never
+/// starves the pass (1.3.3 release review; same seam as #100).
 fn reconciled_listing(store: &SkillStore, project_id: &str) -> project_sync::AssignmentListing {
-    for _ in 0..100 {
-        let listing = project_sync::list_assignments_with_staleness(store, project_id)
-            .expect("list should succeed");
-        if listing.reconciled {
-            return listing;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-    panic!("reconcile pass never got the guard");
+    let listing = crate::core::mutation_guard::with_private_guard(|| {
+        project_sync::list_assignments_with_staleness(store, project_id)
+            .expect("list should succeed")
+    });
+    assert!(listing.reconciled, "the uncontended reconcile pass runs");
+    listing
 }
 
 #[test]

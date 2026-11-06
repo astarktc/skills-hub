@@ -12,7 +12,7 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 - **Inspector**: Select a skill to see its health, source and per-harness deployments, repair what failed, and browse its files with Markdown rendering and syntax highlighting (40+ languages)
 - **Command palette**: ⌘K / Ctrl+K finds a skill, a place or an action
 - **Unified view**: Your Library of skills and where each one is deployed, per harness
-- **Onboarding import**: Scan existing skills in installed harnesses, import them into your Library, and deploy — an original is removed only when it is byte-identical to the imported copy; a same-named but different sibling is kept and reported
+- **Onboarding import**: Scan existing skills in installed harnesses, import them into your Library, and deploy — an original is removed only when it is byte-identical to the imported copy; a same-named but different sibling is kept and reported, unless you choose "Remove the other copies" in the review
 - **Import sources**: Local folder / Git URL (including multi-skill repo selection, `.claude/skills/` directory support); GitHub sources download through the GitHub API where possible (recording the real commit) and fall back to cloning
 - **Update / Update all**: Re-fetch from source and bring every deployed copy back into line; updating many skills fetches them in parallel and reports the outcome of each skill and each harness it touched
 - **New harness detection**: Detect newly installed harnesses and offer to deploy your skills to them
@@ -90,7 +90,7 @@ so those nine have no separate project row.
 
 ### Prerequisites
 
-- Node.js 18+ (recommended: 20+)
+- Node.js 22+ (the frontend tests need it; CI uses 22)
 - Rust (stable)
 - Tauri system dependencies (follow Tauri official docs for your OS)
 
@@ -139,14 +139,14 @@ cargo test
 - Why does deploying sometimes fall back to copy? Skills Hub prefers symlink/junction, but on some systems (especially Windows) symlinks may be restricted; in that case it falls back to directory copy.
 - Why does a skill still show up in a harness after I disable or remove it? If Skills Hub could not remove the folder (permissions, a locked file), it keeps the deployment and marks it Failed instead of forgetting it, so the path stays visible and the same action can be retried. The same holds for removing a skill from a project and for removing a project or one of its harnesses.
 - Why does the project matrix sometimes say statuses may be out of date? Deploy operations run one at a time. If one is running while the matrix loads, the stored statuses are shown without re-checking them against disk; they are re-checked once the operation finishes.
-- What does `TARGET_EXISTS|...` mean? The target folder already exists and the operation did not overwrite it (default is non-destructive). Remove the existing folder or retry with the appropriate overwrite flow.
+- What happens when a folder with the skill's name is already in a harness? Skills Hub asks before replacing it (identical content is replaced silently); choosing Keep leaves that folder alone and records the skill as off for that harness.
 - macOS Gatekeeper note (unsigned/notarized builds, may vary by macOS version): if you see “damaged” or “unverified developer”, run `xattr -cr "/Applications/Skills Hub.app"` (https://v2.tauri.app/distribute/#macos).
 
 ## Supported Platforms
 
 - macOS (verified)
-- Windows (expected by design; not validated locally)
-- Linux (expected by design; not validated locally)
+- Windows (CI runs the Rust test suite on Windows; release builds smoke-tested on Windows 11)
+- Linux (CI runs the Rust test suite on Linux; not smoke-tested on a desktop)
 
 ## License
 

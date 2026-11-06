@@ -1002,3 +1002,59 @@ fn an_overwrite_never_removes_an_unrecorded_folder_of_the_configured_repo() {
         "# An unrecorded copy"
     );
 }
+
+/// 1.3.3 release review: an overwrite whose occupant cannot be removed for
+/// lack of permission keeps the typed removal condition (its path and next
+/// step), instead of being flattened into "the Tool's skills dir is not
+/// writable".
+#[cfg(unix)]
+#[test]
+fn an_overwrite_blocked_by_permission_keeps_the_typed_removal_failure() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = make_store(dir.path());
+    seed_skill(&store, "skill-1");
+    let source = make_skill_dir(dir.path(), "central-skill", "# New");
+    let tool_root = dir.path().join("skills-root");
+    let occupant = tool_root.join("my-skill");
+    fs::create_dir_all(occupant.join("locked")).expect("occupy target");
+    fs::write(occupant.join("locked/SKILL.md"), "# Old").expect("occupy target");
+    // The occupant's inner folder is read-only: its file cannot be unlinked.
+    fs::set_permissions(occupant.join("locked"), fs::Permissions::from_mode(0o555)).expect("chmod");
+
+    let adapter = claude();
+    let result = sync_skill_into_root(
+        &store,
+        &central_repo_of(&store),
+        adapter,
+        &tool_root,
+        &source,
+        "skill-1",
+        "my-skill",
+        &OverwritePolicy {
+            overwrite: true,
+            overwrite_if_same_content: false,
+        },
+        std::slice::from_ref(&adapter),
+        1000,
+    );
+    fs::set_permissions(occupant.join("locked"), fs::Permissions::from_mode(0o755))
+        .expect("restore");
+    if nix_is_root() {
+        return; // root ignores modes; nothing to observe
+    }
+    let err = result.expect_err("the occupant cannot be removed");
+    match crate::core::errors::CommandError::from(err) {
+        crate::core::errors::CommandError::RemovalPermissionDenied { .. } => {}
+        other => panic!("expected the typed removal failure, got {other:?}"),
+    }
+}
+
+#[cfg(unix)]
+fn nix_is_root() -> bool {
+    std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim() == "0")
+        .unwrap_or(false)
+}

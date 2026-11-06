@@ -172,6 +172,22 @@ fn classify_sync_error(
         };
     }
 
+    // A removal the fence refused, or one a permission failure stopped,
+    // already carries its typed condition (path + next step): keep it rather
+    // than flattening it into "the Tool's skills dir is not writable"
+    // (1.3.3 release review). `CommandError::from_anyhow` recovers it.
+    // (`downcast_ref` on the anyhow error looks through context layers, as
+    // `from_anyhow` does; `chain()` would see only the context wrappers.)
+    if matches!(
+        err.downcast_ref::<crate::core::errors::SignalError>(),
+        Some(
+            crate::core::errors::SignalError::RemovalPermissionDenied { .. }
+                | crate::core::errors::SignalError::RemovalRefused { .. }
+        )
+    ) {
+        return GlobalSyncError::Other(err);
+    }
+
     // External OS failures: inspect the underlying `io::Error` kind instead of
     // sniffing platform-specific message strings. The raw-code check covers
     // Windows ERROR_ACCESS_DENIED (5) in case a wrapper surfaces it with a

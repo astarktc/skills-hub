@@ -49,3 +49,5 @@ back with evidence, not forced.
   busy timeout; `b8a530b` raises it to 30 s (two green hosted-Windows runs, PR #10).
 - L1 merged (`401d3e5`) after round 4; the round-4 re-check (Sol, high) found nothing and judged no ordinary layout
   over-refused. All five lanes are on `main`; next, the final Astra review of `v1.3.2..main`.
+- Final review (GPT-6 Astra, high): fix-then-ship, no P1; one P2 + two P3 fixed by the orchestrator
+  (`.scratch/reviews/1.3.3-release-review.md` § Disposition). Released as 1.3.3.
