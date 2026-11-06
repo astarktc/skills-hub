@@ -56,7 +56,10 @@ export type Translate = (
 export type SortMode = "name" | "updated" | "added";
 
 export type RepoGroup<T> = {
-  /** Stable identity for React keys; `LOCAL_GROUP_KEY` for the local group. */
+  /**
+   * Stable identity for React keys; `LOCAL_GROUP_KEY` for the local folders'
+   * group, `MANAGED_GROUP_KEY` for the imported skills' ("Managed here").
+   */
   key: string;
   label: string;
   href: string | null;
@@ -70,6 +73,13 @@ export type RepoGroup<T> = {
 };
 
 export const LOCAL_GROUP_KEY = "__local__";
+
+/**
+ * The group of imported skills (BACKLOG #72): they have no source — the
+ * central copy is the truth — so they group under the words their source
+ * line leads with, "Managed here", never under a folder source's "Local".
+ */
+export const MANAGED_GROUP_KEY = "__managed__";
 
 /**
  * The order a list's rows are on screen: a grouped list walks its groups
@@ -273,8 +283,16 @@ function looksLikeGitRef(ref: string): boolean {
   );
 }
 
+/**
+ * The fields the source grouping reads. A row without a `source_type` (an
+ * Explore candidate) is never imported.
+ */
+export type GroupingFields = Pick<SkillPresentationFields, "source_ref"> & { source_type?: string };
+
 /** A skill's group key and its GitHub repo, if any. */
-function repoGroupOf(skill: Pick<SkillPresentationFields, "source_ref">): { key: string; repo: RepoInfo | null } {
+function repoGroupOf(skill: GroupingFields): { key: string; repo: RepoInfo | null } {
+  const { source_type } = skill;
+  if (source_type !== undefined && sourceKind({ source_type }) === "imported") return { key: MANAGED_GROUP_KEY, repo: null };
   const ref = skill.source_ref ?? "";
   const isGit = ref !== "" && looksLikeGitRef(ref);
   const repo = isGit ? repoInfo(ref) : null;
@@ -282,21 +300,22 @@ function repoGroupOf(skill: Pick<SkillPresentationFields, "source_ref">): { key:
 }
 
 /**
- * Fold skills into repo groups, alphabetically by label, with the local
- * group always last. With `foldSingletons`, every repo that holds exactly
+ * Fold skills into repo groups, alphabetically by label, then the local
+ * folders' group, then the imported skills' "Managed here" group
+ * (`labels.managed`). With `foldSingletons`, every repo that holds exactly
  * one skill folds into one "Individual sources" group (`labels.individual`),
  * placed after the repo groups and before the local group, its skills in
- * input order (the lens's sort).
+ * input order (the lens's sort); Local and Managed here never fold.
  *
  * `catalog` is the unfiltered library (D42, BACKLOG #81 (4)): when given, a
  * repo is a singleton only if it holds one skill **in the catalog**, so a
  * query or chip that leaves one skill of a multi-skill repo keeps it under
  * its repo header. Without it the rows given decide.
  */
-export function groupSkillsByRepo<T extends Pick<SkillPresentationFields, "source_ref">>(
+export function groupSkillsByRepo<T extends GroupingFields>(
   skills: T[],
-  labels: { local: string; ungrouped: string; individual?: string },
-  options: { foldSingletons?: boolean; catalog?: readonly Pick<SkillPresentationFields, "source_ref">[] } = {},
+  labels: { local: string; managed: string; ungrouped: string; individual?: string },
+  options: { foldSingletons?: boolean; catalog?: readonly GroupingFields[] } = {},
 ): RepoGroup<T>[] {
   const map = new Map<string, { href: string | null; owner: string | null; skills: T[] }>();
   for (const skill of skills) {
@@ -311,18 +330,22 @@ export function groupSkillsByRepo<T extends Pick<SkillPresentationFields, "sourc
     catalogCounts.set(key, (catalogCounts.get(key) ?? 0) + 1);
   }
   const isSingleton = (key: string) =>
-    Boolean(options.foldSingletons) && key !== LOCAL_GROUP_KEY && (catalogCounts.get(key) ?? 0) <= 1;
+    Boolean(options.foldSingletons) &&
+    key !== LOCAL_GROUP_KEY &&
+    key !== MANAGED_GROUP_KEY &&
+    (catalogCounts.get(key) ?? 0) <= 1;
   const entries: RepoGroup<T>[] = [...map.entries()]
     .filter(([key]) => !isSingleton(key))
     .map(([key, entry]) => ({
       key,
-      label: key === LOCAL_GROUP_KEY ? labels.local : key || labels.ungrouped,
+      label:
+        key === LOCAL_GROUP_KEY ? labels.local : key === MANAGED_GROUP_KEY ? labels.managed : key || labels.ungrouped,
       href: entry.href,
       owner: entry.owner,
       skills: entry.skills,
     }));
   const rank = (key: string) =>
-    key === LOCAL_GROUP_KEY ? 2 : key === INDIVIDUAL_GROUP_KEY ? 1 : 0;
+    key === MANAGED_GROUP_KEY ? 3 : key === LOCAL_GROUP_KEY ? 2 : key === INDIVIDUAL_GROUP_KEY ? 1 : 0;
   const singles = [...map.entries()].filter(([key]) => isSingleton(key));
   if (singles.length > 0) {
     const members = new Set(singles.flatMap(([, entry]) => entry.skills));

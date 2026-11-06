@@ -31,7 +31,7 @@ const ITEMS = [
   item("3", "beta", "https://github.com/solo/one", 2),
   item("4", "delta", null, 4),
 ];
-const labels = { local: "Local", ungrouped: "Ungrouped", individual: "Individual sources" };
+const labels = { local: "Local", managed: "Managed here", ungrouped: "Ungrouped", individual: "Individual sources" };
 
 function render(overrides: Partial<ListLensOptions<LensItem>> = {}) {
   return renderHook((props: Partial<ListLensOptions<LensItem>>) =>

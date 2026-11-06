@@ -26,6 +26,8 @@ import {
   SKILL_FILTERS,
   syncedStrip,
   INDIVIDUAL_GROUP_KEY,
+  LOCAL_GROUP_KEY,
+  MANAGED_GROUP_KEY,
   repoInfo,
   repointCurrentSource,
   repointKind,
@@ -211,7 +213,7 @@ describe("groupSkillsByRepo", () => {
           source_ref: "https://github.com/acme/alpha",
         }),
       ],
-      { local: "Local", ungrouped: "Ungrouped" },
+      { local: "Local", managed: "Managed here", ungrouped: "Ungrouped" },
     );
 
     expect(groups.map((g) => g.label)).toEqual([
@@ -233,7 +235,7 @@ describe("groupSkillsByRepo", () => {
           source_ref: "https://example.com/team/x.git",
         }),
       ],
-      { local: "Local", ungrouped: "Ungrouped" },
+      { local: "Local", managed: "Managed here", ungrouped: "Ungrouped" },
     );
     expect(groups).toHaveLength(1);
     expect(groups[0].label).toBe("https://example.com/team/x.git");
@@ -248,7 +250,7 @@ describe("groupSkillsByRepo", () => {
       skill({ name: "alpha-two", source_type: "git", source_ref: "https://github.com/acme/alpha" }),
       skill({ name: "loner-b", source_type: "git", source_ref: "https://github.com/bee/b" }),
     ];
-    const labels = { local: "Local", ungrouped: "Ungrouped", individual: "Individual sources" };
+    const labels = { local: "Local", managed: "Managed here", ungrouped: "Ungrouped", individual: "Individual sources" };
     const groups = groupSkillsByRepo(input, labels, { foldSingletons: true });
 
     expect(groups.map((g) => g.label)).toEqual(["acme/alpha", "Individual sources", "Local"]);
@@ -275,7 +277,7 @@ describe("groupSkillsByRepo", () => {
       skill({ name: "alpha-two", source_type: "git", source_ref: "https://github.com/acme/alpha" }),
       skill({ name: "loner", source_type: "git", source_ref: "https://github.com/zoo/z" }),
     ];
-    const labels = { local: "Local", ungrouped: "Ungrouped", individual: "Individual sources" };
+    const labels = { local: "Local", managed: "Managed here", ungrouped: "Ungrouped", individual: "Individual sources" };
     const filtered = [catalog[1], catalog[2]];
     const groups = groupSkillsByRepo(filtered, labels, { foldSingletons: true, catalog });
     expect(groups.map((g) => [g.key, g.skills.map((s) => s.name)])).toEqual([
@@ -288,6 +290,29 @@ describe("groupSkillsByRepo", () => {
     ]);
   });
 
+  // BACKLOG #72: an imported skill's source line says "Managed here", so its
+  // group does too; a folder source keeps "Local".
+  it("groups imported skills under Managed here, after Local, never folded", () => {
+    const labels = { local: "Local", managed: "Managed here", ungrouped: "Ungrouped", individual: "Individual sources" };
+    const groups = groupSkillsByRepo(
+      [
+        skill({ name: "taken-over", source_type: "imported", source_ref: "/Users/me/.cursor/skills/taken-over" }),
+        skill({ name: "folder-one", source_type: "local", source_ref: "/Users/me/skills/folder-one" }),
+        skill({ name: "alpha", source_type: "git", source_ref: "https://github.com/acme/alpha" }),
+        skill({ name: "alpha-two", source_type: "git", source_ref: "https://github.com/acme/alpha" }),
+      ],
+      labels,
+      { foldSingletons: true },
+    );
+    expect(groups.map((g) => [g.key, g.label, g.skills.map((s) => s.name)])).toEqual([
+      ["acme/alpha", "acme/alpha", ["alpha", "alpha-two"]],
+      [LOCAL_GROUP_KEY, "Local", ["folder-one"]],
+      [MANAGED_GROUP_KEY, "Managed here", ["taken-over"]],
+    ]);
+    expect(groups[2].href).toBeNull();
+    expect(groups[2].owner).toBeNull();
+  });
+
   it("names a GitHub group's owner (the identity chip's key); other groups have none", () => {
     const groups = groupSkillsByRepo(
       [
@@ -295,7 +320,7 @@ describe("groupSkillsByRepo", () => {
         skill({ name: "b", source_type: "git", source_ref: "https://example.com/team/x.git" }),
         skill({ name: "c" }),
       ],
-      { local: "Local", ungrouped: "Ungrouped" },
+      { local: "Local", managed: "Managed here", ungrouped: "Ungrouped" },
     );
     expect(groups.map((g) => [g.label, g.owner])).toEqual([
       ["https://example.com/team/x.git", null],

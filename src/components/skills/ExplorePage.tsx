@@ -139,7 +139,7 @@ const ExplorePage = ({
   const controlledQuery = useMemo(() => ({ value: query, set: onQueryChange }), [onQueryChange, query]);
   const lens = useListLens({
     items: candidates,
-    labels: { local: "", ungrouped: "", individual: "" },
+    labels: { local: "", managed: "", ungrouped: "", individual: "" },
     fold: exploreQueryFold,
     filters: EXPLORE_FILTERS,
     defaultFilter: "notInLibrary",

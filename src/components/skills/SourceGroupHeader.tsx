@@ -1,5 +1,5 @@
 import { memo, type KeyboardEvent, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, Folder, GitBranch, Layers } from "lucide-react";
+import { Box, ChevronDown, ChevronRight, Folder, GitBranch, Layers } from "lucide-react";
 import type { TFunction } from "i18next";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,7 @@ import type { SkillActions } from "../../hooks/useSkillActions";
 import {
   INDIVIDUAL_GROUP_KEY,
   LOCAL_GROUP_KEY,
+  MANAGED_GROUP_KEY,
   groupState,
   identityHue,
   identityInitials,
@@ -60,7 +61,16 @@ const groupChip = (group: RepoGroup<ManagedSkill>) =>
     </Badge>
   ) : (
     <Badge variant="solid" tone="neutral" size="chip" aria-hidden="true">
-      {group.key === LOCAL_GROUP_KEY ? <Folder /> : group.key === INDIVIDUAL_GROUP_KEY ? <Layers /> : <GitBranch />}
+      {group.key === LOCAL_GROUP_KEY ? (
+        <Folder />
+      ) : group.key === MANAGED_GROUP_KEY ? (
+        // The imported source line's icon (`skillSourceLine`'s "imported").
+        <Box />
+      ) : group.key === INDIVIDUAL_GROUP_KEY ? (
+        <Layers />
+      ) : (
+        <GitBranch />
+      )}
     </Badge>
   );
 

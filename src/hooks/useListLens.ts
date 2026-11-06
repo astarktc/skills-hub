@@ -37,8 +37,11 @@ const NEVER_COLLAPSED: PersistedPreference<readonly string[]> = {
 
 const NONE: ReadonlySet<string> = new Set();
 
-/** The least a lens row carries: identity, a name, and the source grouping reads. */
-export type LensSubject = { id: string; name: string; source_ref: string | null };
+/**
+ * The least a lens row carries: identity, a name, and what the source
+ * grouping reads (`source_type` tells an imported skill — "Managed here").
+ */
+export type LensSubject = { id: string; name: string; source_ref: string | null; source_type?: string };
 
 /** A skill-shaped row: the default query/sort fold (`filterAndSortSkills`) reads these fields. */
 export type LensItem = SkillPresentationFields & { id: string; name: string };
@@ -52,7 +55,7 @@ export type LensQueryFold<T> = (items: readonly T[], query: string) => T[];
 type ListLensBase<T extends LensSubject> = {
   items: readonly T[];
   /** Group labels, localized by the caller. */
-  labels: { local: string; ungrouped: string; individual: string };
+  labels: { local: string; managed: string; ungrouped: string; individual: string };
   /** Where this surface persists Grouped/Flat (the literal keys live in preferences.ts); omitted = Flat only. */
   groupByRepoPreference?: PersistedPreference<boolean>;
   /** Where this surface persists its view mode; omitted = list only. */
@@ -136,7 +139,7 @@ export function useListLens<T extends LensSubject>(options: ListLensOptions<T>) 
     return counts;
   }, [filters, items]);
 
-  const { local, ungrouped, individual } = labels;
+  const { local, managed, ungrouped, individual } = labels;
   /**
    * null = Flat. Grouping is decided on the unfiltered catalog (D42): a query
    * that leaves one skill of a multi-skill repo keeps its repo header.
@@ -144,9 +147,9 @@ export function useListLens<T extends LensSubject>(options: ListLensOptions<T>) 
   const groups: RepoGroup<T>[] | null = useMemo(
     () =>
       groupByRepo
-        ? groupSkillsByRepo(visible, { local, ungrouped, individual }, { foldSingletons, catalog: items })
+        ? groupSkillsByRepo(visible, { local, managed, ungrouped, individual }, { foldSingletons, catalog: items })
         : null,
-    [foldSingletons, groupByRepo, individual, items, local, ungrouped, visible],
+    [foldSingletons, groupByRepo, individual, items, local, managed, ungrouped, visible],
   );
 
   // Collapse (D42). The stored state is the operator's; while a query or chip

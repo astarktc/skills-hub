@@ -86,6 +86,7 @@ const AssignmentMatrix = ({
     items: skills,
     labels: {
       local: t("localGroup"),
+      managed: t("managedGroup"),
       ungrouped: t("ungrouped"),
       individual: t("individualSources"),
     },

@@ -58,6 +58,7 @@ export const resources = {
       viewDenseGrid: "Dense grid",
       ungrouped: "Ungrouped",
       localGroup: "Local",
+      managedGroup: "Managed here",
       individualSources: "Individual sources",
       refresh: "Update",
       addSkillButton: "Add skill",
