@@ -3,7 +3,7 @@
 // src/bindings/index.ts). All user-facing error copy is composed here
 // via i18n; nothing else in the frontend should inspect command failures.
 
-import type { CommandError } from "./bindings";
+import type { CommandError, RemovalRefusal } from "./bindings";
 import { INVOCATION_LABEL_KEY, toolLabel } from "./lib/skillPresentation";
 
 type TranslateFn = (key: string, opts?: Record<string, unknown>) => string;
@@ -81,6 +81,14 @@ const GIT_CLONE_HINT_KEYS: Record<string, string> = {
   refused: "errors.gitCloneRefused",
   execFailed: "errors.gitCloneExecFailed",
   unknown: "errors.gitCloneUnknown",
+};
+
+// Exhaustive over the generated reason union: a new refusal fails the build
+// until it has copy.
+const REMOVAL_REFUSAL_KEYS: Record<RemovalRefusal, string> = {
+  centralLibrary: "errors.removalRefusedCentralLibrary",
+  resolvesElsewhere: "errors.removalRefusedResolvesElsewhere",
+  containsMount: "errors.removalRefusedContainsMount",
 };
 
 const INVALID_PATH_KEYS: Record<string, string> = {
@@ -162,13 +170,9 @@ export function describeCommandError(
       return t("errors.pathOutsideToolDirs", { path: e.path });
     case "REMOVAL_REFUSED":
       // Physical admission refused the removal: a folder on the way is an
-      // alias, and the copy says where the path really leads.
-      return t(
-        e.reason === "centralLibrary"
-          ? "errors.removalRefusedCentralLibrary"
-          : "errors.removalRefusedResolvesElsewhere",
-        { path: e.path, resolved: e.resolved },
-      );
+      // alias (the copy says where the path really leads), or a folder
+      // inside it is a mount (the copy names it).
+      return t(REMOVAL_REFUSAL_KEYS[e.reason], { path: e.path, resolved: e.resolved });
     case "REMOVAL_PERMISSION_DENIED":
       // The OS refused for lack of permission: say what to check and that a
       // retry fails the same way; the I/O chain stays in `detail` for the log.
