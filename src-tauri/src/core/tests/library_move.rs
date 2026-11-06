@@ -157,6 +157,14 @@ fn resolves_to(link: &Path, dir: &Path) -> bool {
     }
 }
 
+/// Remove a directory link as itself (Windows needs `remove_dir` for one).
+fn remove_link(path: &Path) {
+    #[cfg(windows)]
+    fs::remove_dir(path).unwrap();
+    #[cfg(not(windows))]
+    fs::remove_file(path).unwrap();
+}
+
 fn is_link(path: &Path) -> bool {
     path.symlink_metadata()
         .map(|meta| meta.file_type().is_symlink())
@@ -444,7 +452,7 @@ fn a_copy_mode_deployment_is_unchanged() {
     let alpha = f.install("alpha");
     f.sync(&alpha, &["claude_code"]);
     let target = f.home().join(".claude/skills/alpha");
-    fs::remove_file(&target).unwrap();
+    remove_link(&target);
     crate::core::sync_engine::copy_dir_recursive(&f.central(&alpha), &target).unwrap();
     fs::write(target.join("SKILL.md"), "the harness's copy").unwrap();
 
@@ -469,7 +477,7 @@ fn an_owned_link_pointing_elsewhere_is_not_ours_and_untouched() {
     let elsewhere = f.dir.path().join("elsewhere");
     fs::create_dir_all(&elsewhere).unwrap();
     let target = f.home().join(".claude/skills/alpha");
-    fs::remove_file(&target).unwrap();
+    remove_link(&target);
     #[cfg(unix)]
     std::os::unix::fs::symlink(&elsewhere, &target).unwrap();
     #[cfg(windows)]
