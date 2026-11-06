@@ -39,16 +39,18 @@ export function duplicatePairs(tools: readonly ToolInfoDto[], selected: Readonly
     reader: string,
     reads: ToolInfoDto["duplicate_readers"],
     via?: string,
-  ): DuplicatePair[] =>
-    (reads?.keys ?? [])
+  ): DuplicatePair[] => {
+    if (!reads) return [];
+    return reads.keys
       .filter((other) => selected.has(other))
       .map((other) => {
         const folder = (sharedWith.get(other) ?? [other]).filter((key) => selected.has(key));
-        const pair: DuplicatePair = { reader, other, behaviour: reads!.behaviour };
+        const pair: DuplicatePair = { reader, other, behaviour: reads.behaviour };
         if (folder.length > 1) pair.folder = folder;
         if (via) pair.via = via;
         return pair;
       });
+  };
   return tools.flatMap((tool) => {
     if (!selected.has(tool.key)) return [];
     return [
