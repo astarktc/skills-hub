@@ -51,3 +51,15 @@ back with evidence, not forced.
   over-refused. All five lanes are on `main`; next, the final Astra review of `v1.3.2..main`.
 - Final review (GPT-6 Astra, high): fix-then-ship, no P1; one P2 + two P3 fixed by the orchestrator
   (`.scratch/reviews/1.3.3-release-review.md` § Disposition). Released as 1.3.3.
+
+## Closure — 2026-11-05
+
+Shipped as **v1.3.3** (tag `v1.3.3` = `db339c7`, release run 42171004813, published 2026-11-06 06:05 UTC; 14 assets;
+`updater.json` lists darwin-aarch64/x86_64, linux-x86_64, windows-aarch64/x86_64). Every lane item closed and removed
+from BACKLOG: #63 #68 #72 #73 #74 (pointer) #75 #76 #90 #95 #96 #97 #98 #99 #100 #101 #102 #103 #104 #105 #106 #107.
+
+Residue (extracted to BACKLOG): #112 matrix hit area, #113 Import's delete-before-deploy order, #114 sort not
+remembered, #115 stale Enable count; #74's persistence half stays with #53. Dropped by name: #102's light-theme captures
+(the README embeds one image per screen). Accepted limits recorded in `core/removal_fence.rs` and CONTEXT.md: the
+check-then-remove race; a mount at or inside the removed directory (incl. a btrfs subvolume) is refused; Linux directory
+removal fails closed without a readable `/proc/self/mountinfo`.

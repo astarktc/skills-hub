@@ -12,7 +12,7 @@ the code that day (`archive/round19/closure/extract-{A..G}.md`).
 
 **Order (operator 2026-11-05):**
 
-1. **1.3.3, a hygiene patch** — a solid base before roadmap features (`.scratch/release-1.3.3/spec.md`). Merged and
+1. **1.3.3, a hygiene patch** — a solid base before roadmap features (`archive/release-1.3.3/spec.md`; released 2026-11-05). Merged and
    removed from this file: #63 #68 #72 #73 #74 (its pointer; persistence is #53's) #75 #90 #95 #96 #97 #98 #99 #100
    #101 #102 (dark theme only — the README embeds one image per screen) #103 #104 #106 #107 #76 #105.
 2. **Round 20**: #92 then #110, beside #91 (they touch different files); #108; #109 and #84 (both need the
