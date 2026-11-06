@@ -2078,8 +2078,8 @@ fn journal_mode(db: &std::path::Path) -> String {
 
 /// #104: `ensure_schema` puts the database in WAL mode — a new one, and an
 /// existing one as 1.3.2 and earlier left it (rollback journal), data intact.
-/// The mode persists in the file; every store connection then uses
-/// `synchronous = NORMAL`, WAL's documented pairing.
+/// The mode persists in the file; every store connection uses
+/// `synchronous = FULL` (an acknowledged write survives a power loss).
 #[test]
 fn ensure_schema_puts_new_and_existing_databases_in_wal_mode() {
     let (dir, store) = make_store();
@@ -2087,7 +2087,7 @@ fn ensure_schema_puts_new_and_existing_databases_in_wal_mode() {
     let synchronous: i64 = store
         .with_conn(|conn| Ok(conn.query_row("PRAGMA synchronous;", [], |row| row.get(0))?))
         .unwrap();
-    assert_eq!(synchronous, 1, "NORMAL");
+    assert_eq!(synchronous, 2, "FULL");
 
     let existing = dir.path().join("existing.db");
     open_v8_database(&existing);
@@ -2241,5 +2241,52 @@ fn an_unreadable_target_is_backed_up_with_its_sidecars() {
     assert!(
         sidecar(&backup, "-wal").exists(),
         "the WAL travelled with the backup"
+    );
+}
+
+/// 1.3.3 L2 review: a backup that fails part-way leaves the original file set
+/// whole — its WAL (holding a committed write) still beside its database —
+/// and no partial backup behind. Here the `-journal` "sidecar" is a directory,
+/// so copying it fails after the database and its `-wal` were copied.
+#[test]
+fn a_failed_backup_never_splits_a_database_from_its_wal() {
+    let root = tempfile::tempdir().unwrap();
+    let data_root = root.path().join("data");
+    seeded_db(
+        &data_root.join("com.tauri.dev").join("skills_hub.db"),
+        "from-legacy",
+    );
+    let target_dir = root.path().join("current");
+    let target = target_dir.join("skills_hub.db");
+    crash_snapshot(root.path(), &target);
+    // Unreadable to the pre-migration probe, so nothing checkpoints the WAL.
+    let header = std::fs::read(&target).unwrap();
+    std::fs::write(&target, b"not a database, not even a header").unwrap();
+    std::fs::create_dir(sidecar(&target, "-journal")).unwrap();
+
+    assert!(super::migrate_legacy_db_if_needed(&data_root, &target).is_err());
+
+    assert!(
+        target.exists() && sidecar(&target, "-wal").exists(),
+        "the original set stays whole"
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(&target_dir)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.contains(".bak-"))
+        .collect();
+    assert!(leftovers.is_empty(), "no partial backup: {leftovers:?}");
+
+    // Restore the file and clear the blocker: the committed write is still
+    // reachable through the original WAL.
+    std::fs::write(&target, header).unwrap();
+    std::fs::remove_dir(sidecar(&target, "-journal")).unwrap();
+    assert_eq!(
+        SkillStore::new(target.clone())
+            .get_setting("only_in_the_wal")
+            .unwrap()
+            .as_deref(),
+        Some("yes")
     );
 }

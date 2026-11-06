@@ -1885,13 +1885,13 @@ impl SkillStore {
         // failing the caller with SQLITE_BUSY. Stated here rather than relying
         // on rusqlite's own default.
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        // WAL's documented pairing (see `enable_wal`): a commit appends to the
-        // WAL without an fsync, which happens at checkpoint. Per connection,
-        // and only in WAL mode — in rollback mode NORMAL is not corruption-safe.
-        let journal_mode: String = conn.query_row("PRAGMA journal_mode;", [], |row| row.get(0))?;
-        if journal_mode.eq_ignore_ascii_case("wal") {
-            conn.execute_batch("PRAGMA synchronous = NORMAL;")?;
-        }
+        // FULL, stated rather than inherited: every commit is synced to the
+        // WAL before the call returns. The store is authoritative (Edit intent,
+        // Disable state, artifact ownership), so an acknowledged write must
+        // survive a power loss; NORMAL could roll it back (sqlite.org/pragma.html
+        // #pragma_synchronous) and a last-close checkpoint does not cover a
+        // commit made while another connection is open (1.3.3 L2 review).
+        conn.execute_batch("PRAGMA synchronous = FULL;")?;
         // Enforce foreign key constraints on every connection (rusqlite PRAGMA is per-connection).
         conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         f(&conn)
@@ -1944,27 +1944,12 @@ pub fn migrate_legacy_db_if_needed(data_root: &Path, target_db_path: &Path) -> R
             .unwrap_or_default()
             .as_secs()
     ));
-    // The sidecars first: a WAL or hot journal must never be left beside a
-    // different database file — SQLite would replay it onto the adopted copy.
-    // Normally `db_has_any_skills`' connection checkpointed and removed them;
-    // when that read failed, nothing did.
-    for suffix in DB_SIDECAR_SUFFIXES {
-        let from = with_suffix(target_db_path, suffix);
-        if std::fs::symlink_metadata(&from).is_ok() {
-            let to = with_suffix(&backup, suffix);
-            std::fs::rename(&from, &to).with_context(|| {
-                format!("failed to backup existing db sidecar {from:?} -> {to:?}")
-            })?;
-        }
-    }
-    if target_db_path.exists() {
-        std::fs::rename(target_db_path, &backup).with_context(|| {
-            format!(
-                "failed to backup existing db {:?} -> {:?}",
-                target_db_path, backup
-            )
-        })?;
-    }
+    // The existing file set (database + its sidecars) moves to the backup as
+    // one unit. Normally `db_has_any_skills`' connection checkpointed and
+    // removed the sidecars; when that read failed, nothing did. A WAL or hot
+    // journal must never be split from its database (its commits would be
+    // stranded) nor left beside the adopted copy (SQLite would replay it).
+    backup_db_file_set(target_db_path, &backup)?;
 
     std::fs::copy(&legacy_db_path, target_db_path).with_context(|| {
         format!(
@@ -1979,6 +1964,51 @@ pub fn migrate_legacy_db_if_needed(data_root: &Path, target_db_path: &Path) -> R
 /// The files SQLite keeps beside a database (`<db>-wal`, its `-shm` index, a
 /// rollback `-journal`). They belong to that one file and move with it.
 const DB_SIDECAR_SUFFIXES: [&str; 3] = ["-wal", "-shm", "-journal"];
+
+/// Move a database and its sidecars to `backup` as one unit, failure-safe
+/// (1.3.3 L2 review): the whole set is first *copied* to the backup — a
+/// failed copy deletes the partial backup and leaves the originals untouched
+/// — then the originals are removed, sidecars before the database, and a
+/// failed removal restores what was removed from the complete backup. A
+/// crash at any point leaves either the originals whole or a complete backup;
+/// never a database without its WAL, never an old sidecar without a backup.
+fn backup_db_file_set(db: &Path, backup: &Path) -> Result<()> {
+    let mut set = Vec::new();
+    if std::fs::symlink_metadata(db).is_ok() {
+        set.push((db.to_path_buf(), backup.to_path_buf()));
+    }
+    for suffix in DB_SIDECAR_SUFFIXES {
+        let from = with_suffix(db, suffix);
+        if std::fs::symlink_metadata(&from).is_ok() {
+            set.push((from, with_suffix(backup, suffix)));
+        }
+    }
+
+    for (index, (from, to)) in set.iter().enumerate() {
+        if let Err(err) = std::fs::copy(from, to) {
+            for (_, copied) in &set[..=index] {
+                let _ = std::fs::remove_file(copied);
+            }
+            return Err(err)
+                .with_context(|| format!("failed to backup existing db file {from:?} -> {to:?}"));
+        }
+    }
+
+    // Sidecars first, the database last: until the database goes, nothing
+    // else may sit at the target path.
+    let mut removed: Vec<&(PathBuf, PathBuf)> = Vec::new();
+    for pair in set.iter().rev() {
+        if let Err(err) = std::fs::remove_file(&pair.0) {
+            for (original, copy) in removed {
+                let _ = std::fs::copy(copy, original);
+            }
+            return Err(err)
+                .with_context(|| format!("failed to remove backed-up db file {:?}", pair.0));
+        }
+        removed.push(pair);
+    }
+    Ok(())
+}
 
 fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
@@ -1996,12 +2026,10 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 /// GitHub's hosted Windows runner four read + upsert workers came within
 /// half a second of the 5 s timeout and eight failed "database is locked"
 /// every run — even with a 30 s timeout. In WAL mode readers and the writer
-/// never block each other and a commit is an append (with
-/// `synchronous = NORMAL`, see `with_conn`, no fsync until the checkpoint),
-/// so only writers queue, briefly: eight workers' slowest call stayed near
-/// 1 s there. NORMAL in WAL mode is corruption-safe; a power loss can roll
-/// back the last commits since a checkpoint, and every store call's
-/// connection close checkpoints when it is the last one open.
+/// never block each other and a commit is an append to the WAL, so only
+/// writers queue, briefly: eight workers' slowest call stayed near 1 s there.
+/// Every connection runs `synchronous = FULL` (see `with_conn`): one sync of
+/// the WAL per commit, so an acknowledged write survives a power loss.
 ///
 /// The mode is persistent, so this converts an existing database once
 /// (sqlite.org/wal.html § Persistence); an older build opens it unchanged.
