@@ -1620,3 +1620,62 @@ fn remove_divergent_settles_a_shared_dir_once_and_reports_every_harness() {
         "chosen + one row per harness: {originals:?}"
     );
 }
+
+// ── physical admission of an original's removal (BACKLOG #107) ─────────────
+
+/// A Tool's skills dir linked onto a Managed skill's central copy makes an
+/// "original" a folder *inside the central library*. The lexical registry
+/// fence admits it (the path is spelled under the Tool's dir); physical
+/// admission refuses it with the typed refusal, and the central bytes stay.
+#[cfg(unix)]
+#[test]
+fn an_original_inside_the_central_library_through_an_aliased_tool_dir_is_refused() {
+    use crate::core::errors::{CommandError, RemovalRefusal};
+
+    let f = fixture();
+    install_tool(&f, "claude_code");
+    let beta_original = seed_skill_dir(&f, "claude_code", "beta", "beta body");
+    let report = run(&f, &[selection("beta", &beta_original)], policy_off(true));
+    assert!(matches!(
+        imported(&report, "beta"),
+        ImportGroupStatus::Imported { .. }
+    ));
+    let beta_central = f.paths.central_dir.join("beta");
+    let bundled = beta_central.join("alpha");
+    fs::create_dir_all(&bundled).unwrap();
+    let bundled_body = "---\nname: alpha\n---\nsame\n";
+    fs::write(bundled.join("SKILL.md"), bundled_body).unwrap();
+
+    install_tool(&f, "cursor");
+    let cursor = adapter_by_key("cursor").unwrap();
+    let cursor_dir = f.paths.home.join(cursor.relative_skills_dir);
+    if cursor_dir.symlink_metadata().is_ok() {
+        fs::remove_dir_all(&cursor_dir).unwrap();
+    }
+    fs::create_dir_all(cursor_dir.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&beta_central, &cursor_dir).unwrap();
+    let chosen = seed_skill_dir(&f, "claude_code", "alpha", "same");
+
+    let report = run(&f, &[selection("alpha", &chosen)], policy_off(true));
+
+    let ImportGroupStatus::Imported { originals, .. } = imported(&report, "alpha") else {
+        panic!("alpha should import: {:?}", report);
+    };
+    assert!(
+        matches!(
+            original_at(originals, &cursor_dir.join("alpha"), "cursor"),
+            OriginalStatus::Failed {
+                error: CommandError::RemovalRefused {
+                    reason: RemovalRefusal::CentralLibrary,
+                    ..
+                }
+            }
+        ),
+        "{originals:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(bundled.join("SKILL.md")).expect("central bytes survive"),
+        bundled_body
+    );
+    assert!(!chosen.exists(), "the chosen original is still removed");
+}

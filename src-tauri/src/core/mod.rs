@@ -28,6 +28,7 @@ pub mod project_sync;
 pub mod propagation;
 pub mod provenance;
 pub mod refresh;
+pub mod removal_fence;
 pub mod repo_subpath;
 pub mod repoint;
 pub mod settings;

@@ -1,6 +1,7 @@
 use std::fs;
 
 use crate::core::content_identity::Source;
+use crate::core::removal_fence::ProtectedLibrary;
 use crate::core::sync_engine::{
     copy_dir_recursive, sync_dir_for_tool_with_overwrite, sync_dir_hybrid,
     sync_dir_hybrid_with_overwrite, SyncMode,
@@ -184,6 +185,7 @@ fn symlink_capable_tool_gets_a_link() {
         Source::Directory(src_dir.path()),
         &target,
         false,
+        &ProtectedLibrary::unrecorded(),
     )
     .unwrap();
     assert!(matches!(out.mode_used, SyncMode::Symlink));
@@ -216,6 +218,7 @@ fn any_adapter_without_symlink_support_is_copied() {
         Source::Directory(src_dir.path()),
         &target,
         false,
+        &ProtectedLibrary::unrecorded(),
     )
     .unwrap();
     assert!(matches!(out.mode_used, SyncMode::Copy));
@@ -251,6 +254,82 @@ fn copy_overwrite_replaces_broken_symlink_target() {
     assert!(matches!(out.mode_used, SyncMode::Copy));
     assert!(target.join("s/a.txt").exists());
     assert_eq!(fs::read(target.join("s/a.txt")).unwrap(), b"ok");
+}
+
+// ---------------------------------------------------------------------------
+// Overwrite replacement is physically admitted (BACKLOG #107): the folder in
+// the way is removed only when it is not the source, inside it, or around it.
+// ---------------------------------------------------------------------------
+
+/// A Tool's skills dir linked onto the central repo makes the target *be* the
+/// source. Replacing it would delete the central skill and then link it to
+/// itself; the overwrite is refused with the typed refusal instead.
+#[cfg(unix)]
+#[test]
+fn overwrite_refuses_a_target_that_physically_is_its_source() {
+    use crate::core::errors::{RemovalRefusal, SignalError};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let central_root = tmp.path().join("central");
+    let source = central_root.join("demo");
+    fs::create_dir_all(source.join("nested")).unwrap();
+    fs::write(source.join("SKILL.md"), b"# demo").unwrap();
+    fs::write(source.join("nested").join("keep"), b"central bytes").unwrap();
+    let tool_dir = tmp.path().join("tools").join("claude");
+    fs::create_dir_all(tool_dir.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&central_root, &tool_dir).unwrap();
+    let target = tool_dir.join("demo");
+
+    let err = sync_dir_hybrid_with_overwrite(&source, Source::Directory(&source), &target, true)
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            err.downcast_ref::<SignalError>(),
+            Some(SignalError::RemovalRefused {
+                reason: RemovalRefusal::CentralLibrary,
+                ..
+            })
+        ),
+        "{err:#}"
+    );
+    assert!(
+        !source.symlink_metadata().unwrap().file_type().is_symlink(),
+        "the source is still a real directory"
+    );
+    assert_eq!(fs::read(source.join("SKILL.md")).unwrap(), b"# demo");
+    assert_eq!(
+        fs::read(source.join("nested").join("keep")).unwrap(),
+        b"central bytes"
+    );
+}
+
+/// A link in the way under an aliased parent is still replaced as itself: the
+/// old link goes, its referent's bytes stay.
+#[cfg(unix)]
+#[test]
+fn overwrite_replaces_a_leaf_link_under_an_aliased_parent_without_touching_its_referent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let old = tmp.path().join("central").join("old");
+    fs::create_dir_all(&old).unwrap();
+    fs::write(old.join("SKILL.md"), b"# old").unwrap();
+    let source = tmp.path().join("central").join("new");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("SKILL.md"), b"# new").unwrap();
+    let real_dir = tmp.path().join("dotfiles").join("skills");
+    fs::create_dir_all(&real_dir).unwrap();
+    let tool_dir = tmp.path().join("tools").join("claude");
+    fs::create_dir_all(tool_dir.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&real_dir, &tool_dir).unwrap();
+    std::os::unix::fs::symlink(&old, real_dir.join("demo")).unwrap();
+    let target = tool_dir.join("demo");
+
+    let out = sync_dir_hybrid_with_overwrite(&source, Source::Directory(&source), &target, true)
+        .expect("overwrite");
+
+    assert!(out.replaced);
+    assert_eq!(fs::read(old.join("SKILL.md")).unwrap(), b"# old");
+    assert_eq!(fs::read(target.join("SKILL.md")).unwrap(), b"# new");
 }
 
 // ---------------------------------------------------------------------------
@@ -371,6 +450,7 @@ fn sync_within_root_links_under_a_present_root() {
         &target,
         false,
         &root,
+        &ProtectedLibrary::unrecorded(),
     )
     .unwrap();
     assert!(matches!(out.mode_used, SyncMode::Symlink));
@@ -406,6 +486,7 @@ fn copy_within_root_never_recreates_a_root_that_vanishes_mid_copy() {
         &target,
         false,
         &root,
+        &ProtectedLibrary::unrecorded(),
     )
     .unwrap();
     assert!(matches!(out.mode_used, SyncMode::Copy));
@@ -429,6 +510,7 @@ fn copy_within_root_never_recreates_a_root_that_vanishes_mid_copy() {
         &target,
         false,
         &root,
+        &ProtectedLibrary::unrecorded(),
     )
     .unwrap_err();
 
@@ -459,6 +541,7 @@ fn global_sync_still_creates_missing_parents() {
             Source::Directory(src.path()),
             &target,
             true,
+            &ProtectedLibrary::unrecorded(),
         )
         .unwrap();
         assert_eq!(matches!(out.mode_used, SyncMode::Copy), !supports_symlink);
@@ -485,6 +568,7 @@ mod junction_leg {
         execute_settling_unlocked, execute_unlocked, plan, RemovalScope, Settlement,
     };
     use crate::core::content_identity::{self, Comparison, Source};
+    use crate::core::removal_fence::{Fence, ProtectedLibrary};
     use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord};
     use crate::core::sync_engine::{
         remove_path_any, sync_dir_hybrid_with_overwrite, try_junction, Occupant, SyncMode,
@@ -604,7 +688,8 @@ mod junction_leg {
         let central = central_skill(tmp.path(), "demo");
         let target = junction_target(tmp.path(), &central, "demo");
 
-        remove_path_any(&target).expect("remove junction");
+        remove_path_any(&target, &Fence::new(&ProtectedLibrary::unrecorded()))
+            .expect("remove junction");
 
         assert_eq!(
             fs::symlink_metadata(&target).unwrap_err().kind(),
@@ -623,7 +708,8 @@ mod junction_leg {
 
         assert!(fs::symlink_metadata(&target).is_ok(), "present");
         assert!(!target.exists(), "dangling");
-        remove_path_any(&target).expect("remove dangling junction");
+        remove_path_any(&target, &Fence::new(&ProtectedLibrary::unrecorded()))
+            .expect("remove dangling junction");
         assert!(fs::symlink_metadata(&target).is_err());
     }
 
@@ -661,7 +747,8 @@ mod junction_leg {
             return;
         }
 
-        remove_path_any(&link).expect("remove directory symlink");
+        remove_path_any(&link, &Fence::new(&ProtectedLibrary::unrecorded()))
+            .expect("remove directory symlink");
 
         assert!(fs::symlink_metadata(&link).is_err());
         assert_central_intact(&central, "demo");
@@ -682,7 +769,8 @@ mod junction_leg {
         }
         assert!(!fs::symlink_metadata(&link).unwrap().file_type().is_dir());
 
-        remove_path_any(&link).expect("remove file symlink");
+        remove_path_any(&link, &Fence::new(&ProtectedLibrary::unrecorded()))
+            .expect("remove file symlink");
 
         assert!(fs::symlink_metadata(&link).is_err());
         assert_central_intact(&central, "demo");
@@ -705,7 +793,8 @@ mod junction_leg {
         assert!(fs::symlink_metadata(&link).is_ok(), "present");
         assert!(!link.exists(), "dangling");
 
-        remove_path_any(&link).expect("remove dangling directory symlink");
+        remove_path_any(&link, &Fence::new(&ProtectedLibrary::unrecorded()))
+            .expect("remove dangling directory symlink");
 
         assert!(fs::symlink_metadata(&link).is_err());
         assert!(
@@ -730,7 +819,8 @@ mod junction_leg {
         assert!(fs::symlink_metadata(&link).is_ok(), "present");
         assert!(!link.exists(), "dangling");
 
-        remove_path_any(&link).expect("remove dangling file symlink");
+        remove_path_any(&link, &Fence::new(&ProtectedLibrary::unrecorded()))
+            .expect("remove dangling file symlink");
 
         assert!(fs::symlink_metadata(&link).is_err());
         assert!(

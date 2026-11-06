@@ -147,6 +147,20 @@ describe("describeCommandError", () => {
     ).toBe('errors.pathOutsideToolDirs {"path":"/home/u/Documents"}');
   });
 
+  it("says why physical admission refused a removal and where the path leads, per REMOVAL_REFUSED reason", () => {
+    const refused = {
+      code: "REMOVAL_REFUSED",
+      path: "/home/u/.claude/skills/alpha",
+      resolved: "/home/u/.skillshub/alpha",
+    } as const;
+    expect(describeCommandError({ ...refused, reason: "centralLibrary" }, t)).toBe(
+      'errors.removalRefusedCentralLibrary {"path":"/home/u/.claude/skills/alpha","resolved":"/home/u/.skillshub/alpha"}',
+    );
+    expect(describeCommandError({ ...refused, reason: "resolvesElsewhere" }, t)).toBe(
+      'errors.removalRefusedResolvesElsewhere {"path":"/home/u/.claude/skills/alpha","resolved":"/home/u/.skillshub/alpha"}',
+    );
+  });
+
   it("shows the missing path as a detail line for SOURCE_PATH_MISSING", () => {
     expect(
       describeCommandError(
