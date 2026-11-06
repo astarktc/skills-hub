@@ -33,22 +33,20 @@ fn copy_only_tool() -> &'static str {
 /// A listing whose reconcile pass actually ran.
 ///
 /// The mutation guard is process-global and `cargo test` runs tests in
-/// parallel, so an unlucky call can legitimately return `reconciled: false`
-/// (another test's mutation was in flight). Tests asserting on *reconciled*
-/// status retry through this helper; the skip path has its own test.
+/// parallel, so on the global guard an unlucky call can legitimately return
+/// `reconciled: false` (another test's mutation was in flight). A private
+/// guard makes "no mutation in flight" true for this listing alone, so the
+/// reconcile pass runs deterministically; the skip path has its own test.
 fn list_reconciled(
     store: &SkillStore,
     project_id: &str,
 ) -> Vec<crate::core::skill_store::ProjectSkillAssignmentRecord> {
-    for _ in 0..100 {
-        let listing = project_sync::list_assignments_with_staleness(store, project_id)
-            .expect("list should succeed");
-        if listing.reconciled {
-            return listing.assignments;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-    panic!("reconcile pass never got the guard");
+    let listing = crate::core::mutation_guard::with_private_guard(|| {
+        project_sync::list_assignments_with_staleness(store, project_id)
+    })
+    .expect("list should succeed");
+    assert!(listing.reconciled, "the reconcile pass ran");
+    listing.assignments
 }
 
 fn register_project_and_skill(

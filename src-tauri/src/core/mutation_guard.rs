@@ -29,13 +29,48 @@ use std::sync::Mutex;
 /// The one mutation guard. `Mutex::new` is const, so no lazy init is needed.
 static GUARD: Mutex<()> = Mutex::new(());
 
+/// The guard this thread serialises on: always [`GUARD`] outside tests.
+fn guard() -> &'static Mutex<()> {
+    #[cfg(test)]
+    if let Some(private) = PRIVATE_GUARD.with(std::cell::Cell::get) {
+        return private;
+    }
+    &GUARD
+}
+
+#[cfg(test)]
+thread_local! {
+    static PRIVATE_GUARD: std::cell::Cell<Option<&'static Mutex<()>>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Test-only seam: run `op` with this thread's [`serialized`] and
+/// [`try_serialized`] calls on a fresh guard of their own instead of the
+/// process-wide one. `cargo test` runs tests in parallel and many take the
+/// process-wide guard, so "no mutation in flight" is never reliably true
+/// there; a test asserting the uncontended path makes it true for itself.
+/// Threads spawned by `op` still use the process-wide guard.
+#[cfg(test)]
+pub(crate) fn with_private_guard<T>(op: impl FnOnce() -> T) -> T {
+    struct Restore(Option<&'static Mutex<()>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            PRIVATE_GUARD.with(|cell| cell.set(self.0));
+        }
+    }
+    // One small leak per call, test builds only.
+    let private: &'static Mutex<()> = Box::leak(Box::new(Mutex::new(())));
+    let _restore = Restore(PRIVATE_GUARD.with(|cell| cell.replace(Some(private))));
+    op()
+}
+
 /// Run `op` as the only Sync-target mutation in this process.
 ///
 /// Poisoning is recovered rather than propagated: the guard protects nothing
 /// but the right to run, so a panicking mutation must not wedge every later
 /// one.
 pub(crate) fn serialized<T>(op: impl FnOnce() -> T) -> T {
-    let _guard = GUARD.lock().unwrap_or_else(|err| err.into_inner());
+    let _guard = guard().lock().unwrap_or_else(|err| err.into_inner());
     op()
 }
 
@@ -43,7 +78,7 @@ pub(crate) fn serialized<T>(op: impl FnOnce() -> T) -> T {
 /// immediately. For read paths that would rather report un-reconciled data
 /// than block behind a mutation.
 pub(crate) fn try_serialized<T>(op: impl FnOnce() -> T) -> Option<T> {
-    match GUARD.try_lock() {
+    match guard().try_lock() {
         Ok(_guard) => Some(op()),
         Err(std::sync::TryLockError::Poisoned(poisoned)) => {
             let _guard = poisoned.into_inner();

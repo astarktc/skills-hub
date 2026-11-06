@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{serialized, try_serialized};
+use super::{serialized, try_serialized, with_private_guard};
 
 use crate::core::gitignore::IgnoreUpdateOptions;
 use crate::core::installer::InstallerPaths;
@@ -68,22 +68,52 @@ fn try_serialized_yields_none_while_a_mutation_is_in_flight() {
         "try_serialized must not block behind an in-flight mutation"
     );
 
-    // The guard is process-global and the test binary runs tests in parallel,
-    // so "free" is only ever eventually true; retry briefly rather than assume
-    // this thread is the only mutation in the process.
-    let mut reopened = None;
-    for _ in 0..100 {
-        reopened = try_serialized(|| 42u32);
-        if reopened.is_some() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    // "Free" is never reliably observable on the process-global guard while
+    // other tests hold it in parallel, so the release half runs on a private
+    // guard: the same code, without neighbours.
+    with_private_guard(|| {
+        assert_eq!(
+            serialized(|| try_serialized(|| 42u32)),
+            None,
+            "held: the probe is refused"
+        );
+        assert_eq!(
+            try_serialized(|| 42u32),
+            Some(42),
+            "try_serialized runs the operation once no mutation is in flight"
+        );
+    });
+}
+
+/// The test seam itself: a thread inside `with_private_guard` is not
+/// contended by a mutation holding the process-wide guard — which is what
+/// makes the no-contention tests deterministic under a parallel test run.
+#[test]
+fn a_private_guard_is_not_contended_by_the_process_wide_one() {
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        serialized(|| {
+            held_tx.send(()).expect("signal held");
+            release_rx.recv().expect("wait for release");
+        })
+    });
+    held_rx.recv().expect("the holder has the global guard");
+
+    assert_eq!(try_serialized(|| ()), None, "the global guard is held");
     assert_eq!(
-        reopened,
-        Some(42),
-        "try_serialized runs the operation once no mutation is in flight"
+        with_private_guard(|| try_serialized(|| 7u32)),
+        Some(7),
+        "a private guard is free although the global one is held"
     );
+    assert_eq!(
+        try_serialized(|| ()),
+        None,
+        "leaving the seam restores the global guard on this thread"
+    );
+
+    release_tx.send(()).expect("release");
+    holder.join().expect("holder");
 }
 
 // ---------------------------------------------------------------------------
@@ -467,20 +497,17 @@ fn listing_reconciles_when_no_mutation_is_in_flight() {
     let f = fixture("listing-reconcile-guard");
     let (_tool, assignment_id) = make_drifted_copy_assignment(&f);
 
-    // The guard is process-wide and other tests take it in parallel; on a
-    // slower host (the Windows suite) they hold it nearly back to back, so
-    // the poll gets a generous window (30 s) rather than 5 s.
-    let mut listing = None;
-    for _ in 0..600 {
-        let attempt = project_sync::list_assignments_with_staleness(&f.store, &f.project.id)
-            .expect("listing");
-        if attempt.reconciled {
-            listing = Some(attempt);
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    let listing = listing.expect("the reconcile pass eventually gets the guard");
+    // No mutation is in flight *for this listing*: other tests hold the
+    // process-wide guard in parallel, so the listing runs on a private one
+    // rather than polling for a gap that a loaded host may never leave.
+    let listing = with_private_guard(|| {
+        project_sync::list_assignments_with_staleness(&f.store, &f.project.id)
+    })
+    .expect("listing");
+    assert!(
+        listing.reconciled,
+        "with no mutation in flight the reconcile pass runs"
+    );
 
     let row = listing
         .assignments
