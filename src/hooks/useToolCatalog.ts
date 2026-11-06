@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ToolOption, ToolStatusDto } from "../components/skills/types";
 import { invokeTauri, isTauri } from "../lib/tauri";
 import type { TranslateFn } from "./useStatusReporter";
@@ -21,11 +21,18 @@ export function useToolCatalog({ t }: { t: TranslateFn }) {
   const [projectToolStatus, setProjectToolStatus] =
     useState<ToolStatusDto | null>(null);
 
+  // The startup read happens once per catalog: the call records detection,
+  // so a second read (StrictMode runs a mount effect twice in development)
+  // would answer `newly_installed: []` and hide the New harnesses dialog
+  // (#90). Both effect runs await the one read.
+  const startupRead = useRef<Promise<ToolStatusDto> | null>(null);
   useEffect(() => {
     if (!isTauri) return;
+    startupRead.current ??= invokeTauri("getToolStatus");
+    const read = startupRead.current;
     void (async () => {
       try {
-        setToolStatus(await invokeTauri("getToolStatus"));
+        setToolStatus(await read);
       } catch (err) {
         // Non-fatal; the app still works without detection.
         console.warn(err);

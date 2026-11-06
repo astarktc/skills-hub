@@ -795,13 +795,15 @@ describe("S2/S3: onboarding import goes through the global sync batch", () => {
     );
     const status = report.groups[0].status;
     if (status.status !== "imported") throw new Error(`expected imported, got ${status.status}`);
-    expect(status.forced_tools).toEqual(["amp"]);
+    // Amp and Kimi share the dir holding the identical copy: both are reported
+    // on it (#90, as Rust's plan does), so both are forced.
+    expect(status.forced_tools).toEqual(["amp", "kimi_cli"]);
     const byTool = Object.fromEntries(status.targets.map((o) => [o.tool_key, o.status]));
     expect(byTool.codex).toMatchObject({ status: "synced", outcome: { replaced: true } });
     expect(byTool.amp).toMatchObject({ status: "skipped", error: { code: "TOOL_NOT_WRITABLE" } });
-    // The unwritable Amp original survives and stays discoverable.
+    // The unwritable shared original survives and stays discoverable, for both.
     const after = (await handlers.getOnboardingPlan()).groups.find((g) => g.name === "commit-message");
-    expect(after?.variants.map((v) => v.tool)).toEqual(["amp"]);
+    expect(after?.variants.map((v) => v.tool)).toEqual(["amp", "kimi_cli"]);
   });
 
   it("reports a divergent sibling in a target's way once, as its TARGET_EXISTS row (ticket 04 review F4)", async () => {
@@ -1779,5 +1781,58 @@ describe("ticket 17: Projects — a missing folder, Sync this, the kept row, a s
     const { handlers } = backendFor("failures");
     expect((await handlers.getProjectView("prj-quartermaster")).reconciled).toBe(false);
     expect((await handlers.getProjectView("prj-quartermaster")).reconciled).toBe(true);
+  });
+});
+
+describe("fixture parity with Rust (#90)", () => {
+  it("the onboarding plan reports every harness on a shared skills dir, one variant each (Rust has no path dedupe)", async () => {
+    const { handlers } = backendFor("first-run");
+    const plan = await handlers.getOnboardingPlan();
+    const ego = plan.groups.find((g) => g.name === "ego-browser")!;
+    const shared = `${globalRoot("amp")}/ego-browser`;
+    expect(globalRoot("kimi_cli")).toBe(globalRoot("amp"));
+    expect(ego.variants.filter((v) => v.path === shared).map((v) => v.tool)).toEqual(["amp", "kimi_cli"]);
+    expect(plan.copy_count).toBe(plan.groups.reduce((n, g) => n + g.variants.length, 0));
+  });
+
+  it("removing a conflict's other copies settles a shared path once and reports it per harness (Rust `remove_divergent_copies`)", async () => {
+    const { state, handlers } = backendFor("first-run");
+    state.foreign.push({ tool: "amp", name: "handoff", fingerprint: "a fork in the shared dir", linkTarget: null });
+    const group = (await handlers.getOnboardingPlan()).groups.find((g) => g.name === "handoff")!;
+    const chosen = group.variants.find((v) => v.tool === "claude_code")!;
+    const report = await handlers.importOnboardingSelection(
+      [{ group_name: "handoff", chosen_path: chosen.path, name: null, remove_divergent: true }],
+      { auto_sync: false, tools: null, remove_originals: false },
+      sink().channel,
+    );
+    const status = report.groups[0].status;
+    if (status.status !== "imported") throw new Error(`expected imported, got ${status.status}`);
+    const removed = status.originals.filter((o) => o.status.status === "removed").map((o) => [o.tool, o.path]);
+    expect(removed).toEqual([
+      ["amp", `${globalRoot("amp")}/handoff`],
+      ["kimi_cli", `${globalRoot("amp")}/handoff`],
+      ["pi", `${globalRoot("pi")}/handoff`],
+    ]);
+    expect(state.foreign.some((f) => f.name === "handoff" && f.tool !== "claude_code")).toBe(false);
+  });
+
+  it("resolveProjectCollisions answers a missing project as a per-decision NOT_FOUND row, never a throw", async () => {
+    const { handlers } = backendFor("rich");
+    const report = await handlers.resolveProjectCollisions([
+      { project_id: "prj-gone", skill_id: "s-any", tool: "claude_code", decision: "overwrite" },
+    ]);
+    expect(report).toEqual({
+      skipped_projects: [],
+      items: [
+        {
+          assignment_id: null,
+          project_id: "prj-gone",
+          skill_id: "s-any",
+          skill_name: "",
+          tool: "claude_code",
+          status: { status: "failed", error: { code: "NOT_FOUND", kind: "assignment", id: "prj-gone/s-any/claude_code" } },
+        },
+      ],
+    });
   });
 });

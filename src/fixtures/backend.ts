@@ -1316,14 +1316,18 @@ export function createFixtureBackend(
     const scope = scanScope();
     const groups = new Map<string, OnboardingGroup>();
     const invalid: OnboardingPlan["invalid"] = [];
-    const seenPaths = new Set<string>();
     let found = 0;
+    // Rust `build_onboarding_plan_in_home` scans each harness's skills dir:
+    // harnesses sharing one (Amp and Kimi's `.config/agents/skills`) each
+    // report what sits there — one variant per (harness, path), never deduped.
     for (const tool of TOOL_REGISTRY.filter((t) => scope.includes(t.key))) {
       const root = globalRoot(tool.key);
+      const seen = new Set<string>();
       for (const dir of state.foreign.filter((f) => globalRoot(f.tool) === root)) {
         const path = `${root}/${dir.name}`;
-        if (seenPaths.has(path)) continue;
-        seenPaths.add(path);
+        // One folder per path within this harness's dir.
+        if (seen.has(path)) continue;
+        seen.add(path);
         // Rust `scan_tool_dir`'s manifest gate (#46): listed apart, never a group.
         if (dir.invalid) {
           invalid.push({ tool: tool.key, name: dir.name, path, reason: dir.invalid });
@@ -1454,17 +1458,23 @@ export function createFixtureBackend(
     const originals: OriginalOutcome[] = [];
     // Rust `remove_divergent_original`: the operator's "remove the other
     // copies" runs first, so a target Tool then gets the link at that path.
-    const settled = new Set<string>();
+    // Rust `remove_divergent_copies`: each physical path is settled once and
+    // its status fanned out to every harness naming it (a shared skills dir).
+    const settled = new Map<string, OriginalOutcome["status"]>();
     if (selection.remove_divergent) {
       for (const v of group.variants) {
-        if (identical(v) || !present(v)) continue;
-        settled.add(v.path);
-        if (state.unwritableTools.includes(v.tool)) {
-          originals.push({ path: v.path, tool: v.tool, status: { status: "failed", error: PERMISSION_DENIED(v.path) } });
-        } else {
-          state.foreign = state.foreign.filter((f) => !(`${globalRoot(f.tool)}/${f.name}` === v.path));
-          originals.push({ path: v.path, tool: v.tool, status: { status: "removed" } });
+        if (v.path === chosen.path || identical(v)) continue;
+        let status = settled.get(v.path);
+        if (!status) {
+          if (!present(v)) continue;
+          status = state.unwritableTools.includes(v.tool)
+            ? { status: "failed", error: PERMISSION_DENIED(v.path) }
+            : { status: "removed" };
+          if (status.status === "removed")
+            state.foreign = state.foreign.filter((f) => `${globalRoot(f.tool)}/${f.name}` !== v.path);
+          settled.set(v.path, status);
         }
+        originals.push({ path: v.path, tool: v.tool, status });
       }
     }
     const variants = group.variants.filter((v) => !settled.has(v.path));
@@ -1716,9 +1726,11 @@ export function createFixtureBackend(
    * since gone is not answered: the project is one skip (`null` here).
    */
   const resolveCollision = (decision: AssignmentDecision): ProjectSyncOutcome | null => {
-    const project = findProject(decision.project_id);
-    const a = project.assignments.find((x) => x.skill_id === decision.skill_id && x.tool === decision.tool);
-    if (!a) {
+    // Rust `resolve_collisions_unlocked` looks the assignment row up: a gone
+    // project, like a gone row, is that decision's NOT_FOUND row (#90).
+    const project = state.projects.find((p) => p.id === decision.project_id);
+    const a = project?.assignments.find((x) => x.skill_id === decision.skill_id && x.tool === decision.tool);
+    if (!project || !a) {
       return {
         assignment_id: null,
         project_id: decision.project_id,

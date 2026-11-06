@@ -65,6 +65,26 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+describe("useToolCatalog under StrictMode (#90)", () => {
+  it("keeps the one startup read's newly detected tools when the effect runs twice", async () => {
+    // The backend records detection on the read (Rust `record_installed_tools`):
+    // only the first `getToolStatus` reports a tool newly detected.
+    let reads = 0;
+    mockInvoke.mockImplementation((command) =>
+      command === "getToolStatus"
+        ? Promise.resolve({ ...GLOBAL, newly_installed: reads++ === 0 ? ["cursor"] : [] })
+        : Promise.reject(new Error(`unexpected ${command}`)),
+    );
+    const { result } = renderHook(() => useToolCatalog({ t }), { reactStrictMode: true });
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.toolStatus?.newly_installed).toEqual(["cursor"]);
+    expect(reads).toBe(1);
+  });
+});
+
 describe("useToolCatalog", () => {
   it("loads the global tool status once and derives labels, installedness and shared dirs", async () => {
     stubBackend();

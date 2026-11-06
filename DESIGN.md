@@ -1377,7 +1377,7 @@ dismissed for good.
   the My Skills heading, then the main landmark; never `<body>`): **Review** → **Result**, named in the header as
   an `ol` with `aria-current="step"`, like Add. Above it, while the import runs, only the one overwrite ask (D12).
   Not dismissible while its own import runs; its progress (`HeaderProgress placement="dialog"`) sits at its foot.
-- **Counts** (the Review's first focus, an `h3` `sm` semibold `tabular-nums`): "12 skills · 22 copies in 6 harnesses
+- **Counts** (the Review's first focus, an `h3` `sm` semibold `tabular-nums`): "12 skills · 23 copies in 7 harnesses
   · 1 can't be imported" — name-groups and copies counted separately (D14), the harnesses holding a copy, the
   invalid manifests. One sentence under it says what importing does. With only invalid manifests left the line is
   "1 can't be imported", the sentence says why, and Import is refused with "Nothing here can be imported yet: fix the
