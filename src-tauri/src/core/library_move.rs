@@ -1284,7 +1284,9 @@ fn rollback<'p>(
 // compared, so a copy without it would still verify "the same" and the
 // clean would remove the only place it lived. A skill whose copy carries
 // any — on its own folder or on any entry — is not moved
-// (`unverifiable_metadata`, naming the first such entry):
+// (`unverifiable_metadata`, naming the first such entry), and the clean
+// re-checks a set-aside old copy for it right before removal (content added
+// after the copy keeps the old copy, `changed_since_copy`):
 //
 // * Windows: a named (alternate) data stream on a file or folder — it can
 //   hold bytes of its own (`Zone.Identifier` included);
@@ -1742,6 +1744,32 @@ fn make_link(kind: &std::fs::FileType, text: &Path, at: &Path) -> std::io::Resul
             std::os::windows::fs::symlink_file(text, at)
         }
     }
+}
+
+/// Whether any entry of the tree at `root` (the root included; links never
+/// followed) carries content the copy cannot verify (§ What the copy cannot
+/// verify). The clean asks it of a set-aside old copy right before removal.
+fn carries_unverifiable_metadata(root: &Path) -> Result<bool> {
+    if unverifiable_metadata(root, false)? {
+        return Ok(true);
+    }
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).with_context(|| format!("read {:?}", dir))? {
+            let entry = entry.with_context(|| format!("read {:?}", dir))?;
+            let path = entry.path();
+            let kind = entry
+                .file_type()
+                .with_context(|| format!("stat {:?}", path))?;
+            if unverifiable_metadata(&path, kind.is_symlink())? {
+                return Ok(true);
+            }
+            if kind.is_dir() {
+                pending.push(path);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Whether `dst` reproduces the skill at `src` over every compared facet
@@ -2430,7 +2458,10 @@ fn remove_duplicate(store: &SkillStore, old_root: &Path, dest: &Path, m: &Moved)
         if EntryId::of(&m.new)? != Some(m.new_id) {
             return Ok(Some(LeftBehindReason::DestinationMissing));
         }
-        if !same_tree(&aside, &m.new)? {
+        // Content the comparison cannot see (§ What the copy cannot verify)
+        // may have been added since the copy — while the app was stopped, say:
+        // a copy "the same" over the compared facets is then no duplicate.
+        if !same_tree(&aside, &m.new)? || carries_unverifiable_metadata(&aside)? {
             return Ok(Some(LeftBehindReason::ChangedSinceCopy));
         }
         // The new copy compared is still the one the record names.

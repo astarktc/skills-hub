@@ -617,11 +617,19 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
       return { status: "ready", loaded: true, views: next };
     });
   }, [converge]);
+  // The selection as of the latest commit: `reloadViews` is handed to a long
+  // action (Move Library folder) that may settle after the operator picked
+  // another project, so it reads the selection when it runs.
+  const selectedProjectIdRef = useRef(selectedProjectId);
+  useLayoutEffect(() => {
+    selectedProjectIdRef.current = selectedProjectId;
+  });
   const reloadViews = useCallback(async (): Promise<void> => {
     const reads: Promise<unknown>[] = [];
-    if (selectedProjectId) {
+    const selected = selectedProjectIdRef.current;
+    if (selected) {
       reads.push(
-        invokeTauri("getProjectView", selectedProjectId).then(
+        invokeTauri("getProjectView", selected).then(
           (view) => {
             if (view.rewrote_statuses) converge();
             applyView(view);
@@ -633,7 +641,7 @@ export function useProjectState(deps: ProjectStateDeps = {}): ProjectState {
     }
     if (placementReadRef.current > 0) reads.push(loadPlacementViews());
     await Promise.all(reads);
-  }, [applyView, converge, loadPlacementViews, selectedProjectId]);
+  }, [applyView, converge, loadPlacementViews]);
   const placementOf = useCallback(
     (skillId: string) => skillPlacement(projects, placementViews, skillId),
     [placementViews, projects],

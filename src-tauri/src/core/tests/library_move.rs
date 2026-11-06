@@ -1346,6 +1346,36 @@ fn edit_after_verify_survives_clean() {
     assert_no_set_aside_left(&f.paths.central_dir);
 }
 
+/// Round-4 re-check #1: content the comparison cannot verify (an extended
+/// ACL on macOS, a non-`user.*` xattr on Linux, a named stream on Windows)
+/// added to an old copy after it was copied — while the app was stopped, or
+/// during the move — is never deleted: the clean re-checks the set-aside copy
+/// for it, not only the compared facets, and keeps it as changed since the
+/// copy. Interrupted after the switch, then resumed, as the reviewer's probe.
+#[test]
+fn metadata_added_after_the_copy_is_never_deleted() {
+    use crate::core::library_move::{resume_library_move, LibraryMovePhase};
+    let (f, skills, _project) = crash_fixture();
+    assert!(crash_move(&f, &f.dest(), LibraryMovePhase::Relinking, 0));
+    let (_, old, _) = &skills[0];
+    let marked = old.join("SKILL.md");
+    if !give_unverifiable_metadata(&marked) {
+        return; // this volume holds none
+    }
+
+    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
+        .expect("resume")
+        .expect("a journal to finish");
+
+    assert!(marked.is_file(), "the old copy carrying it survives");
+    assert!(
+        left_behind(&report, LeftBehindReason::ChangedSinceCopy).contains(old),
+        "kept as changed since the copy"
+    );
+    assert!(!skills[1].1.exists(), "the other old copy is still cleaned");
+    assert_no_set_aside_left(&f.paths.central_dir);
+}
+
 /// No `.skills-hub-clean-*` folder is left in the old Library folder.
 fn assert_no_set_aside_left(root: &Path) {
     let left: Vec<_> = fs::read_dir(root)

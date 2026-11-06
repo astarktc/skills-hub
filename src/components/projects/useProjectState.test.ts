@@ -1668,6 +1668,30 @@ describe("useProjectState reloadViews (another world moved Deployments)", () => 
     expect(result.current.placementViews.views.p1?.assignments.map((row) => row.status)).toEqual(["error"]);
   });
 
+  // Round-4 re-check #2: the move's action holds the `reloadViews` it was handed when Browse ran; the operator may
+  // select another project before it settles. The re-read follows the selection at settlement.
+  it("re-reads the project selected when it runs, not when it was handed out", async () => {
+    const { result } = await renderReady();
+    await withSelectedProject(result, ["claude_code"]);
+    await act(async () => {
+      await result.current.registerProject("/work/p2", {
+        add_to_gitignore: false,
+        add_to_exclude: false,
+      });
+    });
+    const handedOut = result.current.reloadViews;
+    await act(async () => {
+      await result.current.selectProject("p2");
+    });
+    mockInvoke.mockClear();
+
+    await act(async () => {
+      await handedOut();
+    });
+
+    expect(callsTo("getProjectView")).toEqual([["p2"]]);
+  });
+
   it("reads no placement views a surface never asked for", async () => {
     const { result } = await renderReady();
     await withSelectedProject(result, ["claude_code"]);
