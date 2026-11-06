@@ -2064,15 +2064,15 @@ fn give_unverifiable_metadata(path: &Path) -> bool {
     #[cfg(target_os = "linux")]
     {
         // A POSIX ACL in its xattr form: version 2, then (tag, perm, id)
-        // entries sorted by tag — owner rw, user 65534 r, group r, mask r,
-        // other r.
+        // entries sorted by tag — owner rwx, user 65534 r-x, group r-x,
+        // mask r-x, other r-x (a folder stays searchable).
         let mut acl = 2u32.to_le_bytes().to_vec();
         for (tag, perm, id) in [
-            (0x01u16, 6u16, u32::MAX),
-            (0x02, 4, 65534),
-            (0x04, 4, u32::MAX),
-            (0x10, 4, u32::MAX),
-            (0x20, 4, u32::MAX),
+            (0x01u16, 7u16, u32::MAX),
+            (0x02, 5, 65534),
+            (0x04, 5, u32::MAX),
+            (0x10, 5, u32::MAX),
+            (0x20, 5, u32::MAX),
         ] {
             acl.extend(tag.to_le_bytes());
             acl.extend(perm.to_le_bytes());
