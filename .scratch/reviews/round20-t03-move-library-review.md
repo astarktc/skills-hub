@@ -51,4 +51,17 @@ Verification: move tests 22, switch tests 2, removal-fence tests 21 (+1 ignored)
 
 ## Disposition
 
-Round 2 dispatched to an implementer on top of `t3/move-library-folder` (orchestrator, 2026-11-06).
+Round 2 (Opus 5.5, high) fixed all five on PR #12, head `5e8dd507`. Each fix has a regression test that failed on
+`be610918` (#4's resume tests could not compile there). CI is green.
+
+1. Exclusive `create_dir` reservation, with `-2`, `-3` suffixes for a taken name.
+2. A relocation-fidelity copy that keeps every entry, `.git` and links as text, verified over the full tree. A skill
+   that can't be copied faithfully is `kept { unrelocatable }`.
+3. Clean decides by physical identity (`removal_fence::Place`): `still_recorded`, `still_linked`, or
+   `kept { shared_copy }`.
+4. A move journal (settings row) is written in the Switch transaction. It is resumed at startup and at every
+   `move_library`.
+5. Admission runs after creation, by identity. A refusal removes only the empty dirs the move created.
+
+Known gap: the preview still counts kept skills as moving, so its "Move N skills" can overstate. Round-2 review
+dispatched.
