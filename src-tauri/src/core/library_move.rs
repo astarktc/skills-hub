@@ -70,8 +70,7 @@ use super::skill_store::{
     AssignmentTransition, SkillRecord, SkillStore, SkillTargetRecord, TargetTransition,
 };
 use super::sync_engine::{
-    sync_dir_for_tool_with_overwrite, sync_dir_for_tool_within_root,
-    SyncOutcome,
+    sync_dir_for_tool_with_overwrite, sync_dir_for_tool_within_root, SyncOutcome,
 };
 use super::sync_status::{SyncMode, SyncStatus};
 use super::tool_adapters::{
@@ -163,11 +162,18 @@ pub struct SkillMoveOutcome {
 #[derive(Debug, Serialize, Type)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum SkillMoveStatus {
-    Moved { from: String, to: String },
-    Skipped { reason: SkillMoveSkip },
+    Moved {
+        from: String,
+        to: String,
+    },
+    Skipped {
+        reason: SkillMoveSkip,
+    },
     /// Not moved: its copy stays where it is recorded, untouched, and so do
     /// its Deployments.
-    Kept { reason: SkillKept },
+    Kept {
+        reason: SkillKept,
+    },
 }
 
 /// Why a locatable skill was kept where it is.
@@ -351,19 +357,30 @@ pub fn move_library(
             return Err(err);
         }
 
-        let mut report = settle(store, &paths.central_dir, dest, &moved, now, &mut on_progress)?;
-        report.skills.extend(kept.into_iter().map(|(skill, reason)| SkillMoveOutcome {
-            skill_id: skill.id,
-            name: skill.name,
-            status: SkillMoveStatus::Kept { reason },
-        }));
-        report.skills.extend(missing.into_iter().map(|skill| SkillMoveOutcome {
-            skill_id: skill.id,
-            name: skill.name,
-            status: SkillMoveStatus::Skipped {
-                reason: SkillMoveSkip::Missing,
-            },
-        }));
+        let mut report = settle(
+            store,
+            &paths.central_dir,
+            dest,
+            &moved,
+            now,
+            &mut on_progress,
+        )?;
+        report
+            .skills
+            .extend(kept.into_iter().map(|(skill, reason)| SkillMoveOutcome {
+                skill_id: skill.id,
+                name: skill.name,
+                status: SkillMoveStatus::Kept { reason },
+            }));
+        report
+            .skills
+            .extend(missing.into_iter().map(|skill| SkillMoveOutcome {
+                skill_id: skill.id,
+                name: skill.name,
+                status: SkillMoveStatus::Skipped {
+                    reason: SkillMoveSkip::Missing,
+                },
+            }));
         Ok(report)
     })
 }
@@ -619,15 +636,119 @@ fn admit(
     }
 
     if probe == Probe::Write {
-        std::fs::create_dir_all(dest)
+        let created = create_destination(dest)
             .map_err(|_| refuse(LibraryDestinationRefusal::NotWritable, None))?;
-        let probe_file = dest.join(format!(".skills-hub-write-probe-{}", uuid::Uuid::new_v4()));
-        std::fs::write(&probe_file, b"")
-            .map_err(|_| refuse(LibraryDestinationRefusal::NotWritable, None))?;
-        // The probe is the file this call just created in an admitted, empty
-        // destination; it is no artifact, so no fence is involved.
-        std::fs::remove_file(&probe_file)
-            .map_err(|_| refuse(LibraryDestinationRefusal::NotWritable, None))?;
+        let admitted = admit_physically(store, paths, skills, dest, &refuse).and_then(|()| {
+            let probe_file = dest.join(format!(".skills-hub-write-probe-{}", uuid::Uuid::new_v4()));
+            std::fs::write(&probe_file, b"")
+                .map_err(|_| refuse(LibraryDestinationRefusal::NotWritable, None))?;
+            // The probe is the file this call just created in an admitted,
+            // empty destination; it is no artifact, so no fence is involved.
+            std::fs::remove_file(&probe_file)
+                .map_err(|_| refuse(LibraryDestinationRefusal::NotWritable, None))
+        });
+        if let Err(err) = admitted {
+            undo_created(&created);
+            return Err(err);
+        }
+    }
+    Ok(())
+}
+
+/// Create `dest` and every missing folder above it, one level at a time.
+/// Answers the folders this call created, outermost first — a level that
+/// turns out to exist already (a case alias of one that does) is not ours.
+fn create_destination(dest: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut missing: Vec<&Path> = dest
+        .ancestors()
+        .take_while(|level| std::fs::symlink_metadata(level).is_err())
+        .collect();
+    missing.reverse();
+    let mut created = Vec::new();
+    for level in missing {
+        match std::fs::create_dir(level) {
+            Ok(()) => created.push(level.to_path_buf()),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(err) => {
+                undo_created(&created);
+                return Err(err);
+            }
+        }
+    }
+    Ok(created)
+}
+
+/// Remove the folders [`create_destination`] created, innermost first. Each
+/// is removed only while empty (`remove_dir`): this undoes this call's own
+/// `mkdir` and can never take content with it, so no fence is involved.
+fn undo_created(created: &[PathBuf]) {
+    for level in created.iter().rev() {
+        if let Err(err) = std::fs::remove_dir(level) {
+            log::warn!("[library move] could not remove the folder it created at {level:?}: {err}");
+        }
+    }
+}
+
+/// The refusals decided again once the destination exists, by physical
+/// identity (device + inode; the final path on Windows) rather than by
+/// spelling: every protected folder is re-resolved now, so one the creation
+/// itself materialised through a case alias (`~/.CLAUDE/SKILLS` is
+/// `~/.claude/skills` on a case-insensitive volume) is the destination's own
+/// identity, and an existing alias the spelling pass missed (macOS keeps the
+/// caller's case through `realpath`) compares equal.
+fn admit_physically(
+    store: &SkillStore,
+    paths: &InstallerPaths,
+    skills: &[SkillRecord],
+    dest: &Path,
+    refuse: &impl Fn(LibraryDestinationRefusal, Option<&Path>) -> anyhow::Error,
+) -> Result<()> {
+    let at = Place::of(dest)?;
+    let library = std::iter::once(paths.central_dir.clone()).chain(
+        skills
+            .iter()
+            .map(|skill| PathBuf::from(&skill.central_path))
+            .filter(|path| path.is_absolute() && path.parent().is_some()),
+    );
+    for root in library {
+        let place = Place::of(&root)?;
+        if at.within(&place) || place.within(&at) {
+            return Err(refuse(
+                LibraryDestinationRefusal::OverlapsLibrary,
+                Some(&root),
+            ));
+        }
+    }
+    let cache_root = git_cache::root_in(&paths.cache_dir);
+    if at.within(&Place::of(&cache_root)?) {
+        return Err(refuse(
+            LibraryDestinationRefusal::InsideGitCache,
+            Some(&cache_root),
+        ));
+    }
+    for adapter in default_tool_adapters() {
+        for dir in std::iter::once(skills_dir_in(&paths.home, adapter))
+            .chain(former_skills_dirs_in(&paths.home, adapter))
+        {
+            if at.within(&Place::of(&dir)?) {
+                return Err(refuse(
+                    LibraryDestinationRefusal::InsideHarnessDir,
+                    Some(&dir),
+                ));
+            }
+        }
+    }
+    for project in store.list_projects()? {
+        let root = Path::new(&project.path);
+        for adapter in default_tool_adapters() {
+            let dir = project_skills_dir_in(root, adapter);
+            if at.within(&Place::of(&dir)?) {
+                return Err(refuse(
+                    LibraryDestinationRefusal::InsideProjectDir,
+                    Some(&dir),
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -760,7 +881,9 @@ fn copy_phase(
             if let Some(with_skill_id) = shared_with {
                 return Ok(Some(SkillKept::SharedCopy { with_skill_id }));
             }
-            if let Some((entry, cause)) = unrelocatable(&old, &old_place, &paths.central_dir, &old_library)? {
+            if let Some((entry, cause)) =
+                unrelocatable(&old, &old_place, &paths.central_dir, &old_library)?
+            {
                 return Ok(Some(SkillKept::Unrelocatable {
                     entry: entry.to_string_lossy().into_owned(),
                     cause,
@@ -820,9 +943,7 @@ fn reserve(dest: &Path, old: &Path, skill: &SkillRecord) -> Result<PathBuf> {
         match std::fs::create_dir(&path) {
             Ok(()) => return Ok(path),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(err) => {
-                return Err(anyhow::Error::new(err).context(format!("create {:?}", path)))
-            }
+            Err(err) => return Err(anyhow::Error::new(err).context(format!("create {:?}", path))),
         }
     }
     unreachable!("a free folder name exists")
@@ -897,7 +1018,11 @@ fn unrelocatable(
                 pending.push((path, below));
             } else if kind.is_symlink() {
                 let text = std::fs::read_link(&path).with_context(|| format!("read {:?}", path))?;
-                let resolved = path.canonicalize().ok().map(|p| Place::of(&p)).transpose()?;
+                let resolved = path
+                    .canonicalize()
+                    .ok()
+                    .map(|p| Place::of(&p))
+                    .transpose()?;
                 let cause = if text.is_absolute() {
                     let lexically_old = text.starts_with(old) || text.starts_with(old_root);
                     let physically_old = resolved
@@ -907,9 +1032,8 @@ fn unrelocatable(
                         .then_some(UnrelocatableCause::LinkIntoOldLibrary)
                 } else {
                     let escapes_lexically = escapes(&depth, &text);
-                    let escapes_physically = resolved
-                        .as_ref()
-                        .is_some_and(|at| !at.within(old_place));
+                    let escapes_physically =
+                        resolved.as_ref().is_some_and(|at| !at.within(old_place));
                     (escapes_lexically || escapes_physically)
                         .then_some(UnrelocatableCause::LinkEscapes)
                 };
@@ -1096,11 +1220,13 @@ fn occupant(path: &Path, old_place: &Place, new_place: &Place) -> Result<Occupan
     let at = Place::of(path)?;
     let reaches_old = at.same(old_place);
     let reaches_new = at.same(new_place);
-    Ok(match (meta.file_type().is_symlink(), reaches_old || reaches_new) {
-        (true, true) => Occupant::Ours,
-        (false, false) => Occupant::Copy,
-        _ => Occupant::NotOurs,
-    })
+    Ok(
+        match (meta.file_type().is_symlink(), reaches_old || reaches_new) {
+            (true, true) => Occupant::Ours,
+            (false, false) => Occupant::Copy,
+            _ => Occupant::NotOurs,
+        },
+    )
 }
 
 /// One Deployment path of a moved skill and the owned rows describing it.
@@ -1422,8 +1548,7 @@ fn clean_phase(
             });
             continue;
         }
-        if let Err(err) = remove_former_central_copy_unlocked(store, dest, old_root, &m.old)
-        {
+        if let Err(err) = remove_former_central_copy_unlocked(store, dest, old_root, &m.old) {
             log::warn!("[library move] old copy {:?} kept: {err:#}", m.old);
             kept.push(LeftBehind {
                 path: m.old.to_string_lossy().into_owned(),

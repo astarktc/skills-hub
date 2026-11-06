@@ -848,11 +848,6 @@ impl Place {
         Lineage::of(path).map(Self)
     }
 
-    /// Whether the path itself exists.
-    pub(crate) fn exists(&self) -> bool {
-        self.0.head().is_some()
-    }
-
     /// Whether this is `other` or lies inside it (for a path that does not
     /// exist: would lie inside it). `other` must exist.
     pub(crate) fn within(&self, other: &Place) -> bool {

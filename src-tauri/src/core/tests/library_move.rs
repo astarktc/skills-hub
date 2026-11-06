@@ -841,7 +841,10 @@ fn the_move_keeps_git_history_and_dotfiles() {
         fs::read(new.join(".git/objects/ab/cdef")).unwrap(),
         vec![0u8, 1, 2, 255]
     );
-    assert_eq!(fs::read_to_string(new.join(".env.example")).unwrap(), "KEY=");
+    assert_eq!(
+        fs::read_to_string(new.join(".env.example")).unwrap(),
+        "KEY="
+    );
 }
 
 /// Review #2: a link inside the skill is recreated as a link with its text
@@ -878,7 +881,13 @@ fn the_move_keeps_internal_links_as_links() {
 
 /// What a skill the move kept in place says about it.
 fn kept_reason(report: &LibraryMoveReport, id: &str) -> crate::core::library_move::SkillKept {
-    match &report.skills.iter().find(|s| s.skill_id == id).unwrap().status {
+    match &report
+        .skills
+        .iter()
+        .find(|s| s.skill_id == id)
+        .unwrap()
+        .status
+    {
         SkillMoveStatus::Kept { reason } => reason.clone(),
         other => panic!("expected {id} kept, got {other:?}"),
     }
@@ -912,9 +921,24 @@ fn a_skill_that_cannot_be_relocated_faithfully_stays_where_it_is() {
     let report = f.run();
 
     let cases = [
-        (&into_own, &into_own_old, UnrelocatableCause::LinkIntoOldLibrary, "abs-refs"),
-        (&escapes, &escapes_old, UnrelocatableCause::LinkEscapes, "sibling"),
-        (&special, &special_old, UnrelocatableCause::SpecialFile, "pipe"),
+        (
+            &into_own,
+            &into_own_old,
+            UnrelocatableCause::LinkIntoOldLibrary,
+            "abs-refs",
+        ),
+        (
+            &escapes,
+            &escapes_old,
+            UnrelocatableCause::LinkEscapes,
+            "sibling",
+        ),
+        (
+            &special,
+            &special_old,
+            UnrelocatableCause::SpecialFile,
+            "pipe",
+        ),
     ];
     for (id, old, expected, entry_name) in cases {
         match kept_reason(&report, id) {
@@ -928,7 +952,10 @@ fn a_skill_that_cannot_be_relocated_faithfully_stays_where_it_is() {
         assert!(old.join("SKILL.md").is_file(), "original kept");
     }
     let link = f.home().join(".claude/skills/into-own");
-    assert!(resolves_to(&link, &into_own_old), "its Deployment untouched");
+    assert!(
+        resolves_to(&link, &into_own_old),
+        "its Deployment untouched"
+    );
     assert!(report.deployments.iter().all(|d| d.skill_id != into_own));
     assert!(f.central(&fine).starts_with(f.dest()), "the rest moved");
 }
@@ -978,7 +1005,10 @@ fn other_skill_alias_retains_still_linked_old_copy() {
     fs::set_permissions(&cursor_dir, fs::Permissions::from_mode(0o755)).unwrap();
 
     assert!(shared.join("SKILL.md").is_file(), "the shared copy stays");
-    assert!(resolves_to(&beta_link, &shared), "beta's link never dangles");
+    assert!(
+        resolves_to(&beta_link, &shared),
+        "beta's link never dangles"
+    );
     assert!(resolves_to(&f.home().join(".claude/skills/alpha"), &shared));
     assert!(matches!(
         kept_reason(&report, &alpha),
@@ -1010,7 +1040,10 @@ fn an_old_copy_another_skills_deployment_reaches_is_kept() {
 
     assert!(f.central(&alpha).starts_with(f.dest()), "alpha moved");
     assert!(alpha_old.join("SKILL.md").is_file(), "its old copy stays");
-    assert!(resolves_to(&gamma_link, &alpha_old), "gamma's link never dangles");
+    assert!(
+        resolves_to(&gamma_link, &alpha_old),
+        "gamma's link never dangles"
+    );
     let kept: Vec<_> = report
         .left_behind
         .iter()
@@ -1022,7 +1055,12 @@ fn an_old_copy_another_skills_deployment_reaches_is_kept() {
 
 /// A move interrupted — as a crash would — at the first progress step of
 /// `phase` numbered `at`. Answers whether it was interrupted.
-fn crash_move(f: &Fixture, dest: &Path, phase: crate::core::library_move::LibraryMovePhase, at: u32) -> bool {
+fn crash_move(
+    f: &Fixture,
+    dest: &Path,
+    phase: crate::core::library_move::LibraryMovePhase,
+    at: u32,
+) -> bool {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         move_library(&f.store, &f.paths, dest, NOW + 1, |step| {
             if step.phase == phase && step.done == at {
@@ -1078,14 +1116,20 @@ fn crash_after_switch_is_recovered_by_the_next_move() {
 
     let report = move_library(&f.store, &paths_now(&f), &third, NOW + 2, |_| {}).expect("move");
 
-    assert!(report.deployments.iter().all(|d| matches!(d.status, RelinkStatus::Relinked { .. })));
+    assert!(report
+        .deployments
+        .iter()
+        .all(|d| matches!(d.status, RelinkStatus::Relinked { .. })));
     for (id, old, link) in &skills {
         let now = f.central(id);
         assert!(now.starts_with(&third), "{id} is in the third Library");
         assert!(resolves_to(link, &now), "{link:?} follows the Library");
         assert!(!old.exists(), "the first old copy was cleaned");
     }
-    assert!(resolves_to(&project.join(".claude/skills/alpha"), &f.central(&skills[0].0)));
+    assert!(resolves_to(
+        &project.join(".claude/skills/alpha"),
+        &f.central(&skills[0].0)
+    ));
 }
 
 /// Review #4: a crash at any boundary after the switch is finished by the
@@ -1095,7 +1139,10 @@ fn crash_after_switch_is_recovered_by_the_next_move() {
 fn a_crash_after_the_switch_is_finished_by_the_resume_at_every_boundary() {
     use crate::core::library_move::{resume_library_move, test_seams, LibraryMovePhase};
     let boundaries: [(&str, Option<(LibraryMovePhase, u32)>); 5] = [
-        ("before any re-point", Some((LibraryMovePhase::Relinking, 0))),
+        (
+            "before any re-point",
+            Some((LibraryMovePhase::Relinking, 0)),
+        ),
         ("mid re-point", Some((LibraryMovePhase::Relinking, 1))),
         ("before any clean", Some((LibraryMovePhase::Cleaning, 0))),
         ("mid clean", Some((LibraryMovePhase::Cleaning, 1))),
@@ -1128,7 +1175,10 @@ fn a_crash_after_the_switch_is_finished_by_the_resume_at_every_boundary() {
             );
         }
         for (id, old, link) in &skills {
-            assert!(resolves_to(link, &f.central(id)), "{boundary}: {link:?} re-pointed");
+            assert!(
+                resolves_to(link, &f.central(id)),
+                "{boundary}: {link:?} re-pointed"
+            );
             assert!(!old.exists(), "{boundary}: {old:?} cleaned");
         }
         assert!(resolves_to(
@@ -1156,5 +1206,60 @@ fn a_crash_before_the_switch_leaves_the_library_as_it_was() {
         assert_eq!(&f.central(id), old);
         assert!(resolves_to(link, old));
     }
-    assert_eq!(resolve_central_repo_path(&f.store, f.home()).unwrap(), setting);
+    assert_eq!(
+        resolve_central_repo_path(&f.store, f.home()).unwrap(),
+        setting
+    );
+}
+
+/// Review #5 (the reviewer's probe): with no `~/.claude/skills` on disk yet,
+/// `~/.CLAUDE/SKILLS` names that harness dir on a case-insensitive volume.
+/// Admission used to compare the missing tail by spelling and admitted it;
+/// it now admits after creating the destination, by identity, and removes
+/// only the empty folders it created.
+#[test]
+fn missing_case_alias_harness_destination_is_refused() {
+    let mut f = fixture(&[]);
+    let id = f.install("alpha");
+    let before = f.central(&id);
+    if !case_insensitive_volume(f.home()) {
+        return; // a case-sensitive volume: .CLAUDE is not .claude
+    }
+    assert!(!f.home().join(".claude").exists());
+
+    for dest in [
+        f.home().join(".CLAUDE/SKILLS"),
+        f.home().join(".CLAUDE/Skills/library"),
+    ] {
+        let (reason, _) = f.refusal(&dest);
+        assert_eq!(
+            reason,
+            LibraryDestinationRefusal::InsideHarnessDir,
+            "{dest:?}"
+        );
+        assert!(
+            !f.home().join(".claude").exists(),
+            "{dest:?}: the folders it created are gone"
+        );
+    }
+    assert_untouched(&f, &id, &before);
+}
+
+/// Review #5: undoing a refused admission removes only the empty folders
+/// the admission created — never one that was there before.
+#[test]
+fn a_refused_admission_keeps_folders_that_were_there() {
+    let mut f = fixture(&[]);
+    f.install("alpha");
+    if !case_insensitive_volume(f.home()) {
+        return;
+    }
+    fs::create_dir_all(f.home().join(".claude")).unwrap();
+    let (reason, _) = f.refusal(&f.home().join(".CLAUDE/SKILLS"));
+    assert_eq!(reason, LibraryDestinationRefusal::InsideHarnessDir);
+    assert!(
+        f.home().join(".claude").is_dir(),
+        "the operator's folder stays"
+    );
+    assert!(!f.home().join(".claude/skills").exists());
 }
