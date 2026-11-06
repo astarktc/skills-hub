@@ -4,8 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [1.3.4] - 2026-11-06
 
-Round 20, wave A. Skills Hub learns about the wider field of AI coding tools: 28 new harnesses, plus 9 that read
-`~/.agents/skills` without a folder of their own. It warns when two harnesses would make one of them see a skill twice.
+Round 20, wave A. Skills Hub learns about the wider field of AI coding tools: 28 new harnesses, plus 9 served
+through `~/.agents/skills` alone. It warns when two harnesses would make one of them see a skill twice.
 Moving the Library folder is now one safe action instead of a step that broke every harness link.
 
 ### Harnesses
@@ -22,7 +22,7 @@ Moving the Library folder is now one safe action instead of a step that broke ev
   - On Windows, Reasonix's skills go under `%APPDATA%\reasonix`.
   - WorkBuddy and AstrBot have no project folder, so they don't appear in a project's harness list.
   - Letta Code, Muse Code, Poolside and Dirac read a project's shared `.agents/skills` folder.
-- **Harnesses that read `~/.agents/skills` without a folder of their own:** Warp, Zed, Dexto, fx, Sarvam Code,
+- **Harnesses served through `~/.agents/skills` alone** (no deployment target of their own): Warp, Zed, Dexto, fx, Sarvam Code,
   VT Code, DimCode, crow-cli and Corust Agent. They're listed under the `.agents/skills` entry in Settings → Harnesses
   with their detected state, and they're reached by deploying to `.agents/skills`. A folder that holds nothing but
   skills (left behind by a skill installer) doesn't count as the harness being installed.
@@ -41,7 +41,8 @@ Moving the Library folder is now one safe action instead of a step that broke ev
 - **Settings → General → Browse… now moves your Library as one confirmed action.** It asks first ("Move N skills to …?
   Every harness link is re-pointed"), and the destination must be an empty folder. It refuses:
   - a folder inside your Library, or one containing it;
-  - a folder inside a harness or project skills folder;
+  - a folder inside a harness or project skills folder (including the own folder of a harness served through
+    `.agents/skills`, such as `~/.fx/skills`);
   - a folder inside the app's download cache;
   - a folder it cannot write to.
 

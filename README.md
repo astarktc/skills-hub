@@ -125,8 +125,9 @@ in the group reads (today Cursor, Codex, OpenCode, Antigravity, Amp, Kimi Code C
 GitHub Copilot, Letta Code, Muse Code, Poolside and Dirac, plus the reader-only harnesses below), so those harnesses have no separate project row. N is counted
 from the registry.
 
-A **reader-only harness** has no skills folder of its own: it reads `~/.agents/skills` (and
-`<project>/.agents/skills`), so Skills Hub lists it under the `.agents/skills` entry with its detected state
+A **reader-only harness** is one Skills Hub serves only through the shared folder: it reads `~/.agents/skills` (and
+`<project>/.agents/skills`), so Skills Hub never deploys to a folder of its own (some, like fx's `~/.fx/skills`, exist —
+a skill there and in `.agents/skills` would load twice) and lists it under the `.agents/skills` entry with its detected state
 and never as a deployment target. Its row shows `—` for both skills dirs. Today they are Warp, Zed, Dexto, fx,
 Sarvam Code (low confidence: its `~/.agents/skills` read is unverified), VT Code, DimCode, crow-cli and Corust Agent.
 fx also reads `~/.claude/skills`, `~/.codex/skills` and OpenCode's folder, and a skill name it finds twice can't be

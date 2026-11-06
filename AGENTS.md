@@ -122,10 +122,10 @@ than re-tagging.
   used only where the vendor documents one (`%APPDATA%`) — resolved only against the `HostRoots` the command seam
   builds. Env-var homes (`KIMI_CODE_HOME`, …) are not honoured: name them in the row comment. The **project dir is
   optional**: `None` keeps the harness out of `project_tool_entries` and every project-scope admission
-  (`project_adapter_by_key`) and its README cell reads `—`. A harness that reads `~/.agents/skills` and has no
-  folder of its own is a **reader-only harness**: one `ReaderOnlyHarness` literal in `READER_ONLY_HARNESSES` (key,
-  label, detect dirs, its own `skills_dirs` (never deployed to — only so `reader_installed_in` applies the
-  skills-only-footprint rule), the `group` it reads, its `reads` facts — restated in `every_reader_only_row_restates_its_brief_read_facts`,
+  (`project_adapter_by_key`) and its README cell reads `—`. A harness that reads `~/.agents/skills` and is served
+  only through it (no deploy target of its own, even when it has a skills folder) is a **reader-only harness**: one `ReaderOnlyHarness` literal in `READER_ONLY_HARNESSES` (key,
+  label, detect dirs, its own `skills_dirs` (never deployed to — so `reader_installed_in` applies the
+  skills-only-footprint rule and Move Library folder refuses them as a destination), the `group` it reads, its `reads` facts — restated in `every_reader_only_row_restates_its_brief_read_facts`,
   its pairs resolved with the group entry's folder as its own and carried on `ReaderHarnessDto.duplicate_readers`) — never
   a `ToolId`, never a target; the catalogs list it under its group's
   entry (`ToolInfoDto.readers`) and absorb it into the project group's roster, whose "(N harnesses)" count the
