@@ -25,8 +25,15 @@ import { agentBrowser, closeKeys, press } from "./cdp-keys.ts";
 
 const ORIGIN = process.env.FIXTURE_ORIGIN ?? "http://localhost:5175";
 
-/** Evaluate `js` in the page; the result as the page's JSON-able value. */
-const evaluate = (js: string): unknown => agentBrowser("eval", js).result;
+/** A page expression's value as the checks use it: every expression here yields a primitive. */
+type Evaluated = string | number | boolean | null | undefined;
+/** Evaluate `js` in the page. */
+function evaluate(js: string): Evaluated {
+  const result = agentBrowser("eval", js).result;
+  return result === null || ["string", "number", "boolean", "undefined"].includes(typeof result)
+    ? (result as Evaluated)
+    : JSON.stringify(result);
+}
 const settle = (ms = 300) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** The focused element as the checks read it: its name, role, and whether it is hidden from AT / a focus guard. */
