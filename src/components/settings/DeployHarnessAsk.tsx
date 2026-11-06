@@ -23,7 +23,7 @@ type DeployHarnessAskProps = {
  * ticket 02); Deploy now still deploys — nothing is deselected.
  */
 const DeployHarnessAsk = ({ pending, labelOf, t }: DeployHarnessAskProps) => {
-  const warning = pending ? duplicateWarning(pending.duplicates, labelOf, t) : null;
+  const warning = pending ? duplicateWarning(pending.duplicates, pending.toolKey, labelOf, t) : null;
   return (
   <ConfirmDialog
     open={pending !== null}

@@ -12,7 +12,6 @@ import {
   duplicatePairs,
   duplicateWarning,
   harnessListGroups,
-  pairsInvolving,
   type UndetectedReader,
 } from "../../lib/harnessPresentation";
 import { PaneHeader, SettingGroup } from "./PaneDialog";
@@ -98,7 +97,7 @@ export function HarnessesPane({
       readers={readers}
       selected={selectedSet.has(tool.key)}
       expanded={expanded.has(tool.key)}
-      warning={duplicateWarning(pairsInvolving(pairs, tool.key), labelOf, t)}
+      warning={duplicateWarning(pairs, tool.key, labelOf, t)}
       onToggleExpanded={() => toggleExpanded(tool.key)}
       onSelectedChange={(on) => onSelectedChange(tool.key, on)}
       blockedReason={blockedReason}

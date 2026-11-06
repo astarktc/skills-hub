@@ -32,17 +32,44 @@ export function pairsInvolving(pairs: readonly DuplicatePair[], key: string): Du
   return pairs.filter((pair) => pair.reader === key || pair.other === key);
 }
 
-/** One reader's sentence; the consequence follows its duplicate behaviour. */
-function readerSentence(behaviour: DuplicateBehaviour, opts: Record<string, unknown>, t: Translate): string {
+/** A duplicate's consequence, gravest first: invocation breaks › a conflict is flagged › it shows twice. */
+type Consequence = "loadsNone" | "flagsConflict" | "showsTwice";
+const CONSEQUENCES: readonly Consequence[] = ["loadsNone", "flagsConflict", "showsTwice"];
+
+function consequenceOf(behaviour: DuplicateBehaviour): Consequence {
   switch (behaviour) {
     case "loads_none":
-      return t("settingsDialog.harnesses.duplicates.loadsNone", opts);
+      return "loadsNone";
     case "flags_conflict":
-      return t("settingsDialog.harnesses.duplicates.flagsConflict", opts);
+      return "flagsConflict";
     case "shows_all":
     case "shadows":
     case "unknown":
-      return t("settingsDialog.harnesses.duplicates.showsTwice", opts);
+      return "showsTwice";
+  }
+}
+
+/** "X also reads the A (and B) folder(s) — …": the subject reads the others' folders. */
+function readsSentence(consequence: Consequence, opts: Record<string, unknown>, t: Translate): string {
+  switch (consequence) {
+    case "loadsNone":
+      return t("settingsDialog.harnesses.duplicates.reads.loadsNone", opts);
+    case "flagsConflict":
+      return t("settingsDialog.harnesses.duplicates.reads.flagsConflict", opts);
+    case "showsTwice":
+      return t("settingsDialog.harnesses.duplicates.reads.showsTwice", opts);
+  }
+}
+
+/** "A (and B) also read(s) the X folder — …": others read the subject's folder. */
+function readBySentence(consequence: Consequence, opts: Record<string, unknown>, t: Translate): string {
+  switch (consequence) {
+    case "loadsNone":
+      return t("settingsDialog.harnesses.duplicates.readBy.loadsNone", opts);
+    case "flagsConflict":
+      return t("settingsDialog.harnesses.duplicates.readBy.flagsConflict", opts);
+    case "showsTwice":
+      return t("settingsDialog.harnesses.duplicates.readBy.showsTwice", opts);
   }
 }
 
@@ -53,31 +80,52 @@ function listOf(names: readonly string[], t: Translate): string {
 }
 
 /**
- * The warning line for `pairs` (a row's, or the ones turning a harness on
- * completes), or null when there are none: one sentence per reader, in pair
- * order, naming every folder it also reads. The consequence follows the
- * reader's duplicate behaviour — invocation breaks (`loads_none`), a
- * conflict is flagged (`flags_conflict`), otherwise it shows twice.
+ * The warning line about `subject` (its Harnesses row, or the Deploy-now ask
+ * when turning it on), or null when no pair in `pairs` involves it. At most
+ * one sentence for what the subject reads — every folder it also reads,
+ * named once — then one per consequence for the harnesses reading the
+ * subject's folder, gravest first. The consequence follows the reader's
+ * duplicate behaviour: invocation breaks (`loads_none`), a conflict is
+ * flagged (`flags_conflict`), otherwise it shows twice.
  */
 export function duplicateWarning(
   pairs: readonly DuplicatePair[],
+  subject: string,
   labelOf: (key: string) => string,
   t: Translate,
 ): string | null {
-  if (pairs.length === 0) return null;
-  const readers: string[] = [];
-  for (const pair of pairs) if (!readers.includes(pair.reader)) readers.push(pair.reader);
-  return readers
-    .map((reader) => {
-      const own = pairs.filter((pair) => pair.reader === reader);
-      const opts = {
-        reader: labelOf(reader),
-        harnesses: listOf(own.map((pair) => labelOf(pair.other)), t),
-        count: own.length,
-      };
-      return readerSentence(own[0].behaviour, opts, t);
-    })
-    .join(" ");
+  const sentences: string[] = [];
+  const reads = pairs.filter((pair) => pair.reader === subject);
+  if (reads.length > 0) {
+    sentences.push(
+      readsSentence(
+        consequenceOf(reads[0].behaviour),
+        {
+          reader: labelOf(subject),
+          harnesses: listOf(reads.map((pair) => labelOf(pair.other)), t),
+          count: reads.length,
+        },
+        t,
+      ),
+    );
+  }
+  const readBy = pairs.filter((pair) => pair.other === subject);
+  for (const consequence of CONSEQUENCES) {
+    const readers = readBy.filter((pair) => consequenceOf(pair.behaviour) === consequence);
+    if (readers.length === 0) continue;
+    sentences.push(
+      readBySentence(
+        consequence,
+        {
+          readers: listOf(readers.map((pair) => labelOf(pair.reader)), t),
+          harness: labelOf(subject),
+          count: readers.length,
+        },
+        t,
+      ),
+    );
+  }
+  return sentences.length > 0 ? sentences.join(" ") : null;
 }
 
 /** A detected harness's row: the harness, and its detected reader-only harnesses (listed under it). */

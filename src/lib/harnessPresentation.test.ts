@@ -75,44 +75,64 @@ describe("pairsInvolving", () => {
 });
 
 describe("duplicateWarning", () => {
-  it("names the reader and the folder it also reads (one pair)", () => {
+  const K = "settingsDialog.harnesses.duplicates";
+
+  it("on the reader's row: names the folder it also reads (one pair)", () => {
     const pairs = duplicatePairs(TOOLS, new Set(["cursor", "claude_code"]));
-    expect(duplicateWarning(pairs, labelOf, t)).toBe(
-      'settingsDialog.harnesses.duplicates.showsTwice {"reader":"Cursor","harnesses":"Claude Code","count":1}',
+    expect(duplicateWarning(pairs, "cursor", labelOf, t)).toBe(
+      `${K}.reads.showsTwice {"reader":"Cursor","harnesses":"Claude Code","count":1}`,
+    );
+  });
+
+  it("on the read harness's row: names the reader (one pair)", () => {
+    const pairs = duplicatePairs(TOOLS, new Set(["cursor", "claude_code"]));
+    expect(duplicateWarning(pairs, "claude_code", labelOf, t)).toBe(
+      `${K}.readBy.showsTwice {"readers":"Cursor","harness":"Claude Code","count":1}`,
     );
   });
 
   it("lists every folder one reader also reads in one sentence", () => {
     const pairs = duplicatePairs(TOOLS, new Set(["cursor", "claude_code", "codex"]));
-    expect(duplicateWarning(pairsInvolving(pairs, "cursor"), labelOf, t)).toBe(
-      'settingsDialog.harnesses.duplicates.showsTwice {"reader":"Cursor","harnesses":"Claude Code and Codex","count":2}',
+    expect(duplicateWarning(pairs, "cursor", labelOf, t)).toBe(
+      `${K}.reads.showsTwice {"reader":"Cursor","harnesses":"Claude Code and Codex","count":2}`,
     );
   });
 
-  it("says invocation breaks for a harness that loads none of a duplicate", () => {
+  it("says invocation breaks for a reader that loads none of a duplicate", () => {
     const pairs = duplicatePairs(TOOLS, new Set(["fx", "claude_code"]));
-    expect(duplicateWarning(pairs, labelOf, t)).toBe(
-      'settingsDialog.harnesses.duplicates.loadsNone {"reader":"fx","harnesses":"Claude Code","count":1}',
+    expect(duplicateWarning(pairs, "fx", labelOf, t)).toBe(
+      `${K}.reads.loadsNone {"reader":"fx","harnesses":"Claude Code","count":1}`,
     );
   });
 
-  it("says the harness flags a conflict for one that flags it", () => {
+  it("says the reader flags a conflict for one that flags it", () => {
     const pairs = duplicatePairs(TOOLS, new Set(["cortex", "claude_code"]));
-    expect(duplicateWarning(pairs, labelOf, t)).toBe(
-      'settingsDialog.harnesses.duplicates.flagsConflict {"reader":"Cortex Code","harnesses":"Claude Code","count":1}',
+    expect(duplicateWarning(pairs, "cortex", labelOf, t)).toBe(
+      `${K}.reads.flagsConflict {"reader":"Cortex Code","harnesses":"Claude Code","count":1}`,
     );
   });
 
-  it("joins one sentence per reader, in pair order, into one line", () => {
-    const pairs = duplicatePairs(TOOLS, new Set(["cursor", "claude_code", "fx"]));
-    expect(duplicateWarning(pairsInvolving(pairs, "claude_code"), labelOf, t)).toBe(
-      'settingsDialog.harnesses.duplicates.showsTwice {"reader":"Cursor","harnesses":"Claude Code","count":1} ' +
-        'settingsDialog.harnesses.duplicates.loadsNone {"reader":"fx","harnesses":"Claude Code","count":1}',
+  it("gathers the readers of one folder by consequence, the gravest first", () => {
+    const pairs = duplicatePairs(TOOLS, new Set(["cursor", "claude_code", "fx", "cortex"]));
+    expect(duplicateWarning(pairs, "claude_code", labelOf, t)).toBe(
+      `${K}.readBy.loadsNone {"readers":"fx","harness":"Claude Code","count":1} ` +
+        `${K}.readBy.flagsConflict {"readers":"Cortex Code","harness":"Claude Code","count":1} ` +
+        `${K}.readBy.showsTwice {"readers":"Cursor","harness":"Claude Code","count":1}`,
+    );
+    const many = [
+      tool("a", true, { keys: ["dir"], behaviour: "shows_all" }),
+      tool("b", true, { keys: ["dir"], behaviour: "shadows" }),
+      tool("dir", true),
+    ];
+    expect(duplicateWarning(duplicatePairs(many, new Set(["a", "b", "dir"])), "dir", labelOf, t)).toBe(
+      `${K}.readBy.showsTwice {"readers":"a and b","harness":"dir","count":2}`,
     );
   });
 
-  it("is null without a pair", () => {
-    expect(duplicateWarning([], labelOf, t)).toBeNull();
+  it("is null without a pair involving the harness", () => {
+    const pairs = duplicatePairs(TOOLS, new Set(["cursor", "claude_code"]));
+    expect(duplicateWarning(pairs, "codex", labelOf, t)).toBeNull();
+    expect(duplicateWarning([], "cursor", labelOf, t)).toBeNull();
   });
 });
 
