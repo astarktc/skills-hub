@@ -3191,26 +3191,20 @@ fn hard_linked_names_never_share_ownership() {
     let current = trae_dir(&project).join("current");
     our_link(&skill, &current);
     let previous = trae_dir(&project).join("previous");
-    // A hard link to the symlink itself (not its referent): one inode, two names.
-    let linked = std::ffi::CString::new(current.as_os_str().as_encoded_bytes()).unwrap();
-    let alias = std::ffi::CString::new(previous.as_os_str().as_encoded_bytes()).unwrap();
-    // SAFETY: both are valid NUL-terminated paths; `linkat` without
-    // AT_SYMLINK_FOLLOW hard-links the link itself.
-    let rc = unsafe {
-        libc::linkat(
-            libc::AT_FDCWD,
-            linked.as_ptr(),
-            libc::AT_FDCWD,
-            alias.as_ptr(),
-            0,
-        )
-    };
-    assert_eq!(
-        rc,
-        0,
-        "hard-link the symlink: {}",
-        std::io::Error::last_os_error()
-    );
+    // A hard link to the symlink itself (not its referent): one inode, two
+    // names (`linkat` without AT_SYMLINK_FOLLOW, std's choice on Unix).
+    fs::hard_link(&current, &previous).expect("hard-link the symlink");
+    {
+        use std::os::unix::fs::MetadataExt;
+        let (a, b) = (
+            current.symlink_metadata().unwrap(),
+            previous.symlink_metadata().unwrap(),
+        );
+        assert!(
+            b.file_type().is_symlink() && (a.dev(), a.ino()) == (b.dev(), b.ino()),
+            "test premise: one symlink inode under two names"
+        );
+    }
     seed_trae_row(&store, &project, &skill, "trae_cn", "previous", false);
 
     let report =
