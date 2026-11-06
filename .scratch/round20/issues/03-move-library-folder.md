@@ -1,6 +1,6 @@
 # 03: Move Library folder
 
-Status: ready-for-agent
+Status: done — 26ce2b6
 
 **Blocked by:** None (can start immediately).
 
@@ -72,3 +72,7 @@ It answers a truthful report. Today's code: `core/central_repo.rs::move_central_
 - [ ] `npm run version:check && npm run check` passes.
 
 ## Comments
+- 2026-11-06 (orchestrator): five review rounds. Round 1 was blocked on three P1s; round 2 was blocked again; round 3
+  was fix-then-ship from two reviewers; round 4 had two findings that the orchestrator fixed. Full record:
+  `.scratch/reviews/round20-t03-move-library-review.md`. Merged as `26ce2b6` (PR #12).
+

@@ -201,3 +201,24 @@ Every finding below was fixed as the round-4 direction set out, with a regressio
   - macOS extended ACLs.
 
 Gate green (Rust 1,000, vitest 1,367); CI green (rust-windows: 926 tests). Round-4 re-check dispatched (Astra).
+
+## Round 4 re-check — GPT-6 Astra (high), `1577061`: **BLOCK** (2)
+
+Closed: A1/S4, S3 and S1. Not closed:
+
+1. **P1:** resume still deleted an old copy carrying metadata added while the app was stopped (a macOS extended ACL, a
+   Windows named stream). The A2 check ran only at classification; `same_tree` ignores that content. Probe
+   `review_r4_metadata_added_while_app_is_stopped_is_not_deleted`.
+2. **P2:** `reloadViews` captured the selected project, so a project picked during the move kept a stale matrix.
+
+## Disposition
+
+Both fixed by the orchestrator (PR #12, `3e84def`), each regression test written first and red before the fix:
+
+1. The clean runs `carries_unverifiable_metadata` over a set-aside copy right before removal. Content added since the
+   copy keeps the old copy as `changed_since_copy`. Test: `metadata_added_after_the_copy_is_never_deleted`.
+2. `reloadViews` reads the selection through a ref when it runs. Test: `re-reads the project selected when it runs,
+   not when it was handed out`.
+
+Gate green (Rust 1,018, vitest 1,376); CI green. **Merged `26ce2b6`.** The final release review (`v1.3.3..main`)
+re-verifies both fixes.
