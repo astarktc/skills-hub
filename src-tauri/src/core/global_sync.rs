@@ -1,6 +1,8 @@
 //! Global-tool sync orchestration: overwrite policy, writability probing, and
-//! DB record fan-out layered on top of `sync_engine`. The global-skills
-//! counterpart of `project_sync.rs`.
+//! one Deployment row per (skill, folder) layered on top of `sync_engine`. The
+//! global-skills counterpart of `project_sync.rs`. Which folder serves a
+//! requested harness, and how it is deployed into, is placement's answer
+//! (`core::placement`); nothing here re-derives a folder from a dir.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -13,13 +15,12 @@ use crate::core::{
     environment::HostRoots,
     errors::CommandError,
     mutation_guard,
+    placement::{self, row_folder, PlacementScope, PlacementSettings, ScopeKind},
     removal_fence::ProtectedLibrary,
     skill_store::{SkillStore, TargetTransition},
     sync_engine::{self, SyncOutcome},
     sync_status::{SyncMode, SyncStatus},
-    tool_adapters::{
-        adapter_by_key, adapters_sharing_skills_dir, is_installed_in, skills_dir_in, ToolAdapter,
-    },
+    tool_adapters::{adapter_by_key, installed_set_in, ToolAdapter},
 };
 
 /// Typed sync failures, classified into `CommandError` at batch settlement.
@@ -89,8 +90,10 @@ pub struct OverwritePolicy {
 }
 
 /// Deterministic single-pair sync: probe writability of `tool_root`, apply
-/// the overwrite policy, sync, and record a `Synced` target row for each
-/// tool in `record_tools` through [`TargetTransition::Recorded`]. The batch engine
+/// the overwrite policy, sync, and record the one `Synced` Deployment row of
+/// the folder `folder_key` through [`TargetTransition::Recorded`]. `adapter`
+/// is the registry entry whose capability governs the folder
+/// (`placement::capability_entry`). The batch engine
 /// ([`sync_skills_to_planned_tools`]) drives this per attempted pair; tests
 /// drive it directly. Unlocked internal seam — callers reach it through an
 /// entry point that has already taken the mutation guard.
@@ -104,7 +107,7 @@ pub(crate) fn sync_skill_into_root(
     skill_id: &str,
     skill_name: &str,
     policy: &OverwritePolicy,
-    record_tools: &[&'static ToolAdapter],
+    folder_key: &str,
     now: i64,
 ) -> Result<SyncOutcome, GlobalSyncError> {
     // Pre-check: ensure the skills directory is writable (fixes #20 — Windows OS error 5).
@@ -137,20 +140,19 @@ pub(crate) fn sync_skill_into_root(
     )
     .map_err(|err| classify_sync_error(err, adapter, tool_root, &target))?;
 
-    // Some tools share the same global skills directory; keep DB records consistent across them.
+    // One folder, one row: harnesses sharing it read this row through their
+    // folder key, never through a row of their own.
     let target_path = outcome.target_path.to_string_lossy();
-    for a in record_tools {
-        store.transition_skill_target(
-            &Uuid::new_v4().to_string(),
-            TargetTransition::Recorded {
-                skill_id,
-                tool: a.id.as_key(),
-                mode: outcome.mode_used,
-                target_path: &target_path,
-                synced_at: now,
-            },
-        )?;
-    }
+    store.transition_skill_target(
+        &Uuid::new_v4().to_string(),
+        TargetTransition::Recorded {
+            skill_id,
+            tool: folder_key,
+            mode: outcome.mode_used,
+            target_path: &target_path,
+            synced_at: now,
+        },
+    )?;
 
     Ok(outcome)
 }
@@ -213,7 +215,7 @@ fn classify_sync_error(
 
 // ---------------------------------------------------------------------------
 // Batch sync: the single fan-out engine behind the `sync_skills_to_tools`
-// command. Skills × tools in one call; shared-dir dedupe, installedness
+// command. Skills × folders in one call; folder dedupe, installedness
 // filtering, per-target overwrite policy, and per-target outcomes all live
 // here so no caller re-implements the choreography.
 // ---------------------------------------------------------------------------
@@ -239,9 +241,9 @@ pub enum OverrideDecision {
     Keep,
 }
 
-/// The operator's decision for one (skill, tool) pair. Applies to any target
-/// tool sharing the named tool's skills dir (the dir, not the key, is the
-/// real identity of a sync target).
+/// The operator's decision for one (skill, tool) pair. Applies to the folder
+/// the named key's row describes (`placement::row_folder`): the folder, not
+/// the harness, is the identity of a Deployment.
 #[derive(Debug, Clone)]
 pub struct BatchOverride {
     pub skill_id: String,
@@ -257,17 +259,17 @@ pub struct BatchPolicy {
     pub overrides: Vec<BatchOverride>,
 }
 
-/// A probed tool target: adapter, resolved skills root, installedness, and
-/// the installed tools sharing that root (DB record fan-out). Produced by
-/// [`plan_batch_tool_targets`] (environment probing); consumed by the
-/// deterministic [`sync_skills_to_planned_tools`], which tests drive with
-/// fabricated roots.
+/// A probed Deployment folder: its folder key, the registry entry whose
+/// capability governs it, its resolved skills root, and whether any harness it
+/// serves is installed. Produced by [`plan_batch_tool_targets`] (placement
+/// over the environment); consumed by the deterministic
+/// [`sync_skills_to_planned_tools`], which tests drive with fabricated roots.
 #[derive(Debug)]
 pub struct PlannedToolTarget {
     pub adapter: &'static ToolAdapter,
+    pub folder_key: String,
     pub root: PathBuf,
     pub installed: bool,
-    pub record_tools: Vec<&'static ToolAdapter>,
 }
 
 /// Per-(skill, tool) result. `Skipped` is the expected-and-ignorable class
@@ -311,44 +313,49 @@ pub struct BatchProgress<'a> {
     pub tool_key: &'a str,
 }
 
-/// Probe the environment under `roots` for each requested tool key: resolve
-/// the adapter, its skills root, installedness, and the installed shared-dir
-/// group. Unknown keys become planning entries via `Err`, which the batch
-/// turns into `Failed` outcomes.
+/// Place each requested key under `roots`: the folder serving it
+/// (`placement::place`, the layout read once for the whole batch), that
+/// folder's root, the entry whose capability governs it, and whether any
+/// harness it serves is installed. A key may name a harness or a folder (a
+/// folder key is its own entry's key). Unknown keys become planning entries
+/// via `Err`, which the batch turns into `Failed` outcomes.
 pub fn plan_batch_tool_targets(
     roots: &HostRoots,
     tool_keys: &[String],
 ) -> Vec<Result<PlannedToolTarget, (String, GlobalSyncError)>> {
+    let layout = placement::place(
+        PlacementScope::Global(roots),
+        &installed_set_in(roots),
+        &PlacementSettings::default(),
+    );
     tool_keys
         .iter()
         .map(|key| {
-            let adapter = adapter_by_key(key).ok_or_else(|| {
+            let unknown = || {
                 (
                     key.clone(),
                     GlobalSyncError::Other(anyhow::anyhow!("unknown tool: {}", key)),
                 )
-            })?;
-            let installed = is_installed_in(roots, adapter);
-            let root = skills_dir_in(roots, adapter);
-            let record_tools: Vec<&'static ToolAdapter> = adapters_sharing_skills_dir(adapter)
-                .into_iter()
-                .filter(|a| is_installed_in(roots, a))
-                .collect();
+            };
+            adapter_by_key(key).ok_or_else(unknown)?;
+            let folder = layout.folder_of(key).ok_or_else(unknown)?;
+            let adapter =
+                placement::capability_entry(ScopeKind::Global, folder.key).ok_or_else(unknown)?;
             Ok(PlannedToolTarget {
                 adapter,
-                root,
-                installed,
-                record_tools,
+                folder_key: folder.key.to_string(),
+                root: folder.path.clone(),
+                installed: !folder.served.is_empty(),
             })
         })
         .collect()
 }
 
-/// Deterministic batch engine: dedupe installed targets by skills root
-/// (first in caller order wins; shared-dir tools are covered via each
-/// target's `record_tools`), emit `Skipped` for not-installed tools, apply
-/// the per-pair overwrite policy, and isolate failures per target — one bad
-/// pair never aborts the batch. Unlocked internal seam — callers reach it
+/// Deterministic batch engine: dedupe targets by folder key (a folder is
+/// written once, whichever of its harnesses was asked for, and every outcome
+/// names the folder), emit `Skipped` for a folder no installed harness reads,
+/// apply the per-pair overwrite policy, and isolate failures per target — one
+/// bad pair never aborts the batch. Unlocked internal seam — callers reach it
 /// through an entry point that has already taken the mutation guard.
 pub(crate) fn sync_skills_to_planned_tools(
     store: &SkillStore,
@@ -361,24 +368,24 @@ pub(crate) fn sync_skills_to_planned_tools(
 ) -> Vec<BatchTargetOutcome> {
     let mut outcomes: Vec<BatchTargetOutcome> = Vec::new();
 
-    // Partition: attempted = installed, deduped by root; the rest skip.
-    let mut seen_roots: Vec<&Path> = Vec::new();
+    // Partition: one target per folder; attempted = installed, the rest skip.
+    let mut seen_folders: Vec<&str> = Vec::new();
     let mut attempted: Vec<&PlannedToolTarget> = Vec::new();
     let mut skipped_not_installed: Vec<&PlannedToolTarget> = Vec::new();
     for target in targets {
-        if !target.installed {
+        if seen_folders.contains(&target.folder_key.as_str()) {
+            continue; // the folder is already planned: one folder, one row
+        }
+        seen_folders.push(target.folder_key.as_str());
+        if target.installed {
+            attempted.push(target);
+        } else {
             skipped_not_installed.push(target);
-            continue;
         }
-        if seen_roots.contains(&target.root.as_path()) {
-            continue; // covered by an earlier target's record_tools fan-out
-        }
-        seen_roots.push(target.root.as_path());
-        attempted.push(target);
     }
 
     for target in &skipped_not_installed {
-        let tool_key = target.adapter.id.as_key();
+        let tool_key = target.folder_key.as_str();
         for skill in skills {
             outcomes.push(BatchTargetOutcome {
                 skill_id: skill.skill_id.clone(),
@@ -401,7 +408,7 @@ pub(crate) fn sync_skills_to_planned_tools(
         let gate = DisabledGate::read(store, &skill.skill_id);
         for target in &attempted {
             index += 1;
-            let tool_key = target.adapter.id.as_key();
+            let tool_key = target.folder_key.as_str();
             on_progress(BatchProgress {
                 index,
                 total,
@@ -411,7 +418,7 @@ pub(crate) fn sync_skills_to_planned_tools(
 
             let blocked = match &gate {
                 Ok(gate) => gate
-                    .blocks(target.adapter)
+                    .blocks(&target.folder_key)
                     .then(|| BatchTargetStatus::Skipped {
                         error: CommandError::from(GlobalSyncError::TargetDisabled {
                             tool_key: tool_key.to_string(),
@@ -431,15 +438,13 @@ pub(crate) fn sync_skills_to_planned_tools(
                 continue;
             }
 
-            // An override names a tool key; it applies to this target when
-            // that tool shares the target's skills dir (the registry's answer).
+            // An override names a key; it applies to this target when that
+            // key's row describes the target's folder.
             let decision = |wanted: OverrideDecision| {
                 policy.overrides.iter().any(|o| {
                     o.decision == wanted
                         && o.skill_id == skill.skill_id
-                        && adapters_sharing_skills_dir(target.adapter)
-                            .iter()
-                            .any(|a| a.key() == o.tool_key)
+                        && row_folder(ScopeKind::Global, &o.tool_key) == target.folder_key
                 })
             };
             if decision(OverrideDecision::Keep) {
@@ -466,7 +471,7 @@ pub(crate) fn sync_skills_to_planned_tools(
                 &skill.skill_id,
                 &skill.skill_name,
                 &pair_policy,
-                &target.record_tools,
+                &target.folder_key,
                 now,
             ) {
                 Ok(outcome) => BatchTargetStatus::Synced { outcome },
@@ -510,11 +515,11 @@ fn would_be(target: &PlannedToolTarget, skill: &BatchSkill) -> (String, SyncMode
     (path.to_string_lossy().into_owned(), mode)
 }
 
-/// A failed sync settles its rows here (D9, symmetric with ADR-0002): every
-/// Tool of the target's shared-dir group is recorded `error` with the
-/// diagnostic chain — a new row owns nothing (`synced_at` NULL), an existing
-/// one keeps its ownership. A store failure here is logged: the report row
-/// already carries the sync failure, which is what the operator acts on.
+/// A failed sync settles its row here (D9, symmetric with ADR-0002): the
+/// folder's row is recorded `error` with the diagnostic chain — a new row owns
+/// nothing (`synced_at` NULL), an existing one keeps its ownership. A store
+/// failure here is logged: the report row already carries the sync failure,
+/// which is what the operator acts on.
 fn record_failed(
     store: &SkillStore,
     target: &PlannedToolTarget,
@@ -523,38 +528,35 @@ fn record_failed(
 ) {
     let (target_path, mode) = would_be(target, skill);
     let detail = error.to_string();
-    for adapter in &target.record_tools {
-        if let Err(err) = store.transition_skill_target(
-            &Uuid::new_v4().to_string(),
-            TargetTransition::FailedRecorded {
-                skill_id: &skill.skill_id,
-                tool: adapter.key(),
-                mode,
-                target_path: &target_path,
-                error: &detail,
-            },
-        ) {
-            log::warn!(
-                "recording the failed sync of {} to {} failed: {err:#}",
-                skill.skill_id,
-                adapter.key()
-            );
-        }
+    if let Err(err) = store.transition_skill_target(
+        &Uuid::new_v4().to_string(),
+        TargetTransition::FailedRecorded {
+            skill_id: &skill.skill_id,
+            tool: &target.folder_key,
+            mode,
+            target_path: &target_path,
+            error: &detail,
+        },
+    ) {
+        log::warn!(
+            "recording the failed sync of {} to {} failed: {err:#}",
+            skill.skill_id,
+            target.folder_key
+        );
     }
 }
 
 /// The operator kept the folder in the way (`OverrideDecision::Keep`): the
-/// pair is recorded `disabled` for the attempted Tool — a marker that owns
-/// nothing at its path, and that the Disabled rule extends to the Tool's
-/// shared-dir siblings — and reported `Declined`. A store failure fails the
-/// pair as report data.
+/// folder's row is recorded `disabled` — a marker that owns nothing at its
+/// path — and reported `Declined`. A store failure fails the pair as report
+/// data.
 fn record_kept(
     store: &SkillStore,
     target: &PlannedToolTarget,
     skill: &BatchSkill,
 ) -> BatchTargetStatus {
     let (target_path, mode) = would_be(target, skill);
-    let tool_key = target.adapter.key();
+    let tool_key = target.folder_key.as_str();
     match store.transition_skill_target(
         &Uuid::new_v4().to_string(),
         TargetTransition::DisabledRecorded {
@@ -573,35 +575,29 @@ fn record_kept(
 
 /// The Disabled rule of the batch (see **Disabled** in `CONTEXT.md`): a pair
 /// is skipped when its skill is disabled at skill grain, or when **any** row
-/// of the skill describing the target's artifact is `Disabled` — the
-/// target's own Tool or any Tool sharing its skills dir, because a shared
-/// artifact written for a sibling is the disabled Tool's artifact too.
+/// of the skill describing the target's folder is `Disabled` — the folder's
+/// own row, or a row written per shared-dir sibling before rows were per
+/// folder (`placement::row_folder` reads it as the folder).
 struct DisabledGate {
     skill_disabled: bool,
-    disabled_tools: Vec<String>,
+    disabled_folders: Vec<String>,
 }
 
 impl DisabledGate {
     fn read(store: &SkillStore, skill_id: &str) -> Result<Self> {
         Ok(Self {
             skill_disabled: store.skill_disabled_at(skill_id)?.is_some(),
-            disabled_tools: store
+            disabled_folders: store
                 .list_skill_targets(skill_id)?
                 .into_iter()
                 .filter(|row| row.status == SyncStatus::Disabled)
-                .map(|row| row.tool)
+                .map(|row| row_folder(ScopeKind::Global, &row.tool))
                 .collect(),
         })
     }
 
-    fn blocks(&self, adapter: &ToolAdapter) -> bool {
-        self.skill_disabled
-            || self.disabled_tools.iter().any(|tool| {
-                tool == adapter.key()
-                    || adapters_sharing_skills_dir(adapter)
-                        .iter()
-                        .any(|a| a.key() == tool)
-            })
+    fn blocks(&self, folder_key: &str) -> bool {
+        self.skill_disabled || self.disabled_folders.iter().any(|f| f == folder_key)
     }
 }
 

@@ -23,7 +23,7 @@ type SkillInspectorProps = {
   /** Beside the list (≥ 1200 px), or a sheet over it (D23). */
   placement: InspectorPlacement;
   /** The strip's Tools (effective target set, registry order, labelled) — the row's own. */
-  stripTools: readonly { id: string; label: string }[];
+  stripTools: readonly { id: string; label: string; folder: string }[];
   labelOf: (tool: string) => string;
   isDetected: (tool: string) => boolean;
   actions: Pick<SkillActions, "run" | "repair">;

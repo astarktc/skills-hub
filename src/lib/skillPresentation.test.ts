@@ -593,13 +593,13 @@ describe("skillToolChips", () => {
     synced_at: 1,
   });
   const allTools = [
-    { id: "claude_code", label: "Claude Code" },
-    { id: "cursor", label: "Cursor" },
-    { id: "pi", label: "Pi" },
+    { id: "claude_code", label: "Claude Code", folder: "claude_code" },
+    { id: "cursor", label: "Cursor", folder: "cursor" },
+    { id: "pi", label: "Pi", folder: "pi" },
   ];
   const installed = [
-    { id: "claude_code", label: "Claude Code" },
-    { id: "pi", label: "Pi" },
+    { id: "claude_code", label: "Claude Code", folder: "claude_code" },
+    { id: "pi", label: "Pi", folder: "pi" },
   ];
 
   it("renders a row-only tool as an undetected chip keeping its target", () => {
@@ -650,6 +650,18 @@ describe("skillToolChips", () => {
       allTools,
     );
     expect(chips.map((c) => c.id)).toEqual(["claude_code", "pi", "cursor"]);
+  });
+
+  it("gives two tools sharing a Deployment folder that folder's one row", () => {
+    const shared = [
+      { id: "amp", label: "Amp", folder: "amp" },
+      { id: "kimi_cli", label: "Kimi Code", folder: "amp" },
+    ];
+    const chips = skillToolChips([target("amp")], shared, shared);
+    expect(chips.map((c) => [c.id, c.target?.tool])).toEqual([
+      ["amp", "amp"],
+      ["kimi_cli", "amp"],
+    ]);
   });
 });
 
@@ -961,9 +973,9 @@ describe("My Skills folds (ticket 11)", () => {
   };
   const row = (tool: string, status: SkillTargetDto["status"], synced_at: number | null = 1) => ({ tool, status, synced_at });
   const TOOLS = [
-    { id: "cursor", label: "Cursor" },
-    { id: "claude_code", label: "Claude Code" },
-    { id: "amp", label: "Amp" },
+    { id: "cursor", label: "Cursor", folder: "cursor" },
+    { id: "claude_code", label: "Claude Code", folder: "claude_code" },
+    { id: "amp", label: "Amp", folder: "amp" },
   ];
   const context = {
     labelOf: (id: string) => ({ windsurf: "Windsurf" })[id] ?? id,
@@ -973,6 +985,21 @@ describe("My Skills folds (ticket 11)", () => {
   const states = (fields: Partial<Fields>) => strip(fields).marks.map((mark) => mark.state);
 
   describe("syncedStrip", () => {
+    it("two Tools sharing a Deployment folder read its one row; no extra mark for it", () => {
+      const shared = [
+        { id: "amp", label: "Amp", folder: "amp" },
+        { id: "kimi_cli", label: "Kimi Code", folder: "amp" },
+      ];
+      const fold = syncedStrip({ ...base, targets: [row("amp", "synced")] }, shared, context);
+      expect(fold.marks.map((mark) => [mark.tool, mark.folder, mark.state])).toEqual([
+        ["amp", "amp", "synced"],
+        ["kimi_cli", "amp", "synced"],
+      ]);
+      // Only Kimi Code in the set: Amp's folder row is Kimi's, not an extra mark.
+      const kimiOnly = syncedStrip({ ...base, targets: [row("amp", "error")] }, [shared[1]], context);
+      expect(kimiOnly.marks.map((mark) => [mark.tool, mark.state])).toEqual([["kimi_cli", "failed"]]);
+    });
+
     it("one mark per Tool of the set, in its order; each target state has its own mark", () => {
       const fold = strip({
         targets: [row("amp", "error"), row("cursor", "synced"), row("claude_code", "stale")],

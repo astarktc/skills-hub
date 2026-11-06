@@ -42,14 +42,29 @@ export function useToolCatalog({ t }: { t: TranslateFn }) {
 
   const toolInfos = useMemo(() => toolStatus?.tools ?? [], [toolStatus]);
 
-  /** Every known tool, labelled (i18n label when present, else the backend's). */
+  /**
+   * Every known tool, labelled (i18n label when present, else the backend's),
+   * with the Deployment folder serving it (`ToolInfoDto.folder_key`).
+   */
   const tools: ToolOption[] = useMemo(
     () =>
       toolInfos.map((info) => ({
         id: info.key,
         label: t(`tools.${info.key}`, { defaultValue: info.label }),
+        folder: info.folder_key,
       })),
     [t, toolInfos],
+  );
+
+  /**
+   * Harness key → the global Deployment folder serving it: its Deployment
+   * rows are keyed by that folder (`ToolInfoDto.folder_key`, the backend's
+   * answer — never derived from a path). A key the catalog does not list (a
+   * folder key itself, or a row of an unknown Tool) stands for itself.
+   */
+  const folderOf = useCallback(
+    (key: string) => toolInfos.find((info) => info.key === key)?.folder_key ?? key,
+    [toolInfos],
   );
 
   /**
@@ -103,10 +118,12 @@ export function useToolCatalog({ t }: { t: TranslateFn }) {
       installedToolIds,
       installedTools,
       sharedToolIdsByToolId,
+      folderOf,
       projectToolStatus,
       loadProjectToolStatus,
     }),
     [
+      folderOf,
       toolStatus,
       tools,
       toolLabelById,

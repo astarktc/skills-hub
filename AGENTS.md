@@ -338,8 +338,9 @@ than re-tagging.
   `*ReportDto` mirror or mapper in `commands/`, per-item failures are `CommandError` classified at settlement,
   and counters (`refreshed/failed/skipped`, `removed/failed`, …) are derived once by the frontend fold
   (`src/lib/reportOutcome.ts`), never carried on the wire. Delete returns its `RemovalReport` too:
-  - sync → `sync_skills_to_tools` (`core/global_sync.rs`): installedness filtering, shared-dir dedupe,
-    overwrite policy (batch default + per-(skill,tool) overrides), DB record fan-out. The frontend seam
+  - sync → `sync_skills_to_tools` (`core/global_sync.rs`): each key placed in the Deployment folder serving it
+    (`core/placement.rs`, the layout read once per batch), folder dedupe, installedness filtering, overwrite policy
+    (batch default + per-(skill,tool) overrides), one row per (skill, folder key) — never one per shared-dir sibling. The frontend seam
     (`useSyncOrchestration.syncSkillsToTools`) owns the **overwrite ask**: every call site passes
     `overwriteIfSameContent: true` (identical content is replaced silently); `TARGET_EXISTS` rows raise one
     confirmation and one retry batch with per-pair `overrides` (`decision: "overwrite"` confirmed, `"keep"` declined —
@@ -350,8 +351,8 @@ than re-tagging.
     never for a `?`-propagated error or a cancellation; a success clears only its own family.
   - Update / Refresh (all) → `refresh_managed_skills` (`core/refresh.rs`): acquire every skill (bounded
     pool of 4, std threads), then `skill_update::apply_unlocked` admits and settles each under the
-    guard (finalize + Edit replay + Propagation; ADR-0004) — existing targets only, never a new one (D34; a first sync
-    into a shared skills dir records its installed sharers, as the global batch does — D34 amendment). A single
+    guard (finalize + Edit replay + Propagation; ADR-0004) — existing targets only, never a new one (D34; a shared
+    skills dir is one folder with one row, round 20 ticket 09 retiring the D34 amendment's sharer records). A single
     Update is a batch of one, reached through `update_managed_skill` for Update/Restore's catalog-bearing
     response. `core/skill_update.rs` owns the git/local/Edit/Restore byte adapters; stale acquisitions are
     discarded as skipped report data, never retried in-batch. Direct Edit settles through the same Update

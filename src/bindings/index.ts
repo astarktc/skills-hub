@@ -250,8 +250,12 @@ export type AppSettings = {
 	github_token_set: boolean | null,
 	auto_sync_enabled: boolean,
 	/**
-	 *  `None` = never configured (distinct from an empty selection). Keys
-	 *  the Tool registry no longer knows are pruned on read (round 12 D2).
+	 *  `None` = never configured (distinct from an empty selection). The
+	 *  selection is stored as Deployment folder keys; this is every harness a
+	 *  selected folder serves (`core::placement`) — folder by folder in the
+	 *  stored order, each folder's harnesses in registry order — so two
+	 *  harnesses sharing one folder are on or off together. Keys the registry
+	 *  no longer knows are pruned on read (round 12 D2).
 	 */
 	global_selected_tools: string[] | null,
 	/**
@@ -520,8 +524,9 @@ export type ConfigureProjectToolsResultDto = {
  */
 export type DisableScope =
 /**
- *  One (skill, Tool) pair at global scope (fanned out across the Tool's
- *  shared skills dir by `artifact_removal`).
+ *  One (skill, folder) pair at global scope: `tool` names a harness (or a
+ *  folder key), and the Deployment folder serving it is what turns off —
+ *  one folder, one row (`core::placement`).
  */
 { kind: "skill_tool"; skill_id: string; tool: string } |
 /**  One skill, everywhere: global targets and project assignments. */
@@ -1354,6 +1359,12 @@ export type ProjectToolDto = {
 	id: string,
 	project_id: string,
 	tool: string,
+	/**
+	 *  The project Deployment folder serving `tool` (`core::placement`): the
+	 *  key its assignment rows carry, so a matrix column reads its cells by it
+	 *  (Trae and Trae CN share `trae`) and never derives a folder from a path.
+	 */
+	folder_key: string,
 };
 
 /**
@@ -1913,6 +1924,13 @@ export type ToolInfoDto = {
 	key: string,
 	label: string,
 	installed: boolean,
+	/**
+	 *  The folder key of the Deployment folder serving this harness at the
+	 *  list's scope (`core::placement`). Deployment rows, the project matrix
+	 *  and the saved selection are keyed by folder: the frontend matches a
+	 *  harness to its rows through this key, never through a path.
+	 */
+	folder_key: string,
 	/**
 	 *  Keys of every listed tool sharing this tool's skills dir (global dir
 	 *  for the global list, project dir for the project list), in adapter

@@ -92,11 +92,26 @@ describe("matrixCell", () => {
 describe("matrixColumns", () => {
   it("labels each configured Tool from the catalog and says when detection does not see it", () => {
     const labels: Record<string, string> = { claude_code: "Claude Code", windsurf: "Windsurf" };
-    const tools = [{ tool: "claude_code" }, { tool: "windsurf" }, { tool: "zed" }];
+    const tools = [
+      { tool: "claude_code", folder_key: "claude_code" },
+      { tool: "windsurf", folder_key: "windsurf" },
+      { tool: "zed", folder_key: "zed" },
+    ];
     expect(matrixColumns(tools, (key) => labels[key] ?? key, ["claude_code"])).toEqual([
-      { key: "claude_code", label: "Claude Code", detected: true },
-      { key: "windsurf", label: "Windsurf", detected: false },
-      { key: "zed", label: "zed", detected: false },
+      { key: "claude_code", folder: "claude_code", label: "Claude Code", detected: true },
+      { key: "windsurf", folder: "windsurf", label: "Windsurf", detected: false },
+      { key: "zed", folder: "zed", label: "zed", detected: false },
+    ]);
+  });
+
+  it("carries the Deployment folder each column reads (two Tools may share one)", () => {
+    const tools = [
+      { tool: "trae", folder_key: "trae" },
+      { tool: "trae_cn", folder_key: "trae" },
+    ];
+    expect(matrixColumns(tools, (key) => key, null).map((column) => [column.key, column.folder])).toEqual([
+      ["trae", "trae"],
+      ["trae_cn", "trae"],
     ]);
     // Before the catalog loads nothing is called "not detected".
     expect(matrixColumns(tools, (key) => key, null).every((column) => column.detected)).toBe(true);

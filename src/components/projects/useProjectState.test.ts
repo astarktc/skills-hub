@@ -52,6 +52,7 @@ function toolRecords(projectId: string, tools: string[]): ProjectToolDto[] {
     id: `${projectId}:${tool}`,
     project_id: projectId,
     tool,
+    folder_key: tool,
   }));
 }
 

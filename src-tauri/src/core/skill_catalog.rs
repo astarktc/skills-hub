@@ -18,6 +18,7 @@ use std::path::Path;
 
 use crate::core::{
     manifest::{invocation_mode_for_dir, InvocationMode},
+    placement::{one_row_per_folder, ScopeKind},
     project_ops::project_name_from_path,
     provenance::is_refreshable,
     skill_health::{all_skill_health, skill_health, SkillHealth},
@@ -35,7 +36,8 @@ pub struct SkillProject {
     pub project_id: String,
     /// The project's display name (its folder's basename, `project_name_from_path`).
     pub project_name: String,
-    /// One per assignment row of this skill in the project, by Tool key.
+    /// One per Deployment folder of this skill in the project, keyed by its
+    /// folder key (`placement::one_row_per_folder`).
     pub deployments: Vec<SkillProjectDeployment>,
 }
 
@@ -55,7 +57,7 @@ fn projects_by_skill(
     rows: Vec<SkillProjectDeploymentRecord>,
 ) -> HashMap<String, Vec<SkillProject>> {
     let mut out: HashMap<String, Vec<SkillProject>> = HashMap::new();
-    for row in rows {
+    for row in one_row_per_folder(ScopeKind::Project, rows) {
         let projects = out.entry(row.skill_id).or_default();
         let deployment = SkillProjectDeployment {
             tool: row.tool,
@@ -90,7 +92,9 @@ pub struct ManagedSkillEntry {
     /// frontmatter at list time (not persisted).
     pub invocation_mode: InvocationMode,
     pub invocation_override: Option<super::skill_edits::InvocationOverride>,
-    /// Every global Sync target row of this skill, in store order —
+    /// The skill's global Deployments, one per folder keyed by its folder key
+    /// (`placement::one_row_per_folder`: rows written once per shared-dir
+    /// sibling before 1.4.0 read as their folder), in store order —
     /// `disabled` rows included: they are the operator's record.
     pub targets: Vec<SkillTargetRecord>,
     /// When the skill was disabled at skill grain, `None` when it is not
@@ -163,9 +167,12 @@ fn build_entry(
     health: Option<SkillHealth>,
     projects: Vec<SkillProject>,
 ) -> Result<ManagedSkillEntry> {
-    let targets = store
-        .list_skill_targets(&skill.id)
-        .with_context(|| format!("list sync targets for skill {}", skill.id))?;
+    let targets = one_row_per_folder(
+        ScopeKind::Global,
+        store
+            .list_skill_targets(&skill.id)
+            .with_context(|| format!("list sync targets for skill {}", skill.id))?,
+    );
     let invocation_mode = invocation_mode_for_dir(Path::new(&skill.central_path));
     let invocation_override = super::skill_edits::invocation_override(store, &skill.id)?;
     let refreshable = is_refreshable(&skill);

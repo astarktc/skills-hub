@@ -182,6 +182,63 @@ export function globalSharers(key: string): string[] {
   return TOOL_REGISTRY.filter((tool) => tool.globalDir === dir).map((t) => t.key);
 }
 
+/**
+ * The global Deployment folder a row keyed `key` describes and the folder
+ * serving the harness `key` (Rust `placement::own_folder` /
+ * `serving_folder`): `agents_skills` for `.agents`, `claude_code` for
+ * `.claude`, otherwise the first registry entry sharing the dir. An unknown
+ * key stands for itself.
+ */
+export function globalFolderOf(key: string): string {
+  const dir = toolByKey(key)?.globalDir;
+  if (dir === undefined) return key;
+  return TOOL_REGISTRY.find((tool) => tool.globalDir === dir)?.key ?? key;
+}
+
+/** Every registry key served by the global folder `folder`, in registry order. */
+export function folderHarnesses(folder: string): string[] {
+  return TOOL_REGISTRY.filter((tool) => globalFolderOf(tool.key) === folder).map((tool) => tool.key);
+}
+
+/**
+ * The project Deployment folder of `key` (Rust `placement::own_folder` at
+ * project scope): the virtual group owns `.agents/skills`, otherwise the
+ * first registry entry sharing the project dir. Unknown keys stand for
+ * themselves.
+ */
+export function projectFolderOf(key: string): string {
+  const dir = toolByKey(key)?.projectDir;
+  if (dir === undefined || dir === null) return key;
+  if (dir === toolByKey(VIRTUAL_GROUP_KEY)?.projectDir) return VIRTUAL_GROUP_KEY;
+  return TOOL_REGISTRY.find((tool) => tool.projectDir === dir)?.key ?? key;
+}
+
+/**
+ * Rust `placement::one_row_per_folder`: rows written once per shared-dir
+ * sibling read as their folder — per owner, one row keyed by the folder, a
+ * `disabled` one when any is, else the row already keyed by it, else the
+ * first — in the order each folder first appears.
+ */
+export function oneRowPerFolder<R extends { tool: string; status: string }>(
+  rows: readonly R[],
+  folderOf: (tool: string) => string,
+  ownerOf: (row: R) => string = () => "",
+): R[] {
+  const groups = new Map<string, { folder: string; rows: R[] }>();
+  for (const row of rows) {
+    const folder = folderOf(row.tool);
+    const key = `${ownerOf(row)}\n${folder}`;
+    const group = groups.get(key) ?? { folder, rows: [] };
+    group.rows.push(row);
+    groups.set(key, group);
+  }
+  return [...groups.values()].map(({ folder, rows: members }) => {
+    const pick =
+      members.find((row) => row.status === "disabled") ?? members.find((row) => row.tool === folder) ?? members[0];
+    return { ...pick, tool: folder };
+  });
+}
+
 /** Project-scope catalog entries (virtual-group constituents absorbed). */
 export function projectCatalog(): FixtureTool[] {
   return TOOL_REGISTRY.filter((tool) => !tool.grouped && tool.projectDir !== null);

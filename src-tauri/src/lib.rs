@@ -144,6 +144,20 @@ pub fn run() {
                 ),
             }
 
+            // Once: a pre-1.4.0 harness selection becomes the folder selection
+            // (a folder is on when any harness it serves was selected). Until it
+            // has, the settings reader translates the old row on every read; a
+            // corrupt old row stays a refusal until the operator saves again.
+            match core::settings::migrate_tool_selection_to_folders(&store) {
+                Ok(false) => {}
+                Ok(true) => log::info!("translated the saved harness selection to folders"),
+                Err(err) => log::warn!(
+                    "translating the saved harness selection to folders failed; \
+                     retried next launch: {:#}",
+                    err
+                ),
+            }
+
             // Finish a Move Library folder that a crash interrupted after its
             // switch (its journal is in the database): re-point every link the
             // journal's old copies still hold and clean them, before any other

@@ -33,6 +33,10 @@ pub struct ProjectToolDto {
     pub id: String,
     pub project_id: String,
     pub tool: String,
+    /// The project Deployment folder serving `tool` (`core::placement`): the
+    /// key its assignment rows carry, so a matrix column reads its cells by it
+    /// (Trae and Trae CN share `trae`) and never derives a folder from a path.
+    pub folder_key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -118,6 +122,7 @@ pub fn project_tool_dtos(store: &SkillStore, project_id: &str) -> Result<Vec<Pro
         .map(|r| ProjectToolDto {
             id: r.id,
             project_id: r.project_id,
+            folder_key: project_sync::project_folder(&r.tool),
             tool: r.tool,
         })
         .collect())
@@ -277,14 +282,33 @@ pub(crate) fn configure_project_tools_unlocked(
     // otherwise applied.
     let mut removals: Vec<RemovalReport> = Vec::new();
     for record in &persisted {
-        if !tools.contains(&record.tool) {
-            removals.push(remove_project_tool_and_artifacts(
-                store,
-                central_dir,
-                project_id,
-                &record.tool,
-            )?);
+        if tools.contains(&record.tool) {
+            continue;
         }
+        // One folder, one set of rows: a dropped tool whose project folder
+        // another kept tool still uses (Trae and Trae CN share `.trae/skills`)
+        // leaves that folder's Deployments in place — only its tool row goes.
+        let folder = project_sync::project_folder(&record.tool);
+        if tools
+            .iter()
+            .any(|kept| project_sync::project_folder(kept) == folder)
+        {
+            store.remove_project_tool(project_id, &record.tool)?;
+            removals.push(RemovalReport {
+                scope: RemovalScope::ProjectTool {
+                    project_id: project_id.to_string(),
+                    tool_key: record.tool.clone(),
+                },
+                ..RemovalReport::merge([])
+            });
+            continue;
+        }
+        removals.push(remove_project_tool_and_artifacts(
+            store,
+            central_dir,
+            project_id,
+            &record.tool,
+        )?);
     }
 
     if let Some(options) = ignore {

@@ -175,8 +175,8 @@ function App() {
     const knownIds = new Set(known.map((tool) => tool.id));
     const unknown = stripTargetIds
       .filter((id) => !knownIds.has(id))
-      .map((id) => ({ id, label: toolLabelById[id] ?? id }));
-    return [...known.map((tool) => ({ id: tool.id, label: tool.label })), ...unknown];
+      .map((id) => ({ id, label: toolLabelById[id] ?? id, folder: id }));
+    return [...known.map((tool) => ({ id: tool.id, label: tool.label, folder: tool.folder })), ...unknown];
   }, [catalogTools, stripTargetIds, toolLabelById]);
   const labelOfTool = useCallback((id: string) => toolLabelById[id] ?? id, [toolLabelById]);
   const toolInfos = useMemo(() => toolStatus?.tools ?? [], [toolStatus]);

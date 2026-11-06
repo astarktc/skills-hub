@@ -120,15 +120,17 @@ export function useHarnessSelection({
         latest.current.autoSyncEnabled &&
         latest.current.installed.includes(toolId);
 
+      // The harness's rows are its Deployment folder's (`folder_key`).
+      const folderOf = () => latest.current.catalog.find((info) => info.key === toolId)?.folder_key ?? toolId;
       try {
         if (!stillWanted()) return;
-        const count = harnessArrivals(latest.current.skills, toolId).length;
+        const count = harnessArrivals(latest.current.skills, folderOf()).length;
         if (count === 0) return;
         const selection = new Set(readSavedSelection() ?? []);
         const duplicates = pairsInvolving(duplicatePairs(latest.current.catalog, selection), toolId);
         const answer = await ask({ kind: "deployHarness", toolKey: toolId, toolLabel: labelOf(toolId), count, duplicates });
         if (answer !== "confirmed" || !(await whenIdle()) || !stillWanted()) return;
-        const arrivals = harnessArrivals(latest.current.skills, toolId);
+        const arrivals = harnessArrivals(latest.current.skills, folderOf());
         if (arrivals.length === 0) return;
         await run("syncToTargets", arrivals, { tools: [toolId], confirmed: true });
       } finally {

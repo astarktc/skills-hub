@@ -26,8 +26,11 @@ type CountConfirmModalProps = {
   assignmentsOf: AssignmentsOf | null;
   /** The explicit read of every project's view, made as a Disable/Enable confirmation opens. */
   loadPlacementViews: () => Promise<void>;
-  /** Sync to Tools: the Tools to pick from (installed, labelled) and the ones picked first. */
-  toolChoices: readonly { id: string; label: string }[];
+  /**
+   * Sync to Tools: the Tools to pick from (installed, labelled, each with the
+   * Deployment folder whose row it reads) and the ones picked first.
+   */
+  toolChoices: readonly { id: string; label: string; folder: string }[];
   defaultTools: readonly string[];
   /** Run the verb confirmed (Sync to Tools with the picked Tools). */
   onConfirm: (tools?: string[]) => void;
@@ -100,7 +103,10 @@ export default function CountConfirmModal({
     if (counts.skipped > 0) lines.push(t("bulk.confirm.update.skipped", { count: counts.skipped }));
     confirmDisabled ||= counts.refreshable === 0;
   } else if (verb === "syncToTargets") {
-    const counts = syncCounts(skills, picked);
+    const counts = syncCounts(
+      skills,
+      picked.map((id) => toolChoices.find((tool) => tool.id === id)?.folder ?? id),
+    );
     title =
       skills.length === 1
         ? t("bulk.confirm.sync.title", { count: 1, name: skills[0].name })

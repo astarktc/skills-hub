@@ -33,7 +33,7 @@ type SkillsListProps = {
   /** The import cascade (ticket 21): the rows a large import just added, and the run's token. */
   landing: ImportLanding;
   /** The strip's Tools: the effective target set, registry order, labelled. */
-  stripTools: readonly { id: string; label: string }[];
+  stripTools: readonly { id: string; label: string; folder: string }[];
   /** The Tool catalog's label for any key (a row outside the set). */
   labelOf: (tool: string) => string;
   isDetected: (tool: string) => boolean;

@@ -171,7 +171,7 @@ function useDoor(s: Setup) {
     t,
     reporter,
     sync: s.sync,
-    catalog: { toolLabelById: { claude: "CLAUDE", cursor: "CURSOR" } },
+    catalog: { toolLabelById: { claude: "CLAUDE", cursor: "CURSOR" }, folderOf: (key: string) => key },
     surface,
     library,
     projects: s.projects,
@@ -905,7 +905,7 @@ describe("report data (D11)", () => {
 
 describe("one operator action, one overwrite ask (the real sync world)", () => {
   const TOOL_STATUS: ToolStatusDto = {
-    tools: ["claude", "cursor"].map((key) => ({ key, label: key.toUpperCase(), installed: true, shared_with: [key], constituents: [], readers: [], placement: null, duplicate_readers: null })),
+    tools: ["claude", "cursor"].map((key) => ({ key, label: key.toUpperCase(), installed: true, folder_key: key, shared_with: [key], constituents: [], readers: [], placement: null, duplicate_readers: null })),
     installed: ["claude", "cursor"],
     newly_installed: [],
   };

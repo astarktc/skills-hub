@@ -78,9 +78,13 @@ import {
   expandHome,
   fingerprint,
   globalRoot,
+  folderHarnesses,
+  globalFolderOf,
   globalSharers,
+  projectFolderOf,
   hashFiles,
   isProjectToolInstalled,
+  oneRowPerFolder,
   projectCatalog,
   projectToolDir,
   skillFiles,
@@ -193,7 +197,13 @@ export function createFixtureBackend(
         bySkill.set(row.skill_id, list);
       }
     }
-    return state.skills.map((s) => ({ ...clone(s.dto), projects: bySkill.get(s.dto.id) ?? [] }));
+    // Rust `skill_catalog`: one Deployment per folder, keyed by the folder.
+    for (const list of bySkill.values())
+      for (const entry of list) entry.deployments = oneRowPerFolder(entry.deployments, projectFolderOf);
+    return state.skills.map((s) => {
+      const dto = clone(s.dto);
+      return { ...dto, targets: oneRowPerFolder(dto.targets, globalFolderOf), projects: bySkill.get(s.dto.id) ?? [] };
+    });
   };
 
   const isInstalled = (tool: string) => state.installedTools.includes(tool);
@@ -274,44 +284,48 @@ export function createFixtureBackend(
   // Global sync
   // -------------------------------------------------------------------------
 
-  /** Record (or refresh) the target rows of every detected Tool sharing the root. */
-  const recordTargets = (skill: FixtureSkill, tool: string) => {
-    const path = `${globalRoot(tool)}/${skill.dto.name}`;
+  /**
+   * The rows describing the global folder `folder` — its own, plus any a
+   * pre-1.4.0 scenario wrote once per shared-dir sibling (Rust
+   * `placement::row_folder`).
+   */
+  const folderRows = (skill: FixtureSkill, folder: string) =>
+    skill.dto.targets.filter((t) => globalFolderOf(t.tool) === folder);
+
+  /** Record (or refresh) the folder's one row (Rust `sync_skill_into_root`). */
+  const recordTargets = (skill: FixtureSkill, folder: string) => {
+    const path = `${globalRoot(folder)}/${skill.dto.name}`;
     const at = now();
     artifacts.set(path, true);
-    for (const sharer of globalSharers(tool).filter(isInstalled)) {
-      const row = skill.dto.targets.find((t) => t.tool === sharer);
-      if (row) {
-        row.status = "synced";
-        row.mode = "symlink";
-        row.synced_at = at;
-        row.target_path = path;
-      } else {
-        skill.dto.targets.push({ tool: sharer, mode: "symlink", status: "synced", target_path: path, synced_at: at });
-      }
+    const row = skill.dto.targets.find((t) => t.tool === folder);
+    if (row) {
+      row.status = "synced";
+      row.mode = "symlink";
+      row.synced_at = at;
+      row.target_path = path;
+    } else {
+      skill.dto.targets.push({ tool: folder, mode: "symlink", status: "synced", target_path: path, synced_at: at });
     }
     skill.dto.last_sync_at = at;
   };
 
   /**
-   * A failed sync settles its rows (Rust `global_sync::record_failed`, D9):
-   * every detected Tool sharing the root gets an `error` row — a new one owns
-   * nothing (`synced_at` null), an existing one keeps its ownership. An
-   * unanswered TARGET_EXISTS never reaches here (it is asked first).
+   * A failed sync settles the folder's row (Rust `global_sync::record_failed`,
+   * D9): `error` — a new one owns nothing (`synced_at` null), an existing one
+   * keeps its ownership. An unanswered TARGET_EXISTS never reaches here (it is
+   * asked first).
    */
-  const recordFailedTargets = (skill: FixtureSkill, tool: string) => {
-    const path = `${globalRoot(tool)}/${skill.dto.name}`;
-    for (const sharer of globalSharers(tool).filter(isInstalled)) {
-      const row = skill.dto.targets.find((t) => t.tool === sharer);
-      if (row) row.status = "error";
-      else skill.dto.targets.push({ tool: sharer, mode: "symlink", status: "error", target_path: path, synced_at: null });
-    }
+  const recordFailedTargets = (skill: FixtureSkill, folder: string) => {
+    const path = `${globalRoot(folder)}/${skill.dto.name}`;
+    const row = skill.dto.targets.find((t) => t.tool === folder);
+    if (row) row.status = "error";
+    else skill.dto.targets.push({ tool: folder, mode: "symlink", status: "error", target_path: path, synced_at: null });
   };
 
   /**
-   * "Keep existing" (Rust `global_sync::record_kept`): the attempted Tool's
-   * pair is recorded `disabled` — a marker owning nothing — and reported as
-   * any disabled pair is.
+   * "Keep existing" (Rust `global_sync::record_kept`): the folder's row is
+   * recorded `disabled` — a marker owning nothing — and reported as any
+   * disabled pair is.
    */
   const recordKept = (skill: FixtureSkill, tool: string): BatchTargetStatus => {
     const row = skill.dto.targets.find((t) => t.tool === tool);
@@ -368,24 +382,26 @@ export function createFixtureBackend(
     onProgress: ProgressSink<SyncProgressDto> | null,
   ): Promise<BatchTargetOutcome[]> => {
     const outcomes: BatchTargetOutcome[] = [];
-    const seenRoots = new Set<string>();
+    // One folder, one target (Rust `plan_batch_tool_targets`): every key is
+    // placed in the folder serving it, and every outcome names the folder.
+    const seenFolders = new Set<string>();
     const attempted: string[] = [];
-    for (const key of tools) {
-      if (!toolByKey(key)) {
+    for (const requested of tools) {
+      if (!toolByKey(requested)) {
         for (const s of skills) {
-          outcomes.push({ skill_id: s.skill_id, skill_name: s.name, tool_key: key, status: { status: "failed", error: { code: "UNKNOWN_TOOL", tool: key } } });
+          outcomes.push({ skill_id: s.skill_id, skill_name: s.name, tool_key: requested, status: { status: "failed", error: { code: "UNKNOWN_TOOL", tool: requested } } });
         }
         continue;
       }
-      if (!isInstalled(key)) {
+      const key = globalFolderOf(requested);
+      if (seenFolders.has(key)) continue;
+      seenFolders.add(key);
+      if (!folderHarnesses(key).some(isInstalled)) {
         for (const s of skills) {
           outcomes.push({ skill_id: s.skill_id, skill_name: s.name, tool_key: key, status: { status: "skipped", error: { code: "TOOL_NOT_INSTALLED", tool: key } } });
         }
         continue;
       }
-      const root = globalRoot(key);
-      if (seenRoots.has(root)) continue;
-      seenRoots.add(root);
       attempted.push(key);
     }
     const total = skills.length * attempted.length;
@@ -408,7 +424,7 @@ export function createFixtureBackend(
         }
         const decided = (decision: "overwrite" | "keep") =>
           (policy.overrides ?? []).some(
-            (o) => o.decision === decision && o.skill_id === s.skill_id && globalSharers(key).includes(o.tool),
+            (o) => o.decision === decision && o.skill_id === s.skill_id && globalFolderOf(o.tool) === key,
           );
         if (decided("keep")) {
           outcomes.push({ skill_id: s.skill_id, skill_name: s.name, tool_key: key, status: recordKept(skill, key) });
@@ -428,14 +444,11 @@ export function createFixtureBackend(
 
   /**
    * The batch's Disabled rule (Rust `global_sync::DisabledGate`): a skill
-   * disabled at skill grain, or any `disabled` row among the Tools sharing
-   * this Tool's skills dir, skips the pair — one shared artifact.
+   * disabled at skill grain, or any `disabled` row describing the folder,
+   * skips it — one folder, one artifact.
    */
-  const isDisabledFor = (skill: FixtureSkill, tool: string) =>
-    skill.dto.disabled_at !== null ||
-    skill.dto.targets.some(
-      (t) => t.status === "disabled" && (t.tool === tool || globalSharers(tool).includes(t.tool)),
-    );
+  const isDisabledFor = (skill: FixtureSkill, folder: string) =>
+    skill.dto.disabled_at !== null || folderRows(skill, folder).some((t) => t.status === "disabled");
 
   /** Effective global target set: the recorded selection, else every detected Tool. */
   const effectiveTargets = () => state.settings.global_selected_tools ?? state.installedTools;
@@ -671,8 +684,14 @@ export function createFixtureBackend(
     if (unreconciled) state.unreconciledViews = state.unreconciledViews.filter((id) => id !== project.id);
     return {
       project: projectDto(project),
-      tools: project.tools.map((tool) => ({ id: `${project.id}-tool-${tool}`, project_id: project.id, tool })),
-      assignments: clone(project.assignments),
+      tools: project.tools.map((tool) => ({
+        id: `${project.id}-tool-${tool}`,
+        project_id: project.id,
+        tool,
+        folder_key: projectFolderOf(tool),
+      })),
+      // Rust `list_assignments_with_staleness`: one row per (skill, folder).
+      assignments: oneRowPerFolder(clone(project.assignments), projectFolderOf, (a) => a.skill_id),
       reconciled: !unreconciled,
       // The fixture keeps statuses as its scenario wrote them: its views
       // reconcile nothing, so none rewrites a status.
@@ -752,16 +771,28 @@ export function createFixtureBackend(
   /** A disabled row, or any row of a skill disabled at skill grain, is skipped. */
   const skippedDisabled: ProjectSyncOutcomeStatus = { status: "skipped", reason: { reason: "disabled" } };
 
+  /**
+   * The assignment of `skillId` describing the project folder `tool` names
+   * (Rust `project_sync::folder_assignment`): the folder's own row first,
+   * else one a pre-1.4.0 scenario wrote for a sibling sharing it.
+   */
+  const folderAssignment = (project: FixtureProject, skillId: string, tool: string) => {
+    const folder = projectFolderOf(tool);
+    const rows = project.assignments.filter((a) => a.skill_id === skillId && projectFolderOf(a.tool) === folder);
+    return rows.find((a) => a.tool === folder) ?? rows[0];
+  };
+
   const assign = (project: FixtureProject, skill: FixtureSkill, tool: string): ProjectSyncOutcome => {
     // Rust `project_sync::assign_skill_to_tools`: a skill disabled at skill
-    // grain gets the assignment recorded `disabled`, not synced.
+    // grain gets the assignment recorded `disabled`, not synced. One row per
+    // folder, keyed by it.
     const disabled = skill.dto.disabled_at !== null;
     const a: ProjectSkillAssignmentDto = {
       id: newId(`${project.id}-asg`),
       project_id: project.id,
       skill_id: skill.dto.id,
       skill_name: skill.dto.name,
-      tool,
+      tool: projectFolderOf(tool),
       mode: "symlink",
       status: disabled ? "disabled" : "pending",
       last_error: null,
@@ -829,20 +860,20 @@ export function createFixtureBackend(
    * `disabled`, and a pair with no row gets a marker row — only when the
    * shared artifact settled: a failed removal mints no `disabled` sibling.
    */
-  const disablePair = (skill: FixtureSkill, tool: string): Removal => {
-    const hasRow = skill.dto.targets.some((t) => t.tool === tool);
-    if (!toolByKey(tool) && !hasRow) fail({ code: "UNKNOWN_TOOL", tool });
-    const group = globalSharers(tool).some(isInstalled) ? globalSharers(tool) : [tool];
-    const out = removeGlobalRows(skill, group, "disable");
-    if (!failedIn(out.targets) && !skill.dto.targets.some((t) => t.tool === tool)) {
+  const disablePair = (skill: FixtureSkill, requested: string): Removal => {
+    const folder = globalFolderOf(requested);
+    const hasRow = folderRows(skill, folder).length > 0;
+    if (!toolByKey(folder) && !hasRow) fail({ code: "UNKNOWN_TOOL", tool: requested });
+    const out = removeGlobalRows(skill, [...new Set(folderRows(skill, folder).map((t) => t.tool))], "disable");
+    if (!failedIn(out.targets) && folderRows(skill, folder).length === 0) {
       skill.dto.targets.push({
-        tool,
+        tool: folder,
         mode: "symlink",
         status: "disabled",
-        target_path: `${globalRoot(tool)}/${skill.dto.name}`,
+        target_path: `${globalRoot(folder)}/${skill.dto.name}`,
         synced_at: null,
       });
-      const marker = { scope: "global_target" as const, id: `tgt-${skill.dto.id}-${tool}`, skill_id: skill.dto.id, tool };
+      const marker = { scope: "global_target" as const, id: `tgt-${skill.dto.id}-${folder}`, skill_id: skill.dto.id, tool: folder };
       return { ...out, disabled: [...(out.disabled ?? []), marker] };
     }
     return out;
@@ -889,15 +920,15 @@ export function createFixtureBackend(
     tool: string,
     overrides: BatchSyncOverrideDto[],
   ): Promise<EnableReport> => {
+    const folder = globalFolderOf(tool);
     if (skill.dto.disabled_at !== null) {
       return {
-        global: [{ skill_id: skill.dto.id, skill_name: skill.dto.name, tool_key: tool, status: { status: "skipped", error: { code: "TARGET_DISABLED", tool } } }],
+        global: [{ skill_id: skill.dto.id, skill_name: skill.dto.name, tool_key: folder, status: { status: "skipped", error: { code: "TARGET_DISABLED", tool: folder } } }],
         projects: { skipped_projects: [], items: [] },
       };
     }
-    const group = toolByKey(tool) ? globalSharers(tool) : [tool];
-    skill.dto.targets = skill.dto.targets.filter((t) => !(t.status === "disabled" && group.includes(t.tool)));
-    return { global: await firstSync(skill, [tool], overrides), projects: { skipped_projects: [], items: [] } };
+    skill.dto.targets = skill.dto.targets.filter((t) => !(t.status === "disabled" && globalFolderOf(t.tool) === folder));
+    return { global: await firstSync(skill, [folder], overrides), projects: { skipped_projects: [], items: [] } };
   };
 
   /**
@@ -997,8 +1028,8 @@ export function createFixtureBackend(
 
   /**
    * Propagation (Rust `propagation::propagate_unlocked`): global rows one
-   * shared-skills-dir group at a time (one artifact, every member row settled),
-   * then every project assignment of the skill.
+   * Deployment folder at a time (one artifact, every row of it settled), then
+   * every project assignment of the skill.
    */
   const propagate = (skill: FixtureSkill): PropagationOutcome[] => {
     const out: PropagationOutcome[] = [];
@@ -1007,54 +1038,41 @@ export function createFixtureBackend(
     };
     const centralMissing = skill.files.length === 0;
     if (skill.dto.disabled_at !== null) {
-      // Off everywhere until enabled: every row reported, none touched.
-      for (const row of skill.dto.targets) skippedGlobal(row.tool, { reason: "disabled" });
+      // Off everywhere until enabled: every folder reported, none touched.
+      for (const folder of new Set(skill.dto.targets.map((row) => globalFolderOf(row.tool))))
+        skippedGlobal(folder, { reason: "disabled" });
       for (const project of state.projects)
         for (const a of project.assignments.filter((x) => x.skill_id === skill.dto.id))
           out.push({ scope: { scope: "project", project_id: project.id, tool: a.tool }, status: { status: "skipped", reason: { reason: "disabled" } } });
       return out;
     }
-    const handled = new Set<string>();
-    for (const row of skill.dto.targets) {
-      if (handled.has(row.tool)) continue;
-      handled.add(row.tool);
-      if (!toolByKey(row.tool)) {
-        skippedGlobal(row.tool, row.status === "disabled" ? { reason: "disabled" } : { reason: "unknown_tool", tool: row.tool });
-        continue;
-      }
-      const sharers = globalSharers(row.tool);
-      const group = skill.dto.targets.filter(
-        (r) => (r.tool === row.tool || sharers.includes(r.tool)) && toolByKey(r.tool),
-      );
-      for (const member of group) handled.add(member.tool);
-      // One disabled member disables the shared artifact.
+    // One folder at a time (Rust `propagate_global_rows`): its rows — the
+    // folder's own plus any a pre-1.4.0 scenario wrote per sibling — are
+    // settled together and reported once, by the folder key.
+    const folders = [...new Set(skill.dto.targets.map((row) => globalFolderOf(row.tool)))];
+    for (const folder of folders) {
+      const group = folderRows(skill, folder);
       if (group.some((member) => member.status === "disabled")) {
-        for (const member of group) skippedGlobal(member.tool, { reason: "disabled" });
+        skippedGlobal(folder, { reason: "disabled" });
         continue;
       }
-      for (const member of group.filter((r) => !isInstalled(r.tool))) {
-        skippedGlobal(member.tool, { reason: "tool_not_installed", tool: member.tool });
+      if (!toolByKey(folder)) {
+        skippedGlobal(folder, { reason: "unknown_tool", tool: folder });
+        continue;
       }
-      const installed = group.filter((r) => isInstalled(r.tool));
-      if (installed.length === 0) continue;
+      if (!folderHarnesses(folder).some(isInstalled)) {
+        skippedGlobal(folder, { reason: "tool_not_installed", tool: folder });
+        continue;
+      }
       // Only a link of ours follows the source: a row that never materialised
       // (a failed first sync's `error` row) gets a first sync.
-      if (!installed.some((member) => needsNewBytes(member.mode) || !ownsArtifact(member))) {
-        for (const member of installed) skippedGlobal(member.tool, { reason: "link_follows_source" });
+      if (!group.some((member) => needsNewBytes(member.mode) || !ownsArtifact(member))) {
+        skippedGlobal(folder, { reason: "link_follows_source" });
         continue;
       }
-      const driverPath = installed[0].target_path;
-      const firstSync = !installed.some(ownsArtifact);
-      // A shared skills dir is one artifact (D34 amendment): a first sync is
-      // recorded for every installed sharer the skill has no row for yet, as
-      // the global batch's `recordTargets` does; an owned artifact's update
-      // records nothing new. `handled` keeps a minted sibling from being
-      // visited again by this loop (the array grows under it).
-      const siblings = firstSync
-        ? sharers.filter((tool) => isInstalled(tool) && !skill.dto.targets.some((t) => t.tool === tool))
-        : [];
-      for (const tool of siblings) handled.add(tool);
-      // A first sync (no member owns the path) meets a foreign folder as
+      const driverPath = (group.find((member) => member.tool === folder) ?? group[0]).target_path;
+      const firstSync = !group.some(ownsArtifact);
+      // A first sync (no row owns the path) meets a foreign folder as
       // TARGET_EXISTS; an owner replaces it.
       const occupied =
         firstSync && state.foreign.some((f) => `${globalRoot(f.tool)}/${f.name}` === driverPath);
@@ -1063,39 +1081,28 @@ export function createFixtureBackend(
       // TOOL_NOT_WRITABLE).
       const error: CommandError | null = centralMissing
         ? missingSource(skill)
-        : state.unwritableTools.includes(installed[0].tool)
+        : group.some((member) => state.unwritableTools.includes(member.tool))
           ? PERMISSION_DENIED(driverPath)
           : occupied
             ? targetExists(driverPath)
             : null;
       const at = now();
-      for (const member of installed) {
-        const scope = { scope: "global" as const, tool: member.tool };
+      for (const member of group) {
         if (error) {
-          const firstDeploy = !ownsArtifact(member);
           member.status = "error";
-          out.push({ scope, status: { status: "failed", error, first_deploy: firstDeploy } });
         } else {
           member.status = "synced";
           member.mode = "symlink";
           member.synced_at = at;
           member.target_path = driverPath;
-          out.push({ scope, status: { status: "synced", mode_used: "symlink" } });
         }
       }
-      // Siblings follow the batch's rule: synced beside the group; on a failed
-      // first sync an `error` row owning nothing (`record_failed`), except for
-      // TARGET_EXISTS, which records nothing until the ask is answered.
-      for (const tool of error?.code === "TARGET_EXISTS" ? [] : siblings) {
-        const scope = { scope: "global" as const, tool };
-        if (error) {
-          skill.dto.targets.push({ tool, mode: "symlink", status: "error", target_path: driverPath, synced_at: null });
-          out.push({ scope, status: { status: "failed", error, first_deploy: true } });
-        } else {
-          skill.dto.targets.push({ tool, mode: "symlink", status: "synced", target_path: driverPath, synced_at: at });
-          out.push({ scope, status: { status: "synced", mode_used: "symlink" } });
-        }
-      }
+      const scope = { scope: "global" as const, tool: folder };
+      out.push(
+        error
+          ? { scope, status: { status: "failed", error, first_deploy: firstSync } }
+          : { scope, status: { status: "synced", mode_used: "symlink" } },
+      );
     }
     for (const project of state.projects) {
       for (const a of project.assignments.filter((x) => x.skill_id === skill.dto.id)) {
@@ -1581,7 +1588,12 @@ export function createFixtureBackend(
         s.auto_sync_enabled = update.value;
         break;
       case "global_tool_config":
-        s.global_selected_tools = update.value.selected_tools.filter((k) => toolByKey(k));
+        // Rust stores the folders serving the named harnesses and answers
+        // every harness those folders serve (`settings::harnesses_served_by`):
+        // two harnesses sharing a folder are on or off together.
+        s.global_selected_tools = [
+          ...new Set(update.value.selected_tools.filter((k) => toolByKey(k)).map(globalFolderOf)),
+        ].flatMap(folderHarnesses);
         s.scan_selected_tools_only = update.value.scan_selected_only;
         s.global_selected_tools_corrupt = false;
         break;
@@ -1746,6 +1758,7 @@ export function createFixtureBackend(
         key: t.key,
         label: t.label,
         installed: isInstalled(t.key),
+        folder_key: globalFolderOf(t.key),
         shared_with: globalSharers(t.key),
         constituents: [],
         readers:
@@ -1775,6 +1788,7 @@ export function createFixtureBackend(
       key: t.key,
       label: t.label,
       installed: isProjectToolInstalled(state, t.key),
+      folder_key: projectFolderOf(t.key),
       shared_with: catalog.filter((o) => o.projectDir === t.projectDir).map((o) => o.key),
       constituents:
         t.key === VIRTUAL_GROUP_KEY
@@ -1896,7 +1910,7 @@ export function createFixtureBackend(
     // Rust `resolve_collisions_unlocked` looks the assignment row up: a gone
     // project, like a gone row, is that decision's NOT_FOUND row (#90).
     const project = state.projects.find((p) => p.id === decision.project_id);
-    const a = project?.assignments.find((x) => x.skill_id === decision.skill_id && x.tool === decision.tool);
+    const a = project ? folderAssignment(project, decision.skill_id, decision.tool) : undefined;
     if (!project || !a) {
       return {
         assignment_id: null,
@@ -2321,9 +2335,15 @@ export function createFixtureBackend(
         if (!projectCatalog().some((t) => t.key === tool)) fail({ code: "UNKNOWN_TOOL", tool });
       }
       const dropped = project.tools.filter((t) => !tools.includes(t));
-      const report = removal(removeAssignments(project, (a) => !dropped.includes(a.tool)));
-      const stuck = new Set(project.assignments.filter((a) => dropped.includes(a.tool)).map((a) => a.tool));
-      project.tools = [...tools, ...dropped.filter((t) => stuck.has(t))];
+      // Rust `configure_project_tools_unlocked`: a dropped Tool whose project
+      // folder a kept Tool still uses (Trae and Trae CN) leaves its rows.
+      const keptFolders = new Set(tools.map(projectFolderOf));
+      const goneFolders = new Set(dropped.map(projectFolderOf).filter((folder) => !keptFolders.has(folder)));
+      const report = removal(removeAssignments(project, (a) => !goneFolders.has(projectFolderOf(a.tool))));
+      const stuck = new Set(
+        project.assignments.filter((a) => goneFolders.has(projectFolderOf(a.tool))).map((a) => projectFolderOf(a.tool)),
+      );
+      project.tools = [...tools, ...dropped.filter((t) => stuck.has(projectFolderOf(t)))];
       if (gitignore) project.gitignore = { in_gitignore: gitignore.add_to_gitignore, in_exclude: gitignore.add_to_exclude };
       project.updated_at = now();
       return { view: viewOf(project), report };
@@ -2336,8 +2356,11 @@ export function createFixtureBackend(
       await pause(180);
       const project = findProject(projectId);
       const skill = findSkill(skillId);
-      if (project.assignments.some((a) => a.skill_id === skillId && a.tool === tool)) {
-        const report = removal(removeAssignments(project, (a) => !(a.skill_id === skillId && a.tool === tool)));
+      if (folderAssignment(project, skillId, tool)) {
+        const folder = projectFolderOf(tool);
+        const report = removal(
+          removeAssignments(project, (a) => !(a.skill_id === skillId && projectFolderOf(a.tool) === folder)),
+        );
         return { kind: "unassigned", view: viewOf(project), report };
       }
       if (!project.path_exists) return { kind: "assigned", view: viewOf(project), report: folderMissing(project) };
@@ -2354,7 +2377,7 @@ export function createFixtureBackend(
     resyncProjectAssignment: async (projectId, skillId, tool) => {
       await pause(220);
       const project = findProject(projectId);
-      const row = project.assignments.find((a) => a.skill_id === skillId && a.tool === tool);
+      const row = folderAssignment(project, skillId, tool);
       if (!row) return fail({ code: "NOT_FOUND", kind: "assignment", id: `${projectId}/${skillId}/${tool}` });
       const report = resyncAssignments(project, [row]);
       return { view: viewOf(project), report };
@@ -2380,8 +2403,10 @@ export function createFixtureBackend(
       const skill = findSkill(skillId);
       // Rust `assign_skill_to_tools`: a missing folder is not entered.
       if (!project.path_exists) return { view: viewOf(project), report: folderMissing(project) };
-      const items = project.tools.map((tool) => {
-        const existing = project.assignments.find((a) => a.skill_id === skillId && a.tool === tool);
+      // One folder, one assignment: tools sharing a project folder are one item.
+      const folders = [...new Set(project.tools.map(projectFolderOf))];
+      const items = folders.map((tool) => {
+        const existing = folderAssignment(project, skillId, tool);
         if (!existing) return assign(project, skill, tool);
         return outcomeOf(project, existing, isDisabledAssignment(existing) ? skippedDisabled : { status: "already_assigned" });
       });

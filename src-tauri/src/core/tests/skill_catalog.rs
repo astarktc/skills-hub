@@ -481,3 +481,33 @@ fn a_failing_project_query_fails_the_catalog() {
     let err = managed_skill_catalog(&store).expect_err("the catalog must fail loudly");
     assert!(format!("{err:#}").contains("list project deployments"));
 }
+
+/// Rows written once per shared-dir sibling before rows were per folder (Amp
+/// and Kimi Code's `~/.config/agents/skills`) read as one Deployment, keyed by
+/// the folder; a lone sibling row comes out keyed by its folder too.
+#[test]
+fn the_catalog_reads_sibling_rows_as_one_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = tmp.path().join("central");
+    let alpha = write_manifest(&central, "alpha", "---\nname: alpha\n---\n");
+    let beta = write_manifest(&central, "beta", "---\nname: beta\n---\n");
+    seed_skill(&store, "s1", "alpha", &alpha);
+    seed_skill(&store, "s2", "beta", &beta);
+    seed_target(&store, "s1", "amp");
+    seed_target(&store, "s1", "kimi_cli");
+    seed_target(&store, "s1", "claude_code");
+    seed_target(&store, "s2", "kimi_cli");
+
+    let catalog = managed_skill_catalog(&store).unwrap();
+    let tools = |id: &str| -> Vec<String> {
+        let entry = catalog.iter().find(|e| e.skill.id == id).unwrap();
+        let mut tools: Vec<String> = entry.targets.iter().map(|t| t.tool.clone()).collect();
+        tools.sort();
+        tools
+    };
+    assert_eq!(tools("s1"), vec!["amp", "claude_code"]);
+    assert_eq!(tools("s2"), vec!["amp"]);
+    let one = managed_skill_entry(&store, "s1").unwrap().unwrap();
+    assert_eq!(one.targets.len(), 2);
+}

@@ -168,6 +168,7 @@ describe("useHarnessSelection cross-read warning", () => {
     key,
     label: key,
     installed: true,
+    folder_key: key,
     shared_with: [key],
     constituents: [],
     readers: [],

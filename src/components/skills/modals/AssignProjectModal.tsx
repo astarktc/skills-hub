@@ -68,7 +68,8 @@ export default function AssignProjectModal({
   const missingFor = (row: SkillPlacement) =>
     placements.map((value) => {
       const own = value.rows?.find((candidate) => candidate.project.id === row.project.id);
-      return row.tools.filter((tool) => !own?.assignments.some((assignment) => assignment.tool === tool.tool));
+      // An assignment row is keyed by the Tool's Deployment folder.
+      return row.tools.filter((tool) => !own?.assignments.some((assignment) => assignment.tool === tool.folder_key));
     });
 
   useEffect(() => {

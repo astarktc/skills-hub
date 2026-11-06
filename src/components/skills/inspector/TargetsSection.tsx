@@ -67,10 +67,12 @@ export default function TargetsSection({ skill, strip, actions, blockedReason, t
     offered.refusal === "not_detected" ? t("inspector.targets.notDetectedReason", { tool: mark.label }) : null;
   const skillOff = skill.disabled_at !== null;
   const centralMissing = skill.unlocatable === "central_missing";
-  const byTool = new Map(skill.targets.map((target) => [target.tool, target]));
+  // Rows are keyed by Deployment folder; a mark names the folder it reads.
+  const byFolder = new Map(skill.targets.map((target) => [target.tool, target]));
+  const targetOf = (tool: string) => byFolder.get(strip.marks.find((mark) => mark.tool === tool)?.folder ?? tool);
   // The undo line shows only while the pair is still disabled, for this skill.
   const undoTool =
-    removed && removed.skillId === skill.id && byTool.get(removed.tool)?.status === "disabled" ? removed.tool : null;
+    removed && removed.skillId === skill.id && targetOf(removed.tool)?.status === "disabled" ? removed.tool : null;
 
   useEffect(() => {
     if (!removed) return;
@@ -127,7 +129,7 @@ export default function TargetsSection({ skill, strip, actions, blockedReason, t
   const undoMark = undoTool ? (strip.marks.find((mark) => mark.tool === undoTool) ?? null) : null;
 
   const modeLabel = (tool: string) => {
-    const target = byTool.get(tool);
+    const target = targetOf(tool);
     return target ? t(`inspector.targets.mode.${target.mode}`) : null;
   };
 

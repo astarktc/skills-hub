@@ -102,6 +102,7 @@ const AssignmentMatrix = ({
 
   const assignmentMap = useMemo(() => {
     const map = new Map<string, ProjectSkillAssignmentDto>();
+    // Rows are keyed by Deployment folder; a column reads its folder's row.
     for (const a of assignments) map.set(`${a.skill_id}:${a.tool}`, a);
     return map;
   }, [assignments]);
@@ -308,7 +309,7 @@ const MatrixRow = memo(
     t,
   }: MatrixRowProps) => {
     const rowPending = isRowPending(skill.id);
-    const assignedCount = columns.filter((column) => assignmentMap.has(`${skill.id}:${column.key}`)).length;
+    const assignedCount = columns.filter((column) => assignmentMap.has(`${skill.id}:${column.folder}`)).length;
     // Both bulk verbs stay where they are — a verb that would change nothing
     // is refused with the reason, so the focus that ran it never drops (D21).
     const bulkReason = pathMissing ? t("projectsSurface.cell.folderMissing") : blockedReason;
@@ -329,7 +330,7 @@ const MatrixRow = memo(
             key={column.key}
             skill={skill}
             column={column}
-            assignment={assignmentMap.get(`${skill.id}:${column.key}`)}
+            assignment={assignmentMap.get(`${skill.id}:${column.folder}`)}
             inFlight={pendingCells.has(`${skill.id}:${column.key}`)}
             pathMissing={pathMissing}
             blockedReason={blockedReason}

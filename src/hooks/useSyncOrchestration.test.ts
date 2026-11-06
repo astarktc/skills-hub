@@ -67,6 +67,7 @@ function toolInfo(key: string, shared_with: string[] = [key]): ToolInfoDto {
     key,
     label: key.toUpperCase(),
     installed: true,
+    folder_key: shared_with[0],
     shared_with,
     constituents: [],
     readers: [],

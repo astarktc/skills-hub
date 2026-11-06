@@ -306,8 +306,11 @@ fn an_uninstalled_tool_is_skipped() {
     );
 }
 
+/// Rows written once per shared-dir sibling before rows were per folder (Amp
+/// and Kimi Code's `~/.config/agents/skills`) are one folder: the bytes are
+/// written once, every row is settled, and one outcome names the folder.
 #[test]
-fn a_shared_skills_dir_group_syncs_once_and_settles_every_member_row() {
+fn sibling_rows_of_one_folder_sync_once_and_settle_every_row() {
     let f = fixture();
     let amp = adapter_by_key("amp").expect("amp adapter");
     let kimi = adapter_by_key("kimi_cli").expect("kimi_cli adapter");
@@ -321,16 +324,16 @@ fn a_shared_skills_dir_group_syncs_once_and_settles_every_member_row() {
 
     let outcomes = propagate(&f);
 
+    assert_eq!(outcomes.len(), 1, "one folder, one outcome: {outcomes:?}");
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &global("amp")),
+            PropagationStatus::Synced { .. }
+        ),
+        "the folder should be reported synced, got {:?}",
+        outcomes
+    );
     for tool in ["amp", "kimi_cli"] {
-        assert!(
-            matches!(
-                outcome_for(&outcomes, &global(tool)),
-                PropagationStatus::Synced { .. }
-            ),
-            "{} should be reported synced, got {:?}",
-            tool,
-            outcomes
-        );
         let row = f
             .store
             .get_skill_target(&f.skill_id, tool)
@@ -390,7 +393,7 @@ fn a_row_whose_tool_shares_no_dir_with_the_registry_is_still_its_own_group() {
 }
 
 #[test]
-fn a_missing_central_source_fails_every_row_as_report_data() {
+fn a_missing_central_source_fails_the_folder_and_every_row_as_report_data() {
     let f = fixture();
     let amp = adapter_by_key("amp").expect("amp adapter");
     install_tool(&f, amp);
@@ -403,23 +406,25 @@ fn a_missing_central_source_fails_every_row_as_report_data() {
 
     let outcomes = propagate(&f);
 
-    for tool in ["amp", "kimi_cli"] {
-        match outcome_for(&outcomes, &global(tool)) {
-            PropagationStatus::Failed {
-                error,
-                first_deploy,
-            } => {
-                assert!(!first_deploy, "an owned copy failed to update");
-                assert!(
-                    matches!(error,
-                        crate::core::errors::CommandError::InvalidPath { path, reason }
-                        if path == &f.central_path.to_string_lossy() && reason == "missing"
-                    ),
-                    "a missing central copy is a typed condition, not prose"
-                );
-            }
-            other => panic!("expected a failed target for {}, got {:?}", tool, other),
+    assert_eq!(outcomes.len(), 1, "one folder, one outcome: {outcomes:?}");
+    match outcome_for(&outcomes, &global("amp")) {
+        PropagationStatus::Failed {
+            error,
+            first_deploy,
+        } => {
+            assert!(!first_deploy, "an owned copy failed to update");
+            assert!(
+                matches!(error,
+                    crate::core::errors::CommandError::InvalidPath { path, reason }
+                    if path == &f.central_path.to_string_lossy() && reason == "missing"
+                ),
+                "a missing central copy is a typed condition, not prose"
+            );
         }
+        other => panic!("expected the folder failed, got {:?}", other),
+    }
+    // Every row of the folder is settled `error`.
+    for tool in ["amp", "kimi_cli"] {
         let row = f
             .store
             .get_skill_target(&f.skill_id, tool)
@@ -427,6 +432,16 @@ fn a_missing_central_source_fails_every_row_as_report_data() {
             .unwrap_or_else(|| panic!("row for {}", tool));
         assert_eq!(row.status, SyncStatus::Error);
     }
+}
+
+/// The project folder [`seed_project_copy_assignment`]'s row describes: the
+/// copy-only Cursor shadow's project dir is the AGENTS group's, so its row —
+/// keyed `cursor`, as a pre-1.4.0 row was — is reported by that folder.
+fn project_folder_of_copy_only_tool() -> String {
+    crate::core::placement::row_folder(
+        crate::core::placement::ScopeKind::Project,
+        copy_only_tool().key(),
+    )
 }
 
 /// A project assignment row in copy mode on a copy-only Tool, with a stale
@@ -473,7 +488,7 @@ fn a_project_copy_is_refreshed_and_its_row_settled() {
 
     let scope = PropagationScope::Project {
         project_id: "p1".to_string(),
-        tool: copy_only_tool().key().to_string(),
+        tool: project_folder_of_copy_only_tool(),
     };
     assert!(
         matches!(
@@ -594,7 +609,7 @@ fn a_project_whose_directory_is_gone_is_skipped() {
 
     let scope = PropagationScope::Project {
         project_id: "p1".to_string(),
-        tool: copy_only_tool().key().to_string(),
+        tool: project_folder_of_copy_only_tool(),
     };
     assert!(
         matches!(
@@ -634,7 +649,7 @@ fn a_project_path_that_is_a_file_is_skipped() {
 
     let scope = PropagationScope::Project {
         project_id: "p1".to_string(),
-        tool: copy_only_tool().key().to_string(),
+        tool: project_folder_of_copy_only_tool(),
     };
     assert!(
         matches!(
@@ -673,7 +688,7 @@ fn a_project_artifact_is_found_by_its_stored_name_after_the_skill_is_renamed() {
 
     let scope = PropagationScope::Project {
         project_id: "p1".to_string(),
-        tool: copy_only_tool().key().to_string(),
+        tool: project_folder_of_copy_only_tool(),
     };
     assert!(
         matches!(
@@ -699,11 +714,11 @@ fn a_project_artifact_is_found_by_its_stored_name_after_the_skill_is_renamed() {
 }
 
 // ---------------------------------------------------------------------------
-// A shared skills dir is one artifact (D34 amendment, ticket 33 audit F1):
-// Propagation's first sync of a never-materialised row records every
-// installed sharer, exactly as the global batch does — so the Update's own
-// first sync and its confirmed overwrite retry (which goes through the batch)
-// leave the same row set.
+// A shared skills dir is one Deployment folder, one row (round 20 ticket 09,
+// retiring the D34 amendment's per-sharer records): Propagation's first sync
+// of a never-materialised row records nothing beyond the folder's row, exactly
+// as the global batch does — so the Update's own first sync and its confirmed
+// overwrite retry (which goes through the batch) leave the same row set.
 // ---------------------------------------------------------------------------
 
 /// Amp's global skills dir, shared with Kimi Code CLI.
@@ -768,7 +783,7 @@ fn amp_and_kimi() -> (&'static ToolAdapter, &'static ToolAdapter) {
 }
 
 #[test]
-fn a_first_sync_records_every_installed_sharer_of_the_shared_dir() {
+fn a_first_sync_into_a_shared_folder_records_only_the_folders_row() {
     let f = fixture();
     let (amp, kimi) = amp_and_kimi();
     install_tool(&f, amp);
@@ -778,26 +793,22 @@ fn a_first_sync_records_every_installed_sharer_of_the_shared_dir() {
 
     let outcomes = propagate(&f);
 
-    for tool in ["amp", "kimi_cli"] {
-        assert!(
-            matches!(
-                outcome_for(&outcomes, &global(tool)),
-                PropagationStatus::Synced {
-                    mode_used: SyncMode::Symlink
-                }
-            ),
-            "{tool} is reported synced, got {outcomes:?}"
-        );
-    }
-    assert_eq!(outcomes.len(), 2, "each row reported once: {outcomes:?}");
-    let rows = row_set(&f);
-    assert_eq!(tools_of(&f), ["amp", "kimi_cli"]);
-    for (tool, status, mode, path, owns) in &rows {
-        assert_eq!(*status, SyncStatus::Synced, "{tool}");
-        assert_eq!(*mode, SyncMode::Symlink, "{tool}");
-        assert!(*owns, "{tool} owns the artifact it was synced to");
-        assert_eq!(path, &rows[0].3, "{tool} records the one shared path");
-    }
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &global("amp")),
+            PropagationStatus::Synced {
+                mode_used: SyncMode::Symlink
+            }
+        ),
+        "the folder is reported synced, got {outcomes:?}"
+    );
+    assert_eq!(outcomes.len(), 1, "one folder, one outcome: {outcomes:?}");
+    // Kimi Code reads the folder's row; no row of its own is minted.
+    assert_eq!(tools_of(&f), ["amp"]);
+    let (_, status, mode, _, owns) = &row_set(&f)[0];
+    assert_eq!(*status, SyncStatus::Synced);
+    assert_eq!(*mode, SyncMode::Symlink);
+    assert!(*owns, "the folder's row owns the artifact it was synced to");
     // One artifact: the shared dir holds the skill once, as a link.
     let entries: Vec<_> = fs::read_dir(target.parent().unwrap())
         .expect("read shared dir")
@@ -848,10 +859,10 @@ fn an_update_of_an_owned_artifact_records_no_new_sharer() {
 }
 
 /// The audit's exact sequence: the Update's first sync meets a foreign folder
-/// (`TARGET_EXISTS`, first deploy; the batch's rule records no sharer until
-/// the ask is answered), then the confirmed retry through the global batch
-/// records Amp and Kimi — the same row set Propagation writes when nothing
-/// is in the way.
+/// (`TARGET_EXISTS`, first deploy; nothing is recorded until the ask is
+/// answered), then the confirmed retry through the global batch records the
+/// folder's one row — the same row set Propagation writes when nothing is in
+/// the way.
 #[test]
 fn a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_propagation() {
     use crate::core::errors::CommandError;
@@ -919,7 +930,7 @@ fn a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_prop
     seed_unowned_target(&control, "amp", &shared_target(&control));
     propagate(&control);
 
-    assert_eq!(tools_of(&f), ["amp", "kimi_cli"]);
+    assert_eq!(tools_of(&f), ["amp"]);
     assert_eq!(
         row_set(&f),
         row_set(&control),
@@ -928,7 +939,7 @@ fn a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_prop
 }
 
 #[test]
-fn a_failed_first_sync_records_installed_sharers_error_as_the_batch_does() {
+fn a_failed_first_sync_settles_the_folders_row_error_as_the_batch_does() {
     use crate::core::errors::CommandError;
 
     let f = fixture();
@@ -941,22 +952,18 @@ fn a_failed_first_sync_records_installed_sharers_error_as_the_batch_does() {
 
     let outcomes = propagate(&f);
 
-    for tool in ["amp", "kimi_cli"] {
-        match outcome_for(&outcomes, &global(tool)) {
-            PropagationStatus::Failed {
-                error: CommandError::InvalidPath { reason, .. },
-                first_deploy: true,
-            } if reason == "missing" => {}
-            other => panic!("expected a failed first deploy for {tool}, got {other:?}"),
-        }
+    assert_eq!(outcomes.len(), 1, "{outcomes:?}");
+    match outcome_for(&outcomes, &global("amp")) {
+        PropagationStatus::Failed {
+            error: CommandError::InvalidPath { reason, .. },
+            first_deploy: true,
+        } if reason == "missing" => {}
+        other => panic!("expected a failed first deploy, got {other:?}"),
     }
-    let rows = row_set(&f);
-    assert_eq!(tools_of(&f), ["amp", "kimi_cli"]);
-    for (tool, status, _, path, owns) in &rows {
-        assert_eq!(*status, SyncStatus::Error, "{tool}");
-        assert!(!owns, "{tool}: a failed first sync owns nothing");
-        assert_eq!(path, &rows[0].3, "{tool}");
-    }
+    assert_eq!(tools_of(&f), ["amp"], "no sibling row is minted");
+    let (_, status, _, _, owns) = &row_set(&f)[0];
+    assert_eq!(*status, SyncStatus::Error);
+    assert!(!owns, "a failed first sync owns nothing");
 }
 
 #[test]

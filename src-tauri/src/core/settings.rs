@@ -29,8 +29,9 @@ use specta::Type;
 use super::credentials::{self, CredentialStore};
 use super::environment::HostRoots;
 use super::errors::SignalError;
+use super::placement::{self, PlacementSettings, ScopeKind};
 use super::skill_store::SkillStore;
-use super::tool_adapters::{adapter_by_key, global_tool_entries, installed_keys};
+use super::tool_adapters::{adapter_by_key, catalog_rows, global_tool_entries, installed_keys};
 
 /// Storage keys — spelled here and nowhere else.
 mod keys {
@@ -41,6 +42,12 @@ mod keys {
     /// the token now lives in the `CredentialStore`.
     pub const LEGACY_GITHUB_TOKEN: &str = "github_token";
     pub const AUTO_SYNC_ENABLED: &str = "auto_sync_enabled";
+    /// The saved selection as Deployment folder keys (1.4.0 on).
+    pub const GLOBAL_SELECTED_FOLDERS: &str = "global_selected_folders_v2";
+    /// The pre-1.4.0 selection of harness keys. Read only while
+    /// `GLOBAL_SELECTED_FOLDERS` is absent, and translated to folder keys
+    /// (`migrate_tool_selection_to_folders` writes the translation once);
+    /// never written again, so a downgrade still finds it.
     pub const GLOBAL_SELECTED_TOOLS: &str = "global_selected_tools_v1";
     pub const SCAN_SELECTED_TOOLS_ONLY: &str = "scan_selected_tools_only";
     pub const UI_ZOOM_LEVEL: &str = "ui_zoom_level";
@@ -130,8 +137,12 @@ pub struct AppSettings {
     /// secret itself never crosses the wire.
     pub github_token_set: Option<bool>,
     pub auto_sync_enabled: bool,
-    /// `None` = never configured (distinct from an empty selection). Keys
-    /// the Tool registry no longer knows are pruned on read (round 12 D2).
+    /// `None` = never configured (distinct from an empty selection). The
+    /// selection is stored as Deployment folder keys; this is every harness a
+    /// selected folder serves (`core::placement`) — folder by folder in the
+    /// stored order, each folder's harnesses in registry order — so two
+    /// harnesses sharing one folder are on or off together. Keys the registry
+    /// no longer knows are pruned on read (round 12 D2).
     pub global_selected_tools: Option<Vec<String>>,
     /// True when the stored selection exists but could not be parsed. The
     /// selection above is then `None` for display only: a global sync refuses
@@ -180,7 +191,7 @@ pub fn load_settings(
     credentials: &dyn CredentialStore,
     fallback_root: &Path,
 ) -> Result<AppSettings> {
-    let global_selection = read_tool_selection(store, keys::GLOBAL_SELECTED_TOOLS)?;
+    let global_selection = read_folder_selection(store)?;
     Ok(AppSettings {
         central_repo_path: resolve_central_repo_path(store, fallback_root)?
             .to_string_lossy()
@@ -195,7 +206,9 @@ pub fn load_settings(
             }
         },
         auto_sync_enabled: read_bool(store, keys::AUTO_SYNC_ENABLED, DEFAULT_AUTO_SYNC_ENABLED)?,
-        global_selected_tools: global_selection.configured(),
+        global_selected_tools: global_selection
+            .configured()
+            .map(|f| harnesses_served_by(&f)),
         global_selected_tools_corrupt: matches!(global_selection, StoredSelection::Corrupt { .. }),
         scan_selected_tools_only: read_bool(
             store,
@@ -213,7 +226,9 @@ pub fn load_settings(
 /// path refuses it separately). Reads only the settings table, never the
 /// credential store.
 pub fn onboarding_scan_selection(store: &SkillStore) -> Result<Option<Vec<String>>> {
-    let selection = read_tool_selection(store, keys::GLOBAL_SELECTED_TOOLS)?.configured();
+    let selection = read_folder_selection(store)?
+        .configured()
+        .map(|folders| harnesses_served_by(&folders));
     let scan_selected_only = read_bool(
         store,
         keys::SCAN_SELECTED_TOOLS_ONLY,
@@ -295,9 +310,10 @@ pub fn ui_zoom_level(store: &SkillStore) -> f64 {
         .unwrap_or(DEFAULT_UI_ZOOM_LEVEL)
 }
 
-/// The tools a global sync writes to: the operator's recorded selection when
-/// they have configured one, otherwise every detected tool. Detection is a
-/// fallback for a never-configured install, never an override of intent.
+/// The Deployment folders a global sync writes to, as folder keys: the
+/// operator's recorded selection when they have configured one, otherwise the
+/// folders serving every detected tool. Detection is a fallback for a
+/// never-configured install, never an override of intent.
 ///
 /// An empty selection is a selection — `Some(vec![])` means "sync nowhere",
 /// deliberately distinct from `None`. The set is **not** intersected with
@@ -309,16 +325,78 @@ pub fn ui_zoom_level(store: &SkillStore) -> f64 {
 /// (`SignalError::SettingCorrupt`), never a fallback to detection: the
 /// operator repairs it by saving the selection again.
 pub fn effective_global_tool_targets(store: &SkillStore, roots: &HostRoots) -> Result<Vec<String>> {
-    Ok(
-        match read_tool_selection(store, keys::GLOBAL_SELECTED_TOOLS)? {
-            StoredSelection::Configured(selected) => selected,
-            StoredSelection::Unconfigured => installed_keys(&global_tool_entries(roots)),
-            StoredSelection::Corrupt { detail } => bail!(SignalError::SettingCorrupt {
-                key: keys::GLOBAL_SELECTED_TOOLS.to_string(),
-                detail,
-            }),
-        },
-    )
+    Ok(match read_folder_selection(store)? {
+        StoredSelection::Configured(selected) => selected,
+        StoredSelection::Unconfigured => {
+            folders_serving(&installed_keys(&global_tool_entries(roots)))
+        }
+        StoredSelection::Corrupt { key, detail } => bail!(SignalError::SettingCorrupt {
+            key: key.to_string(),
+            detail,
+        }),
+    })
+}
+
+/// The folder keys serving `harnesses` at global scope, in first-seen order —
+/// a key the registry does not know is dropped (logged). A folder is on when
+/// any harness it serves is named (spec Q26).
+fn folders_serving(harnesses: &[String]) -> Vec<String> {
+    let mut folders: Vec<String> = Vec::new();
+    for harness in harnesses {
+        match placement::serving_folder(ScopeKind::Global, harness, &PlacementSettings::default()) {
+            Some(folder) if !folders.iter().any(|f| f == folder) => {
+                folders.push(folder.to_string())
+            }
+            Some(_) => {}
+            None => {
+                log::warn!("[settings] dropping unknown tool key {harness:?} from the selection")
+            }
+        }
+    }
+    folders
+}
+
+/// Every harness a selected folder serves — folder by folder in the stored
+/// order, each folder's harnesses in registry order: the harness-shaped
+/// spelling of a folder selection the wire carries.
+fn harnesses_served_by(folders: &[String]) -> Vec<String> {
+    folders
+        .iter()
+        .flat_map(|folder| {
+            catalog_rows().filter(move |adapter| {
+                placement::serving_folder(
+                    ScopeKind::Global,
+                    adapter.key(),
+                    &PlacementSettings::default(),
+                ) == Some(folder.as_str())
+            })
+        })
+        .map(|adapter| adapter.key().to_string())
+        .collect()
+}
+
+/// Translate a pre-1.4.0 harness selection (`global_selected_tools_v1`) into
+/// the folder selection once: when no folder selection is stored and the old
+/// row parses, write its translation (a folder is on when any harness it
+/// serves was selected). A corrupt old row is left alone — it keeps reading as
+/// `SETTING_CORRUPT` until the operator saves the selection, which writes the
+/// new key. Answers whether a translation was written. Runs at startup; the
+/// reader translates on the fly until it has.
+pub fn migrate_tool_selection_to_folders(store: &SkillStore) -> Result<bool> {
+    if store.get_setting(keys::GLOBAL_SELECTED_FOLDERS)?.is_some() {
+        return Ok(false);
+    }
+    match read_legacy_tool_selection(store)? {
+        StoredSelection::Configured(folders) => {
+            write_str(
+                store,
+                keys::GLOBAL_SELECTED_FOLDERS,
+                &serde_json::to_string(&folders)?,
+            )?;
+            Ok(true)
+        }
+        StoredSelection::Unconfigured | StoredSelection::Corrupt { .. } => Ok(false),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -365,10 +443,11 @@ pub fn apply_setting(
             {
                 bail!(SignalError::UnknownTool { tool: tool.clone() });
             }
+            // Stored as the folders serving the named harnesses (or folders).
             write_str(
                 store,
-                keys::GLOBAL_SELECTED_TOOLS,
-                &serde_json::to_string(&selected_tools)?,
+                keys::GLOBAL_SELECTED_FOLDERS,
+                &serde_json::to_string(&folders_serving(&selected_tools))?,
             )?;
             write_bool(store, keys::SCAN_SELECTED_TOOLS_ONLY, scan_selected_only)?;
         }
@@ -607,15 +686,15 @@ fn read_bool(store: &SkillStore, key: &str, default: bool) -> Result<bool> {
         .unwrap_or(default))
 }
 
-/// A stored Tool selection as read from its row. `Unconfigured` (absent or
-/// blank) is the only state that may fall back to detection; `Configured`
-/// carries registry keys only; `Corrupt` is a row that exists but is not a
-/// JSON string array.
+/// A stored selection as read from its row. `Unconfigured` (absent or blank)
+/// is the only state that may fall back to detection; `Configured` carries
+/// folder keys only; `Corrupt` is a row that exists but is not a JSON string
+/// array (`key` names that row).
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum StoredSelection {
     Unconfigured,
     Configured(Vec<String>),
-    Corrupt { detail: String },
+    Corrupt { key: &'static str, detail: String },
 }
 
 impl StoredSelection {
@@ -628,32 +707,69 @@ impl StoredSelection {
     }
 }
 
-/// The one reader of a Tool-selection row. Keys the registry no longer knows
-/// are dropped here (logged once per read), so neither the modal nor a sync
-/// batch ever sees a tool that does not exist; the operator's next save
-/// persists the pruned set.
-fn read_tool_selection(store: &SkillStore, key: &str) -> Result<StoredSelection> {
+/// The one reader of the saved selection, as folder keys: the folder row when
+/// it exists, else the pre-1.4.0 harness row translated
+/// ([`read_legacy_tool_selection`]). Keys that are no global folder are
+/// dropped here (logged once per read), so neither the modal nor a sync batch
+/// ever sees a folder that does not exist; the operator's next save persists
+/// the pruned set.
+fn read_folder_selection(store: &SkillStore) -> Result<StoredSelection> {
+    let key = keys::GLOBAL_SELECTED_FOLDERS;
+    let Some(raw) = store.get_setting(key)? else {
+        return read_legacy_tool_selection(store);
+    };
+    Ok(match parse_selection_row(key, &raw) {
+        StoredSelection::Configured(stored) => {
+            let (known, unknown): (Vec<String>, Vec<String>) = stored
+                .into_iter()
+                .partition(|folder| is_global_folder(folder));
+            for folder in &unknown {
+                log::warn!("[settings] dropping unknown folder key {folder:?} from {key}");
+            }
+            StoredSelection::Configured(known)
+        }
+        other => other,
+    })
+}
+
+/// The pre-1.4.0 selection row (`global_selected_tools_v1`, harness keys),
+/// translated to the folders serving them ([`folders_serving`]).
+fn read_legacy_tool_selection(store: &SkillStore) -> Result<StoredSelection> {
+    let key = keys::GLOBAL_SELECTED_TOOLS;
     let Some(raw) = store.get_setting(key)? else {
         return Ok(StoredSelection::Unconfigured);
     };
-    if raw.trim().is_empty() {
-        return Ok(StoredSelection::Unconfigured);
-    }
-    let keys = match serde_json::from_str::<Vec<String>>(&raw) {
-        Ok(keys) => keys,
-        Err(err) => {
-            return Ok(StoredSelection::Corrupt {
-                detail: err.to_string(),
-            })
+    Ok(match parse_selection_row(key, &raw) {
+        StoredSelection::Configured(harnesses) => {
+            StoredSelection::Configured(folders_serving(&harnesses))
         }
-    };
-    let (known, unknown): (Vec<String>, Vec<String>) = keys
-        .into_iter()
-        .partition(|tool| adapter_by_key(tool).is_some());
-    for tool in &unknown {
-        log::warn!("[settings] dropping unknown tool key {tool:?} from {key}");
+        other => other,
+    })
+}
+
+fn parse_selection_row(key: &'static str, raw: &str) -> StoredSelection {
+    if raw.trim().is_empty() {
+        return StoredSelection::Unconfigured;
     }
-    Ok(StoredSelection::Configured(known))
+    match serde_json::from_str::<Vec<String>>(raw) {
+        Ok(keys) => StoredSelection::Configured(keys),
+        Err(err) => StoredSelection::Corrupt {
+            key,
+            detail: err.to_string(),
+        },
+    }
+}
+
+/// Whether `key` is a global Deployment folder key: a folder serving some
+/// registry entry.
+fn is_global_folder(key: &str) -> bool {
+    catalog_rows().any(|adapter| {
+        placement::serving_folder(
+            ScopeKind::Global,
+            adapter.key(),
+            &PlacementSettings::default(),
+        ) == Some(key)
+    })
 }
 
 fn write_str(store: &SkillStore, key: &str, value: &str) -> Result<()> {

@@ -126,6 +126,11 @@ pub struct ToolInfoDto {
     pub key: String,
     pub label: String,
     pub installed: bool,
+    /// The folder key of the Deployment folder serving this harness at the
+    /// list's scope (`core::placement`). Deployment rows, the project matrix
+    /// and the saved selection are keyed by folder: the frontend matches a
+    /// harness to its rows through this key, never through a path.
+    pub folder_key: String,
     /// Keys of every listed tool sharing this tool's skills dir (global dir
     /// for the global list, project dir for the project list), in adapter
     /// order, including this tool itself (len >= 1). The backend owns the
@@ -222,6 +227,7 @@ impl From<ToolCatalogEntry> for ToolInfoDto {
             key: entry.key.to_string(),
             label: entry.label.to_string(),
             installed: entry.installed,
+            folder_key: entry.folder_key.to_string(),
             shared_with: entry.shared_with.iter().map(|k| k.to_string()).collect(),
             constituents: entry.constituents.iter().map(|k| k.to_string()).collect(),
             readers: entry

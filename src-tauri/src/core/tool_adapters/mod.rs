@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 
 use crate::core::environment::{HostOs, HostRoot, HostRoots};
 use crate::core::errors::SignalError;
+use crate::core::placement::InstalledSet;
 use crate::core::skill_discovery::{manifest_validity, InvalidManifestReason};
 
 pub mod catalog;
@@ -2873,24 +2874,33 @@ pub fn default_tool_adapters() -> &'static [ToolAdapter] {
 /// each row's thread-local shadow applied (`test_overrides::shadow`), so a
 /// catalog test can exercise a shape no shipped row has yet.
 #[cfg(not(test))]
-fn catalog_rows() -> impl Iterator<Item = &'static ToolAdapter> {
+pub(crate) fn catalog_rows() -> impl Iterator<Item = &'static ToolAdapter> {
     TOOL_ADAPTERS.iter()
 }
 
 #[cfg(test)]
-fn catalog_rows() -> impl Iterator<Item = &'static ToolAdapter> {
+pub(crate) fn catalog_rows() -> impl Iterator<Item = &'static ToolAdapter> {
     TOOL_ADAPTERS
         .iter()
         .map(|adapter| test_overrides::lookup(adapter.key()).unwrap_or(adapter))
 }
 
-/// Tools can share the same global skills directory (e.g. Amp and Kimi Code CLI).
-/// Use this to coordinate UI warnings and avoid duplicate filesystem operations.
-pub fn adapters_sharing_skills_dir(adapter: &ToolAdapter) -> Vec<&'static ToolAdapter> {
-    TOOL_ADAPTERS
-        .iter()
-        .filter(|a| a.skills_dir.same_location(&adapter.skills_dir))
-        .collect()
+/// The detected registry entries and reader-only harnesses on the host whose
+/// roots are `roots` — the installed set placement is computed over
+/// (`core::placement::place`), by the one installedness rule
+/// ([`is_installed_in`], [`reader_installed_in`]).
+pub fn installed_set_in(roots: &HostRoots) -> InstalledSet {
+    InstalledSet::from_keys(
+        catalog_rows()
+            .filter(|adapter| is_installed_in(roots, adapter))
+            .map(ToolAdapter::key)
+            .chain(
+                reader_only_harnesses()
+                    .into_iter()
+                    .filter(|reader| reader_installed_in(roots, reader))
+                    .map(|reader| reader.key),
+            ),
+    )
 }
 
 /// The adapters absorbed into `group` at project scope, in registry order.

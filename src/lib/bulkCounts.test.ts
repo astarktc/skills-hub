@@ -216,6 +216,12 @@ describe("harnessArrivals (D48)", () => {
     ];
     expect(harnessArrivals(skills, "cursor").map((s) => s.id)).toEqual(["fresh", "failedThere"]);
   });
+
+  it("reads the harness's Deployment folder: Kimi Code gets nothing Amp's folder already has", () => {
+    const skills = [skill("onAmp", [target("amp")]), skill("nowhere", [])];
+    // Kimi Code is served by the folder `amp` (`ToolInfoDto.folder_key`).
+    expect(harnessArrivals(skills, "amp").map((s) => s.id)).toEqual(["nowhere"]);
+  });
 });
 
 describe("updateCounts", () => {

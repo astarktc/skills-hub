@@ -24,6 +24,7 @@ pub mod manifest;
 pub mod mutation_guard;
 pub mod onboarding;
 pub mod onboarding_import;
+pub mod placement;
 pub mod project_ops;
 pub mod project_sync;
 pub mod propagation;

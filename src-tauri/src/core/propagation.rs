@@ -36,11 +36,11 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use uuid::Uuid;
 
 use super::environment::HostRoots;
 use super::errors::{CommandError, SignalError};
 use super::installer::InstallerPaths;
+use super::placement::{self, one_row_per_folder, row_folder, ScopeKind};
 use super::project_sync::AssignmentSyncContext;
 use super::removal_fence::ProtectedLibrary;
 use super::skill_store::{
@@ -49,9 +49,7 @@ use super::skill_store::{
 };
 use super::sync_engine;
 use super::sync_status::{SyncMode, SyncStatus};
-use super::tool_adapters::{
-    adapter_by_key, adapters_sharing_skills_dir, is_installed_in, ToolAdapter,
-};
+use super::tool_adapters::{adapter_by_key, catalog_rows, installed_set_in, ToolAdapter};
 
 /// Which Sync target an outcome is about.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, specta::Type)]
@@ -140,13 +138,16 @@ pub(crate) fn propagate_unlocked(
 
     let mut report = PropagationReport::default();
     if store.skill_disabled_at(skill_id)?.is_some() {
-        // Off everywhere until enabled: every row is reported, none is touched.
-        for row in store.list_skill_targets(skill_id)? {
+        // Off everywhere until enabled: every folder is reported, none is touched.
+        for row in one_row_per_folder(ScopeKind::Global, store.list_skill_targets(skill_id)?) {
             report
                 .targets
                 .push(skipped_global(&row.tool, PropagationSkip::Disabled));
         }
-        for assignment in store.list_project_skill_assignments_by_skill(skill_id)? {
+        for assignment in one_row_per_folder(
+            ScopeKind::Project,
+            store.list_project_skill_assignments_by_skill(skill_id)?,
+        ) {
             report.targets.push(PropagationOutcome {
                 scope: PropagationScope::Project {
                     project_id: assignment.project_id,
@@ -185,9 +186,13 @@ fn missing_source(central_path: &Path) -> anyhow::Error {
 // Global scope
 // ---------------------------------------------------------------------------
 
-/// Global target rows, handled one **shared skills dir group at a time**:
-/// tools sharing a global skills dir share one artifact, so the bytes are
-/// written once and every member row is settled.
+/// Global target rows, handled one **Deployment folder at a time**: a folder
+/// is one artifact, so the bytes are written once and every row describing it
+/// is settled — one row per folder, plus any row written once per shared-dir
+/// sibling before rows were per folder (`placement::row_folder` reads it as
+/// the folder), until the redeploy collapses them. One outcome is reported per
+/// folder, named by its folder key. A row that never materialised gets a first
+/// deploy and records nothing beyond its own row.
 fn propagate_global_rows(
     store: &SkillStore,
     central_dir: &Path,
@@ -197,270 +202,128 @@ fn propagate_global_rows(
     now: i64,
     report: &mut PropagationReport,
 ) -> Result<()> {
-    let rows: Vec<_> = store
-        .list_skill_targets(skill_id)?
-        .into_iter()
-        .map(|row| {
-            let adapter = adapter_by_key(&row.tool);
-            (row, adapter)
-        })
-        .collect();
-    let mut handled: Vec<String> = Vec::new();
+    let mut groups: Vec<(String, Vec<SkillTargetRecord>)> = Vec::new();
+    for row in store.list_skill_targets(skill_id)? {
+        let folder = row_folder(ScopeKind::Global, &row.tool);
+        match groups.iter_mut().find(|(f, _)| *f == folder) {
+            Some((_, rows)) => rows.push(row),
+            None => groups.push((folder, vec![row])),
+        }
+    }
+    if groups.is_empty() {
+        return Ok(());
+    }
+    let installed = installed_set_in(roots);
 
-    for (row, adapter) in &rows {
-        if handled.contains(&row.tool) {
+    for (folder, rows) in &groups {
+        // One disabled row disables the folder: writing it for a sibling
+        // would re-materialise it where the disabled harness reads.
+        if rows.iter().any(|row| row.status == SyncStatus::Disabled) {
+            report
+                .targets
+                .push(skipped_global(folder, PropagationSkip::Disabled));
             continue;
         }
-        handled.push(row.tool.clone());
-
-        let Some(adapter) = *adapter else {
-            let reason = if row.status == SyncStatus::Disabled {
-                PropagationSkip::Disabled
-            } else {
-                PropagationSkip::UnknownTool {
-                    tool: row.tool.clone(),
-                }
-            };
-            report.targets.push(skipped_global(&row.tool, reason));
-            continue;
-        };
-
-        // The group: this skill's rows whose tools share the global skills
-        // dir (the dir, not the key, is a target's identity). Which tools
-        // those are is the registry's answer; the rows are matched by key.
-        // The row's own Tool is a member by definition — the registry
-        // answers from its static entries while the row resolved through
-        // `adapter_by_key`, and the two may disagree (a test shadow), so the
-        // membership is not left to the registry's reflexivity.
-        let sharers = adapters_sharing_skills_dir(adapter);
-        let sharing: Vec<&str> = sharers.iter().map(|a| a.key()).collect();
-        let group: Vec<(&SkillTargetRecord, &'static ToolAdapter)> = rows
-            .iter()
-            .filter(|(r, _)| r.tool == row.tool || sharing.contains(&r.tool.as_str()))
-            .filter_map(|(r, a)| a.map(|a| (r, a)))
-            .collect();
-        for (member, _) in &group {
-            if !handled.contains(&member.tool) {
-                handled.push(member.tool.clone());
-            }
-        }
-
-        // One disabled member disables the shared artifact: writing it for a
-        // sibling would re-materialise it where the disabled Tool reads.
-        if group
-            .iter()
-            .any(|(member, _)| member.status == SyncStatus::Disabled)
-        {
-            for (member, _) in &group {
-                report
-                    .targets
-                    .push(skipped_global(&member.tool, PropagationSkip::Disabled));
-            }
-            continue;
-        }
-
-        let (installed, absent): (Vec<_>, Vec<_>) = group
-            .into_iter()
-            .partition(|(_, a)| is_installed_in(roots, a));
-        for (member, _) in &absent {
+        let Some(adapter) = placement::capability_entry(ScopeKind::Global, folder) else {
             report.targets.push(skipped_global(
-                &member.tool,
-                PropagationSkip::ToolNotInstalled {
-                    tool: member.tool.clone(),
+                folder,
+                PropagationSkip::UnknownTool {
+                    tool: folder.clone(),
                 },
             ));
-        }
-        let Some((driver, _)) = installed.first() else {
             continue;
         };
+        // The folder is reachable when any harness whose own folder it is, is
+        // installed (its rows are what is recorded here, whatever key wrote them).
+        let reachable = catalog_rows()
+            .filter(|a| row_folder(ScopeKind::Global, a.key()) == *folder)
+            .any(|a| installed.contains(a.key()));
+        if !reachable {
+            report.targets.push(skipped_global(
+                folder,
+                PropagationSkip::ToolNotInstalled {
+                    tool: folder.clone(),
+                },
+            ));
+            continue;
+        }
 
         // A link already follows the central copy — but only a link of ours:
         // a row that never materialised (a failed first sync's `error` row,
         // `owns_artifact` false) has no link yet, so it gets a first sync.
-        if !installed
+        if !rows
             .iter()
-            .any(|(member, a)| needs_new_bytes(member.mode, a) || !member.owns_artifact())
+            .any(|row| needs_new_bytes(row.mode, adapter) || !row.owns_artifact())
         {
-            for (member, _) in &installed {
-                report.targets.push(skipped_global(
-                    &member.tool,
-                    PropagationSkip::LinkFollowsSource,
-                ));
-            }
+            report
+                .targets
+                .push(skipped_global(folder, PropagationSkip::LinkFollowsSource));
             continue;
         }
 
-        // The shared artifact is ours to replace only when a member row
+        // The folder's artifact is ours to replace only when a row
         // materialised it (`owns_artifact`); otherwise this is a first sync
         // and foreign bytes there are `TARGET_EXISTS`.
-        let overwrite = installed.iter().any(|(member, _)| member.owns_artifact());
-
-        // A shared skills dir is one artifact (D34 amendment): a first sync
-        // into it is recorded for every *installed* sharer, exactly as the
-        // global batch records its `record_tools` — the sharers this skill
-        // has no row for yet are settled here beside the group's rows. An
-        // update of an owned artifact records nothing new. A sibling minted
-        // here is never visited again in this pass (`rows` is a snapshot;
-        // `handled` names it besides).
-        let siblings: Vec<&'static ToolAdapter> = if overwrite {
-            Vec::new()
-        } else {
-            sharers
-                .iter()
-                .copied()
-                .filter(|a| !rows.iter().any(|(r, _)| r.tool == a.key()))
-                .filter(|a| is_installed_in(roots, a))
-                .collect()
-        };
-        for sibling in &siblings {
-            if !handled.iter().any(|tool| tool == sibling.key()) {
-                handled.push(sibling.key().to_string());
-            }
-        }
-
-        // The group's most restrictive member — a sibling about to be
-        // recorded included — decides how the shared artifact is written:
-        // one copy-only Tool makes the whole dir a copy.
-        let driving_adapter = installed
+        let owned = rows.iter().any(|row| row.owns_artifact());
+        let driver = rows
             .iter()
-            .map(|(_, a)| *a)
-            .chain(siblings.iter().copied())
-            .find(|a| !a.supports_symlink)
-            .unwrap_or(adapter);
+            .find(|row| row.tool == *folder)
+            .unwrap_or(&rows[0]);
 
         let source_missing = !central_path.is_dir();
         let result = if source_missing {
             Err(missing_source(central_path))
         } else {
             sync_engine::sync_dir_for_tool_with_overwrite(
-                driving_adapter,
+                adapter,
                 central_path,
                 super::content_identity::Source::Managed { store, skill_id },
                 Path::new(&driver.target_path),
-                overwrite,
+                owned,
                 &ProtectedLibrary::new(store, central_dir),
             )
         };
 
-        match result {
+        let status = match result {
             Ok(outcome) => {
                 let target_path = outcome.target_path.to_string_lossy().to_string();
-                for (member, _) in &installed {
+                for row in rows {
                     store.transition_skill_target(
-                        &member.id,
+                        &row.id,
                         TargetTransition::SyncCompleted {
                             mode: outcome.mode_used,
                             target_path: &target_path,
                             synced_at: now,
                         },
                     )?;
-                    report.targets.push(PropagationOutcome {
-                        scope: PropagationScope::Global {
-                            tool: member.tool.clone(),
-                        },
-                        status: PropagationStatus::Synced {
-                            mode_used: outcome.mode_used,
-                        },
-                    });
                 }
-                for sibling in &siblings {
-                    store.transition_skill_target(
-                        &Uuid::new_v4().to_string(),
-                        TargetTransition::Recorded {
-                            skill_id,
-                            tool: sibling.key(),
-                            mode: outcome.mode_used,
-                            target_path: &target_path,
-                            synced_at: now,
-                        },
-                    )?;
-                    report.targets.push(PropagationOutcome {
-                        scope: PropagationScope::Global {
-                            tool: sibling.key().to_string(),
-                        },
-                        status: PropagationStatus::Synced {
-                            mode_used: outcome.mode_used,
-                        },
-                    });
+                PropagationStatus::Synced {
+                    mode_used: outcome.mode_used,
                 }
             }
             Err(error) => {
+                // A failed first sync records nothing new (D9): a
+                // `TARGET_EXISTS` is answered by the operator's ask, any other
+                // failure settles the folder's rows `error`.
                 let detail = format!("{:#}", error);
-                // The sibling rule of a failed first sync is the global
-                // batch's (`global_sync::sync_skills_to_planned_tools`): a
-                // `TARGET_EXISTS` records nothing until the operator answers
-                // the ask (D12) — its confirmed retry goes through that batch,
-                // which records the sharers then; any other failure records
-                // every installed sharer `error`, owning nothing
-                // (`record_failed`, D9).
-                let collision = error
-                    .chain()
-                    .any(|cause| cause.is::<sync_engine::TargetExistsError>());
-                let failed_siblings: &[&'static ToolAdapter] =
-                    if collision { &[] } else { &siblings };
-                // Each member row is its own Sync target, so each one is
-                // settled and reported as failed. A missing central copy is
-                // the same typed condition for every row; a sync failure's
-                // full chain belongs to the row that was attempted, and the
-                // rest carry its diagnostic text.
-                let mut original = Some(error);
-                for (member, _) in &installed {
+                for row in rows {
                     store.transition_skill_target(
-                        &member.id,
+                        &row.id,
                         TargetTransition::SyncFailed { error: &detail },
                     )?;
-                    let error = if source_missing {
-                        missing_source(central_path)
-                    } else {
-                        original
-                            .take()
-                            .unwrap_or_else(|| anyhow::anyhow!("{}", detail))
-                    };
-                    report.targets.push(PropagationOutcome {
-                        scope: PropagationScope::Global {
-                            tool: member.tool.clone(),
-                        },
-                        status: PropagationStatus::Failed {
-                            error: CommandError::from_anyhow(error),
-                            first_deploy: !member.owns_artifact(),
-                        },
-                    });
                 }
-                // A row that never materialised records the mode a sync
-                // would try first, as the batch's `would_be` does.
-                let would_be_mode = if driving_adapter.supports_symlink {
-                    SyncMode::Symlink
-                } else {
-                    SyncMode::Copy
-                };
-                for sibling in failed_siblings {
-                    store.transition_skill_target(
-                        &Uuid::new_v4().to_string(),
-                        TargetTransition::FailedRecorded {
-                            skill_id,
-                            tool: sibling.key(),
-                            mode: would_be_mode,
-                            target_path: &driver.target_path,
-                            error: &detail,
-                        },
-                    )?;
-                    let error = if source_missing {
-                        missing_source(central_path)
-                    } else {
-                        anyhow::anyhow!("{}", detail)
-                    };
-                    report.targets.push(PropagationOutcome {
-                        scope: PropagationScope::Global {
-                            tool: sibling.key().to_string(),
-                        },
-                        status: PropagationStatus::Failed {
-                            error: CommandError::from_anyhow(error),
-                            first_deploy: true,
-                        },
-                    });
+                PropagationStatus::Failed {
+                    error: CommandError::from_anyhow(error),
+                    first_deploy: !owned,
                 }
             }
-        }
+        };
+        report.targets.push(PropagationOutcome {
+            scope: PropagationScope::Global {
+                tool: folder.clone(),
+            },
+            status,
+        });
     }
     Ok(())
 }
@@ -485,13 +348,79 @@ fn propagate_project_rows(
     now: i64,
     report: &mut PropagationReport,
 ) -> Result<()> {
+    // One folder per project, one sync: rows written once per shared-dir
+    // sibling before rows were per folder follow their folder's row.
+    let mut groups: Vec<(String, String, Vec<ProjectSkillAssignmentRecord>)> = Vec::new();
     for assignment in store.list_project_skill_assignments_by_skill(&skill.id)? {
+        let folder = row_folder(ScopeKind::Project, &assignment.tool);
+        match groups
+            .iter_mut()
+            .find(|(p, f, _)| *p == assignment.project_id && *f == folder)
+        {
+            Some((_, _, rows)) => rows.push(assignment),
+            None => groups.push((assignment.project_id.clone(), folder, vec![assignment])),
+        }
+    }
+    for (project_id, folder, rows) in groups {
         let scope = PropagationScope::Project {
-            project_id: assignment.project_id.clone(),
-            tool: assignment.tool.clone(),
+            project_id,
+            tool: folder.clone(),
         };
-        let status = propagate_one_assignment(store, central_dir, skill, now, &assignment)?;
+        let pick = rows
+            .iter()
+            .position(|row| row.status == SyncStatus::Disabled)
+            .or_else(|| rows.iter().position(|row| row.tool == folder))
+            .unwrap_or(0);
+        let driver = &rows[pick];
+        let status = propagate_one_assignment(store, central_dir, skill, now, driver)?;
+        settle_siblings(store, driver, &rows, &status)?;
         report.targets.push(PropagationOutcome { scope, status });
+    }
+    Ok(())
+}
+
+/// Settle the other rows of the driver's folder as the driver settled.
+fn settle_siblings(
+    store: &SkillStore,
+    driver: &ProjectSkillAssignmentRecord,
+    rows: &[ProjectSkillAssignmentRecord],
+    status: &PropagationStatus,
+) -> Result<()> {
+    let siblings = rows.iter().filter(|row| row.id != driver.id);
+    match status {
+        PropagationStatus::Synced { .. } => {
+            let Some(settled) = store.get_project_skill_assignment(
+                &driver.project_id,
+                &driver.skill_id,
+                &driver.tool,
+            )?
+            else {
+                return Ok(());
+            };
+            for row in siblings {
+                store.transition_assignment(
+                    &row.id,
+                    AssignmentTransition::SyncCompleted {
+                        mode: settled.mode,
+                        synced_at: settled.synced_at.unwrap_or_default(),
+                        content_hash: settled.content_hash.as_deref(),
+                    },
+                )?;
+            }
+        }
+        PropagationStatus::Failed { .. } => {
+            let detail = store
+                .get_project_skill_assignment(&driver.project_id, &driver.skill_id, &driver.tool)?
+                .and_then(|settled| settled.last_error)
+                .unwrap_or_default();
+            for row in siblings {
+                store.transition_assignment(
+                    &row.id,
+                    AssignmentTransition::SyncFailed { error: &detail },
+                )?;
+            }
+        }
+        PropagationStatus::Skipped { .. } => {}
     }
     Ok(())
 }

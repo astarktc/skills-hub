@@ -530,8 +530,8 @@ export function unlocatableRepairs(
 
 /**
  * One tool chip on a skill card: a Tool the card must offer the operator,
- * with the target row it has (if any) and whether detection still sees the
- * Tool.
+ * with the target row of the folder serving it (if any) and whether
+ * detection still sees the Tool.
  */
 export type SkillToolChip = {
   id: string;
@@ -556,14 +556,15 @@ export function skillToolChips(
   installedTools: ToolOption[],
   allTools: ToolOption[],
 ): SkillToolChip[] {
-  const targetByTool = new Map(targets.map((target) => [target.tool, target]));
+  // Rows are keyed by Deployment folder (`ToolOption.folder`).
+  const targetByFolder = new Map(targets.map((target) => [target.tool, target]));
   const chips: SkillToolChip[] = installedTools.map((tool) => ({
     id: tool.id,
     label: tool.label,
-    target: targetByTool.get(tool.id) ?? null,
+    target: targetByFolder.get(tool.folder) ?? null,
     detected: true,
   }));
-  const seen = new Set(chips.map((chip) => chip.id));
+  const seen = new Set(installedTools.map((tool) => tool.folder));
   const labelById = new Map(allTools.map((tool) => [tool.id, tool.label]));
   for (const target of targets) {
     if (seen.has(target.tool)) continue;
@@ -1036,6 +1037,11 @@ export const STRIP_MARK_NAME_KEY = {
 
 export type StripMark = {
   tool: string;
+  /**
+   * The Deployment folder whose row the mark reads (`ToolInfoDto.folder_key`):
+   * two harnesses sharing a folder read one row.
+   */
+  folder: string;
   /** The Tool catalog's label — never a raw key. */
   label: string;
   state: StripMarkState;
@@ -1057,8 +1063,9 @@ export type SyncedStrip = {
 
 /**
  * The Synced strip: one mark per Tool of the effective target set (in the
- * order given — the registry's), then any Tool the skill still has a row
- * for outside that set, so a failure is never hidden. A skill disabled at
+ * order given — the registry's), each reading the row of the folder serving
+ * it, then a mark for any folder the skill still has a row for outside that
+ * set, so a failure is never hidden. A skill disabled at
  * skill grain shows every mark disabled; a skill whose central copy is
  * missing never shows a filled mark (its links dangle: `broken`).
  */
@@ -1068,28 +1075,29 @@ export function syncedStrip(
     unlocatable: UnlocatableState | null;
     targets: readonly Pick<SkillTargetDto, "tool" | "status" | "synced_at">[];
   },
-  tools: readonly { id: string; label: string }[],
+  tools: readonly { id: string; label: string; folder: string }[],
   context: { labelOf: (tool: string) => string; isDetected: (tool: string) => boolean },
 ): SyncedStrip {
-  const byTool = new Map(skill.targets.map((target) => [target.tool, target]));
-  const order = tools.map((tool) => ({ id: tool.id, label: tool.label }));
-  const shown = new Set(order.map((tool) => tool.id));
+  const byFolder = new Map(skill.targets.map((target) => [target.tool, target]));
+  const order = tools.map((tool) => ({ id: tool.id, label: tool.label, folder: tool.folder }));
+  const shown = new Set(order.map((tool) => tool.folder));
   for (const target of skill.targets) {
     if (shown.has(target.tool)) continue;
     shown.add(target.tool);
-    order.push({ id: target.tool, label: context.labelOf(target.tool) });
+    order.push({ id: target.tool, label: context.labelOf(target.tool), folder: target.tool });
   }
   const centralMissing = skill.unlocatable === "central_missing";
-  const marks = order.map(({ id, label }): StripMark => {
+  const marks = order.map(({ id, label, folder }): StripMark => {
     const mark = (state: StripMarkState, nameKey: StripMark["nameKey"]): StripMark => ({
       tool: id,
+      folder,
       label,
       state,
       nameKey,
       detected: context.isDetected(id),
     });
     if (skill.disabled_at !== null) return mark("disabled", "skill_disabled");
-    const target = byTool.get(id);
+    const target = byFolder.get(folder);
     if (!target) return mark("not_synced", "not_synced");
     switch (target.status) {
       case "disabled":

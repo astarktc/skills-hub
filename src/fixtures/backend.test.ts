@@ -227,7 +227,7 @@ describe("rich", () => {
     expect(retry[0].status).toMatchObject({ status: "synced", outcome: { replaced: true } });
   });
 
-  it("dedupes a shared skills dir and records every detected sharer", async () => {
+  it("writes a shared skills dir once and records one row, keyed by its folder", async () => {
     const { handlers } = backendFor("rich");
     const vitest = (await handlers.getManagedSkills()).find((s) => s.name === "vitest-migration")!;
     const report = await handlers.syncSkillsToTools(
@@ -238,7 +238,8 @@ describe("rich", () => {
     );
     expect(report.map((r) => r.tool_key)).toEqual(["amp"]);
     const after = (await handlers.getManagedSkills()).find((s) => s.id === vitest.id)!;
-    expect(after.targets.map((t) => t.tool)).toEqual(expect.arrayContaining(["amp", "kimi_cli"]));
+    expect(after.targets.map((t) => t.tool)).toContain("amp");
+    expect(after.targets.map((t) => t.tool)).not.toContain("kimi_cli");
   });
 
   it("streams both Refresh phases and reports every refreshable skill", async () => {
@@ -261,9 +262,10 @@ describe("rich", () => {
     const global = Object.fromEntries(
       status.targets.flatMap((o) => (o.scope.scope === "global" ? [[o.scope.tool, o.status]] : [])),
     );
-    // amp/kimi_cli are copies (one shared artifact): rewritten, recovered.
+    // amp/kimi_cli are copies of one shared artifact, one folder (`amp`):
+    // rewritten once, recovered, reported once.
     expect(global.amp).toEqual({ status: "synced", mode_used: "symlink" });
-    expect(global.kimi_cli).toEqual({ status: "synced", mode_used: "symlink" });
+    expect(global.kimi_cli).toBeUndefined();
     // Synced links are skipped: the central copy was refreshed in place.
     expect(global.claude_code).toEqual({ status: "skipped", reason: { reason: "link_follows_source" } });
     const after = await byName(handlers, "using-git-worktrees");
@@ -370,18 +372,20 @@ describe("failures", () => {
       );
     };
 
+    // Amp and Kimi Code's rows are one folder (`amp`), reported once.
     const links = await statusOf(worktrees.id);
-    for (const tool of ["amp", "kimi_cli", "cursor"]) {
+    for (const tool of ["amp", "cursor"]) {
       expect(links[tool]).toEqual({ status: "skipped", reason: { reason: "link_follows_source" } });
     }
+    expect(links.kimi_cli).toBeUndefined();
     const linkRows = (await byName(handlers, "using-git-worktrees")).targets;
-    for (const tool of ["amp", "kimi_cli", "cursor"]) {
+    for (const tool of ["amp", "cursor"]) {
       expect(linkRows.find((r) => r.tool === tool)).toMatchObject({ mode: "symlink", status: "error" });
     }
 
     const copies = await statusOf(tdd.id);
     expect(copies.amp).toMatchObject({ status: "failed", error: { code: "REMOVAL_PERMISSION_DENIED" } });
-    expect(copies.kimi_cli).toMatchObject({ status: "failed", error: { code: "REMOVAL_PERMISSION_DENIED" } });
+    expect(copies.kimi_cli).toBeUndefined();
     const copyRows = (await byName(handlers, "tdd")).targets;
     expect(copyRows.find((r) => r.tool === "amp")).toMatchObject({ mode: "copy", status: "error" });
   });
@@ -768,7 +772,7 @@ describe("D35 boundary of Refresh all (ticket 33 audit F2)", () => {
   });
 });
 
-describe("D34 amendment: a shared skills dir records every installed sharer on every write path (audit F1)", () => {
+describe("one folder, one row: a shared skills dir records no sibling on any write path (round 20 ticket 09, audit F1)", () => {
   /**
    * The audit's state: json-canvas with only Amp's never-owned `error` row (a
    * first sync that failed before Kimi was installed); Kimi shares Amp's dir
@@ -801,20 +805,16 @@ describe("D34 amendment: a shared skills dir records every installed sharer on e
     return status.targets.flatMap((o) => (o.scope.scope === "global" ? [[o.scope.tool, o.status]] : []));
   };
 
-  it("the Update's own first sync records Amp and Kimi on the one shared artifact", async () => {
+  it("the Update's own first sync records the shared folder's one row", async () => {
     const { handlers, skill, rows, tools } = canvasOnAmp();
     const { report } = await handlers.updateManagedSkill(skill.dto.id, sink().channel);
-    expect(globalOutcomes(report.skills[0].status)).toEqual([
-      ["amp", { status: "synced", mode_used: "symlink" }],
-      ["kimi_cli", { status: "synced", mode_used: "symlink" }],
-    ]);
-    expect(await tools()).toEqual(["amp", "kimi_cli"]);
-    const [amp, kimi] = await rows();
-    expect(kimi.target_path).toBe(amp.target_path);
-    expect([amp.owned, kimi.owned]).toEqual([true, true]);
+    expect(globalOutcomes(report.skills[0].status)).toEqual([["amp", { status: "synced", mode_used: "symlink" }]]);
+    expect(await tools()).toEqual(["amp"]);
+    const [amp] = await rows();
+    expect(amp.owned).toBe(true);
   });
 
-  it("the audit's repro: a collision records no sharer; the confirmed retry records [amp, kimi_cli], the same rows", async () => {
+  it("the audit's repro: a collision records nothing new; the confirmed retry records the folder's row, the same rows", async () => {
     const { handlers, skill, rows, tools } = canvasOnAmp({ foreign: true });
     const before = await tools();
     expect(before).toEqual(["amp"]);
@@ -831,7 +831,7 @@ describe("D34 amendment: a shared skills dir records every installed sharer on e
       { overwrite_if_same_content: true, overrides: [{ skill_id: skill.dto.id, tool: "amp", decision: "overwrite" }] },
       sink<SyncProgressDto>().channel,
     );
-    expect(await tools()).toEqual(["amp", "kimi_cli"]);
+    expect(await tools()).toEqual(["amp"]);
     // Whichever writer settled the shared dir, the catalog reads the same.
     const control = canvasOnAmp();
     await control.handlers.updateManagedSkill(control.skill.dto.id, sink().channel);
@@ -1125,14 +1125,21 @@ describe("N1: progress ticks only the work that reached each phase", () => {
 
 describe("F2: unwritable dirs refuse removal too (ADR-0002)", () => {
   it("disable from a shared unwritable dir: one failed target, both rows kept as error", async () => {
-    const { handlers } = backendFor("failures");
+    const { handlers, state } = backendFor("failures");
     const docx = await byName(handlers, "docx");
     const report = await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: docx.id, tool: "amp" });
     expect(report.targets).toHaveLength(1);
+    // The scenario's pre-1.4.0 sibling rows are both the folder's.
     expect(report.targets[0].rows.map((r) => r.tool).sort()).toEqual(["amp", "kimi_cli"]);
     expect(report.targets[0].status).toMatchObject({ status: "failed", error: { code: "REMOVAL_PERMISSION_DENIED" } });
+    const stored = state.skills.find((s) => s.dto.id === docx.id)!.dto.targets;
+    expect(stored.filter((r) => r.tool === "amp" || r.tool === "kimi_cli").map((r) => r.status)).toEqual([
+      "error",
+      "error",
+    ]);
+    // The catalog reads them as the one folder they are.
     const rows = (await byName(handlers, "docx")).targets.filter((r) => r.tool === "amp" || r.tool === "kimi_cli");
-    expect(rows.map((r) => r.status)).toEqual(["error", "error"]);
+    expect(rows.map((r) => [r.tool, r.status])).toEqual([["amp", "error"]]);
   });
 
   it("remove_project keeps the project and the row whose artifact stayed", async () => {
@@ -1192,7 +1199,7 @@ describe("ticket-01 review: ownership, partial Disable, artifact presence", () =
     expect(tddAssignment().last_error).toBe(failure);
   });
 
-  it("F3: a failed shared-dir removal mints no disabled sibling; the retry settles both", async () => {
+  it("F3: a failed shared-dir removal mints no marker; the retry settles the folder's row", async () => {
     const { state, handlers } = fixture();
     const docx = state.skills.find((s) => s.dto.name === "docx")!;
     docx.dto.targets = docx.dto.targets.filter((t) => t.tool !== "amp");
@@ -1204,7 +1211,8 @@ describe("ticket-01 review: ownership, partial Disable, artifact presence", () =
     state.unwritableTools = state.unwritableTools.filter((tool) => tool !== "amp" && tool !== "kimi_cli");
     const retried = await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: docx.dto.id, tool: "amp" });
     expect(retried.targets.map((t) => t.status.status)).toEqual(["removed"]);
-    expect(shared()).toEqual([["kimi_cli", "disabled"], ["amp", "disabled"]]);
+    // Kimi Code's pre-1.4.0 row is the folder's record: no second row is minted.
+    expect(shared()).toEqual([["kimi_cli", "disabled"]]);
   });
 
   it("F4: presence is independent of status — a repeated Disable, then Delete, on a locked path keeps failing", async () => {
@@ -1355,11 +1363,10 @@ describe("D9: Skill health and the failed / declined first sync (ticket 02)", ()
       expect(typeof s.health.error.code).toBe("string");
       expect(s.health.at).toBeLessThanOrEqual(NOW);
     }
-    // A failed first sync's rows own nothing.
+    // A failed first sync's rows own nothing (Amp and Kimi Code's, one folder).
     const canvas = await byName(handlers, "json-canvas");
     expect(canvas.targets.filter((t) => t.status === "error")).toEqual([
       expect.objectContaining({ tool: "amp", synced_at: null }),
-      expect.objectContaining({ tool: "kimi_cli", synced_at: null }),
     ]);
   });
 
@@ -1466,9 +1473,9 @@ describe("D9: Skill health and the failed / declined first sync (ticket 02)", ()
 
     const unwritable = await handlers.syncSkillsToTools(batch, ["amp"], { overwrite_if_same_content: true }, sink().channel);
     expect(unwritable[0].status).toMatchObject({ status: "skipped", error: { code: "TOOL_NOT_WRITABLE" } });
-    for (const tool of ["amp", "kimi_cli"]) {
-      expect(zod.dto.targets.find((t) => t.tool === tool)).toMatchObject({ status: "error", synced_at: null });
-    }
+    // One folder, one row: Kimi Code reads Amp's.
+    expect(zod.dto.targets.find((t) => t.tool === "amp")).toMatchObject({ status: "error", synced_at: null });
+    expect(zod.dto.targets.some((t) => t.tool === "kimi_cli")).toBe(false);
 
     const asked = await handlers.syncSkillsToTools(batch, ["cursor"], { overwrite_if_same_content: true }, sink().channel);
     expect(asked[0].status).toMatchObject({ status: "failed", error: { code: "TARGET_EXISTS" } });
@@ -1988,5 +1995,39 @@ describe("fixture parity with Rust (#90)", () => {
         },
       ],
     });
+  });
+});
+
+describe("one Deployment row per folder (round 20 ticket 09)", () => {
+  it("saves a harness selection as folders: Kimi Code turns on Amp's folder, and both read on", async () => {
+    const { handlers } = backendFor("rich");
+    const saved = await handlers.updateSetting({
+      key: "global_tool_config",
+      value: { selected_tools: ["kimi_cli", "claude_code"], scan_selected_only: false },
+    });
+    expect(saved.global_selected_tools).toEqual(["amp", "kimi_cli", "claude_code"]);
+  });
+
+  it("assigns two Tools sharing a project folder as one row, keyed by the folder", async () => {
+    const { handlers } = backendFor("rich");
+    const pdf = (await handlers.getManagedSkills()).find((s) => s.name === "pdf")!;
+    const { view } = await handlers.configureProjectTools("prj-quartermaster", ["trae", "trae_cn"], null);
+    expect(view.tools.map((tool) => [tool.tool, tool.folder_key])).toEqual([
+      ["trae", "trae"],
+      ["trae_cn", "trae"],
+    ]);
+    const { report, view: assigned } = await handlers.bulkAssignSkill("prj-quartermaster", pdf.id);
+    expect(report.items.map((item) => item.tool)).toEqual(["trae"]);
+    expect(assigned.assignments.filter((a) => a.skill_id === pdf.id).map((a) => a.tool)).toEqual(["trae"]);
+
+    // Dropping one of the two keeps the folder's Deployment.
+    const { view: kept, report: removed } = await handlers.configureProjectTools("prj-quartermaster", ["trae"], null);
+    expect(removed.targets).toEqual([]);
+    expect(kept.assignments.filter((a) => a.skill_id === pdf.id).map((a) => a.tool)).toEqual(["trae"]);
+
+    // Toggling the sibling's cell takes the folder's row off.
+    const off = await handlers.toggleProjectSkillAssignment("prj-quartermaster", pdf.id, "trae_cn");
+    expect(off.kind).toBe("unassigned");
+    expect(off.view.assignments.some((a) => a.skill_id === pdf.id)).toBe(false);
   });
 });

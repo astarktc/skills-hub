@@ -682,3 +682,32 @@ fn the_ticket_06_rows_resolve_their_cross_read_pairs() {
         assert_eq!(duplicate_readers_of(&roots, key), pairs, "{key}");
     }
 }
+
+/// Each catalog entry carries the folder key of the Deployment folder serving
+/// it at the catalog's scope — what the frontend matches rows by — and its
+/// `shared_with` group is exactly the entries with that folder.
+#[test]
+fn every_catalog_entry_carries_its_folder_key() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+
+    let global = global_tool_entries(&roots);
+    assert_eq!(entry(&global, "kimi_cli").folder_key, "amp");
+    assert_eq!(entry(&global, "amp").folder_key, "amp");
+    assert_eq!(entry(&global, "cursor").folder_key, "cursor");
+    assert_eq!(entry(&global, "agents_skills").folder_key, "agents_skills");
+    for e in &global {
+        let same_folder: Vec<&str> = global
+            .iter()
+            .filter(|other| other.folder_key == e.folder_key)
+            .map(|other| other.key)
+            .collect();
+        assert_eq!(e.shared_with, same_folder, "{}", e.key);
+    }
+
+    let project = project_tool_entries(&roots);
+    assert_eq!(entry(&project, "trae_cn").folder_key, "trae");
+    assert_eq!(entry(&project, "qoder_cn_cli").folder_key, "qoder");
+    assert_eq!(entry(&project, "agents_skills").folder_key, "agents_skills");
+    assert_eq!(entry(&project, "claude_code").folder_key, "claude_code");
+}

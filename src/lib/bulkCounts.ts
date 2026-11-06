@@ -217,7 +217,11 @@ export type SyncCounts = {
   added: number;
 };
 
-/** Sync to the picked Tools, over the selection. */
+/**
+ * Sync to the picked Tools, over the selection. `tools` names each picked
+ * Tool by the Deployment folder serving it (`ToolInfoDto.folder_key`) — the
+ * key its row carries.
+ */
 export function syncCounts(skills: readonly ManagedSkill[], tools: readonly string[]): SyncCounts {
   let alreadySynced = 0;
   let disabled = 0;
@@ -237,12 +241,14 @@ export function syncCounts(skills: readonly ManagedSkill[], tools: readonly stri
  * skills to {harness} now?"): enabled (no skill-grain Disable), locatable
  * (a central copy to deploy) and without a deployment there already — a pair
  * Disable gates is skipped, a deployed or out-of-date one is not new. The ask
- * states this count and the batch deploys exactly these skills.
+ * states this count and the batch deploys exactly these skills. `folder` is
+ * the Deployment folder serving the harness (`ToolInfoDto.folder_key`): a
+ * harness sharing a folder another harness already deployed to gets nothing new.
  */
-export function harnessArrivals(skills: readonly ManagedSkill[], tool: string): ManagedSkill[] {
+export function harnessArrivals(skills: readonly ManagedSkill[], folder: string): ManagedSkill[] {
   return skills.filter((skill) => {
     if (skill.disabled_at !== null || skill.unlocatable !== null) return false;
-    const target = skill.targets.find((row) => row.tool === tool);
+    const target = skill.targets.find((row) => row.tool === folder);
     return !target || !(target.status === "disabled" || target.status === "synced" || target.status === "stale");
   });
 }

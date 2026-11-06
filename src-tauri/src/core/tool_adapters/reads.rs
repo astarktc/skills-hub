@@ -113,6 +113,10 @@ pub struct ReadFacts {
 pub const AGENTS_SKILLS: RegistryPath = RegistryPath::home(".agents/skills");
 /// `~/.claude/skills`, Claude Code's global folder, read by many harnesses.
 pub const CLAUDE_SKILLS: RegistryPath = RegistryPath::home(".claude/skills");
+/// `<project>/.agents/skills`, the AGENTS convention's project folder.
+pub const AGENTS_PROJECT_DIR: &str = ".agents/skills";
+/// `<project>/.claude/skills`, Claude Code's project folder.
+pub const CLAUDE_PROJECT_DIR: &str = ".claude/skills";
 
 impl ReadFacts {
     /// Facts for a row the brief has no evidence for (or retires).

@@ -6,6 +6,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use tauri::Manager;
 
 use super::errors::SignalError;
+use super::placement::{row_folder, ScopeKind};
 use super::sync_status::{aggregate, ProjectSyncStatus, SyncMode, SyncStatus};
 
 const DB_FILE_NAME: &str = "skills_hub.db";
@@ -1791,6 +1792,7 @@ impl SkillStore {
         })
     }
 
+    #[cfg(test)]
     pub fn list_project_skill_assignments_for_project_tool(
         &self,
         project_id: &str,
@@ -1876,11 +1878,11 @@ impl SkillStore {
 
             let assignments_sql = match only {
                 Some(_) => {
-                    "SELECT project_id, skill_id, id, mode, status, last_error \
+                    "SELECT project_id, skill_id, id, mode, status, last_error, tool \
                      FROM project_skill_assignments WHERE project_id = ?1"
                 }
                 None => {
-                    "SELECT project_id, skill_id, id, mode, status, last_error \
+                    "SELECT project_id, skill_id, id, mode, status, last_error, tool \
                      FROM project_skill_assignments"
                 }
             };
@@ -1890,7 +1892,8 @@ impl SkillStore {
                 let skill_id: String = row.get(1)?;
                 let id: String = row.get(2)?;
                 let (_, status, _) = read_lifecycle(&id, row.get(3)?, row.get(4)?, row.get(5)?);
-                Ok((project_id, skill_id, status))
+                let tool: String = row.get(6)?;
+                Ok((project_id, skill_id, status, tool))
             };
             let assignment_rows = match only {
                 Some(project_id) => stmt.query_map(params![project_id], read_assignment)?,
@@ -1899,12 +1902,18 @@ impl SkillStore {
 
             let mut statuses: HashMap<String, Vec<SyncStatus>> = HashMap::new();
             let mut skills: HashMap<String, HashSet<String>> = HashMap::new();
+            // One Deployment per (skill, folder): rows written once per
+            // shared-dir sibling before rows were per folder count once.
+            let mut deployments: HashSet<(String, String, String)> = HashSet::new();
             for row in assignment_rows {
-                let (project_id, skill_id, status) = row?;
-                aggregates
-                    .entry(project_id.clone())
-                    .or_default()
-                    .assignment_count += 1;
+                let (project_id, skill_id, status, tool) = row?;
+                let folder = row_folder(ScopeKind::Project, &tool);
+                if deployments.insert((project_id.clone(), skill_id.clone(), folder)) {
+                    aggregates
+                        .entry(project_id.clone())
+                        .or_default()
+                        .assignment_count += 1;
+                }
                 skills
                     .entry(project_id.clone())
                     .or_default()

@@ -280,13 +280,13 @@ function makeDeps(overrides?: { takenNames?: string[] }) {
   const catalog = {
     toolLabelById: { claude: "CLAUDE", cursor: "CURSOR" },
     tools: [
-      { id: "claude", label: "CLAUDE" },
-      { id: "cursor", label: "CURSOR" },
-      { id: "goose", label: "GOOSE" },
+      { id: "claude", label: "CLAUDE", folder: "claude" },
+      { id: "cursor", label: "CURSOR", folder: "cursor" },
+      { id: "goose", label: "GOOSE", folder: "goose" },
     ],
     installedTools: [
-      { id: "claude", label: "CLAUDE" },
-      { id: "cursor", label: "CURSOR" },
+      { id: "claude", label: "CLAUDE", folder: "claude" },
+      { id: "cursor", label: "CURSOR", folder: "cursor" },
     ],
   };
   const library = {

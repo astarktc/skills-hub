@@ -570,7 +570,8 @@ fn resync_continues_on_error() {
         Some(bad_assignment.id.as_str())
     );
     assert_eq!(failed.skill_name, "bad-skill");
-    assert_eq!(failed.tool, "cursor");
+    // Reported by the folder the row describes (`cursor`'s project folder).
+    assert_eq!(failed.tool, "agents_skills");
     let project_sync::ProjectSyncOutcomeStatus::Failed { error } = &failed.status else {
         panic!("expected Failed, got {:?}", failed.status);
     };
@@ -1263,8 +1264,10 @@ fn fanout_assigns_every_tool_in_caller_order() {
     )
     .unwrap();
 
+    // One row per folder, keyed by it: Cursor's project folder is the AGENTS
+    // group's `.agents/skills`.
     let tool_keys: Vec<&str> = report.items.iter().map(|o| o.tool.as_str()).collect();
-    assert_eq!(tool_keys, vec!["claude_code", "cursor"]);
+    assert_eq!(tool_keys, vec!["claude_code", "agents_skills"]);
     for o in &report.items {
         assert!(
             matches!(o.status, ProjectSyncOutcomeStatus::Synced),
@@ -1422,7 +1425,7 @@ fn fanout_reports_a_sync_failure_with_the_kept_error_row() {
     .unwrap();
 
     let row = store
-        .get_project_skill_assignment(&project.id, &skill.id, "cursor")
+        .get_project_skill_assignment(&project.id, &skill.id, "agents_skills")
         .unwrap()
         .expect("the row exists");
     assert_eq!(row.status, SyncStatus::Error);
@@ -1490,7 +1493,7 @@ fn fanout_propagates_a_refused_settlement_instead_of_reporting_it_settled() {
         "the sync failure stays in the chain as context: {chain}"
     );
     let row = store
-        .get_project_skill_assignment(&project.id, &skill.id, "cursor")
+        .get_project_skill_assignment(&project.id, &skill.id, "agents_skills")
         .unwrap()
         .expect("the inserted row remains");
     assert_eq!(row.status, SyncStatus::Pending, "nothing settled");
@@ -2683,7 +2686,10 @@ fn removal_still_works_for_a_missing_project_folder() {
 /// `error` row — never Synced. Symlink and copy-only Tools alike.
 #[test]
 fn a_project_root_that_vanishes_at_parent_creation_is_not_recreated() {
-    for tool in ["claude_code", copy_only_tool()] {
+    // Deep Agents Code is the shipped copy-only harness, with a project
+    // folder of its own (a copy-only shadow of a group constituent would be
+    // served by the group's link-mode folder).
+    for tool in ["claude_code", "deep_agents_code"] {
         let (_db_dir, store) = make_store();
         let tmpdir = tempfile::tempdir().unwrap();
         let skill_dir = make_skill_dir(tmpdir.path(), "race-skill");
@@ -2797,4 +2803,189 @@ fn a_listing_says_whether_its_reconcile_pass_rewrote_a_status() {
     let again = reconciled_listing(&store, &project.id);
     assert_eq!(again.assignments[0].status, SyncStatus::Missing);
     assert!(!again.rewrote_statuses, "the stored status already matches");
+}
+
+// ---------------------------------------------------------------------------
+// One assignment row per (project, skill, folder) — round 20 ticket 09.
+// Trae and Trae CN share `<project>/.trae/skills` (folder key `trae`).
+// ---------------------------------------------------------------------------
+
+fn trae_project() -> (
+    tempfile::TempDir,
+    tempfile::TempDir,
+    SkillStore,
+    ProjectRecord,
+    SkillRecord,
+) {
+    let (db_dir, store) = make_store();
+    let tmpdir = tempfile::tempdir().unwrap();
+    let skill_dir = make_skill_dir(tmpdir.path(), "trae-skill");
+    let project_dir = tmpdir.path().join("trae-project");
+    fs::create_dir_all(&project_dir).unwrap();
+    let (project, skill) = register_project_and_skill(
+        &store,
+        &project_dir.to_string_lossy(),
+        "trae-skill",
+        &skill_dir.to_string_lossy(),
+    );
+    (db_dir, tmpdir, store, project, skill)
+}
+
+#[test]
+fn harnesses_sharing_a_project_folder_get_one_row_keyed_by_the_folder() {
+    let (_db, _tmp, store, project, skill) = trae_project();
+    add_tools(&store, &project, &["trae", "trae_cn"]);
+
+    let report = assign_skill_to_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        3000,
+    )
+    .unwrap();
+
+    assert_eq!(report.items.len(), 1, "one folder, one item: {report:?}");
+    assert_eq!(report.items[0].tool, "trae");
+    assert!(matches!(
+        report.items[0].status,
+        ProjectSyncOutcomeStatus::Synced
+    ));
+    let rows = store.list_project_skill_assignments(&project.id).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].tool, "trae");
+    assert!(Path::new(&project.path)
+        .join(".trae/skills/trae-skill")
+        .exists());
+
+    // Asking for the sibling again is the same assignment.
+    let again = assign_skill_to_tools(
+        &store,
+        &central_repo_of(&store),
+        &project,
+        &skill,
+        &keys(&["trae_cn"]),
+        3100,
+    )
+    .unwrap();
+    assert!(matches!(
+        again.items[0].status,
+        ProjectSyncOutcomeStatus::AlreadyAssigned
+    ));
+
+    // Toggling the sibling's cell takes the folder's row off.
+    let toggled = project_sync::toggle_skill_assignment(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        "trae_cn",
+        3200,
+    )
+    .unwrap();
+    assert!(matches!(
+        toggled,
+        project_sync::ToggleOutcome::Unassigned { .. }
+    ));
+    assert!(store
+        .list_project_skill_assignments(&project.id)
+        .unwrap()
+        .is_empty());
+    assert!(!Path::new(&project.path)
+        .join(".trae/skills/trae-skill")
+        .exists());
+}
+
+#[test]
+fn dropping_one_of_two_harnesses_sharing_a_folder_keeps_its_deployments() {
+    let (_db, _tmp, store, project, skill) = trae_project();
+    add_tools(&store, &project, &["trae", "trae_cn"]);
+    assign_skill_to_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        3000,
+    )
+    .unwrap();
+
+    let removals = crate::core::project_ops::configure_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &["trae".to_string()],
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(removals.len(), 1);
+    assert!(
+        removals[0].targets.is_empty(),
+        "nothing removed: {}",
+        removals[0]
+    );
+    assert_eq!(
+        store
+            .list_project_skill_assignments(&project.id)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(Path::new(&project.path)
+        .join(".trae/skills/trae-skill")
+        .exists());
+    let tools: Vec<String> = store
+        .list_project_tools(&project.id)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.tool)
+        .collect();
+    assert_eq!(tools, vec!["trae"]);
+}
+
+/// Rows a pre-1.4.0 project wrote once per sibling are one folder: the
+/// re-sync writes it once and settles both rows, the listing and the counts
+/// read one Deployment.
+#[test]
+fn legacy_sibling_assignment_rows_resync_once_and_list_as_one_folder() {
+    let (_db, _tmp, store, project, skill) = trae_project();
+    for tool in ["trae", "trae_cn"] {
+        project_sync::assign_and_sync(
+            &store,
+            &central_repo_of(&store),
+            &project,
+            &skill,
+            tool,
+            2000,
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        store
+            .list_project_skill_assignments(&project.id)
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let report =
+        project_sync::resync_project(&store, &central_repo_of(&store), &project.id, 3000).unwrap();
+
+    assert_eq!(report.items.len(), 1, "one folder, one item: {report:?}");
+    assert_eq!(report.items[0].tool, "trae");
+    for row in store.list_project_skill_assignments(&project.id).unwrap() {
+        assert_eq!(row.status, SyncStatus::Synced, "{}", row.tool);
+        assert_eq!(row.synced_at, Some(3000), "{}", row.tool);
+    }
+
+    let listing = project_sync::list_assignments_with_staleness(&store, &project.id).unwrap();
+    assert_eq!(listing.assignments.len(), 1);
+    assert_eq!(listing.assignments[0].tool, "trae");
+    assert_eq!(
+        store
+            .project_aggregate(&project.id)
+            .unwrap()
+            .assignment_count,
+        1
+    );
 }
