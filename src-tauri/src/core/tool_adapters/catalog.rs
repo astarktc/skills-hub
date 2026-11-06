@@ -5,6 +5,7 @@
 //! tools, how shared skills dirs group, and what "installed" means lives here
 //! so it is testable against a temp home.
 
+use super::reads::DuplicateBehaviour;
 use super::{
     adapters_sharing_skills_dir, catalog_rows, constituents_of, is_installed_in,
     reader_installed_in, readers_of, HostRoots, ToolAdapter,
@@ -38,6 +39,25 @@ pub struct ToolCatalogEntry {
     /// catalog, whose dirs are project-relative and whose detection is a
     /// group's union).
     pub placement: Option<GlobalPlacement>,
+    /// Set when this harness, deployed to beside one of the `keys`, would see
+    /// a skill twice — the cross-read warning's pairs, global catalog only
+    /// ([`DuplicateReads`]). `None` when there is no such pair.
+    pub duplicate_readers: Option<DuplicateReads>,
+}
+
+/// The cross-read warning's pairs for one installed harness R: the other
+/// installed entries whose deploy dir R reads **by default** (`Yes`, never a
+/// legacy, opt-in, conditional or unknown read — `ReadFacts::reads_by_default`)
+/// while R also reads its own deploy dir by default. A shared skills dir
+/// sibling (`shared_with`) is not a pair: one folder, deployed to once.
+/// Resolved from the registry alone; the frontend only intersects `keys`
+/// with the selection, never re-deriving a read from a dir.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DuplicateReads {
+    /// The other installed entries' keys, in registry order (len >= 1).
+    pub keys: Vec<&'static str>,
+    /// What R does with the second copy (the warning's consequence).
+    pub behaviour: DuplicateBehaviour,
 }
 
 /// One reader-only harness listed under the entry whose folder it reads.
@@ -74,6 +94,9 @@ pub struct GlobalPlacement {
 /// installedness is its own detect dir like any other entry, or any detected
 /// reader-only harness of it (`is_installed_in`).
 pub fn global_tool_entries(roots: &HostRoots) -> Vec<ToolCatalogEntry> {
+    let installed: Vec<&'static ToolAdapter> = catalog_rows()
+        .filter(|adapter| is_installed_in(roots, adapter))
+        .collect();
     catalog_rows()
         .map(|adapter| ToolCatalogEntry {
             key: adapter.key(),
@@ -106,8 +129,31 @@ pub fn global_tool_entries(roots: &HostRoots) -> Vec<ToolCatalogEntry> {
                     .collect(),
                 supports_symlink: adapter.supports_symlink,
             }),
+            duplicate_readers: duplicate_reads(adapter, &installed),
         })
         .collect()
+}
+
+/// [`DuplicateReads`] for `reader` among the `installed` entries.
+fn duplicate_reads(
+    reader: &ToolAdapter,
+    installed: &[&'static ToolAdapter],
+) -> Option<DuplicateReads> {
+    let facts = &reader.reads;
+    let own = &reader.skills_dir;
+    if !installed.iter().any(|a| a.key() == reader.key()) || !facts.reads_by_default(own, own) {
+        return None;
+    }
+    let keys: Vec<&'static str> = installed
+        .iter()
+        .filter(|other| !other.skills_dir.same_location(own))
+        .filter(|other| facts.reads_by_default(&other.skills_dir, own))
+        .map(|other| other.key())
+        .collect();
+    (!keys.is_empty()).then_some(DuplicateReads {
+        keys,
+        behaviour: facts.duplicates,
+    })
 }
 
 /// Project-scope catalog: constituent tools are absorbed into their virtual
@@ -150,6 +196,7 @@ pub fn project_tool_entries(roots: &HostRoots) -> Vec<ToolCatalogEntry> {
                 constituents,
                 readers: vec![],
                 placement: None,
+                duplicate_readers: None,
             }
         })
         .collect()

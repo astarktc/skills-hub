@@ -71,6 +71,7 @@ function toolInfo(key: string, shared_with: string[] = [key]): ToolInfoDto {
     constituents: [],
     readers: [],
     placement: { skills_dir: `~/.${key}/skills`, detect_dirs: [`~/.${key}`], supports_symlink: true },
+    duplicate_readers: null,
   };
 }
 

@@ -53,6 +53,7 @@ use crate::core::skills_search::{
 };
 use crate::core::sync_status::{SyncMode, SyncStatus};
 use crate::core::tool_adapters::catalog::GlobalPlacement;
+use crate::core::tool_adapters::reads::DuplicateBehaviour;
 use crate::core::tool_adapters::{
     global_tool_entries, installed_keys, project_tool_entries, ToolCatalogEntry,
 };
@@ -144,6 +145,23 @@ pub struct ToolInfoDto {
     /// Where the tool lives and how it is deployed to — the global list only;
     /// `null` in the project list (see `ToolCatalogEntry::placement`).
     pub placement: Option<ToolPlacementDto>,
+    /// The cross-read warning's pairs: set when this installed harness also
+    /// reads, by default, the deploy dirs of the installed harnesses `keys`,
+    /// so a skill deployed to it and to one of them shows up twice here (or
+    /// worse — `behaviour`). Resolved by the backend from the registry; the
+    /// frontend intersects `keys` with the selection and never re-derives a
+    /// read from a dir. `null` without a pair, and always in the project list.
+    pub duplicate_readers: Option<DuplicateReadsDto>,
+}
+
+/// One harness's cross-read pairs (`ToolInfoDto::duplicate_readers`).
+#[derive(Debug, Serialize, Type)]
+pub struct DuplicateReadsDto {
+    /// The other installed harnesses whose deploy dir this one reads, in
+    /// registry order (len >= 1). Never a shared skills dir sibling.
+    pub keys: Vec<String>,
+    /// What this harness does with the second copy.
+    pub behaviour: DuplicateBehaviour,
 }
 
 /// A reader-only harness listed under the entry whose folder it reads.
@@ -202,6 +220,10 @@ impl From<ToolCatalogEntry> for ToolInfoDto {
                 })
                 .collect(),
             placement: entry.placement.map(ToolPlacementDto::from),
+            duplicate_readers: entry.duplicate_readers.map(|reads| DuplicateReadsDto {
+                keys: reads.keys.iter().map(|k| k.to_string()).collect(),
+                behaviour: reads.behaviour,
+            }),
         }
     }
 }

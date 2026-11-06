@@ -378,3 +378,4 @@ The operator keeps one skill Library and deploys it to many harnesses. Three thi
 - 03 is blocked in round-1 review (3 P1, 2 P2; `reviews/round20-t03-move-library-review.md`). The round-2 fix is
   dispatched.
 - 02 dispatched after 01's merge.
+- 02 merged `efaf49a` (PR #14); Astra fix-then-ship, 3 findings fixed by the orchestrator. 05 dispatched.

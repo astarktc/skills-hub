@@ -68,6 +68,7 @@ import type {
   SkillRefreshStatus,
   SyncMode,
   SyncProgressDto,
+  ToolInfoDto,
   ToolStatusDto,
 } from "../bindings";
 import type { CommandName, Commands } from "../lib/tauri";
@@ -90,7 +91,7 @@ import {
   type FixtureSkill,
   type FixtureState,
 } from "./model";
-import { READER_REGISTRY, TOOL_REGISTRY, VIRTUAL_GROUP_KEY } from "./registry";
+import { DUPLICATE_READS, READER_REGISTRY, TOOL_REGISTRY, VIRTUAL_GROUP_KEY } from "./registry";
 
 /**
  * A plausible detect dir for the fixture's placement facts: the global dir's
@@ -1719,6 +1720,15 @@ export function createFixtureBackend(
     };
   };
 
+  // Rust `catalog::duplicate_reads`: an installed reader's snapshot pairs,
+  // kept to the installed entries (the snapshot never names a sibling).
+  const duplicateReads = (key: string): ToolInfoDto["duplicate_readers"] => {
+    const reads = DUPLICATE_READS[key];
+    if (!reads || !isInstalled(key)) return null;
+    const keys = reads.keys.filter((other) => isInstalled(other));
+    return keys.length > 0 ? { keys, behaviour: reads.behaviour } : null;
+  };
+
   const toolStatus = (): ToolStatusDto => {
     const installed = TOOL_REGISTRY.filter((t) => isInstalled(t.key)).map((t) => t.key);
     const newly = installed.filter((k) => !state.seenTools.includes(k));
@@ -1739,6 +1749,7 @@ export function createFixtureBackend(
           detect_dirs: [`~/${fixtureDetectDir(t.globalDir)}`],
           supports_symlink: true,
         },
+        duplicate_readers: duplicateReads(t.key),
       })),
       installed,
       newly_installed: newly,
@@ -1758,6 +1769,7 @@ export function createFixtureBackend(
           : [],
       readers: [],
       placement: null,
+      duplicate_readers: null,
     }));
     return { tools, installed: tools.filter((t) => t.installed).map((t) => t.key), newly_installed: [] };
   };

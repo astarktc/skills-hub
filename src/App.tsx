@@ -167,7 +167,7 @@ function App() {
 
   // The Synced strip's Tools: the effective target set, in registry order,
   // labelled by the Tool catalog (never a raw key).
-  const { tools: catalogTools, toolLabelById, installedToolIds } = catalog;
+  const { tools: catalogTools, toolLabelById, installedToolIds, toolStatus } = catalog;
   const { effectiveSyncTargetIds: stripTargetIds } = sync;
   const stripTools = useMemo(() => {
     const wanted = new Set(stripTargetIds);
@@ -179,6 +179,7 @@ function App() {
     return [...known.map((tool) => ({ id: tool.id, label: tool.label })), ...unknown];
   }, [catalogTools, stripTargetIds, toolLabelById]);
   const labelOfTool = useCallback((id: string) => toolLabelById[id] ?? id, [toolLabelById]);
+  const toolInfos = useMemo(() => toolStatus?.tools ?? [], [toolStatus]);
   const isToolDetected = useCallback((id: string) => installedToolIds.includes(id), [installedToolIds]);
 
   // The skill action door: every verb on a skill (card, detail, toolbar,
@@ -201,6 +202,7 @@ function App() {
   const harnessSelection = useHarnessSelection({
     sync,
     installed: installedToolIds,
+    catalog: toolInfos,
     skills: library.managedSkills,
     labelOf: labelOfTool,
     surface,
@@ -826,7 +828,7 @@ function App() {
         t={t}
       />
 
-      <DeployHarnessAsk pending={deployHarnessAsk} t={t} />
+      <DeployHarnessAsk pending={deployHarnessAsk} labelOf={labelOfTool} t={t} />
       <MoveLibraryAsk pending={moveLibraryAsk} t={t} />
 
       <ShortcutsDialog

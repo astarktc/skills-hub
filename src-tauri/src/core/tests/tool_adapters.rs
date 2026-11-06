@@ -541,6 +541,7 @@ fn plain_adapter(id: ToolId) -> ToolAdapter {
         project_skills_dir: Some("ignored"),
         group: None,
         supports_symlink: true,
+        reads: crate::core::tool_adapters::reads::ReadFacts::UNKNOWN,
     }
 }
 
@@ -566,6 +567,7 @@ fn scan_tool_dir_skips_codex_system_and_includes_symlink_dir() {
         project_skills_dir: Some("ignored"),
         group: None,
         supports_symlink: true,
+        reads: crate::core::tool_adapters::reads::ReadFacts::UNKNOWN,
     };
 
     let out = scan_tool_dir(&tool, dir.path()).unwrap();
@@ -601,6 +603,7 @@ fn scan_tool_dir_skips_app_support_path() {
         project_skills_dir: Some("ignored"),
         group: None,
         supports_symlink: false,
+        reads: crate::core::tool_adapters::reads::ReadFacts::UNKNOWN,
     };
 
     let out = scan_tool_dir(&tool, &root).unwrap();
@@ -1098,4 +1101,520 @@ fn the_readme_table_lists_every_registry_row() {
         "README table rows vs registry rows (adapters + reader-only)"
     );
     assert_eq!(rows, expected);
+}
+
+/// The brief-snapshot table (round 20 ticket 02, spec Q5/Q20): every row's
+/// shared-folder read facts restated from
+/// `docs/design-inputs/2026-11-05-harness-candidates-and-shared-dir-reads.md`
+/// § Part 2 "Existing registry rows", each with the brief row it encodes.
+/// LIKELY and UNKNOWN cells are `Unknown`. A registry fact changed without
+/// this table (and the brief row) fails here.
+#[test]
+fn every_row_restates_its_brief_read_facts() {
+    use crate::core::tool_adapters::reads::{
+        DuplicateBehaviour as D, Precedence as P, ReadMode as M, SharedRead::*,
+    };
+    type Row = (
+        &'static str,    // registry key
+        &'static str,    // brief row
+        [SharedRead; 2], // global: ~/.agents, ~/.claude
+        [SharedRead; 2], // project: .agents, .claude
+        P,
+        D,
+        &'static [(&'static str, M)], // also_reads (home-relative)
+    );
+    use crate::core::tool_adapters::reads::SharedRead;
+    const U: SharedRead = Unknown;
+    const ALL_UNKNOWN: [SharedRead; 2] = [U, U];
+    const CLI_ONLY: M = M::Conditional("Antigravity CLI only");
+    let expected: &[Row] = &[
+        (
+            "agents_skills",
+            "(omitted: the convention folder itself)",
+            [Yes, No],
+            [Yes, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "cursor",
+            "Cursor",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Unknown,
+            D::ShowsAll,
+            &[(".codex/skills", M::Default)],
+        ),
+        (
+            "claude_code",
+            "Claude Code",
+            [No, Yes],
+            [No, Yes],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "codex",
+            "Codex",
+            [Yes, No],
+            [Yes, No],
+            P::Both,
+            D::ShowsAll,
+            &[],
+        ),
+        (
+            "opencode",
+            "OpenCode",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Unknown,
+            D::ShowsAll,
+            &[],
+        ),
+        (
+            "antigravity",
+            "Antigravity",
+            [No, No],
+            [Yes, No],
+            P::Unknown,
+            D::Unknown,
+            &[
+                (".gemini/skills", CLI_ONLY),
+                (".gemini/antigravity-cli/skills", CLI_ONLY),
+                (".gemini/antigravity/skills", M::Legacy),
+            ],
+        ),
+        (
+            "amp",
+            "Amp",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Own,
+            D::Shadows,
+            &[
+                (".config/agents/skills", M::Default),
+                (".config/amp/skills", M::Default),
+                (".claude/plugins/cache", M::Default),
+            ],
+        ),
+        (
+            "kimi_cli",
+            "Kimi Code CLI",
+            [
+                Yes,
+                Conditional("legacy kimi-cli only, when ~/.kimi/skills is absent"),
+            ],
+            [Yes, No],
+            P::Unknown,
+            D::Unknown,
+            &[
+                (".config/agents/skills", M::Legacy),
+                (".kimi/skills", M::Legacy),
+                (".codex/skills", M::Legacy),
+            ],
+        ),
+        (
+            "augment",
+            "Augment",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Own,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "openclaw",
+            "OpenClaw",
+            [
+                Conditional("default state dir only: a non-default OPENCLAW_STATE_DIR drops it"),
+                No,
+            ],
+            [Yes, No],
+            P::Shared,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "copaw",
+            "Copaw → QwenPaw",
+            [No, No],
+            [No, No],
+            P::Own,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "cline",
+            "Cline",
+            [Yes, No],
+            [Yes, Yes],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "codebuddy",
+            "CodeBuddy",
+            [No, U],
+            [No, U],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "command_code",
+            "Command Code",
+            [Yes, No],
+            [Yes, No],
+            P::Own,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "continue",
+            "Continue",
+            ALL_UNKNOWN,
+            ALL_UNKNOWN,
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "crush",
+            "Crush",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Unknown,
+            D::Unknown,
+            &[(".config/agents/skills", M::Default)],
+        ),
+        (
+            "junie",
+            "Junie",
+            [Yes, No],
+            [Conditional("trusted projects only"), No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "iflow_cli",
+            "iFlow CLI",
+            [No, No],
+            [No, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "kiro_cli",
+            "Kiro CLI",
+            [No, No],
+            [No, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "kode",
+            "Kode",
+            ALL_UNKNOWN,
+            ALL_UNKNOWN,
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "mcpjam",
+            "MCPJam",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "mistral_vibe",
+            "Mistral Vibe",
+            [Yes, No],
+            [Conditional("trusted projects only"), No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "mux",
+            "Mux → Xum",
+            [Yes, U],
+            ALL_UNKNOWN,
+            P::Own,
+            D::Shadows,
+            &[(".xum/skills", M::Default)],
+        ),
+        (
+            "openclaude",
+            "OpenClaude IDE",
+            ALL_UNKNOWN,
+            ALL_UNKNOWN,
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "openhands",
+            "OpenHands",
+            [Yes, No],
+            [Yes, No],
+            P::Shared,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "pi",
+            "Pi",
+            [Yes, No],
+            [Yes, No],
+            P::Unknown,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "qoder",
+            "Qoder",
+            [
+                Conditional(
+                    "the Qoder desktop app only; the IDE and CLI read only ~/.qoder/skills",
+                ),
+                No,
+            ],
+            [No, No],
+            P::Own,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "qoderwork",
+            "QoderWork",
+            [No, No],
+            [No, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "qwen_code",
+            "Qwen Code",
+            [Yes, OptIn],
+            [Yes, No],
+            P::Own,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "trae",
+            "Trae",
+            ALL_UNKNOWN,
+            [OptIn, U],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "trae_cn",
+            "Trae CN",
+            ALL_UNKNOWN,
+            [OptIn, U],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "zencoder",
+            "Zencoder (+ Zenflow)",
+            [Yes, U],
+            [Yes, Yes],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "neovate",
+            "Neovate",
+            [No, Yes],
+            [No, Yes],
+            P::Own,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "pochi",
+            "Pochi",
+            [Yes, No],
+            [Yes, No],
+            P::Own,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "adal",
+            "AdaL",
+            ALL_UNKNOWN,
+            ALL_UNKNOWN,
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "kilo_code",
+            "Kilo Code",
+            [Yes, OptIn],
+            [Yes, OptIn],
+            P::Unknown,
+            D::Unknown,
+            &[
+                (".kilo/skills", M::Default),
+                (".kilocode/skills", M::Unknown),
+            ],
+        ),
+        (
+            "roo_code",
+            "Roo Code",
+            [Yes, No],
+            [Yes, No],
+            P::Own,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "goose",
+            "Goose",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Unknown,
+            D::Unknown,
+            &[(".agents/plugins", M::Default)],
+        ),
+        (
+            "gemini_cli",
+            "Gemini CLI",
+            [Yes, No],
+            [Yes, No],
+            P::Shared,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "github_copilot",
+            "GitHub Copilot",
+            [Yes, No],
+            [Yes, Yes],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "clawdbot",
+            "Clawdbot (retire, #108)",
+            ALL_UNKNOWN,
+            ALL_UNKNOWN,
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "droid",
+            "Droid",
+            [Yes, No],
+            [Yes, No],
+            P::Unknown,
+            D::Shadows,
+            &[(".agent/skills", M::Default)],
+        ),
+        (
+            "windsurf",
+            "Windsurf → Devin",
+            [Yes, No],
+            [Yes, Yes],
+            P::Unknown,
+            D::Unknown,
+            &[
+                (".codeium/windsurf/skills", M::Default),
+                (".copilot/skills", M::Default),
+            ],
+        ),
+        (
+            "moltbot",
+            "MoltBot (retire, #108)",
+            ALL_UNKNOWN,
+            ALL_UNKNOWN,
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "hermes-agent",
+            "Hermes Agent",
+            [OptIn, OptIn],
+            ALL_UNKNOWN,
+            P::Own,
+            D::Shadows,
+            &[],
+        ),
+    ];
+    let keys: Vec<&str> = default_tool_adapters().iter().map(|a| a.key()).collect();
+    assert_eq!(
+        expected.iter().map(|row| row.0).collect::<Vec<_>>(),
+        keys,
+        "the snapshot covers every registry row, in registry order"
+    );
+    for (key, brief_row, global, project, precedence, duplicates, also_reads) in expected {
+        let facts = adapter_by_key(key).unwrap().reads;
+        let at = format!("{key} (brief row: {brief_row})");
+        assert_eq!(
+            [facts.global.agents, facts.global.claude],
+            *global,
+            "{at}: global reads"
+        );
+        assert_eq!(
+            [facts.project.agents, facts.project.claude],
+            *project,
+            "{at}: project reads"
+        );
+        assert_eq!(facts.precedence, *precedence, "{at}: precedence");
+        assert_eq!(facts.duplicates, *duplicates, "{at}: duplicate behaviour");
+        let actual: Vec<(&str, M)> = facts
+            .also_reads
+            .iter()
+            .map(|a| {
+                assert_eq!(
+                    a.dir.root,
+                    HostRoot::Home,
+                    "{at}: also_reads are home-rooted today"
+                );
+                assert!(a.dir.overrides.is_empty(), "{at}: no per-OS also_reads yet");
+                (a.dir.rel, a.mode)
+            })
+            .collect();
+        assert_eq!(actual, also_reads.to_vec(), "{at}: also_reads");
+    }
+}
+
+/// Facts vs `group` (spec Q17): the `group` literal is the deployment
+/// decision, but a harness absorbed into the AGENTS group must not be one
+/// the brief says ignores `<project>/.agents/skills`.
+#[test]
+fn no_agents_group_member_ignores_the_project_agents_folder() {
+    use crate::core::tool_adapters::reads::SharedRead;
+    let members: Vec<&ToolAdapter> = constituents_of(VirtualGroup::AgentsStandard).collect();
+    assert!(!members.is_empty());
+    for member in members {
+        assert_ne!(
+            member.reads.project.agents,
+            SharedRead::No,
+            "{} is an AGENTS-group member but does not read <project>/.agents/skills",
+            member.key()
+        );
+    }
 }

@@ -1848,7 +1848,64 @@ describe("ticket 17: Projects — a missing folder, Sync this, the kept row, a s
   });
 });
 
+// Round 20 ticket 02: the registry scenario — detected and undetected
+// harnesses, a reader-only member, a row without a project dir, and the
+// cross-read pairs (Rust `catalog::duplicate_reads`).
+describe("registry", () => {
+  it("shows detected and undetected harnesses, a reader-only member and a row without a project dir", async () => {
+    const { handlers } = backendFor("registry");
+    const status = await handlers.getToolStatus();
+    expect(status.tools.some((tool) => tool.installed)).toBe(true);
+    expect(status.tools.some((tool) => !tool.installed)).toBe(true);
+    const agents = status.tools.find((tool) => tool.key === "agents_skills")!;
+    expect(agents.readers.length).toBeGreaterThan(0);
+    expect(status.tools.some((tool) => tool.key === "workbuddy" && tool.installed)).toBe(true);
+    const project = await handlers.getProjectToolStatus();
+    expect(project.tools.some((tool) => tool.key === "workbuddy")).toBe(false);
+  });
+
+  it("answers Cursor's cross-read pairs with both sides selected", async () => {
+    const { handlers, state } = backendFor("registry");
+    const status = await handlers.getToolStatus();
+    const cursor = status.tools.find((tool) => tool.key === "cursor")!;
+    // `.agents/skills` is detected, so it is a pair too; it is not selected,
+    // so the pane warns about Claude Code and Codex only until it is turned on.
+    expect(cursor.duplicate_readers).toEqual({
+      keys: ["agents_skills", "claude_code", "codex"],
+      behaviour: "shows_all",
+    });
+    const selected = state.settings.global_selected_tools ?? [];
+    expect(selected).toEqual(expect.arrayContaining(["cursor", "claude_code", "codex"]));
+    expect(selected).not.toContain("agents_skills");
+  });
+});
+
 describe("fixture parity with Rust (#90)", () => {
+  // Rust `catalog::duplicate_reads`: only installed harnesses, both sides;
+  // never a shared skills dir sibling.
+  it("cross-read pairs name installed harnesses only, never a shared-dir sibling", async () => {
+    const { handlers, state } = backendFor("rich");
+    let status = await handlers.getToolStatus();
+    const of = (key: string) => status.tools.find((tool) => tool.key === key)!.duplicate_readers;
+    expect(of("cursor")).toEqual({ keys: ["claude_code", "codex"], behaviour: "shows_all" });
+    expect(of("amp")).toEqual({ keys: ["claude_code"], behaviour: "shadows" });
+    expect(of("kimi_cli")).toBeNull();
+    expect(of("opencode")).toBeNull();
+    expect(of("claude_code")).toBeNull();
+
+    state.installedTools = state.installedTools.filter((key) => key !== "claude_code");
+    state.installedTools.push("crush", "agents_skills");
+    status = await handlers.getToolStatus();
+    expect(of("cursor")).toEqual({ keys: ["agents_skills", "codex"], behaviour: "shows_all" });
+    expect(of("crush")).toEqual({ keys: ["agents_skills", "amp", "kimi_cli"], behaviour: "unknown" });
+    expect(status.tools.every((tool) => tool.duplicate_readers?.keys.every((key) => key !== tool.key) ?? true)).toBe(true);
+  });
+
+  it("the project list carries no cross-read pairs", async () => {
+    const { handlers } = backendFor("rich");
+    expect((await handlers.getProjectToolStatus()).tools.every((tool) => tool.duplicate_readers === null)).toBe(true);
+  });
+
   it("the onboarding plan reports every harness on a shared skills dir, one variant each (Rust has no path dedupe)", async () => {
     const { handlers } = backendFor("first-run");
     const plan = await handlers.getOnboardingPlan();
