@@ -209,19 +209,17 @@ fn derive_name_from_subpath(clone_url: &str, subpath: Option<&str>) -> String {
     }
 }
 
+/// The repository's name as a plain leaf: the last segment under every
+/// separator a URL or a path can carry (`/`, a Windows `\`, the `:` of an
+/// scp-style `host:repo` or a drive), less `.git`. A segment that names
+/// nothing (empty, `.`, `..`) falls back to `skill`, so a derived name is
+/// never a path (BACKLOG #105).
 fn derive_name_from_repo_url(repo_url: &str) -> String {
-    let mut name = repo_url
-        .split('/')
-        .next_back()
-        .unwrap_or("skill")
-        .to_string();
-    if let Some(stripped) = name.strip_suffix(".git") {
-        name = stripped.to_string();
-    }
-    if name.is_empty() {
-        "skill".to_string()
-    } else {
-        name
+    let leaf = repo_url.rsplit(['/', '\\', ':']).next().unwrap_or_default();
+    let name = leaf.strip_suffix(".git").unwrap_or(leaf);
+    match name {
+        "" | "." | ".." => "skill".to_string(),
+        name => name.to_string(),
     }
 }
 

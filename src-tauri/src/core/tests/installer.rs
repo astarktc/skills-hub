@@ -1479,6 +1479,29 @@ fn explore_preview_cancelled_acquisition_never_becomes_a_hit() {
     assert!(out.join("complete.txt").is_file());
 }
 
+/// BACKLOG #105: a derived skill name is always a plain leaf — the last
+/// segment of the URL under every separator a URL or path can carry — so a
+/// Windows-style `file://C:\…` URL never names an absolute path, and a
+/// segment that is not a name falls back to `skill`.
+#[test]
+fn a_derived_name_is_a_plain_leaf_under_every_separator() {
+    for (url, name) in [
+        ("https://github.com/owner/repo.git", "repo"),
+        ("https://github.com/owner/repo", "repo"),
+        ("git@github.com:owner/repo.git", "repo"),
+        (r"file://C:\Users\alex\repos\my-skill", "my-skill"),
+        (r"file://C:\Users\alex\repos\my-skill.git", "my-skill"),
+        (r"C:\Users\alex\repos\mixed/sep\leaf", "leaf"),
+        ("host:repo.git", "repo"),
+        ("file://C:", "skill"),
+        ("https://example.com/owner/..", "skill"),
+        ("https://example.com/owner/.", "skill"),
+        ("https://example.com/owner/", "skill"),
+    ] {
+        assert_eq!(super::derive_name_from_repo_url(url), name, "{url}");
+    }
+}
+
 #[test]
 fn settings_and_credential_read_failures_do_not_block_listing_install_or_preview() {
     let (dir, store) = make_store();
@@ -1486,8 +1509,9 @@ fn settings_and_credential_read_failures_do_not_block_listing_install_or_preview
     let repo_dir = tempfile::tempdir().unwrap();
     fs::write(repo_dir.path().join("SKILL.md"), "---\nname: solo\n---\n").unwrap();
     let _repo = init_git_repo(repo_dir.path());
-    // A `file:` URL with `/` separators on every platform (on Windows,
-    // `file://C:\…` would make the derived skill name an absolute path).
+    // A well-formed `file:` URL with `/` separators on every platform (a
+    // `file://C:\…` spelling derives a plain name too since BACKLOG #105,
+    // `a_derived_name_is_a_plain_leaf_under_every_separator`).
     let url = format!(
         "file:///{}",
         repo_dir
