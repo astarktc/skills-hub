@@ -16,9 +16,8 @@ the code that day (`archive/round19/closure/extract-{A..G}.md`).
    removed from this file: #63 #68 #72 #73 #74 (its pointer; persistence is #53's) #75 #90 #95 #96 #97 #98 #99 #100
    #101 #102 (dark theme only — the README embeds one image per screen) #103 #104 #106 #107 #76 #105.
 2. **Round 20** (`round20/spec.md`): **Wave A = 1.3.4** absorbed #92, #110 and #91 (opened 2026-11-06, tickets
-   `round20/issues/01`–`08`). **Wave B = 1.4.0**, grilled 2026-11-06 (`round20/spec.md` § Wave B, Q1–Q29): #108 (with
-   #87 as its project leg), #109, #84, #116 and #70. Their lines stay here until Wave B's tickets open. Next: the A-vs-C
-   folder-card prototype and the T3 Code study, then the spec body.
+   `round20/issues/01`–`08`). **Wave B = 1.4.0** (`round20/spec.md` § Wave B, grilled and specced 2026-11-06) absorbed
+   #108 → tickets 10 + 11, #87 → 11, #109 → 12 + 15, #116 → 12, #84 → 14 + 15, #70 → 16 (`round20/issues/09`–`17`).
 3. **After 1.4.0:** #85/#86, #93.
 
 Harness research behind #92 and #108–#110: `docs/design-inputs/2026-11-05-harness-candidates-and-shared-dir-reads.md` and
@@ -26,45 +25,8 @@ Harness research behind #92 and #108–#110: `docs/design-inputs/2026-11-05-harn
 
 ## Now — evidence of unfinished work is strong
 
-- **#108 Redeploy: deploy to the new place, then undeploy the old (operator 2026-11-05).** One mechanism for every change
-  of where or how a Deployment lives: the shared-folder preference (#109), registry dir corrections, retired keys and
-  copy ↔ link switches (#84). Rules:
-  - **Deploy first, then remove** — a crash leaves at most a duplicate, never a missing skill, and a rerun completes it.
-  - **Remove the old copy only when byte-identical** to the library; a differing copy (local edits) goes to the one
-    overwrite ask (D12).
-  - Removal goes through `artifact_removal`, so **#107 lands first**.
-  - An old copy that fails to remove is reported as the duplicate it leaves ("shows twice in Cursor");
-    `RELOCATION_PENDING` / `relocation.incomplete` surface through `reportOutcome` (the fold skips every non-failed
-    status today).
-  Corrections it carries: Codex, Goose, OpenHands → `~/.agents/skills` globally; Antigravity → `~/.gemini/config/skills`;
-  Kimi → `~/.kimi-code/skills` (never blindly: `.config/agents` is Amp's and Crush's too); Kilo → `~/.kilo/skills`; Xum →
-  `~/.xum/skills`; Zencoder → `~/.agents/skills` (`.zencoder/skills` is deprecated); Copaw → QwenPaw (`~/.qwenpaw`);
-  **Clawdbot and MoltBot retired into OpenClaw**, OpenClaw kept (a stored retired-key row is tolerated as an unknown key,
-  `archive/round19/issues/34-…md:125–131`). Also: onboarding scans former dirs (`~/.codex/skills`) for import; the launch
-  pass returns as this mechanism (disabled in 1.3.2, `lib.rs` ~:172); acceptance tests are audit 3's F14–F16 (aliased
-  roots, a destination aliased onto the central repo, Keep over a copy with local-only edits); a release-smoke line — a
-  real machine's first-launch move checked with `ls -la` over the old and new dirs. Source: this session;
-  `archive/round19/review/ticket-34-backend-audit-3.md` § F15; `archive/round19/closure/extract-F.md` F9–F19,
-  `extract-E.md` E18.
-- **#109 Shared-folder preference (operator 2026-11-05; supersedes the former #83).** A Settings toggle — use shared
-  skills folders when a harness can read them — and a dropdown for a harness that reads both: `.agents` (default) or
-  `.claude`. Each harness is served by exactly one folder, chosen from #92's facts; a harness reading neither keeps its
-  own. Off = every harness's own folder, which for Codex is `~/.agents/skills` and for Claude Code `~/.claude/skills`.
-  Applied through #108. Downstream:
-  - **A Deployment is a folder; harnesses are its readers.** My Skills rows show one dot per folder (`.agents`,
-    `.claude`, plus own-folder dots); the inspector groups detected harnesses under the folder serving them.
-  - **Disable on a shared folder is per folder**, and its copy names every reader it affects. One reader cannot be
-    excluded while another harness needs the folder — say so rather than pretend.
-  - **Unavoidable duplicates**: a skill sent to a `.claude`-only harness (Claude Code) and an `.agents`-only one (Codex)
-    sits in both, and every harness reading both sees two (still fewer than today: Cursor can see four). Mark it where
-    it hurts (fx, Cortex Code).
-  - **Project scope** gets the same model with a per-project override; the defaults/overrides UI is designed once with
-    #84 — study T3 Code's project defaults and per-project overrides in the spec phase (operator 2026-11-05).
-  - Carries #88's preference residue: the offer dialog, preview copy ("would move N"), the shadowed-own-copy flag,
-    Import near-misses under the preference (a renamed / symlinked identical original), the layout read once per
-    operation (composites re-read it today), onboarding's reader roster for shared / aliased dirs.
-  Blocked by #92 and #108. Source: this session; `docs/design-inputs/2026-11-05-harness-candidates-and-shared-dir-reads.md`
-  § Part 2, § Implications; `archive/round19/issues/34-…md:440–466`.
+(Nothing queued here while round 20 Wave B runs.)
+
 (Retired: #88 — split 2026-11-05 (operator): physical identity in every destructive seam, onboarding's physical-path
 exclusion included → #107; resumable moves, dir corrections, the launch pass, F14–F16 and the smoke line → #108;
 the #83 preference and its UI → #109. #89 — the lexical launch relocation pass is no longer called (1.3.2, PR #5,
@@ -72,19 +34,6 @@ the #83 preference and its UI → #109. #89 — the lexical launch relocation pa
 Absorbed: #79 → round 19 ticket 29, #71 → 33, #78 → 30, #80 #81 #82 → 31 — all shipped; #67 #45 #83 and #40's detection
 half → ticket 34, superseded 2026-11-04 → #88 (relocation, the preference) and #92 (registry facts, rows, warning).)
 
-- **#70 The overwrite ask can't be answered knowingly.** Twice in the think-aloud the operator chose Overwrite without
-  being able to judge: *"it gives me no way to see them whatsoever, and I can't even see the diff."*
-  - The ask should name **who put the folder there**. An Add or Enable collision has no target row, so it is never
-    Skills Hub's (`OverwriteRow`, `src/lib/overwriteAsk.ts:30–42`, carries no provenance; the wire row is `path`,
-    `modifiedAt`, `sameContent`).
-  - It should offer a **content view or diff** against the skill, plus Reveal in Finder per row (`OverwriteModal.tsx:93–103`).
-  - Each button should state its **consequence** ("Keep theirs — {skill} stays off {Tool}; Enable later to
-    replace it"). He couldn't predict Keep (`resources.ts:439–447`, `:575–583`).
-  - The **overwritten** rows should be recorded in the run report: he had forgotten which folders he overwrote. Kept
-    rows already are (a quiet "declined" note, `reportOutcome.ts:303–304`); an overwritten pair settles as plain
-    `synced` and vanishes (`overwriteAsk.ts:317–324`; same family as #64 (3)).
-  - An ask that arrives after Cancel should say the skill was already being added.
-  - Source: `archive/round19/issues/18-operator-think-aloud.md` § Findings (P2·Q4, P5·Q3, P5·Q4).
 
 (Absorbed earlier: #39 #46 #47 #49 #52 and the §E borrows were absorbed by `archive/round19/spec.md` on 2026-09-27: #52 → tickets 01 + 13, #49 → 11, #39 → 11, #47 → 16, #46 → 05 + 21. Earlier: #43 #44 → `archive/round18/issues/01`, `02`.)
 
@@ -94,13 +43,6 @@ to Future efforts. #42 (overwrite ask on `TARGET_EXISTS`) was absorbed by `archi
 were seeded 2026-09-24 from the upstream/field survey in `docs/design-inputs/` — each carries its § pointer; re-verify against the
 code before scheduling.)
 
-- **#84 Link vs copy, chosen by the operator at every level (operator 2026-11-05: important; unparked).** Today
-  copy-vs-link is the registry's `supports_symlink` alone (every entry `true`; Cursor's history shows a harness can
-  regress). Default link everywhere; overrides at global scope, project scope, per project and per harness — most
-  specific wins (harness › project › scope › default). A registry `supports_symlink: false` always copies, and the link
-  choice shows disabled with its reason (Deep Agents Code, #110). Sync code stays name-blind: the setting is read as a
-  capability. Changing a level re-deploys existing Deployments through #108 (identical-or-ask). The per-project UI
-  shares #109's defaults/overrides pattern. Source: grill 2026-11-02 (Q18); this session.
 
 ## Later — real, not urgent
 
@@ -127,11 +69,6 @@ code before scheduling.)
   keep `name` / `updated` / `added` / `issues` values). Source: 1.3.3 L4 review.
 - **#115 The bulk Enable confirmation shows a stale project count for a moment** after a Disable, until project
   placements reload (pre-existing; seen in 1.3.3 L4's fixture checks). Source: 1.3.3 L4 report.
-- **#116 The cross-read warning ignores an installed but unselected reader.** Cursor, installed and not selected,
-  still sees two copies when Claude Code and Codex are both selected: it reads both folders. Spec Q6 requires the
-  reader itself to be selected (`catalog::pairs_of`). The round-20 rows review fixed only the reader-only case (fx,
-  `among` pairs). Generalising it belongs to #109's "a Deployment is a folder; harnesses are its readers" model. Decide
-  how loud it may be: Firebender, Warp and Kimchi read many folders. Source: `reviews/round20-rows-review.md` § Disposition 3.
 - **#117 A failed cache refetch can delete an entry another thread is copying from.** `fetch_through_cache`'s retry
   after a failed refetch (`remove_entry`) does not check the reader leases that round 20 ticket 04 added
   (`CachedCheckout`). Clean Now and the age-out do check them. Route the retry through the same idle check, or make it
@@ -145,13 +82,6 @@ code before scheduling.)
   can't express. Pool skills may also need a `skill.json` manifest and a per-workspace broadcast to reach an agent
   (UNKNOWN). Verify on a real install, then correct through #108's redeploy and add detect `.qwenpaw`. Source:
   `docs/design-inputs/2026-11-05-harness-candidates-and-shared-dir-reads.md` I6; `round20/spec.md` § Wave B Q13.
-- **#87 Project-scope relocation for corrected harness dirs — absorbed by #108 as its project leg (Wave B Q7).** Blocked by #108: `main` still has Kilo global *and*
-  project `.kilocode/skills` (`tool_adapters/mod.rs:636, :639`) and Xum both `.mux/skills` (`:480, :483`) — ticket 34
-  never merged. When #108 corrects the global dirs, the project dirs still need a project relocation pass (per project,
-  under the guard, same byte-identical-replace rule, reported in the project view) before they flip; the same pass
-  covers Goose / OpenHands project `.agents/skills` and project assignments under a retired key (clawdbot / moltbot —
-  #108 retires them). Likely becomes #108's project-scope leg. Source: `archive/round19/review/ticket-34-backend-audit.md` § F8,
-  `docs/design-inputs/2026-11-02-harness-global-skills-dirs.md` I6/I7.
 - **#85 Projects matrix keyboard model (ticket 17 audit N1, carried by ticket 23).** The matrix is a plain Tab walk:
   127 Tab presses from the first to the last cell of the 25-skill fixture matrix (`archive/round19/review/ticket-17-audit.md`
   § N1). Ticket 23 decided the ⌘K palette's keys define no grid model, so this is its own ticket: spatial/roving

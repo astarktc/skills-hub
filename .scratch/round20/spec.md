@@ -387,11 +387,11 @@ The operator keeps one skill Library and deploys it to many harnesses. Three thi
 - 04 merged as `6a8c235` (PR #19). All of Wave A is on `main`. Final release review dispatched.
 - Final review blocked (OpenAI usage limit); release held. The CHANGELOG is committed. Handoff `handoffs/2026-11-06-1.3.4-ready-awaiting-final-review.md`.
 - **Wave A released as v1.3.4** (`ed8e442`, 2026-11-06). Next: the Wave B grill in this effort.
-- 2026-11-06: Wave B grilled (below, Q1–Q29); prototype and T3 Code study dispatched.
+- 2026-11-06: Wave B grilled (below, Q1–Q31), prototype verdict C, spec body written, tickets 09–17 opened.
 
 # Wave B — redeploy, shared folders, link vs copy (grilled 2026-11-06)
 
-Status: needs-triage (spec body written 2026-11-06; tickets await the operator's approval of the breakdown)
+Status: ready-for-agent (tickets `issues/09`–`17`, breakdown approved 2026-11-06)
 
 Ships as **1.4.0** (operator 2026-11-06, Q1 + Q29). Absorbs BACKLOG **#108** (with **#87** as its project leg), **#109**,
 **#84**, **#116** and **#70**. #85/#86 and #93 go to the release after (Q23). Grilled against the registry facts as built
@@ -863,7 +863,12 @@ who sees it.
   - effective deploy mode and its origin level, and whether link is allowed (capability);
   - the duplicate lines it contributes.
 
-  The pane-level "Seen twice" list is resolved per installed harness (Q20, #116). `ToolInfoDto` remains for the
+  The pane-level "Seen twice" list is resolved per installed harness (Q20, #116).
+- **Only detected harnesses are shown as a folder's harnesses** (operator 2026-11-06). Every surface (Add picker,
+  inspector, My Skills dots, deploy ask, Disable copy, "Seen twice") names detected harnesses only. The one exception
+  is the Harnesses pane: a closed "Not detected (N)" group inside each card keeps undetected members reachable, so
+  you can switch one on before installing it (Wave A story 19). A folder whose harnesses are all undetected is an
+  own card in the pane's "Not detected" group. `ToolInfoDto` remains for the
   harness rows the cards contain. `useToolCatalog` exposes cards; no surface rebuilds them.
 - **Card copy (Q31):**
   - The title is the folder; "Serves …" sits underneath; "Also seen by" lists names only.
