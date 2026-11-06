@@ -27,6 +27,7 @@ use crate::core::installer::{
     clone_for_explore_preview, list_git_skills, list_local_skills, GitSkillListing, InstallerPaths,
     LocalSkillCandidate,
 };
+use crate::core::library_move::{LibraryMovePreview, LibraryMoveProgress, LibraryMoveReport};
 use crate::core::log_reveal::{log_reveal_target, resolve_reveal_item};
 use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan, OnboardingScanScope};
 use crate::core::onboarding_import::{
@@ -369,9 +370,8 @@ pub async fn get_settings(
     .map_err(CommandError::from_anyhow)
 }
 
-/// Persist one setting and return the effective snapshot. `~` in a central
-/// repo path is expanded here — the only environment-aware step — before
-/// the policy layer validates and applies it.
+/// Persist one setting and return the effective snapshot. The Library
+/// folder is not one of them: `move_library` is its only writer.
 #[tauri::command]
 #[specta::specta]
 pub async fn update_setting(
@@ -381,12 +381,6 @@ pub async fn update_setting(
 ) -> Result<AppSettings, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let update = match update {
-            SettingUpdate::CentralRepoPath(raw) => SettingUpdate::CentralRepoPath(
-                expand_home_path(&raw)?.to_string_lossy().to_string(),
-            ),
-            other => other,
-        };
         apply_setting(
             &store,
             &credential_store(),
@@ -397,6 +391,66 @@ pub async fn update_setting(
     .await
     .map_err(CommandError::internal)?
     .map_err(CommandError::from_anyhow)
+}
+
+/// What the Move Library folder confirmation states for `destination`
+/// (`~` expanded here): the skill counts and the cloud-sync warning. Refuses
+/// a destination exactly as `move_library` would (bar the write probe).
+/// Read-only.
+#[tauri::command]
+#[specta::specta]
+pub async fn preview_library_move(
+    app: tauri::AppHandle,
+    store: State<'_, SkillStore>,
+    destination: String,
+) -> Result<LibraryMovePreview, CommandError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let paths = installer_paths(&app, &store)?;
+        let dest = expand_home_path(&destination)?;
+        crate::core::library_move::preview_library_move(&store, &paths, &dest)
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
+/// Move Library folder: copy every locatable skill to `destination` (`~`
+/// expanded here), switch every record and the setting together, re-point
+/// every owned linked Deployment and remove the old copies through the
+/// removal fence. Answers the report with the catalog read after
+/// settlement; streams progress. Not cancellable.
+#[tauri::command]
+#[specta::specta]
+pub async fn move_library(
+    app: tauri::AppHandle,
+    store: State<'_, SkillStore>,
+    destination: String,
+    on_progress: Channel<LibraryMoveProgress>,
+) -> Result<LibraryMoveResultDto, CommandError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let paths = installer_paths(&app, &store)?;
+        let dest = expand_home_path(&destination)?;
+        let report =
+            crate::core::library_move::move_library(&store, &paths, &dest, now_ms(), |progress| {
+                let _ = on_progress.send(progress);
+            })?;
+        Ok::<_, anyhow::Error>(LibraryMoveResultDto {
+            report,
+            skills: managed_skill_dtos(&store)?,
+        })
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
+/// `move_library`'s answer: its report and the catalog read after it.
+#[derive(Debug, Serialize, Type)]
+pub struct LibraryMoveResultDto {
+    pub report: LibraryMoveReport,
+    pub skills: Vec<ManagedSkillDto>,
 }
 
 #[tauri::command]

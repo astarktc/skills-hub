@@ -1244,48 +1244,22 @@ fn apply_global_tool_config_refuses_an_unknown_tool_key_and_leaves_the_row() {
     );
 }
 
+/// The Library folder is not a generic setting: `update_setting` cannot
+/// write it (Move Library folder is its only writer).
 #[test]
-fn apply_central_repo_path_requires_absolute_path() {
-    let (dir, store) = make_store();
-    let err = apply_setting(
-        &store,
-        &MemoryStore::new(),
-        dir.path(),
-        SettingUpdate::CentralRepoPath("relative/dir".to_string()),
-    )
-    .unwrap_err();
-    assert!(err.to_string().contains("absolute"), "{err}");
+fn central_repo_path_is_not_a_setting_update() {
+    let parsed =
+        serde_json::from_str::<SettingUpdate>(r#"{"key":"central_repo_path","value":"/tmp/x"}"#);
+    assert!(parsed.is_err(), "{parsed:?}");
 }
 
+/// The switch flips every moved record and the setting together.
 #[test]
-fn apply_central_repo_path_creates_dir_and_persists() {
+fn switch_library_flips_records_and_the_setting_together() {
     let (dir, store) = make_store();
     let home = dir.path().join("home");
-    let target = dir.path().join("new-central");
-    assert!(!target.exists());
-
-    let s = apply_setting(
-        &store,
-        &MemoryStore::new(),
-        &home,
-        SettingUpdate::CentralRepoPath(target.to_string_lossy().to_string()),
-    )
-    .unwrap();
-    assert_eq!(s.central_repo_path, target.to_string_lossy().to_string());
-    assert!(target.is_dir());
-    assert_eq!(resolve_central_repo_path(&store, &home).unwrap(), target);
-}
-
-#[test]
-fn apply_central_repo_path_moves_managed_skills() {
-    let (dir, store) = make_store();
-    let home = dir.path().join("home");
-    let old_base = home.join(".skillshub");
-    let skill_dir = old_base.join("my-skill");
-    std::fs::create_dir_all(&skill_dir).unwrap();
-    std::fs::write(skill_dir.join("SKILL.md"), "# hi").unwrap();
-
     let now = 1_700_000_000_000;
+    let old = home.join(".skillshub").join("my-skill");
     store
         .upsert_skill(&SkillRecord {
             id: "s1".to_string(),
@@ -1295,48 +1269,56 @@ fn apply_central_repo_path_moves_managed_skills() {
             source_ref: None,
             source_subpath: None,
             source_revision: None,
-            central_path: skill_dir.to_string_lossy().to_string(),
+            central_path: old.to_string_lossy().to_string(),
             content_hash: None,
-            created_at: now,
-            updated_at: now,
+            created_at: 1,
+            updated_at: 1,
             last_sync_at: None,
-            last_seen_at: now,
+            last_seen_at: 1,
             status: "active".to_string(),
             imported_from_tool: None,
         })
         .unwrap();
+    let new_root = dir.path().join("moved");
+    let new_copy = new_root.join("my-skill");
 
-    let new_base = dir.path().join("moved");
-    apply_setting(
+    crate::core::settings::switch_library(
         &store,
-        &MemoryStore::new(),
-        &home,
-        SettingUpdate::CentralRepoPath(new_base.to_string_lossy().to_string()),
+        &[("s1".to_string(), new_copy.to_string_lossy().to_string())],
+        &new_root,
+        now,
     )
     .unwrap();
 
-    let moved = new_base.join("my-skill");
-    assert!(moved.join("SKILL.md").exists());
-    assert!(!skill_dir.exists());
     let record = store.get_skill_by_id("s1").unwrap().expect("skill");
-    assert_eq!(PathBuf::from(&record.central_path), moved);
-    assert!(record.updated_at >= now);
+    assert_eq!(PathBuf::from(&record.central_path), new_copy);
+    assert_eq!(record.updated_at, now);
+    assert_eq!(resolve_central_repo_path(&store, &home).unwrap(), new_root);
 }
 
+/// A switch naming a record that is not there changes nothing at all.
 #[test]
-fn apply_central_repo_path_same_path_is_a_noop_move() {
+fn switch_library_is_all_or_nothing() {
     let (dir, store) = make_store();
     let home = dir.path().join("home");
-    let base = home.join(".skillshub");
-    let s = apply_setting(
+    let new_root = dir.path().join("moved");
+
+    let err = crate::core::settings::switch_library(
         &store,
-        &MemoryStore::new(),
-        &home,
-        SettingUpdate::CentralRepoPath(base.to_string_lossy().to_string()),
-    )
-    .unwrap();
-    assert_eq!(s.central_repo_path, base.to_string_lossy().to_string());
-    assert!(base.is_dir());
+        &[(
+            "ghost".to_string(),
+            new_root.join("ghost").to_string_lossy().to_string(),
+        )],
+        &new_root,
+        5,
+    );
+
+    assert!(err.is_err());
+    assert_eq!(
+        resolve_central_repo_path(&store, &home).unwrap(),
+        home.join(".skillshub"),
+        "the setting did not flip"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1400,8 +1382,4 @@ fn setting_update_deserializes_adjacently_tagged() {
         }
         other => panic!("unexpected {other:?}"),
     }
-
-    let u: SettingUpdate =
-        serde_json::from_str(r#"{"key":"central_repo_path","value":"/tmp/x"}"#).unwrap();
-    assert!(matches!(u, SettingUpdate::CentralRepoPath(p) if p == "/tmp/x"));
 }

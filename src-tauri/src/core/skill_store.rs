@@ -899,6 +899,38 @@ impl SkillStore {
         })
     }
 
+    /// Move Library folder's switch: in **one transaction**, point every
+    /// moved skill (`(skill_id, new central_path)`) at its new copy and write
+    /// the settings row `setting` (`(key, value)` — the key is
+    /// `core::settings`'s to spell). Either everything flips or nothing does.
+    /// Raw adapter; `settings::switch_library` is its only caller.
+    pub(super) fn switch_library_records(
+        &self,
+        moves: &[(String, String)],
+        setting: (&str, &str),
+        updated_at: i64,
+    ) -> Result<()> {
+        self.with_conn(|conn| {
+            let tx = conn.unchecked_transaction()?;
+            for (skill_id, central_path) in moves {
+                let changed = tx.execute(
+                    "UPDATE skills SET central_path = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![central_path, updated_at, skill_id],
+                )?;
+                if changed != 1 {
+                    anyhow::bail!("skill {skill_id} vanished during the library switch");
+                }
+            }
+            tx.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![setting.0, setting.1],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+    }
+
     pub fn list_skills_missing_description(&self) -> Result<Vec<SkillRecord>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(

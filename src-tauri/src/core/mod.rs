@@ -18,6 +18,7 @@ pub mod install_batch;
 pub mod install_finalize;
 pub mod installer;
 pub mod legacy_reclassification;
+pub mod library_move;
 pub mod log_reveal;
 pub mod manifest;
 pub mod mutation_guard;

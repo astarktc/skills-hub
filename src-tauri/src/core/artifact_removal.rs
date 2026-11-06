@@ -798,6 +798,63 @@ pub(crate) fn remove_superseded_artifact_unlocked(
     Ok(())
 }
 
+/// Move Library folder's Clean step (`core::library_move`): remove a moved
+/// skill's **former** central copy at `former_copy`, after the switch
+/// recorded its new copy — so the store no longer records this path, and
+/// `central_dir` is the *new* configured central repo.
+///
+/// Admitted physically like every removal: never the (new) library, never a
+/// copy the store still records or the folder holding one (a skill left
+/// behind as Unlocatable keeps its record, so its folder stays protected),
+/// and claimed to lie inside the folder that held the copy — an aliased
+/// folder on the way that leads elsewhere is refused. The old Library root
+/// itself is never named here, so it and anything unrecorded in it stay.
+/// Presence follows the module rule. Unlocked internal seam.
+pub(crate) fn remove_former_central_copy_unlocked(
+    store: &SkillStore,
+    central_dir: &Path,
+    former_copy: &Path,
+) -> Result<()> {
+    let Some(holder) = former_copy.parent().filter(|_| former_copy.is_absolute()) else {
+        anyhow::bail!(
+            "refusing to remove {:?}: not a recorded copy path",
+            former_copy
+        );
+    };
+    if is_present(former_copy) {
+        let claim = [holder.to_path_buf()];
+        let library = ProtectedLibrary::new(store, central_dir);
+        remove_path_any(
+            former_copy,
+            &Fence::new(&library).claiming(Claim::Within(&claim)),
+        )?;
+    }
+    Ok(())
+}
+
+/// Move Library folder's rollback (`core::library_move`): remove a copy it
+/// staged at `staged` inside the destination `dest_root` before the switch,
+/// when a later copy failed. Nothing is recorded there yet; the library
+/// (`central_dir`, the still-configured one, and every recorded copy) stays
+/// protected and the removal is claimed inside `dest_root`. Unlocked
+/// internal seam.
+pub(crate) fn remove_staged_library_copy_unlocked(
+    store: &SkillStore,
+    central_dir: &Path,
+    dest_root: &Path,
+    staged: &Path,
+) -> Result<()> {
+    if is_present(staged) {
+        let claim = [dest_root.to_path_buf()];
+        let library = ProtectedLibrary::new(store, central_dir);
+        remove_path_any(
+            staged,
+            &Fence::new(&library).claiming(Claim::Within(&claim)),
+        )?;
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Entry points (each takes the mutation guard)
 // ---------------------------------------------------------------------------

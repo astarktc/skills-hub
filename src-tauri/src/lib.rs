@@ -24,6 +24,8 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         .commands(tauri_specta::collect_commands![
             commands::get_settings,
             commands::update_setting,
+            commands::preview_library_move,
+            commands::move_library,
             commands::get_tool_status,
             commands::get_project_tool_status,
             commands::clear_git_cache_now,
