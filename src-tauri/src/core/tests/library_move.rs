@@ -932,3 +932,90 @@ fn a_skill_that_cannot_be_relocated_faithfully_stays_where_it_is() {
     assert!(report.deployments.iter().all(|d| d.skill_id != into_own));
     assert!(f.central(&fine).starts_with(f.dest()), "the rest moved");
 }
+
+/// Make `link` a directory link to `target`.
+fn link_dir(target: &Path, link: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(target, link).unwrap();
+}
+
+/// Review #3 (the reviewer's probe): alpha records `central/alpha`, beta
+/// records the same folder through an alias of the Library. Beta's harness
+/// link cannot be re-pointed. Retention used to be decided per skill id
+/// while deletion acted on the physical folder, so alpha's clean deleted the
+/// copy beta's link still reached. Two records of one physical copy are now
+/// both kept, and nothing is removed under a link.
+#[cfg(unix)]
+#[test]
+fn other_skill_alias_retains_still_linked_old_copy() {
+    use crate::core::library_move::SkillKept;
+    use std::os::unix::fs::PermissionsExt;
+    let mut f = fixture(&["claude_code", "cursor"]);
+    let alpha = f.install("alpha");
+    let beta = f.install("beta");
+    let shared = f.central(&alpha);
+    fs::remove_dir_all(f.central(&beta)).unwrap();
+    let alias = f.dir.path().join("alias-to-central");
+    link_dir(&f.paths.central_dir, &alias);
+    let mut record = f.store.get_skill_by_id(&beta).unwrap().unwrap();
+    record.central_path = alias.join("alpha").to_string_lossy().into_owned();
+    f.store.upsert_skill(&record).unwrap();
+    f.sync(&alpha, &["claude_code"]);
+    f.sync(&beta, &["cursor"]);
+    let beta_link = f.home().join(".cursor/skills/beta");
+    assert!(resolves_to(&beta_link, &shared));
+    let cursor_dir = f.home().join(".cursor/skills");
+    fs::set_permissions(&cursor_dir, fs::Permissions::from_mode(0o555)).unwrap();
+    if fs::create_dir(cursor_dir.join("probe")).is_ok() {
+        fs::remove_dir(cursor_dir.join("probe")).unwrap();
+        fs::set_permissions(&cursor_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        return; // running as root
+    }
+
+    let report = f.run();
+    fs::set_permissions(&cursor_dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(shared.join("SKILL.md").is_file(), "the shared copy stays");
+    assert!(resolves_to(&beta_link, &shared), "beta's link never dangles");
+    assert!(resolves_to(&f.home().join(".claude/skills/alpha"), &shared));
+    assert!(matches!(
+        kept_reason(&report, &alpha),
+        SkillKept::SharedCopy { with_skill_id } if with_skill_id == beta
+    ));
+    assert!(matches!(
+        kept_reason(&report, &beta),
+        SkillKept::SharedCopy { with_skill_id } if with_skill_id == alpha
+    ));
+    assert_eq!(f.central(&alpha), shared, "records keep their paths");
+    assert_eq!(f.central(&beta), alias.join("alpha"));
+}
+
+/// Review #3: a physical old copy is removed only when no Deployment of
+/// *any* skill reaches it — here another skill's owned link that the
+/// operator pointed at alpha's copy.
+#[test]
+fn an_old_copy_another_skills_deployment_reaches_is_kept() {
+    let mut f = fixture(&["claude_code"]);
+    let alpha = f.install("alpha");
+    let gamma = f.install("gamma");
+    f.sync(&gamma, &["claude_code"]);
+    let alpha_old = f.central(&alpha);
+    let gamma_link = f.home().join(".claude/skills/gamma");
+    remove_link(&gamma_link);
+    link_dir(&alpha_old, &gamma_link);
+
+    let report = f.run();
+
+    assert!(f.central(&alpha).starts_with(f.dest()), "alpha moved");
+    assert!(alpha_old.join("SKILL.md").is_file(), "its old copy stays");
+    assert!(resolves_to(&gamma_link, &alpha_old), "gamma's link never dangles");
+    let kept: Vec<_> = report
+        .left_behind
+        .iter()
+        .filter(|item| item.reason == LeftBehindReason::StillLinked)
+        .map(|item| (PathBuf::from(&item.path), item.skill_id.clone()))
+        .collect();
+    assert_eq!(kept, vec![(alpha_old, Some(alpha))]);
+}

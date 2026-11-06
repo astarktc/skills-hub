@@ -247,7 +247,8 @@ pub enum RelinkSkip {
 pub struct LeftBehind {
     pub path: String,
     pub reason: LeftBehindReason,
-    /// The skill whose old copy this is (`still_linked`, `removal_failed`).
+    /// The skill whose old copy this is (`still_linked`, `still_recorded`,
+    /// `removal_failed`).
     pub skill_id: Option<String>,
     /// Why its removal failed (`removal_failed`).
     pub error: Option<CommandError>,
@@ -260,8 +261,12 @@ pub enum LeftBehindReason {
     OldLibrary,
     /// Something in the old Library folder no record names — never removed.
     Unrecorded,
-    /// A moved skill's old copy that a Deployment still reaches.
+    /// A moved skill's old copy that a Deployment (of any skill) still
+    /// reaches.
     StillLinked,
+    /// A moved skill's old copy that a skill which stays still records (an
+    /// Unlocatable skill recorded inside it).
+    StillRecorded,
     /// A moved skill's old copy whose removal failed or was refused.
     RemovalFailed,
 }
@@ -321,7 +326,7 @@ pub fn move_library(
         }
 
         let deployments = relink_phase(store, dest, &moved, now, &mut on_progress)?;
-        let left_behind = clean_phase(store, paths, dest, &moved, &mut on_progress)?;
+        let left_behind = clean_phase(store, &paths.central_dir, dest, &moved, &mut on_progress)?;
 
         let mut outcomes: Vec<SkillMoveOutcome> = moved
             .iter()
@@ -574,12 +579,23 @@ fn copy_phase(
         old_library.push(Place::of(Path::new(&skill.central_path))?);
         places.push(Place::of(Path::new(&skill.central_path))?);
     }
+    // Two records of one physical copy (or of copies one inside the other)
+    // alias one set of bytes: copying it twice would split one skill into
+    // two, so neither moves.
+    let shared_with: Vec<Option<String>> = (0..places.len())
+        .map(|i| {
+            (0..places.len())
+                .find(|&j| j != i && places[i].overlaps(&places[j]))
+                .map(|j| locatable[j].id.clone())
+        })
+        .collect();
 
     let mut copied = Copied {
         moved: Vec::with_capacity(locatable.len()),
         kept: Vec::new(),
     };
-    for (done, (skill, old_place)) in locatable.into_iter().zip(places).enumerate() {
+    let skills = locatable.into_iter().zip(places).zip(shared_with);
+    for (done, ((skill, old_place), shared_with)) in skills.enumerate() {
         on_progress(LibraryMoveProgress {
             phase: LibraryMovePhase::Copying,
             done: done as u32,
@@ -591,6 +607,9 @@ fn copy_phase(
         // failure removes it with the copies before it.
         let mut reserved: Option<PathBuf> = None;
         let attempt = (|| -> Result<Option<SkillKept>> {
+            if let Some(with_skill_id) = shared_with {
+                return Ok(Some(SkillKept::SharedCopy { with_skill_id }));
+            }
             if let Some((entry, cause)) = unrelocatable(&old, &old_place, &paths.central_dir, &old_library)? {
                 return Ok(Some(SkillKept::Unrelocatable {
                     entry: entry.to_string_lossy().into_owned(),
@@ -1209,11 +1228,22 @@ impl std::error::Error for NotOurs {}
 
 fn clean_phase(
     store: &SkillStore,
-    paths: &InstallerPaths,
+    old_root: &Path,
     dest: &Path,
     moved: &[Moved],
     on_progress: &mut impl FnMut(LibraryMoveProgress),
 ) -> Result<Vec<LeftBehind>> {
+    // Retention is decided over physical copies, never per skill id: an old
+    // copy goes only when no recorded copy of any skill (one kept in place,
+    // an Unlocatable one inside it) overlaps it and no Deployment of any
+    // skill reaches into it.
+    let recorded: Vec<Place> = store
+        .list_skills()?
+        .iter()
+        .filter(|skill| Path::new(&skill.central_path).is_absolute())
+        .map(|skill| Place::of(Path::new(&skill.central_path)))
+        .collect::<Result<_>>()?;
+    let reached = deployment_places(store)?;
     let total = moved.len() as u32;
     let mut kept: Vec<LeftBehind> = Vec::new();
     for (done, m) in moved.iter().enumerate() {
@@ -1223,17 +1253,23 @@ fn clean_phase(
             total,
             name: m.skill.name.clone(),
         });
-        if still_reached(store, m)? {
+        let retained = if recorded.iter().any(|copy| copy.overlaps(&m.old_place)) {
+            Some(LeftBehindReason::StillRecorded)
+        } else if reached.iter().any(|at| at.within(&m.old_place)) {
+            Some(LeftBehindReason::StillLinked)
+        } else {
+            None
+        };
+        if let Some(reason) = retained {
             kept.push(LeftBehind {
                 path: m.old.to_string_lossy().into_owned(),
-                reason: LeftBehindReason::StillLinked,
+                reason,
                 skill_id: Some(m.skill.id.clone()),
                 error: None,
             });
             continue;
         }
-        if let Err(err) =
-            remove_former_central_copy_unlocked(store, dest, &paths.central_dir, &m.old)
+        if let Err(err) = remove_former_central_copy_unlocked(store, dest, old_root, &m.old)
         {
             log::warn!("[library move] old copy {:?} kept: {err:#}", m.old);
             kept.push(LeftBehind {
@@ -1246,7 +1282,6 @@ fn clean_phase(
     }
 
     let mut left = Vec::new();
-    let old_root = &paths.central_dir;
     if old_root.is_dir() {
         left.push(LeftBehind {
             path: old_root.to_string_lossy().into_owned(),
@@ -1287,34 +1322,42 @@ fn is_scratch(name: &str) -> bool {
     name == ".explore-cache" || name.starts_with(".skills-hub-staging-") || name == ".DS_Store"
 }
 
-/// Whether any recorded Deployment of the skill — any row, any status —
-/// still physically reaches its old copy: removing it would take a
-/// harness's skill away.
-fn still_reached(store: &SkillStore, m: &Moved) -> Result<bool> {
-    let reaches = |path: &Path| {
-        path.canonicalize()
-            .is_ok_and(|resolved| Place::of(&resolved).is_ok_and(|at| at.within(&m.old_place)))
-    };
-    for row in store.list_skill_targets(&m.skill.id)? {
-        if reaches(Path::new(&row.target_path)) {
-            return Ok(true);
+/// Where every recorded Deployment of every skill — any row, any status —
+/// physically resolves (a path that resolves to nothing reaches nothing).
+fn deployment_places(store: &SkillStore) -> Result<Vec<Place>> {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    let mut projects = HashMap::new();
+    for skill in store.list_skills()? {
+        for row in store.list_skill_targets(&skill.id)? {
+            paths.push(PathBuf::from(&row.target_path));
+        }
+        for row in store.list_project_skill_assignments_by_skill(&skill.id)? {
+            let project = match projects.get(&row.project_id) {
+                Some(project) => project,
+                None => {
+                    let project = store.get_project_by_id(&row.project_id)?;
+                    projects.entry(row.project_id.clone()).or_insert(project)
+                }
+            };
+            let (Some(project), Some(adapter)) = (project, adapter_by_key(&row.tool)) else {
+                continue;
+            };
+            let name = skill.name.clone();
+            if let Some(path) =
+                resolve_assignment_artifact(Path::new(&project.path), adapter, &row, || {
+                    Ok(Some(name))
+                })?
+            {
+                paths.push(path);
+            }
         }
     }
-    for row in store.list_project_skill_assignments_by_skill(&m.skill.id)? {
-        let Some(project) = store.get_project_by_id(&row.project_id)? else {
-            continue;
-        };
-        let Some(adapter) = adapter_by_key(&row.tool) else {
-            continue;
-        };
-        let path = resolve_assignment_artifact(Path::new(&project.path), adapter, &row, || {
-            Ok(Some(m.skill.name.clone()))
-        })?;
-        if path.as_deref().is_some_and(reaches) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    paths
+        .iter()
+        .filter(|path| path.is_absolute())
+        .filter_map(|path| path.canonicalize().ok())
+        .map(|resolved| Place::of(&resolved))
+        .collect()
 }
 
 #[cfg(test)]
