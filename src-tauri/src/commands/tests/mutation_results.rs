@@ -1,5 +1,6 @@
 //! Real mutation + wire-result composition, without a Tauri window or operator roots.
 use super::*;
+use crate::core::removal_fence::central_repo_of;
 use crate::core::{
     installer::install_local_skill,
     propagation::PropagationStatus,
@@ -61,6 +62,7 @@ impl Fixture {
         let outcomes = sync_skills_to_tools(
             &self.paths.home,
             &self.store,
+            &central_repo_of(&self.store),
             &[BatchSkill {
                 skill_id: self.id.clone(),
                 skill_name: "alpha".into(),

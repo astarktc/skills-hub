@@ -46,6 +46,7 @@ use super::manifest::{find_skill_md, parse_skill_md};
 use super::refresh::{
     refresh_with_intent, RefreshProgress, RefreshReport, RefreshSelection, UpdateIntent,
 };
+use super::removal_fence::ProtectedLibrary;
 use super::skill_discovery::require_skill_md;
 use super::skill_matching::dir_name_of;
 use super::skill_store::{SkillRecord, SkillStore};
@@ -255,7 +256,10 @@ pub(crate) fn preview_repoint_source_with(
             let source = parse_full_github_url(url)?;
             let ttl_ms = super::settings::git_cache_ttl_ms(store);
             let selection = selection.as_ref().map(RepointSelection::as_git_selection);
-            preview_git(paths, &record, url, &source, selection, ttl_ms, cancel, api)
+            let library = ProtectedLibrary::new(store, &paths.central_dir);
+            preview_git(
+                paths, &library, &record, url, &source, selection, ttl_ms, cancel, api,
+            )
         }
     }
 }
@@ -267,6 +271,7 @@ const PREVIEW_SCRATCH_DIR: &str = "repoint-preview";
 #[allow(clippy::too_many_arguments)]
 fn preview_git(
     paths: &InstallerPaths,
+    library: &ProtectedLibrary<'_>,
     record: &SkillRecord,
     url: &str,
     source: &GitSource,
@@ -289,6 +294,7 @@ fn preview_git(
             },
             dest: scratch.path(),
             cache_dir: &paths.cache_dir,
+            library,
             ttl_ms,
             cancel,
             allow_fast_path: true,
@@ -300,7 +306,7 @@ fn preview_git(
     let names_repository = source.subpath.is_none() && selection.is_none();
     let acquired = match acquired {
         Err(err) if names_repository && is_multi_skills(&err) => {
-            let candidates = list_candidates(paths, url, ttl_ms, cancel, api)?;
+            let candidates = list_candidates(paths, library, url, ttl_ms, cancel, api)?;
             return Ok(RepointPreview {
                 resolved_name: None,
                 git_ref: None,
@@ -323,7 +329,8 @@ fn preview_git(
     };
     let resolved = landed_name(scratch.path(), &fallback);
     let candidates = if names_repository {
-        Some(list_candidates(paths, url, ttl_ms, cancel, api)?).filter(|list| list.len() > 1)
+        Some(list_candidates(paths, library, url, ttl_ms, cancel, api)?)
+            .filter(|list| list.len() > 1)
     } else {
         None
     };
@@ -341,6 +348,7 @@ fn preview_git(
 /// one the picker's install reuses.
 fn list_candidates(
     paths: &InstallerPaths,
+    library: &ProtectedLibrary<'_>,
     url: &str,
     ttl_ms: i64,
     cancel: Option<&CancelToken>,
@@ -349,6 +357,7 @@ fn list_candidates(
     let listing = list_git_skills_with(url, None, api, |parsed| {
         fetch_through_cache(
             &paths.cache_dir,
+            library,
             &FetchRequest {
                 clone_url: &parsed.clone_url,
                 branch: parsed.branch.as_deref(),

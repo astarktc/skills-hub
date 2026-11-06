@@ -69,9 +69,10 @@ pub struct RelocationSummary {
 pub fn relocate_former_global_targets(
     store: &SkillStore,
     home: &Path,
+    central_dir: &Path,
     now: i64,
 ) -> Result<RelocationSummary> {
-    mutation_guard::serialized(|| relocate_unlocked(store, home, now))
+    mutation_guard::serialized(|| relocate_unlocked(store, home, central_dir, now))
 }
 
 /// One former artifact of one skill, materialised (or not) once and shared
@@ -85,6 +86,7 @@ struct Move {
 pub(crate) fn relocate_unlocked(
     store: &SkillStore,
     home: &Path,
+    central_dir: &Path,
     now: i64,
 ) -> Result<RelocationSummary> {
     let mut summary = RelocationSummary::default();
@@ -126,7 +128,7 @@ pub(crate) fn relocate_unlocked(
             let index = match moves.iter().position(|m| m.old == old) {
                 Some(index) => index,
                 None => {
-                    let outcome = materialise(store, home, adapter, &skill, &old);
+                    let outcome = materialise(store, home, central_dir, adapter, &skill, &old);
                     moves.push(Move {
                         old: old.clone(),
                         adapter,
@@ -160,9 +162,13 @@ pub(crate) fn relocate_unlocked(
         }
 
         for relocated in moves.iter().filter(|m| m.outcome.is_some()) {
-            if let Err(err) =
-                remove_superseded_artifact_unlocked(store, home, relocated.adapter, &relocated.old)
-            {
+            if let Err(err) = remove_superseded_artifact_unlocked(
+                store,
+                home,
+                central_dir,
+                relocated.adapter,
+                &relocated.old,
+            ) {
                 log::warn!(
                     "relocated {} but could not remove its former target {}: {:#}",
                     skill.name,
@@ -180,6 +186,7 @@ pub(crate) fn relocate_unlocked(
 fn materialise(
     store: &SkillStore,
     home: &Path,
+    central_dir: &Path,
     adapter: &ToolAdapter,
     skill: &SkillRecord,
     old: &Path,
@@ -220,7 +227,7 @@ fn materialise(
         identity,
         &target,
         overwrite,
-        &ProtectedLibrary::recorded(store),
+        &ProtectedLibrary::new(store, central_dir),
     ) {
         Ok(outcome) => Some(outcome),
         Err(err) => {

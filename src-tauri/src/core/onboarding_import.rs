@@ -391,6 +391,7 @@ fn replace_with_managed_unlocked(
     let targets = sync_skills_to_tools_unlocked(
         &paths.home,
         store,
+        &paths.central_dir,
         &skills,
         &tools,
         &batch_policy,
@@ -436,7 +437,7 @@ fn apply_one_unlocked(
     // here leaves its path free, so a Tool the sync reaches gets the link.
     let removed_divergent: Vec<OriginalOutcome> = if selection.remove_divergent {
         remove_divergent_copies(
-            &paths.home,
+            paths,
             store,
             &installed.skill_id,
             group,
@@ -463,7 +464,7 @@ fn apply_one_unlocked(
                 .filter_map(|variant| {
                     if policy.remove_originals {
                         Some(settle_original(
-                            &paths.home,
+                            paths,
                             store,
                             &installed.skill_id,
                             &variant.path,
@@ -582,6 +583,7 @@ fn sync_imported_unlocked(
     let targets = sync_skills_to_tools_unlocked(
         &paths.home,
         store,
+        &paths.central_dir,
         &skills,
         &tools,
         &batch_policy,
@@ -646,7 +648,7 @@ fn leave_original(
 /// never removed twice, and the second harness never reads the first's
 /// removal as "already gone".
 fn remove_divergent_copies(
-    home: &Path,
+    paths: &InstallerPaths,
     store: &SkillStore,
     skill_id: &str,
     group: &OnboardingGroup,
@@ -658,7 +660,7 @@ fn remove_divergent_copies(
         let status = match settled.iter().find(|(path, _)| *path == variant.path) {
             Some((_, status)) => status.clone(),
             None => {
-                let status = remove_divergent_copy(home, store, skill_id, chosen, &variant.path);
+                let status = remove_divergent_copy(paths, store, skill_id, chosen, &variant.path);
                 settled.push((&variant.path, status.clone()));
                 status
             }
@@ -691,7 +693,7 @@ fn remove_divergent_copies(
 /// admitted physically ([`remove_original`]). Refusals and removal failures
 /// are reported, never thrown.
 fn remove_divergent_copy(
-    home: &Path,
+    paths: &InstallerPaths,
     store: &SkillStore,
     skill_id: &str,
     chosen: &Path,
@@ -719,8 +721,8 @@ fn remove_divergent_copy(
             unknown("the copy's or the managed skill's content could not be read".to_string())
         }
         Comparison::Different => Some(
-            match ensure_path_within_tool_dirs(home, path)
-                .and_then(|()| remove_original(home, store, path))
+            match ensure_path_within_tool_dirs(&paths.home, path)
+                .and_then(|()| remove_original(paths, store, path))
             {
                 Ok(()) => OriginalStatus::Removed,
                 Err(error) => OriginalStatus::Failed {
@@ -735,9 +737,9 @@ fn remove_divergent_copy(
 /// the central library, and physically inside a Tool's skills dir — the
 /// lexical registry fence alone would admit a folder reached through a Tool
 /// dir linked onto the library.
-fn remove_original(home: &Path, store: &SkillStore, path: &Path) -> Result<()> {
-    let library = ProtectedLibrary::recorded(store);
-    let dirs = deletable_skills_dirs_in(home);
+fn remove_original(paths: &InstallerPaths, store: &SkillStore, path: &Path) -> Result<()> {
+    let library = ProtectedLibrary::new(store, &paths.central_dir);
+    let dirs = deletable_skills_dirs_in(&paths.home);
     remove_path_any(path, &Fence::new(&library).claiming(Claim::Within(&dirs)))
 }
 
@@ -745,13 +747,13 @@ fn remove_original(home: &Path, store: &SkillStore, path: &Path) -> Result<()> {
 /// the central copy. The registry owns which paths may be deleted at all
 /// ([`ensure_path_within_tool_dirs`]); its refusal is reported, never thrown.
 fn settle_original(
-    home: &Path,
+    paths: &InstallerPaths,
     store: &SkillStore,
     skill_id: &str,
     path: &Path,
     tool: &str,
 ) -> OriginalOutcome {
-    let status = match ensure_path_within_tool_dirs(home, path) {
+    let status = match ensure_path_within_tool_dirs(&paths.home, path) {
         Err(error) => OriginalStatus::Failed {
             error: CommandError::from_anyhow(error),
         },
@@ -759,7 +761,7 @@ fn settle_original(
         Ok(()) if !content_identity::same_content(Source::Managed { store, skill_id }, path) => {
             OriginalStatus::KeptDivergent
         }
-        Ok(()) => match remove_original(home, store, path) {
+        Ok(()) => match remove_original(paths, store, path) {
             Ok(()) => OriginalStatus::Removed,
             Err(error) => OriginalStatus::Failed {
                 error: CommandError::from_anyhow(error),

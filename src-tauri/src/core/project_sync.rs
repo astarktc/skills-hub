@@ -80,6 +80,8 @@ pub(crate) fn resolve_assignment_artifact(
 /// no helper looks the adapter or the skill up a second time.
 pub(crate) struct AssignmentSyncContext<'a> {
     pub store: &'a SkillStore,
+    /// The configured central repo an overwrite's replacement must spare.
+    pub central_dir: &'a Path,
     pub project_path: &'a Path,
     pub adapter: &'static ToolAdapter,
     pub skill: &'a SkillRecord,
@@ -143,7 +145,7 @@ pub(crate) fn sync_assignment_target(
         &target,
         ctx.overwrite,
         ctx.project_path,
-        &ProtectedLibrary::recorded(ctx.store),
+        &ProtectedLibrary::new(ctx.store, ctx.central_dir),
     )?;
 
     let hash = if outcome.mode_used.can_drift() {
@@ -179,12 +181,13 @@ fn require_adapter(tool_key: &str) -> Result<&'static ToolAdapter> {
 #[cfg(test)]
 pub(crate) fn assign_and_sync(
     store: &SkillStore,
+    central_dir: &Path,
     project: &ProjectRecord,
     skill: &SkillRecord,
     tool_key: &str,
     now: i64,
 ) -> Result<ProjectSkillAssignmentRecord> {
-    match assign_and_settle(store, project, skill, tool_key, now)? {
+    match assign_and_settle(store, central_dir, project, skill, tool_key, now)? {
         AssignAttempt::Settled { record, .. } => Ok(*record),
         AssignAttempt::Refused(refusal) => Err(refusal),
     }
@@ -218,6 +221,7 @@ enum AssignAttempt {
 /// already taken the mutation guard (`mutation_guard`).
 fn assign_and_settle(
     store: &SkillStore,
+    central_dir: &Path,
     project: &ProjectRecord,
     skill: &SkillRecord,
     tool_key: &str,
@@ -246,6 +250,7 @@ fn assign_and_settle(
 
     let ctx = AssignmentSyncContext {
         store,
+        central_dir,
         project_path: Path::new(&project.path),
         adapter,
         skill,
@@ -473,6 +478,7 @@ impl std::fmt::Display for ProjectSyncReport {
 /// `folder_missing` skip and no item, and no row is created or touched.
 pub(crate) fn assign_skill_to_tools(
     store: &SkillStore,
+    central_dir: &Path,
     project: &ProjectRecord,
     skill: &SkillRecord,
     tool_keys: &[String],
@@ -526,7 +532,8 @@ pub(crate) fn assign_skill_to_tools(
                         },
                     ),
                 },
-                None => match assign_and_settle(store, project, skill, tool_key, now)? {
+                None => match assign_and_settle(store, central_dir, project, skill, tool_key, now)?
+                {
                     AssignAttempt::Settled {
                         record,
                         sync_error: None,
@@ -584,6 +591,7 @@ pub fn lookup_project_and_skill(
 /// No composite operation composes it, so it has no unlocked seam.
 pub fn assign_skill_to_project_tools(
     store: &SkillStore,
+    central_dir: &Path,
     project_id: &str,
     skill_id: &str,
     now: i64,
@@ -595,7 +603,7 @@ pub fn assign_skill_to_project_tools(
             .into_iter()
             .map(|t| t.tool)
             .collect();
-        assign_skill_to_tools(store, &project, &skill, &tool_keys, now)
+        assign_skill_to_tools(store, central_dir, &project, &skill, &tool_keys, now)
     })
 }
 
@@ -610,13 +618,21 @@ pub fn assign_skill_to_project_tools(
 /// that takes the guard around it.
 pub(crate) fn assign_skill_to_project_tool_unlocked(
     store: &SkillStore,
+    central_dir: &Path,
     project_id: &str,
     skill_id: &str,
     tool_key: &str,
     now: i64,
 ) -> Result<ProjectSyncReport> {
     let (project, skill) = lookup_project_and_skill(store, project_id, skill_id)?;
-    let report = assign_skill_to_tools(store, &project, &skill, &[tool_key.to_string()], now)?;
+    let report = assign_skill_to_tools(
+        store,
+        central_dir,
+        &project,
+        &skill,
+        &[tool_key.to_string()],
+        now,
+    )?;
     if report
         .items
         .iter()
@@ -633,6 +649,7 @@ pub(crate) fn assign_skill_to_project_tool_unlocked(
 
 pub(crate) fn sync_single_assignment(
     store: &SkillStore,
+    central_dir: &Path,
     project: &ProjectRecord,
     assignment: &ProjectSkillAssignmentRecord,
     overwrite: bool,
@@ -648,6 +665,7 @@ pub(crate) fn sync_single_assignment(
         })?;
     let ctx = AssignmentSyncContext {
         store,
+        central_dir,
         project_path: Path::new(&project.path),
         adapter: require_adapter(&assignment.tool)?,
         skill: &skill,
@@ -666,8 +684,13 @@ pub(crate) fn sync_single_assignment(
 /// Re-materialise every Sync target of one project.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
-pub fn resync_project(store: &SkillStore, project_id: &str, now: i64) -> Result<ProjectSyncReport> {
-    mutation_guard::serialized(|| resync_project_unlocked(store, project_id, now))
+pub fn resync_project(
+    store: &SkillStore,
+    central_dir: &Path,
+    project_id: &str,
+    now: i64,
+) -> Result<ProjectSyncReport> {
+    mutation_guard::serialized(|| resync_project_unlocked(store, central_dir, project_id, now))
 }
 
 /// Per-assignment failures are report data, classified after the row was
@@ -676,12 +699,13 @@ pub fn resync_project(store: &SkillStore, project_id: &str, now: i64) -> Result<
 /// whole re-sync, because a row the store would not settle is not settled.
 pub(crate) fn resync_project_unlocked(
     store: &SkillStore,
+    central_dir: &Path,
     project_id: &str,
     now: i64,
 ) -> Result<ProjectSyncReport> {
     let project = project_ops::require_project(store, project_id)?;
     let assignments = store.list_project_skill_assignments(project_id)?;
-    resync_assignments_unlocked(store, &project, &assignments, now)
+    resync_assignments_unlocked(store, central_dir, &project, &assignments, now)
 }
 
 /// Re-sync one assignment of a project — a matrix cell's **Sync this** (a
@@ -694,6 +718,7 @@ pub(crate) fn resync_project_unlocked(
 /// Mutation entry point: serialised against every other Sync-target mutation.
 pub fn resync_assignment(
     store: &SkillStore,
+    central_dir: &Path,
     project_id: &str,
     skill_id: &str,
     tool: &str,
@@ -709,7 +734,7 @@ pub fn resync_assignment(
                     id: format!("{project_id}/{skill_id}/{tool}"),
                 })
             })?;
-        resync_assignments_unlocked(store, &project, &[assignment], now)
+        resync_assignments_unlocked(store, central_dir, &project, &[assignment], now)
     })
 }
 
@@ -721,6 +746,7 @@ pub fn resync_assignment(
 /// Unlocked internal seam: the caller holds the mutation guard.
 fn resync_assignments_unlocked(
     store: &SkillStore,
+    central_dir: &Path,
     project: &ProjectRecord,
     assignments: &[ProjectSkillAssignmentRecord],
     now: i64,
@@ -763,26 +789,27 @@ fn resync_assignments_unlocked(
         // folder) is a first sync again, so that folder stays and the
         // collision is `TARGET_EXISTS` report data (`owns_artifact`).
         let overwrite = assignment.owns_artifact();
-        let status = match sync_single_assignment(store, project, assignment, overwrite, now) {
-            Ok(()) => ProjectSyncOutcomeStatus::Synced,
-            Err(e) => {
-                let err_msg = format!("{:#}", e);
-                store
-                    .transition_assignment(
-                        &assignment.id,
-                        AssignmentTransition::SyncFailed { error: &err_msg },
-                    )
-                    .with_context(|| {
-                        format!(
-                            "settle assignment {} as error after its re-sync failed: {err_msg}",
-                            assignment.id
+        let status =
+            match sync_single_assignment(store, central_dir, project, assignment, overwrite, now) {
+                Ok(()) => ProjectSyncOutcomeStatus::Synced,
+                Err(e) => {
+                    let err_msg = format!("{:#}", e);
+                    store
+                        .transition_assignment(
+                            &assignment.id,
+                            AssignmentTransition::SyncFailed { error: &err_msg },
                         )
-                    })?;
-                ProjectSyncOutcomeStatus::Failed {
-                    error: CommandError::from_anyhow(e),
+                        .with_context(|| {
+                            format!(
+                                "settle assignment {} as error after its re-sync failed: {err_msg}",
+                                assignment.id
+                            )
+                        })?;
+                    ProjectSyncOutcomeStatus::Failed {
+                        error: CommandError::from_anyhow(e),
+                    }
                 }
-            }
-        };
+            };
         report.items.push(ProjectSyncOutcome {
             assignment_id: Some(assignment.id.clone()),
             project_id: assignment.project_id.clone(),
@@ -814,6 +841,7 @@ fn resync_assignments_unlocked(
 /// Unlocked internal seam: the caller holds the mutation guard.
 pub(crate) fn first_sync_assignments_unlocked(
     store: &SkillStore,
+    central_dir: &Path,
     assignments: &[ProjectSkillAssignmentRecord],
     now: i64,
 ) -> Result<ProjectSyncReport> {
@@ -829,8 +857,9 @@ pub(crate) fn first_sync_assignments_unlocked(
         if assignment.status == SyncStatus::Disabled {
             store.transition_assignment(&assignment.id, AssignmentTransition::EnableAdmitted)?;
         }
-        let result = project
-            .and_then(|project| sync_single_assignment(store, &project, assignment, false, now));
+        let result = project.and_then(|project| {
+            sync_single_assignment(store, central_dir, &project, assignment, false, now)
+        });
         let status = match result {
             Ok(()) => ProjectSyncOutcomeStatus::Synced,
             Err(e) => {
@@ -890,14 +919,16 @@ pub struct AssignmentDecision {
 /// Mutation entry point: serialised against every other Sync-target mutation.
 pub fn resolve_collisions(
     store: &SkillStore,
+    central_dir: &Path,
     decisions: &[AssignmentDecision],
     now: i64,
 ) -> Result<ProjectSyncReport> {
-    mutation_guard::serialized(|| resolve_collisions_unlocked(store, decisions, now))
+    mutation_guard::serialized(|| resolve_collisions_unlocked(store, central_dir, decisions, now))
 }
 
 fn resolve_collisions_unlocked(
     store: &SkillStore,
+    central_dir: &Path,
     decisions: &[AssignmentDecision],
     now: i64,
 ) -> Result<ProjectSyncReport> {
@@ -957,7 +988,14 @@ fn resolve_collisions_unlocked(
                 OverrideDecision::Overwrite => {
                     let result = project_ops::require_project(store, &assignment.project_id)
                         .and_then(|project| {
-                            sync_single_assignment(store, &project, &assignment, true, now)
+                            sync_single_assignment(
+                                store,
+                                central_dir,
+                                &project,
+                                &assignment,
+                                true,
+                                now,
+                            )
                         });
                     match result {
                         Ok(()) => ProjectSyncOutcomeStatus::Synced,
@@ -1010,11 +1048,20 @@ fn reported_skill_name(store: &SkillStore, assignment: &ProjectSkillAssignmentRe
 /// Nothing composes the whole batch, so it has no unlocked seam of its own.
 /// Per-assignment failures are report data; a store failure listing a
 /// project's assignments fails the whole operation.
-pub fn resync_all_projects(store: &SkillStore, now: i64) -> Result<ProjectSyncReport> {
+pub fn resync_all_projects(
+    store: &SkillStore,
+    central_dir: &Path,
+    now: i64,
+) -> Result<ProjectSyncReport> {
     mutation_guard::serialized(|| {
         let mut report = ProjectSyncReport::default();
         for project in store.list_projects()? {
-            report.absorb(resync_project_unlocked(store, &project.id, now)?);
+            report.absorb(resync_project_unlocked(
+                store,
+                central_dir,
+                &project.id,
+                now,
+            )?);
         }
         Ok(report)
     })
@@ -1210,6 +1257,7 @@ pub enum ToggleOutcome {
 /// the decision cannot be raced by a concurrent mutation.
 pub fn toggle_skill_assignment(
     store: &SkillStore,
+    central_dir: &Path,
     project_id: &str,
     skill_id: &str,
     tool_key: &str,
@@ -1222,11 +1270,18 @@ pub fn toggle_skill_assignment(
             .is_some()
         {
             let (project, skill) = lookup_project_and_skill(store, project_id, skill_id)?;
-            let report = unassign_and_remove_artifacts(store, &project, &skill, tool_key)?;
+            let report =
+                unassign_and_remove_artifacts(store, central_dir, &project, &skill, tool_key)?;
             return Ok(ToggleOutcome::Unassigned { report });
         }
-        let report =
-            assign_skill_to_project_tool_unlocked(store, project_id, skill_id, tool_key, now)?;
+        let report = assign_skill_to_project_tool_unlocked(
+            store,
+            central_dir,
+            project_id,
+            skill_id,
+            tool_key,
+            now,
+        )?;
         Ok(ToggleOutcome::Assigned { report })
     })
 }
@@ -1242,6 +1297,7 @@ pub fn toggle_skill_assignment(
 /// It calls only unlocked seams — the guard is not reentrant.
 pub fn unassign_skill_from_project(
     store: &SkillStore,
+    central_dir: &Path,
     project_id: &str,
     skill_id: &str,
 ) -> Result<artifact_removal::RemovalReport> {
@@ -1252,7 +1308,7 @@ pub fn unassign_skill_from_project(
             skill_id: skill.id,
         };
         let plan = artifact_removal::plan(store, &scope)?;
-        artifact_removal::execute_unlocked(store, plan)
+        artifact_removal::execute_unlocked(store, central_dir, plan)
     })
 }
 
@@ -1265,6 +1321,7 @@ pub fn unassign_skill_from_project(
 /// already taken the mutation guard.
 pub(crate) fn unassign_and_remove_artifacts(
     store: &SkillStore,
+    central_dir: &Path,
     project: &ProjectRecord,
     skill: &SkillRecord,
     tool_key: &str,
@@ -1281,7 +1338,7 @@ pub(crate) fn unassign_and_remove_artifacts(
         tool_key: tool_key.to_string(),
     };
     let plan = artifact_removal::plan(store, &scope)?;
-    artifact_removal::execute_unlocked(store, plan)
+    artifact_removal::execute_unlocked(store, central_dir, plan)
 }
 
 #[cfg(test)]

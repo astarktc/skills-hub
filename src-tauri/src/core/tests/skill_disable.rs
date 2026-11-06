@@ -5,6 +5,7 @@
 //! Every case runs against a temp home / central dir / DB; installedness is
 //! faked through `mark_installed_in`. Nothing touches the operator's home.
 
+use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -70,6 +71,7 @@ impl Fixture {
         sync_skills_to_tools(
             self.home(),
             &self.store,
+            &central_repo_of(&self.store),
             &[BatchSkill {
                 skill_id: skill.id,
                 skill_name: skill.name,
@@ -226,7 +228,14 @@ fn disabling_a_pair_removes_the_artifact_and_keeps_the_row_disabled() {
     let target = f.global_path(".claude/skills");
     assert!(exists_any(&target));
 
-    let report = disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    let report = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
 
     assert_eq!((report.removed_rows(), report.failed_rows()), (1, 0));
     assert!(!exists_any(&target), "artifact gone");
@@ -243,7 +252,14 @@ fn disabling_a_pair_removes_the_artifact_and_keeps_the_row_disabled() {
 fn a_disabled_pair_survives_refresh_and_propagation() {
     let f = fixture(&["claude_code", "codex"]);
     f.sync(&["claude_code", "codex"]);
-    disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
 
     let targets = f.refresh_all();
 
@@ -287,7 +303,14 @@ fn disabling_a_pair_with_no_row_records_a_marker_a_refresh_honours() {
     let f = fixture(&["claude_code"]);
     assert_eq!(f.status("claude_code"), None);
 
-    let report = disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    let report = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
     assert!(report.targets.is_empty(), "nothing to remove");
     assert_eq!(f.status("claude_code"), Some(SyncStatus::Disabled));
     // #95: the recorded intent is report data, so the fold can say so.
@@ -302,7 +325,14 @@ fn disabling_a_pair_with_no_row_records_a_marker_a_refresh_honours() {
     );
     assert!(report.cleared_markers.is_empty());
 
-    let again = disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    let again = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
     assert!(
         again.targets.is_empty() && again.disabled_markers.is_empty(),
         "a second Disable records nothing new: {:?}",
@@ -318,9 +348,23 @@ fn disabling_a_pair_with_no_row_records_a_marker_a_refresh_honours() {
 fn enabling_a_pair_resyncs_it_as_a_first_sync() {
     let f = fixture(&["claude_code"]);
     f.sync(&["claude_code"]);
-    disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
 
-    let report = enable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    let report = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
 
     assert!(matches!(
         report.global.as_slice(),
@@ -334,12 +378,26 @@ fn enabling_a_pair_resyncs_it_as_a_first_sync() {
 #[test]
 fn enable_reports_a_directory_in_the_way_as_target_exists_data() {
     let f = fixture(&["claude_code"]);
-    disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
     let foreign = f.global_path(".claude/skills");
     fs::create_dir_all(&foreign).unwrap();
     fs::write(foreign.join("SKILL.md"), "someone else's").unwrap();
 
-    let report = enable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    let report = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
 
     assert!(matches!(
         report.global.as_slice(),
@@ -359,9 +417,23 @@ fn enable_reports_a_directory_in_the_way_as_target_exists_data() {
 fn disabling_twice_settles_nothing_new() {
     let f = fixture(&["claude_code"]);
     f.sync(&["claude_code"]);
-    disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
 
-    let again = disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    let again = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
     assert!(again.targets.is_empty());
     assert!(again.disabled_markers.is_empty(), "an owner is no marker");
     assert_eq!(f.status("claude_code"), Some(SyncStatus::Disabled));
@@ -372,7 +444,14 @@ fn disabling_twice_settles_nothing_new() {
 #[test]
 fn a_shared_dir_sibling_is_skipped_while_a_member_is_disabled() {
     let f = fixture(&["amp", "kimi_cli"]);
-    disable_targets(&f.store, f.home(), &f.pair("amp"), NOW).unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("amp"),
+        NOW,
+    )
+    .unwrap();
     assert_eq!(f.status("kimi_cli"), None);
 
     let outcomes = f.sync(&["kimi_cli"]);
@@ -387,7 +466,14 @@ fn a_shared_dir_sibling_is_skipped_while_a_member_is_disabled() {
 #[test]
 fn an_unknown_tool_with_no_row_is_a_typed_refusal() {
     let f = fixture(&[]);
-    let err = disable_targets(&f.store, f.home(), &f.pair("no_such_tool"), NOW).unwrap_err();
+    let err = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("no_such_tool"),
+        NOW,
+    )
+    .unwrap_err();
     assert!(matches!(
         CommandError::from_anyhow(err),
         CommandError::UnknownTool { .. }
@@ -411,7 +497,14 @@ fn a_failed_removal_keeps_the_row_error_not_disabled() {
         return;
     }
 
-    let report = disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    let report = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
     fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
 
     assert_eq!((report.removed_rows(), report.failed_rows()), (0, 1));
@@ -428,11 +521,25 @@ fn disabling_a_skill_covers_global_targets_and_project_assignments() {
     let f = fixture(&["claude_code"]);
     f.sync(&["claude_code"]);
     let project = project(&f, "claude_code");
-    assign_skill_to_project_tools(&f.store, &project.id, &f.skill_id, NOW).unwrap();
+    assign_skill_to_project_tools(
+        &f.store,
+        &central_repo_of(&f.store),
+        &project.id,
+        &f.skill_id,
+        NOW,
+    )
+    .unwrap();
     let project_target = Path::new(&project.path).join(".claude/skills/alpha");
     assert!(exists_any(&project_target));
 
-    let report = disable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    let report = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.skill(),
+        NOW,
+    )
+    .unwrap();
 
     assert_eq!((report.removed_rows(), report.failed_rows()), (2, 0));
     assert!(!report.record_deleted && !report.central_removed);
@@ -453,8 +560,22 @@ fn a_disabled_skill_is_never_rematerialised_by_any_automatic_pass() {
     let f = fixture(&["claude_code", "codex"]);
     f.sync(&["claude_code"]);
     let project = project(&f, "claude_code");
-    assign_skill_to_project_tools(&f.store, &project.id, &f.skill_id, NOW).unwrap();
-    disable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    assign_skill_to_project_tools(
+        &f.store,
+        &central_repo_of(&f.store),
+        &project.id,
+        &f.skill_id,
+        NOW,
+    )
+    .unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.skill(),
+        NOW,
+    )
+    .unwrap();
 
     // Refresh: codex was never a target; it must not become one.
     let targets = f.refresh_all();
@@ -475,7 +596,7 @@ fn a_disabled_skill_is_never_rematerialised_by_any_automatic_pass() {
     assert!(outcomes.iter().all(skipped_disabled), "{outcomes:?}");
 
     // Project re-sync skips the disabled row.
-    let resync = resync_project(&f.store, &project.id, NOW).unwrap();
+    let resync = resync_project(&f.store, &central_repo_of(&f.store), &project.id, NOW).unwrap();
     assert!(matches!(
         resync.items.as_slice(),
         [item] if matches!(item.status, ProjectSyncOutcomeStatus::Skipped { reason: ProjectSyncSkip::Disabled })
@@ -502,7 +623,14 @@ fn onboarding_import_never_rematerialises_a_disabled_pair() {
 fn onboarding_import_leaves_a_disabled_pair(replace: bool) {
     let f = fixture(&["claude_code"]);
     f.sync(&["claude_code"]);
-    disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
     let reappeared = f.global_path(".claude/skills");
     fs::create_dir_all(&reappeared).unwrap();
     fs::write(
@@ -554,10 +682,24 @@ fn onboarding_import_leaves_a_disabled_pair(replace: bool) {
 #[test]
 fn a_new_assignment_of_a_disabled_skill_is_recorded_disabled_not_synced() {
     let f = fixture(&[]);
-    disable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.skill(),
+        NOW,
+    )
+    .unwrap();
     let project = project(&f, "claude_code");
 
-    let report = assign_skill_to_project_tools(&f.store, &project.id, &f.skill_id, NOW).unwrap();
+    let report = assign_skill_to_project_tools(
+        &f.store,
+        &central_repo_of(&f.store),
+        &project.id,
+        &f.skill_id,
+        NOW,
+    )
+    .unwrap();
 
     assert!(matches!(
         report.items.as_slice(),
@@ -584,10 +726,31 @@ fn enabling_a_skill_resyncs_every_disabled_row_and_clears_the_marker() {
     let f = fixture(&["claude_code"]);
     f.sync(&["claude_code"]);
     let project = project(&f, "claude_code");
-    assign_skill_to_project_tools(&f.store, &project.id, &f.skill_id, NOW).unwrap();
-    disable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    assign_skill_to_project_tools(
+        &f.store,
+        &central_repo_of(&f.store),
+        &project.id,
+        &f.skill_id,
+        NOW,
+    )
+    .unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.skill(),
+        NOW,
+    )
+    .unwrap();
 
-    let report: EnableReport = enable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    let report: EnableReport = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.skill(),
+        NOW,
+    )
+    .unwrap();
 
     assert!(matches!(
         report.global.as_slice(),
@@ -614,11 +777,25 @@ fn enabling_a_skill_skips_a_project_whose_folder_is_missing() {
     let f = fixture(&["claude_code"]);
     f.sync(&["claude_code"]);
     let project = project(&f, "claude_code");
-    assign_skill_to_project_tools(&f.store, &project.id, &f.skill_id, NOW).unwrap();
+    assign_skill_to_project_tools(
+        &f.store,
+        &central_repo_of(&f.store),
+        &project.id,
+        &f.skill_id,
+        NOW,
+    )
+    .unwrap();
     let project_dir = PathBuf::from(&project.path);
     fs::remove_dir_all(&project_dir).unwrap();
 
-    let disabled = disable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    let disabled = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.skill(),
+        NOW,
+    )
+    .unwrap();
     assert!(disabled.failures().is_empty(), "{disabled}");
     let before = f
         .store
@@ -627,7 +804,14 @@ fn enabling_a_skill_skips_a_project_whose_folder_is_missing() {
         .expect("row");
     assert_eq!(before.status, SyncStatus::Disabled);
 
-    let report: EnableReport = enable_targets(&f.store, f.home(), &f.skill(), NOW + 1).unwrap();
+    let report: EnableReport = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.skill(),
+        NOW + 1,
+    )
+    .unwrap();
 
     assert!(report.projects.items.is_empty(), "{}", report.projects);
     assert_eq!(
@@ -651,11 +835,25 @@ fn enabling_a_skill_skips_a_project_whose_folder_is_missing() {
     assert_eq!(f.status("claude_code"), Some(SyncStatus::Synced));
 
     // The Skills scope folds each skill's project skip once.
-    disable_targets(&f.store, f.home(), &f.skill(), NOW + 2).unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.skill(),
+        NOW + 2,
+    )
+    .unwrap();
     let scope = DisableScope::Skills {
         skill_ids: vec![f.skill_id.clone(), f.skill_id.clone()],
     };
-    let both = enable_targets(&f.store, f.home(), &scope, NOW + 3).unwrap();
+    let both = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &scope,
+        NOW + 3,
+    )
+    .unwrap();
     assert_eq!(both.projects.skipped_projects.len(), 1);
     assert!(!project_dir.exists());
 }
@@ -665,9 +863,23 @@ fn enabling_a_skill_skips_a_project_whose_folder_is_missing() {
 fn enabling_a_pair_of_a_disabled_skill_is_skipped() {
     let f = fixture(&["claude_code"]);
     f.sync(&["claude_code"]);
-    disable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.skill(),
+        NOW,
+    )
+    .unwrap();
 
-    let report = enable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    let report = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
 
     assert!(matches!(report.global.as_slice(), [o] if skipped_disabled(o)));
     assert_eq!(f.status("claude_code"), Some(SyncStatus::Disabled));
@@ -682,11 +894,13 @@ fn the_skills_scope_disables_each_named_skill_and_drops_stale_ids() {
         skill_ids: vec![f.skill_id.clone(), "gone".into()],
     };
 
-    let report = disable_targets(&f.store, f.home(), &scope, NOW).unwrap();
+    let report =
+        disable_targets(&f.store, &central_repo_of(&f.store), f.home(), &scope, NOW).unwrap();
     assert_eq!(report.removed_rows(), 1);
     assert!(f.store.skill_disabled_at(&f.skill_id).unwrap().is_some());
 
-    let enabled = enable_targets(&f.store, f.home(), &scope, NOW).unwrap();
+    let enabled =
+        enable_targets(&f.store, &central_repo_of(&f.store), f.home(), &scope, NOW).unwrap();
     assert_eq!(enabled.global.len(), 1);
     assert_eq!(f.status("claude_code"), Some(SyncStatus::Synced));
 }
@@ -698,8 +912,8 @@ fn an_unknown_skill_is_not_found() {
         skill_id: "missing".into(),
     };
     for err in [
-        disable_targets(&f.store, f.home(), &scope, NOW).unwrap_err(),
-        enable_targets(&f.store, f.home(), &scope, NOW).unwrap_err(),
+        disable_targets(&f.store, &central_repo_of(&f.store), f.home(), &scope, NOW).unwrap_err(),
+        enable_targets(&f.store, &central_repo_of(&f.store), f.home(), &scope, NOW).unwrap_err(),
     ] {
         assert!(matches!(
             CommandError::from_anyhow(err),
@@ -768,19 +982,47 @@ fn intent_only_marker_delete_preserves_unmanaged_bytes() {
     type Ordering = fn(&Fixture, &Path);
     let orderings: [(&str, Ordering); 3] = [
         ("marker, then foreign folder", |f, path| {
-            disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+            disable_targets(
+                &f.store,
+                &central_repo_of(&f.store),
+                f.home(),
+                &f.pair("claude_code"),
+                NOW,
+            )
+            .unwrap();
             foreign_folder(path);
         }),
         ("foreign folder, then marker", |f, path| {
             foreign_folder(path);
-            let report = disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+            let report = disable_targets(
+                &f.store,
+                &central_repo_of(&f.store),
+                f.home(),
+                &f.pair("claude_code"),
+                NOW,
+            )
+            .unwrap();
             assert!(report.targets.is_empty(), "Disable touches no unowned path");
             assert!(foreign_bytes_survive(path));
         }),
         ("marker, foreign folder, Enable collides", |f, path| {
-            disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+            disable_targets(
+                &f.store,
+                &central_repo_of(&f.store),
+                f.home(),
+                &f.pair("claude_code"),
+                NOW,
+            )
+            .unwrap();
             foreign_folder(path);
-            let enabled = enable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+            let enabled = enable_targets(
+                &f.store,
+                &central_repo_of(&f.store),
+                f.home(),
+                &f.pair("claude_code"),
+                NOW,
+            )
+            .unwrap();
             assert!(matches!(
                 enabled.global.as_slice(),
                 [o] if matches!(o.status, BatchTargetStatus::Failed { error: CommandError::TargetExists { .. } })
@@ -792,7 +1034,7 @@ fn intent_only_marker_delete_preserves_unmanaged_bytes() {
         let path = f.global_path(".claude/skills");
         arrange(&f, &path);
 
-        let report = remove_skill(&f.store, &f.skill_id).unwrap();
+        let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
 
         assert!(report.record_deleted, "{label}: the skill is deleted");
         assert!(
@@ -811,13 +1053,33 @@ fn intent_only_marker_delete_preserves_unmanaged_bytes() {
 #[test]
 fn an_intent_only_assignment_is_unassigned_without_touching_its_path() {
     let f = fixture(&[]);
-    disable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.skill(),
+        NOW,
+    )
+    .unwrap();
     let project = project(&f, "claude_code");
-    assign_skill_to_project_tools(&f.store, &project.id, &f.skill_id, NOW).unwrap();
+    assign_skill_to_project_tools(
+        &f.store,
+        &central_repo_of(&f.store),
+        &project.id,
+        &f.skill_id,
+        NOW,
+    )
+    .unwrap();
     let path = Path::new(&project.path).join(".claude/skills/alpha");
     foreign_folder(&path);
 
-    let report = unassign_skill_from_project(&f.store, &project.id, &f.skill_id).unwrap();
+    let report = unassign_skill_from_project(
+        &f.store,
+        &central_repo_of(&f.store),
+        &project.id,
+        &f.skill_id,
+    )
+    .unwrap();
 
     assert!(report.targets.is_empty(), "{report}");
     assert_eq!(report.cleared_markers.len(), 1, "the marker row is cleared");
@@ -846,13 +1108,34 @@ fn is_collision(status: &ProjectSyncOutcomeStatus) -> bool {
 /// row `error` with its diagnostic, while `synced_at` stays NULL: the row
 /// never materialised anything, so it still owns nothing.
 fn failed_project_enable(f: &Fixture) -> (ProjectRecord, PathBuf) {
-    disable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.skill(),
+        NOW,
+    )
+    .unwrap();
     let project = project(f, "claude_code");
-    assign_skill_to_project_tools(&f.store, &project.id, &f.skill_id, NOW).unwrap();
+    assign_skill_to_project_tools(
+        &f.store,
+        &central_repo_of(&f.store),
+        &project.id,
+        &f.skill_id,
+        NOW,
+    )
+    .unwrap();
     let path = Path::new(&project.path).join(".claude/skills/alpha");
     foreign_folder(&path);
 
-    let enabled = enable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    let enabled = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.skill(),
+        NOW,
+    )
+    .unwrap();
 
     assert!(
         matches!(enabled.projects.items.as_slice(), [item] if is_collision(&item.status)),
@@ -894,7 +1177,13 @@ fn failed_project_enable_never_makes_a_foreign_folder_ours() {
             let mut rows = f.store.list_project_skill_assignments(&project.id).unwrap();
             project_sync::reconcile_listing_unlocked(&f.store, &project.id, &mut rows);
             assert!(rows.iter().all(|a| !a.owns_artifact()));
-            let report = unassign_skill_from_project(&f.store, &project.id, &f.skill_id).unwrap();
+            let report = unassign_skill_from_project(
+                &f.store,
+                &central_repo_of(&f.store),
+                &project.id,
+                &f.skill_id,
+            )
+            .unwrap();
             assert!(report.targets.is_empty(), "{report}");
             assert_eq!(report.cleared_markers.len(), 1);
         }),
@@ -902,6 +1191,7 @@ fn failed_project_enable_never_makes_a_foreign_folder_ours() {
             "toggle-off",
             |f, project, _| match project_sync::toggle_skill_assignment(
                 &f.store,
+                &central_repo_of(&f.store),
                 &project.id,
                 &f.skill_id,
                 "claude_code",
@@ -917,9 +1207,12 @@ fn failed_project_enable_never_makes_a_foreign_folder_ours() {
             },
         ),
         ("remove project", |f, project, _| {
-            let report =
-                crate::core::project_ops::remove_project_and_artifacts(&f.store, &project.id)
-                    .unwrap();
+            let report = crate::core::project_ops::remove_project_and_artifacts(
+                &f.store,
+                &central_repo_of(&f.store),
+                &project.id,
+            )
+            .unwrap();
             assert!(report.targets.is_empty(), "{report}");
             assert_eq!(report.cleared_markers.len(), 1);
             assert!(f.store.get_project_by_id(&project.id).unwrap().is_none());
@@ -927,7 +1220,14 @@ fn failed_project_enable_never_makes_a_foreign_folder_ours() {
         (
             "Disable again, then Enable retries the collision",
             |f, project, _| {
-                let report = disable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+                let report = disable_targets(
+                    &f.store,
+                    &central_repo_of(&f.store),
+                    f.home(),
+                    &f.skill(),
+                    NOW,
+                )
+                .unwrap();
                 assert!(report.targets.is_empty(), "{report}");
                 assert!(
                     matches!(
@@ -945,26 +1245,35 @@ fn failed_project_enable_never_makes_a_foreign_folder_ours() {
                     .unwrap();
                 assert_eq!(row.status, SyncStatus::Disabled, "intent recorded");
                 assert_eq!(row.synced_at, None, "still no owner");
-                let enabled = enable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+                let enabled = enable_targets(
+                    &f.store,
+                    &central_repo_of(&f.store),
+                    f.home(),
+                    &f.skill(),
+                    NOW,
+                )
+                .unwrap();
                 assert!(matches!(enabled.projects.items.as_slice(), [item]
                 if is_collision(&item.status)));
             },
         ),
         ("Delete the skill", |f, _, _| {
-            let report = remove_skill(&f.store, &f.skill_id).unwrap();
+            let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
             assert!(report.record_deleted, "{report}");
             assert!(report.targets.is_empty(), "{report}");
             assert_eq!(report.cleared_markers.len(), 1);
         }),
         ("resync one", |f, project, _| {
-            let report = resync_project(&f.store, &project.id, NOW + 1).unwrap();
+            let report =
+                resync_project(&f.store, &central_repo_of(&f.store), &project.id, NOW + 1).unwrap();
             assert!(
                 is_collision(&item_for(&report, &f.skill_id).status),
                 "{report}"
             );
         }),
         ("resync all", |f, _, _| {
-            let report = resync_all_projects(&f.store, NOW + 1).unwrap();
+            let report =
+                resync_all_projects(&f.store, &central_repo_of(&f.store), NOW + 1).unwrap();
             assert!(
                 is_collision(&item_for(&report, &f.skill_id).status),
                 "{report}"
@@ -1045,12 +1354,19 @@ fn propagation_never_overwrites_a_path_the_row_does_not_own() {
 fn an_owned_disabled_target_is_still_removed_by_delete() {
     let f = fixture(&["claude_code"]);
     f.sync(&["claude_code"]);
-    disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
     let path = f.global_path(".claude/skills");
     fs::create_dir_all(&path).unwrap();
     fs::write(path.join("SKILL.md"), "reappeared").unwrap();
 
-    let report = remove_skill(&f.store, &f.skill_id).unwrap();
+    let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
 
     assert!(report.record_deleted);
     assert_eq!(report.removed_rows(), 1);
@@ -1066,8 +1382,22 @@ fn delete_disabled_skill_settles_rows_and_cascade() {
     let f = fixture(&["claude_code"]);
     f.sync(&["claude_code"]);
     let project = project(&f, "claude_code");
-    assign_skill_to_project_tools(&f.store, &project.id, &f.skill_id, NOW).unwrap();
-    disable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    assign_skill_to_project_tools(
+        &f.store,
+        &central_repo_of(&f.store),
+        &project.id,
+        &f.skill_id,
+        NOW,
+    )
+    .unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.skill(),
+        NOW,
+    )
+    .unwrap();
     let central = PathBuf::from(
         f.store
             .get_skill_by_id(&f.skill_id)
@@ -1083,7 +1413,7 @@ fn delete_disabled_skill_settles_rows_and_cascade() {
     if !lock_dir(&parent) {
         return;
     }
-    let kept = remove_skill(&f.store, &f.skill_id).unwrap();
+    let kept = remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
     unlock_dir(&parent);
     assert!(!kept.record_deleted && !kept.central_removed);
     // The absent project artifact settled (its row deleted); only the
@@ -1092,7 +1422,7 @@ fn delete_disabled_skill_settles_rows_and_cascade() {
     assert_eq!(f.status("claude_code"), Some(SyncStatus::Error));
     assert!(central.is_dir(), "central copy kept for the retry");
 
-    let report = remove_skill(&f.store, &f.skill_id).unwrap();
+    let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
 
     assert!(report.record_deleted && report.central_removed, "{report}");
     assert_eq!((report.removed_rows(), report.failed_rows()), (1, 0));
@@ -1116,7 +1446,14 @@ fn delete_disabled_skill_settles_rows_and_cascade() {
 fn partial_skill_disable_resync_skips_error_assignments() {
     let f = fixture(&["claude_code"]);
     let project = project(&f, "claude_code");
-    assign_skill_to_project_tools(&f.store, &project.id, &f.skill_id, NOW).unwrap();
+    assign_skill_to_project_tools(
+        &f.store,
+        &central_repo_of(&f.store),
+        &project.id,
+        &f.skill_id,
+        NOW,
+    )
+    .unwrap();
     let beta_source = tempfile::tempdir().unwrap();
     fs::write(
         beta_source.path().join("SKILL.md"),
@@ -1126,14 +1463,28 @@ fn partial_skill_disable_resync_skips_error_assignments() {
     let beta = install_local_skill(&f.paths, &f.store, beta_source.path(), Some("beta".into()))
         .unwrap()
         .skill_id;
-    assign_skill_to_project_tools(&f.store, &project.id, &beta, NOW).unwrap();
+    assign_skill_to_project_tools(
+        &f.store,
+        &central_repo_of(&f.store),
+        &project.id,
+        &beta,
+        NOW,
+    )
+    .unwrap();
 
     let skills_dir = Path::new(&project.path).join(".claude/skills");
     let alpha_target = skills_dir.join("alpha");
     if !lock_dir(&skills_dir) {
         return;
     }
-    let report = disable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    let report = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.skill(),
+        NOW,
+    )
+    .unwrap();
     unlock_dir(&skills_dir);
     assert_eq!(report.failed_rows(), 1);
     assert!(f.store.skill_disabled_at(&f.skill_id).unwrap().is_some());
@@ -1150,8 +1501,8 @@ fn partial_skill_disable_resync_skips_error_assignments() {
     assert!(failure.is_some());
 
     for resync in [
-        resync_project(&f.store, &project.id, NOW + 1).unwrap(),
-        resync_all_projects(&f.store, NOW + 2).unwrap(),
+        resync_project(&f.store, &central_repo_of(&f.store), &project.id, NOW + 1).unwrap(),
+        resync_all_projects(&f.store, &central_repo_of(&f.store), NOW + 2).unwrap(),
     ] {
         assert!(
             is_disabled_skip(&item_for(&resync, &f.skill_id).status),
@@ -1170,7 +1521,14 @@ fn partial_skill_disable_resync_skips_error_assignments() {
     }
 
     // Bulk assign of the kept `error` row reports why, not "already assigned".
-    let assign = assign_skill_to_project_tools(&f.store, &project.id, &f.skill_id, NOW).unwrap();
+    let assign = assign_skill_to_project_tools(
+        &f.store,
+        &central_repo_of(&f.store),
+        &project.id,
+        &f.skill_id,
+        NOW,
+    )
+    .unwrap();
     assert!(
         matches!(assign.items.as_slice(), [item] if is_disabled_skip(&item.status)),
         "{assign}"
@@ -1195,7 +1553,14 @@ fn missing_shared_sibling_disable_failure_does_not_mint_disabled() {
     if !lock_dir(&parent) {
         return;
     }
-    let failed = disable_targets(&f.store, f.home(), &f.pair("amp"), NOW).unwrap();
+    let failed = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("amp"),
+        NOW,
+    )
+    .unwrap();
     unlock_dir(&parent);
 
     assert_eq!(failed.failed_rows(), 1, "{failed}");
@@ -1203,7 +1568,14 @@ fn missing_shared_sibling_disable_failure_does_not_mint_disabled() {
     assert_eq!(f.status("amp"), None, "no marker while the artifact stays");
     assert!(exists_any(&shared));
 
-    let retried = disable_targets(&f.store, f.home(), &f.pair("amp"), NOW).unwrap();
+    let retried = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("amp"),
+        NOW,
+    )
+    .unwrap();
 
     assert_eq!((retried.removed_rows(), retried.failed_rows()), (1, 0));
     assert!(!exists_any(&shared));
@@ -1217,15 +1589,36 @@ fn missing_shared_sibling_disable_failure_does_not_mint_disabled() {
 fn disabled_virtual_group_assignment_enables_once() {
     let f = fixture(&[]);
     let project = project(&f, "agents_skills");
-    assign_skill_to_project_tools(&f.store, &project.id, &f.skill_id, NOW).unwrap();
+    assign_skill_to_project_tools(
+        &f.store,
+        &central_repo_of(&f.store),
+        &project.id,
+        &f.skill_id,
+        NOW,
+    )
+    .unwrap();
     let target = Path::new(&project.path).join(".agents/skills/alpha");
     assert!(exists_any(&target));
 
-    let disabled = disable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    let disabled = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.skill(),
+        NOW,
+    )
+    .unwrap();
     assert_eq!(disabled.removed_rows(), 1);
     assert!(!exists_any(&target));
 
-    let enabled = enable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    let enabled = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.skill(),
+        NOW,
+    )
+    .unwrap();
 
     assert!(
         matches!(
@@ -1278,11 +1671,25 @@ fn an_enable_collision_is_askable_and_its_overwrite_retry_replaces_the_folder() 
     use crate::core::global_sync::OverrideDecision;
     use crate::core::skill_disable::enable_targets_with;
     let f = fixture(&["claude_code"]);
-    disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
     let path = f.global_path(".claude/skills");
     foreign_folder(&path);
 
-    let enabled = enable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    let enabled = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
     let [row] = enabled.global.as_slice() else {
         panic!("{:?}", enabled.global)
     };
@@ -1298,6 +1705,7 @@ fn an_enable_collision_is_askable_and_its_overwrite_retry_replaces_the_folder() 
 
     let retried = enable_targets_with(
         &f.store,
+        &central_repo_of(&f.store),
         f.home(),
         &f.pair("claude_code"),
         &overwrite_or_keep(&f, "claude_code", OverrideDecision::Overwrite),
@@ -1318,13 +1726,28 @@ fn an_enable_collision_kept_stays_disabled_and_reads_declined() {
     use crate::core::global_sync::OverrideDecision;
     use crate::core::skill_disable::enable_targets_with;
     let f = fixture(&["claude_code"]);
-    disable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
     let path = f.global_path(".claude/skills");
     foreign_folder(&path);
-    enable_targets(&f.store, f.home(), &f.pair("claude_code"), NOW).unwrap();
+    enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
 
     let retried = enable_targets_with(
         &f.store,
+        &central_repo_of(&f.store),
         f.home(),
         &f.pair("claude_code"),
         &overwrite_or_keep(&f, "claude_code", OverrideDecision::Keep),
@@ -1355,7 +1778,14 @@ fn synced_then_disabled_project_enable(
     f: &Fixture,
 ) -> (ProjectRecord, PathBuf, project_sync::ProjectSyncOutcome) {
     let project = project(f, "claude_code");
-    assign_skill_to_project_tools(&f.store, &project.id, &f.skill_id, NOW).unwrap();
+    assign_skill_to_project_tools(
+        &f.store,
+        &central_repo_of(&f.store),
+        &project.id,
+        &f.skill_id,
+        NOW,
+    )
+    .unwrap();
     let path = Path::new(&project.path).join(".claude/skills/alpha");
     let owned = f
         .store
@@ -1363,7 +1793,14 @@ fn synced_then_disabled_project_enable(
         .unwrap()
         .unwrap();
     assert!(owned.owns_artifact(), "the first assignment sync owns");
-    disable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.skill(),
+        NOW,
+    )
+    .unwrap();
     let disabled = f
         .store
         .get_project_skill_assignment(&project.id, &f.skill_id, "claude_code")
@@ -1373,7 +1810,14 @@ fn synced_then_disabled_project_enable(
     assert!(!exists_any(&path), "the Disable removed the artifact");
     foreign_folder(&path);
 
-    let enabled = enable_targets(&f.store, f.home(), &f.skill(), NOW).unwrap();
+    let enabled = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        f.home(),
+        &f.skill(),
+        NOW,
+    )
+    .unwrap();
     let [item] = enabled.projects.items.as_slice() else {
         panic!("{}", enabled.projects)
     };
@@ -1406,7 +1850,8 @@ fn a_project_collision_resolves_with_overwrite_or_keep() {
     let setups: [(&str, Setup); 2] = [
         ("never-synced marker", |f| {
             let (project, path) = failed_project_enable(f);
-            let report = resync_project(&f.store, &project.id, NOW).unwrap();
+            let report =
+                resync_project(&f.store, &central_repo_of(&f.store), &project.id, NOW).unwrap();
             let [item] = report.items.as_slice() else {
                 panic!("{report}")
             };
@@ -1428,6 +1873,7 @@ fn a_project_collision_resolves_with_overwrite_or_keep() {
 
             let resolved = resolve_collisions(
                 &f.store,
+                &central_repo_of(&f.store),
                 &[AssignmentDecision {
                     project_id: item.project_id.clone(),
                     skill_id: item.skill_id.clone(),
@@ -1452,7 +1898,8 @@ fn a_project_collision_resolves_with_overwrite_or_keep() {
                     assert_eq!(row.status, SyncStatus::Synced, "{label}");
                     assert_eq!(row.synced_at, Some(NOW + 5), "{label}: owns anew");
                     // The new artifact is ours: Delete removes it.
-                    let report = remove_skill(&f.store, &f.skill_id).unwrap();
+                    let report =
+                        remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
                     assert!(report.record_deleted, "{label}: {report}");
                     assert!(!exists_any(&path), "{label}: the owned artifact is removed");
                 }
@@ -1466,7 +1913,9 @@ fn a_project_collision_resolves_with_overwrite_or_keep() {
                     assert_eq!(row.synced_at, None, "{label}: a kept row owns nothing");
                     // No later pass re-asks or replaces: resync skips it,
                     // Propagation skips it, Delete sets it aside.
-                    let again = resync_project(&f.store, &project.id, NOW + 6).unwrap();
+                    let again =
+                        resync_project(&f.store, &central_repo_of(&f.store), &project.id, NOW + 6)
+                            .unwrap();
                     assert!(is_disabled_skip(&again.items[0].status), "{label}: {again}");
                     assert!(foreign_bytes_survive(&path), "{label}: resync kept it");
                     let propagated =
@@ -1484,7 +1933,8 @@ fn a_project_collision_resolves_with_overwrite_or_keep() {
                         "{label}: {propagated:?}"
                     );
                     assert!(foreign_bytes_survive(&path), "{label}: Propagation kept it");
-                    let report = remove_skill(&f.store, &f.skill_id).unwrap();
+                    let report =
+                        remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
                     assert!(report.record_deleted, "{label}: {report}");
                     assert!(
                         report.targets.is_empty(),
@@ -1505,7 +1955,14 @@ fn enable_admission_keeps_the_ownership_of_a_failed_removal() {
     use crate::core::skill_store::AssignmentTransition;
     let f = fixture(&[]);
     let project = project(&f, "claude_code");
-    assign_skill_to_project_tools(&f.store, &project.id, &f.skill_id, NOW).unwrap();
+    assign_skill_to_project_tools(
+        &f.store,
+        &central_repo_of(&f.store),
+        &project.id,
+        &f.skill_id,
+        NOW,
+    )
+    .unwrap();
     let row = |f: &Fixture| {
         f.store
             .get_project_skill_assignment(&project.id, &f.skill_id, "claude_code")

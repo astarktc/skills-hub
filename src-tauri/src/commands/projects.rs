@@ -92,12 +92,14 @@ pub struct RemoveProjectResultDto {
 #[specta::specta]
 #[allow(non_snake_case)]
 pub async fn remove_project(
+    app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     projectId: String,
 ) -> Result<RemoveProjectResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let report = project_ops::remove_project_and_artifacts(&store, &projectId)?;
+        let central_dir = super::resolve_central_repo_path_for_app(&app, &store)?;
+        let report = project_ops::remove_project_and_artifacts(&store, &central_dir, &projectId)?;
         Ok::<_, anyhow::Error>(RemoveProjectResultDto {
             projects: project_ops::list_project_dtos(&store)?,
             report,
@@ -172,6 +174,7 @@ pub struct ConfigureProjectToolsResultDto {
 #[specta::specta]
 #[allow(non_snake_case)]
 pub async fn configure_project_tools(
+    app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     projectId: String,
     tools: Vec<String>,
@@ -179,7 +182,14 @@ pub async fn configure_project_tools(
 ) -> Result<ConfigureProjectToolsResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let removals = project_ops::configure_project_tools(&store, &projectId, &tools, gitignore)?;
+        let central_dir = super::resolve_central_repo_path_for_app(&app, &store)?;
+        let removals = project_ops::configure_project_tools(
+            &store,
+            &central_dir,
+            &projectId,
+            &tools,
+            gitignore,
+        )?;
         let report = RemovalReport::merge(removals);
         Ok::<_, anyhow::Error>(ConfigureProjectToolsResultDto {
             view: view_of(&store, &projectId)?,
@@ -214,6 +224,7 @@ pub enum ToggleAssignmentResultDto {
 #[specta::specta]
 #[allow(non_snake_case)]
 pub async fn toggle_project_skill_assignment(
+    app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     projectId: String,
     skillId: String,
@@ -221,8 +232,15 @@ pub async fn toggle_project_skill_assignment(
 ) -> Result<ToggleAssignmentResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let outcome =
-            project_sync::toggle_skill_assignment(&store, &projectId, &skillId, &tool, now_ms())?;
+        let central_dir = super::resolve_central_repo_path_for_app(&app, &store)?;
+        let outcome = project_sync::toggle_skill_assignment(
+            &store,
+            &central_dir,
+            &projectId,
+            &skillId,
+            &tool,
+            now_ms(),
+        )?;
         let view = view_of(&store, &projectId)?;
         Ok::<_, anyhow::Error>(match outcome {
             ToggleOutcome::Assigned { report } => {
@@ -265,12 +283,14 @@ pub struct ResyncProjectResultDto {
 #[specta::specta]
 #[allow(non_snake_case)]
 pub async fn resync_project(
+    app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     projectId: String,
 ) -> Result<ResyncProjectResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let report = project_sync::resync_project(&store, &projectId, now_ms())?;
+        let central_dir = super::resolve_central_repo_path_for_app(&app, &store)?;
+        let report = project_sync::resync_project(&store, &central_dir, &projectId, now_ms())?;
         Ok::<_, anyhow::Error>(ResyncProjectResultDto {
             view: view_of(&store, &projectId)?,
             report,
@@ -287,6 +307,7 @@ pub async fn resync_project(
 #[specta::specta]
 #[allow(non_snake_case)]
 pub async fn resync_project_assignment(
+    app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     projectId: String,
     skillId: String,
@@ -294,8 +315,15 @@ pub async fn resync_project_assignment(
 ) -> Result<ResyncProjectResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let report =
-            project_sync::resync_assignment(&store, &projectId, &skillId, &tool, now_ms())?;
+        let central_dir = super::resolve_central_repo_path_for_app(&app, &store)?;
+        let report = project_sync::resync_assignment(
+            &store,
+            &central_dir,
+            &projectId,
+            &skillId,
+            &tool,
+            now_ms(),
+        )?;
         Ok::<_, anyhow::Error>(ResyncProjectResultDto {
             view: view_of(&store, &projectId)?,
             report,
@@ -318,11 +346,13 @@ pub struct ResyncAllResultDto {
 #[tauri::command]
 #[specta::specta]
 pub async fn resync_all_projects(
+    app: tauri::AppHandle,
     store: State<'_, SkillStore>,
 ) -> Result<ResyncAllResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let report = project_sync::resync_all_projects(&store, now_ms())?;
+        let central_dir = super::resolve_central_repo_path_for_app(&app, &store)?;
+        let report = project_sync::resync_all_projects(&store, &central_dir, now_ms())?;
         Ok::<_, anyhow::Error>(ResyncAllResultDto {
             report,
             projects: project_ops::list_project_dtos(&store)?,
@@ -340,12 +370,14 @@ pub async fn resync_all_projects(
 #[tauri::command]
 #[specta::specta]
 pub async fn resolve_project_collisions(
+    app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     decisions: Vec<project_sync::AssignmentDecision>,
 ) -> Result<ProjectSyncReport, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        project_sync::resolve_collisions(&store, &decisions, now_ms())
+        let central_dir = super::resolve_central_repo_path_for_app(&app, &store)?;
+        project_sync::resolve_collisions(&store, &central_dir, &decisions, now_ms())
     })
     .await
     .map_err(CommandError::internal)?
@@ -364,14 +396,21 @@ pub struct BulkAssignResultDto {
 #[specta::specta]
 #[allow(non_snake_case)]
 pub async fn bulk_assign_skill(
+    app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     projectId: String,
     skillId: String,
 ) -> Result<BulkAssignResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let report =
-            project_sync::assign_skill_to_project_tools(&store, &projectId, &skillId, now_ms())?;
+        let central_dir = super::resolve_central_repo_path_for_app(&app, &store)?;
+        let report = project_sync::assign_skill_to_project_tools(
+            &store,
+            &central_dir,
+            &projectId,
+            &skillId,
+            now_ms(),
+        )?;
         Ok::<_, anyhow::Error>(BulkAssignResultDto {
             view: view_of(&store, &projectId)?,
             report,
@@ -397,13 +436,16 @@ pub struct BulkUnassignResultDto {
 #[specta::specta]
 #[allow(non_snake_case)]
 pub async fn bulk_unassign_skill(
+    app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     projectId: String,
     skillId: String,
 ) -> Result<BulkUnassignResultDto, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let report = project_sync::unassign_skill_from_project(&store, &projectId, &skillId)?;
+        let central_dir = super::resolve_central_repo_path_for_app(&app, &store)?;
+        let report =
+            project_sync::unassign_skill_from_project(&store, &central_dir, &projectId, &skillId)?;
         Ok::<_, anyhow::Error>(BulkUnassignResultDto {
             view: view_of(&store, &projectId)?,
             report,

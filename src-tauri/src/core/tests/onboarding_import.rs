@@ -5,6 +5,7 @@
 //! are written straight into its global skills dir. No test touches the
 //! operator's real home, central repo, or database.
 
+use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -1121,6 +1122,7 @@ fn replace_over_a_divergent_copy_produces_an_askable_target_exists_row() {
     let retry = sync_skills_to_tools(
         &f.paths.home,
         &f.store,
+        &central_repo_of(&f.store),
         &[BatchSkill {
             skill_id: skill_id.clone(),
             skill_name: skill_name.clone(),
@@ -1445,7 +1447,7 @@ fn remove_divergent_retains_a_copy_when_the_managed_identity_is_unknown() {
         return;
     }
 
-    let status = super::remove_divergent_copy(&f.paths.home, &f.store, skill_id, &chosen, &copy);
+    let status = super::remove_divergent_copy(&f.paths, &f.store, skill_id, &chosen, &copy);
     make_readable(&central_path.join("SKILL.md"));
 
     assert!(
@@ -1476,8 +1478,8 @@ fn remove_divergent_retains_and_reports_a_copy_whose_metadata_is_unreadable() {
     fs::set_permissions(&tool_dir, fs::Permissions::from_mode(0o000)).unwrap();
     let blocked = copy.symlink_metadata().is_err();
 
-    let status = blocked
-        .then(|| super::remove_divergent_copy(&f.paths.home, &f.store, skill_id, &chosen, &copy));
+    let status =
+        blocked.then(|| super::remove_divergent_copy(&f.paths, &f.store, skill_id, &chosen, &copy));
     fs::set_permissions(&tool_dir, fs::Permissions::from_mode(0o755)).unwrap();
     let Some(status) = status else {
         eprintln!("skipped: this user can stat through a 000 dir");
@@ -1506,7 +1508,7 @@ fn remove_divergent_never_touches_the_chosen_path() {
     };
     fs::write(chosen.join("SKILL.md"), "---\nname: alpha\n---\nedited\n").unwrap();
 
-    let status = super::remove_divergent_copy(&f.paths.home, &f.store, skill_id, &chosen, &chosen);
+    let status = super::remove_divergent_copy(&f.paths, &f.store, skill_id, &chosen, &chosen);
 
     assert!(status.is_none(), "{status:?}");
     assert!(chosen.join("SKILL.md").is_file(), "the chosen copy stays");

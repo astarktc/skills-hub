@@ -6,6 +6,7 @@
 //! the environment-probing entry points take an explicit `home`, so no test
 //! touches the operator's real home directory or installed tools.
 
+use crate::core::removal_fence::central_repo_of;
 use crate::core::sync_status::{SyncMode, SyncStatus};
 use std::fs;
 use std::path::Path;
@@ -79,6 +80,7 @@ fn sync_creates_target_and_records_for_all_group_tools() {
 
     let outcome = sync_skill_into_root(
         &store,
+        &central_repo_of(&store),
         adapter,
         &tool_root,
         &source,
@@ -119,6 +121,7 @@ fn sync_without_overwrite_fails_with_target_exists() {
     let adapter = claude();
     let err = sync_skill_into_root(
         &store,
+        &central_repo_of(&store),
         adapter,
         &tool_root,
         &source,
@@ -162,6 +165,7 @@ fn sync_with_overwrite_replaces_existing_target() {
     let adapter = claude();
     let outcome = sync_skill_into_root(
         &store,
+        &central_repo_of(&store),
         adapter,
         &tool_root,
         &source,
@@ -213,6 +217,7 @@ fn overwrite_if_same_content_only_replaces_identical_targets() {
     ));
     sync_skill_into_root(
         &store,
+        &central_repo_of(&store),
         adapter,
         &tool_root,
         &source,
@@ -228,6 +233,7 @@ fn overwrite_if_same_content_only_replaces_identical_targets() {
     make_skill_dir(&tool_root, "other-skill", "# Different");
     let err = sync_skill_into_root(
         &store,
+        &central_repo_of(&store),
         adapter,
         &tool_root,
         &source,
@@ -268,6 +274,7 @@ fn the_collision_fact_reads_the_stored_identity_like_the_policy() {
     make_skill_dir(&tool_root, "my-skill", "# B");
     let err = sync_skill_into_root(
         &store,
+        &central_repo_of(&store),
         adapter,
         &tool_root,
         &central,
@@ -294,6 +301,7 @@ fn the_collision_fact_reads_the_stored_identity_like_the_policy() {
     make_skill_dir(&tool_root, "ghost", "# B");
     let err = sync_skill_into_root(
         &store,
+        &central_repo_of(&store),
         adapter,
         &tool_root,
         &central,
@@ -314,6 +322,7 @@ fn the_collision_fact_reads_the_stored_identity_like_the_policy() {
     make_skill_dir(&tool_root, "same", "# A");
     let outcome = sync_skill_into_root(
         &store,
+        &central_repo_of(&store),
         adapter,
         &tool_root,
         &central,
@@ -342,6 +351,7 @@ fn copy_only_capability_gets_copy_mode() {
     let cursor = crate::core::tool_adapters::test_overrides::shadow(copy_only);
     let outcome = sync_skill_into_root(
         &store,
+        &central_repo_of(&store),
         cursor,
         &tool_root,
         &source,
@@ -407,6 +417,7 @@ fn batch_syncs_each_skill_to_each_installed_tool() {
     let mut ticks: Vec<(usize, usize, String, String)> = Vec::new();
     let outcomes = sync_skills_to_planned_tools(
         &store,
+        &central_repo_of(&store),
         &skills,
         &targets,
         &BatchPolicy::default(),
@@ -455,6 +466,7 @@ fn batch_dedupes_installed_tools_sharing_a_root_and_fans_out_records() {
     let skills = vec![batch_skill("skill-1", "my-skill", &source)];
     let outcomes = sync_skills_to_planned_tools(
         &store,
+        &central_repo_of(&store),
         &skills,
         &[first, second],
         &BatchPolicy::default(),
@@ -494,6 +506,7 @@ fn batch_skips_not_installed_tools_with_typed_reason() {
     let skills = vec![batch_skill("skill-1", "my-skill", &source)];
     let outcomes = sync_skills_to_planned_tools(
         &store,
+        &central_repo_of(&store),
         &skills,
         &targets,
         &BatchPolicy::default(),
@@ -540,6 +553,7 @@ fn batch_isolates_per_target_failures() {
     let skills = vec![batch_skill("skill-1", "my-skill", &source)];
     let outcomes = sync_skills_to_planned_tools(
         &store,
+        &central_repo_of(&store),
         &skills,
         &targets,
         &BatchPolicy::default(),
@@ -584,6 +598,7 @@ fn batch_override_applies_to_named_tool_and_its_shared_dir_group() {
     let skills = vec![batch_skill("skill-1", "my-skill", &source)];
     let outcomes = sync_skills_to_planned_tools(
         &store,
+        &central_repo_of(&store),
         &skills,
         &[planned(claude(), &root_a, true)],
         &policy_neq,
@@ -619,6 +634,7 @@ fn batch_override_applies_to_named_tool_and_its_shared_dir_group() {
         };
         let outcomes = sync_skills_to_planned_tools(
             &store,
+            &central_repo_of(&store),
             &skills,
             &[planned(kimi, &root_b, true)],
             &policy_shared,
@@ -661,6 +677,7 @@ fn batch_direct_override_forces_overwrite_for_that_skill_only() {
     ];
     let outcomes = sync_skills_to_planned_tools(
         &store,
+        &central_repo_of(&store),
         &skills,
         &[planned(claude(), &root, true)],
         &policy,
@@ -820,6 +837,7 @@ fn sync_skills_to_tools_writes_under_temp_home_and_reports_unknown_tools() {
     let outcomes = sync_skills_to_tools(
         &home,
         &store,
+        &central_repo_of(&store),
         &[batch_skill("skill-1", "skill-1", &source)],
         &keys,
         &BatchPolicy {
@@ -896,6 +914,7 @@ fn an_overwrite_never_removes_a_folder_inside_the_central_library() {
     let adapter = claude();
     let err = sync_skill_into_root(
         &store,
+        &central_repo_of(&store),
         adapter,
         &tool_root,
         &alpha,
@@ -928,4 +947,58 @@ fn an_overwrite_never_removes_a_folder_inside_the_central_library() {
         .get_skill_target("alpha", "claude_code")
         .unwrap()
         .is_none());
+}
+
+/// Review finding 3 (BACKLOG #107), the overwrite's side: the configured
+/// central repo is protected whole. A Tool dir linked onto the repo makes the
+/// folder in `alpha`'s way an *unrecorded* folder of the library (a copy
+/// whose record is gone); the forced overwrite is refused and its bytes
+/// survive.
+#[cfg(unix)]
+#[test]
+fn an_overwrite_never_removes_an_unrecorded_folder_of_the_configured_repo() {
+    use crate::core::errors::{CommandError, RemovalRefusal};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = make_store(dir.path());
+    let central_dir = central_repo_of(&store);
+    let source = make_skill_dir(&dir.path().join("sources"), "alpha", "# Alpha");
+    seed_skill(&store, "alpha");
+    let unrecorded = make_skill_dir(&central_dir, "alpha", "# An unrecorded copy");
+    let tool_root = dir.path().join("tools").join("claude");
+    fs::create_dir_all(tool_root.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&central_dir, &tool_root).unwrap();
+
+    let adapter = claude();
+    let err = sync_skill_into_root(
+        &store,
+        &central_dir,
+        adapter,
+        &tool_root,
+        &source,
+        "alpha",
+        "alpha",
+        &OverwritePolicy {
+            overwrite: true,
+            overwrite_if_same_content: false,
+        },
+        std::slice::from_ref(&adapter),
+        1000,
+    )
+    .expect_err("the overwrite must be refused");
+
+    assert!(
+        matches!(
+            CommandError::from(err),
+            CommandError::RemovalRefused {
+                reason: RemovalRefusal::CentralLibrary,
+                ..
+            }
+        ),
+        "refused with the typed central-library reason"
+    );
+    assert_eq!(
+        fs::read_to_string(unrecorded.join("SKILL.md")).unwrap(),
+        "# An unrecorded copy"
+    );
 }

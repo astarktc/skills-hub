@@ -13,6 +13,7 @@ use super::{
 use crate::core::cancel_token::CancelToken;
 use crate::core::errors::SignalError;
 use crate::core::github_download::GithubApiError;
+use crate::core::removal_fence::ProtectedLibrary;
 
 /// A long TTL: a clone written during a test stays fresh.
 const FRESH_TTL_MS: i64 = 10 * 60 * 1000;
@@ -360,6 +361,8 @@ fn request<'a>(
         intent,
         dest,
         cache_dir,
+        // Leaked: a test request outlives no test process.
+        library: Box::leak(Box::new(ProtectedLibrary::unrecorded())),
         ttl_ms: FRESH_TTL_MS,
         cancel: None,
         allow_fast_path: true,

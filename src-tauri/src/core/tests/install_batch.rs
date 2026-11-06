@@ -2,6 +2,7 @@
 //! collisions collected (never asked, never written through), retry through
 //! the global sync batch with per-pair decisions, cancel between candidates.
 
+use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::Path;
 
@@ -176,6 +177,7 @@ fn retry(f: &Fixture, skill_id: &str, name: &str, decision: OverrideDecision) ->
     let mut rows = sync_skills_to_tools(
         &f.paths.home,
         &f.store,
+        &central_repo_of(&f.store),
         &[BatchSkill {
             skill_id: skill_id.to_string(),
             skill_name: name.to_string(),

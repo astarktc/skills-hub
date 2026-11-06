@@ -19,6 +19,7 @@ use super::{
     installer::{ensure_installable_skill_dir, InstallerPaths},
     propagation::{propagate_unlocked, PropagationReport},
     provenance::{is_refreshable, Provenance},
+    removal_fence::ProtectedLibrary,
     skill_health::{self, OutcomeFamily, SkillOutcomeKind},
     skill_store::{SkillRecord, SkillStore},
     sync_engine::copy_dir_recursive,
@@ -293,7 +294,7 @@ pub(crate) fn acquire_update(
                 subpath: record.source_subpath.as_deref(),
             };
             let (staged, acquired) =
-                stage_git(paths, &record, &source, intent, cancel, api, ttl_ms)?;
+                stage_git(paths, store, &record, &source, intent, cancel, api, ttl_ms)?;
             let mut proposal = SourceProposal::unchanged(&record);
             // Acquisition owns the branch/path split. Finalize carries this
             // resolved path into the record, including legacy backfills.
@@ -340,7 +341,7 @@ pub(crate) fn acquire_git_repoint(
         Some(selection) => SkillIntent::Selection(selection),
         None => SkillIntent::ByName(Some(&record.name)),
     };
-    let (staged, acquired) = stage_git(paths, &record, source, intent, cancel, api, ttl_ms)?;
+    let (staged, acquired) = stage_git(paths, store, &record, source, intent, cancel, api, ttl_ms)?;
     ensure_installable_skill_dir(staged.path())?;
     let proposal = SourceProposal {
         source_type: Provenance::Git.as_str().to_string(),
@@ -359,8 +360,10 @@ pub(crate) fn acquire_git_repoint(
 }
 
 /// Acquire git bytes into a Staging dir beside the skill's central copy.
+#[allow(clippy::too_many_arguments)]
 fn stage_git(
     paths: &InstallerPaths,
+    store: &SkillStore,
     record: &SkillRecord,
     source: &GitSource,
     intent: SkillIntent<'_>,
@@ -378,12 +381,14 @@ fn stage_git(
 
     // Build new content in a sibling staging dir; finalize swaps it in.
     let staged = StagingDir::new_in(central_parent);
+    let library = ProtectedLibrary::new(store, &paths.central_dir);
     let acquired = acquire(
         &AcquireRequest {
             source,
             intent,
             dest: staged.path(),
             cache_dir: &paths.cache_dir,
+            library: &library,
             ttl_ms,
             cancel,
             allow_fast_path: true,

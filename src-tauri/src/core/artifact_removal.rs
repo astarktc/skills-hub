@@ -16,9 +16,12 @@
 //!   - presence: `symlink_metadata` decides, so a broken symlink counts as
 //!     present and is removed; an absent path is a successful removal.
 //!   - admission: every removal is admitted by the entry's physical identity
-//!     (`core::removal_fence`) — never inside the central library, however a
-//!     folder on the way is aliased — and a refusal is a failure like any
-//!     other (the row is kept `error`).
+//!     (`core::removal_fence`) — never inside the central library (the
+//!     configured central repo the caller passes as `central_dir`, plus every
+//!     recorded copy), however a folder on the way is aliased or spelled —
+//!     and a refusal is a failure like any other (the row is kept `error`).
+//!     The `Skill` scope's own central copy is the one exception, removed
+//!     under the record's authority (`sync_engine::remove_central_copy`).
 //!   - settlement: on success every attached row is deleted — or, under
 //!     [`Settlement::Disable`] (`core::skill_disable`, the only caller), kept
 //!     with Sync status `disabled` as the operator's durable "not on this
@@ -69,7 +72,7 @@ use crate::core::{
     removal_fence::{Claim, Fence, ProtectedLibrary},
     skill_health::{self, SkillOutcomeKind},
     skill_store::{AssignmentTransition, ProjectRecord, SkillRecord, SkillStore, TargetTransition},
-    sync_engine::remove_path_any,
+    sync_engine::{remove_central_copy, remove_path_any},
     tool_adapters::{
         adapter_by_key, adapters_sharing_skills_dir, ensure_path_within_tool_dirs,
         former_skills_dirs_in, is_installed_in, ToolAdapter,
@@ -582,8 +585,12 @@ fn is_present(path: &Path) -> bool {
 /// `Skill` scope the central copy and the `skills` row follow, but only when
 /// every target succeeded — a failure keeps the whole skill so the operator
 /// can retry. Unlocked internal seam.
-pub(crate) fn execute_unlocked(store: &SkillStore, plan: RemovalPlan) -> Result<RemovalReport> {
-    execute_settling_unlocked(store, plan, Settlement::Delete)
+pub(crate) fn execute_unlocked(
+    store: &SkillStore,
+    central_dir: &Path,
+    plan: RemovalPlan,
+) -> Result<RemovalReport> {
+    execute_settling_unlocked(store, central_dir, plan, Settlement::Delete)
 }
 
 /// How the rows of a successfully removed target are settled.
@@ -602,11 +609,12 @@ pub(crate) enum Settlement {
 /// [`Settlement::Delete`]. Unlocked internal seam.
 pub(crate) fn execute_settling_unlocked(
     store: &SkillStore,
+    central_dir: &Path,
     plan: RemovalPlan,
     settlement: Settlement,
 ) -> Result<RemovalReport> {
     let mut targets: Vec<RemovalTargetOutcome> = Vec::with_capacity(plan.targets.len());
-    let library = ProtectedLibrary::recorded(store);
+    let library = ProtectedLibrary::new(store, central_dir);
     let fence = Fence::new(&library);
 
     for target in plan.targets {
@@ -692,9 +700,12 @@ pub(crate) fn execute_settling_unlocked(
                 );
             }
         } else {
+            // The one removal of central bytes, authorised by the record
+            // rather than the fence above; a permission failure is typed
+            // like any removal's (BACKLOG #76).
             let central = Path::new(&skill.central_path);
-            if central.exists() {
-                std::fs::remove_dir_all(central)
+            if is_present(central) {
+                remove_central_copy(central, &skill.id, &library)
                     .with_context(|| format!("remove central copy {:?}", central))?;
                 central_removed = true;
             }
@@ -767,6 +778,7 @@ fn settle_row_as_error(store: &SkillStore, row: &RowRef, error: &str) -> Result<
 pub(crate) fn remove_superseded_artifact_unlocked(
     store: &SkillStore,
     home: &Path,
+    central_dir: &Path,
     adapter: &ToolAdapter,
     path: &Path,
 ) -> Result<()> {
@@ -780,7 +792,7 @@ pub(crate) fn remove_superseded_artifact_unlocked(
         });
     }
     if is_present(path) {
-        let library = ProtectedLibrary::recorded(store);
+        let library = ProtectedLibrary::new(store, central_dir);
         remove_path_any(path, &Fence::new(&library).claiming(Claim::Within(&former)))?;
     }
     Ok(())
@@ -790,9 +802,9 @@ pub(crate) fn remove_superseded_artifact_unlocked(
 // Entry points (each takes the mutation guard)
 // ---------------------------------------------------------------------------
 
-fn planned(store: &SkillStore, scope: RemovalScope) -> Result<RemovalReport> {
+fn planned(store: &SkillStore, central_dir: &Path, scope: RemovalScope) -> Result<RemovalReport> {
     let plan = plan(store, &scope)?;
-    execute_unlocked(store, plan)
+    execute_unlocked(store, central_dir, plan)
 }
 
 /// Delete a Managed skill everywhere: every global and project artifact,
@@ -803,10 +815,15 @@ fn planned(store: &SkillStore, scope: RemovalScope) -> Result<RemovalReport> {
 /// report carries the failed targets and `record_deleted: false`.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
-pub fn remove_skill(store: &SkillStore, skill_id: &str) -> Result<RemovalReport> {
+pub fn remove_skill(
+    store: &SkillStore,
+    central_dir: &Path,
+    skill_id: &str,
+) -> Result<RemovalReport> {
     mutation_guard::serialized(|| {
         let report = planned(
             store,
+            central_dir,
             RemovalScope::Skill {
                 skill_id: skill_id.to_string(),
             },
