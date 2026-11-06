@@ -134,6 +134,34 @@ fn every_existing_row_resolves_to_the_paths_it_always_has() {
         ("zcode", ".zcode/skills", &[], &[".zcode"]),
         ("codewhale", ".codewhale/skills", &[], &[".codewhale"]),
         ("workbuddy", ".workbuddy/skills", &[], &[".workbuddy"]),
+        // round 20 ticket 07 rows
+        ("letta_code", ".letta/skills", &[], &[".letta"]),
+        ("muse_code", ".config/muse/skills", &[], &[".config/muse"]),
+        (
+            "poolside",
+            ".config/poolside/skills",
+            &[],
+            &[".config/poolside"],
+        ),
+        ("dirac", ".dirac/skills", &[], &[".dirac"]),
+        ("code_studio", ".codestudio/skills", &[], &[".codestudio"]),
+        (
+            "codearts_agent",
+            ".codeartsdoer/skills",
+            &[],
+            &[".codeartsdoer"],
+        ),
+        ("qoder_cn", ".lingma/skills", &[], &[".lingma"]),
+        ("qoder_cn_cli", ".qoder-cn/skills", &[], &[".qoder-cn"]),
+        (
+            "kimchi",
+            ".config/kimchi/harness/skills",
+            &[],
+            &[".config/kimchi"],
+        ),
+        ("astrbot", ".astrbot/data/skills", &[], &[".astrbot"]),
+        ("oh_my_pi", ".omp/agent/skills", &[], &[".omp"]),
+        ("stakpak", ".stakpak/skills", &[], &[".stakpak"]),
     ];
     assert_eq!(
         expected.len(),
@@ -672,8 +700,8 @@ fn scan_tool_dir_admits_only_valid_manifests_and_reports_the_rest() {
 
 /// Every Tool's project-scope dir, as a table: the registry is the only
 /// source, so this pins the mapping against accidental edits. `None` means
-/// the harness reads no project skills dir (no shipped row yet; the shape is
-/// proven by `a_harness_without_a_project_dir_has_no_project_scope`).
+/// the harness reads no project skills dir (WorkBuddy, AstrBot; the shape is proven by
+/// `a_harness_without_a_project_dir_has_no_project_scope`).
 #[test]
 fn project_relative_skills_dir_for_every_tool() {
     let expected: &[(&str, Option<&str>)] = &[
@@ -727,6 +755,19 @@ fn project_relative_skills_dir_for_every_tool() {
         ("zcode", Some(".zcode/skills")),
         ("codewhale", Some(".codewhale/skills")),
         ("workbuddy", None),
+        // round 20 ticket 07 rows
+        ("letta_code", Some(".agents/skills")),
+        ("muse_code", Some(".agents/skills")),
+        ("poolside", Some(".agents/skills")),
+        ("dirac", Some(".agents/skills")),
+        ("code_studio", Some(".codestudio/skills")),
+        ("codearts_agent", Some(".codeartsdoer/skills")),
+        ("qoder_cn", Some(".lingma/skills")),
+        ("qoder_cn_cli", Some(".qoder/skills")),
+        ("kimchi", Some(".kimchi/skills")),
+        ("astrbot", None),
+        ("oh_my_pi", Some(".omp/skills")),
+        ("stakpak", Some(".stakpak/skills")),
     ];
     assert_eq!(
         expected.len(),
@@ -780,7 +821,7 @@ fn a_harness_without_a_project_dir_has_no_project_scope() {
 }
 
 #[test]
-fn agents_standard_group_has_nine_constituents_and_one_entry() {
+fn agents_standard_group_lists_its_constituents_and_one_entry() {
     let members: Vec<&str> = constituents_of(VirtualGroup::AgentsStandard)
         .map(|a| a.key())
         .collect();
@@ -796,6 +837,11 @@ fn agents_standard_group_has_nine_constituents_and_one_entry() {
             "cline",
             "gemini_cli",
             "github_copilot",
+            // round 20 ticket 07 rows
+            "letta_code",
+            "muse_code",
+            "poolside",
+            "dirac",
         ]
     );
     for a in constituents_of(VirtualGroup::AgentsStandard) {
@@ -1605,6 +1651,129 @@ fn every_row_restates_its_brief_read_facts() {
             "WorkBuddy (The four #92 rows, LIKELY)",
             ALL_UNKNOWN,
             ALL_UNKNOWN,
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        // round 20 ticket 07 rows
+        (
+            "letta_code",
+            "Letta Code (extra)",
+            [No, No],
+            [Yes, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "muse_code",
+            "addendum: Muse Code",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Unknown,
+            D::Unknown,
+            &[(".codex/skills", M::Default)],
+        ),
+        (
+            "poolside",
+            "addendum: Poolside",
+            [Yes, U],
+            [Yes, U],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "dirac",
+            "addendum: Dirac",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Shared,
+            D::Shadows,
+            &[(".ai/skills", M::Default)],
+        ),
+        (
+            "code_studio",
+            "Code Studio",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Unknown,
+            D::Unknown,
+            &[(".copilot/skills", M::Default)],
+        ),
+        (
+            "codearts_agent",
+            "CodeArts Agent",
+            [No, No],
+            [No, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "qoder_cn",
+            "Qoder CN (IDE, ex-Lingma)",
+            [No, No],
+            [No, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "qoder_cn_cli",
+            "Qoder CN CLI",
+            [No, No],
+            [No, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "kimchi",
+            "Kimchi (optional)",
+            [Yes, OptIn],
+            [Yes, OptIn],
+            P::Unknown,
+            D::Shadows,
+            &[
+                (".pi/agent/skills", M::Default),
+                (".codex/skills", M::Default),
+                (".cursor/skills", M::Default),
+                (".warp/skills", M::Default),
+                (".factory/skills", M::Default),
+                (".gemini/skills", M::Default),
+                (".copilot/skills", M::Default),
+                (".github/skills", M::Default),
+            ],
+        ),
+        (
+            "astrbot",
+            "AstrBot (optional)",
+            [No, No],
+            [No, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "oh_my_pi",
+            "oh-my-pi (extra)",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Own,
+            D::Shadows,
+            &[
+                (".agent/skills", M::Default),
+                (".codex/skills", M::Default),
+                (".config/opencode/skills", M::Default),
+                (".pi/agent/skills", M::Unknown),
+            ],
+        ),
+        (
+            "stakpak",
+            "addendum: Stakpak",
+            [No, No],
+            [No, No],
             P::Unknown,
             D::Unknown,
             &[],

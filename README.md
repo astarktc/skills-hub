@@ -82,6 +82,18 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 | `zcode` | ZCode | `.zcode/skills` | `.zcode/skills` | `.zcode` |
 | `codewhale` | Codewhale | `.codewhale/skills` | `.codewhale/skills` | `.codewhale` |
 | `workbuddy` | WorkBuddy | `.workbuddy/skills` | — | `.workbuddy` |
+| `letta_code` | Letta Code | `.letta/skills` | `.agents/skills` | `.letta` |
+| `muse_code` | Muse Code | `.config/muse/skills` | `.agents/skills` | `.config/muse` |
+| `poolside` | Poolside | `.config/poolside/skills` | `.agents/skills` | `.config/poolside` |
+| `dirac` | Dirac | `.dirac/skills` | `.agents/skills` | `.dirac` |
+| `code_studio` | Code Studio | `.codestudio/skills` | `.codestudio/skills` | `.codestudio` |
+| `codearts_agent` | CodeArts Agent | `.codeartsdoer/skills` | `.codeartsdoer/skills` | `.codeartsdoer` |
+| `qoder_cn` | Qoder CN | `.lingma/skills` | `.lingma/skills` | `.lingma` |
+| `qoder_cn_cli` | Qoder CN CLI | `.qoder-cn/skills` | `.qoder/skills` | `.qoder-cn` |
+| `kimchi` | Kimchi | `.config/kimchi/harness/skills` | `.kimchi/skills` | `.config/kimchi` |
+| `astrbot` | AstrBot | `.astrbot/data/skills` | — | `.astrbot` |
+| `oh_my_pi` | oh-my-pi | `.omp/agent/skills` | `.omp/skills` | `.omp` |
+| `stakpak` | Stakpak | `.stakpak/skills` | `.stakpak/skills` | `.stakpak` |
 | `warp` | Warp | — | — | `.warp` or `.config/warp-terminal` |
 | `zed` | Zed | — | — | `.config/zed` |
 | `dexto` | Dexto | — | — | `.dexto` |
@@ -96,8 +108,8 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 manages `~/.agents/skills` and nothing else — Cursor still reads `~/.cursor/skills`, Codex still reads
 `~/.codex/skills`, so those harnesses keep their own rows in the global list. **In a project** it is an
 aggregate shown as `.agents/skills (N harnesses)`: one folder, `<project>/.agents/skills`, that every harness
-in the group reads (today Cursor, Codex, OpenCode, Antigravity, Amp, Kimi Code CLI, Cline, Gemini CLI and
-GitHub Copilot, plus the reader-only harnesses below), so those harnesses have no separate project row. N is counted
+in the group reads (today Cursor, Codex, OpenCode, Antigravity, Amp, Kimi Code CLI, Cline, Gemini CLI,
+GitHub Copilot, Letta Code, Muse Code, Poolside and Dirac, plus the reader-only harnesses below), so those harnesses have no separate project row. N is counted
 from the registry.
 
 A **reader-only harness** has no skills folder of its own: it reads `~/.agents/skills` (and
