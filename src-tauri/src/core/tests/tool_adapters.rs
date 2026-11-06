@@ -129,6 +129,11 @@ fn every_existing_row_resolves_to_the_paths_it_always_has() {
         ),
         ("moltbot", ".moltbot/skills", &[], &[".moltbot"]),
         ("hermes-agent", ".hermes/skills", &[], &[".hermes"]),
+        // round 20 ticket 05 rows
+        ("deepseek_harness", ".dsh/skills", &[], &[".dsh"]),
+        ("zcode", ".zcode/skills", &[], &[".zcode"]),
+        ("codewhale", ".codewhale/skills", &[], &[".codewhale"]),
+        ("workbuddy", ".workbuddy/skills", &[], &[".workbuddy"]),
     ];
     assert_eq!(
         expected.len(),
@@ -717,6 +722,11 @@ fn project_relative_skills_dir_for_every_tool() {
         ("windsurf", Some(".windsurf/skills")),
         ("moltbot", Some(".moltbot/skills")),
         ("hermes-agent", Some(".hermes/skills")),
+        // round 20 ticket 05 rows
+        ("deepseek_harness", Some(".dsh/skills")),
+        ("zcode", Some(".zcode/skills")),
+        ("codewhale", Some(".codewhale/skills")),
+        ("workbuddy", None),
     ];
     assert_eq!(
         expected.len(),
@@ -1562,6 +1572,43 @@ fn every_row_restates_its_brief_read_facts() {
             D::Shadows,
             &[],
         ),
+        // round 20 ticket 05 rows
+        (
+            "deepseek_harness",
+            "DeepSeek Harness (The four #92 rows)",
+            [Yes, No],
+            [Yes, No],
+            P::Own,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "zcode",
+            "ZCode (The four #92 rows)",
+            [Yes, No],
+            [Yes, No],
+            P::Own,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "codewhale",
+            "Codewhale (The four #92 rows)",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Own,
+            D::Shadows,
+            &[(".deepseek/skills", M::Default)],
+        ),
+        (
+            "workbuddy",
+            "WorkBuddy (The four #92 rows, LIKELY)",
+            ALL_UNKNOWN,
+            ALL_UNKNOWN,
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
     ];
     let keys: Vec<&str> = default_tool_adapters().iter().map(|a| a.key()).collect();
     assert_eq!(
@@ -1617,4 +1664,355 @@ fn no_agents_group_member_ignores_the_project_agents_folder() {
             member.key()
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// round 20 ticket 05 rows: the reader-only harnesses
+// ---------------------------------------------------------------------------
+
+fn reader(key: &str) -> &'static crate::core::tool_adapters::ReaderOnlyHarness {
+    reader_only_harnesses()
+        .into_iter()
+        .find(|reader| reader.key == key)
+        .unwrap_or_else(|| panic!("reader {key}"))
+}
+
+/// The brief-snapshot table for the reader-only rows: each row's group,
+/// default detect dirs and read facts, restated from brief § Part 2
+/// "Recommended Part 1 additions" or the addendum's § Shared-dir reads.
+/// LIKELY and UNKNOWN cells are `Unknown`; precedence the brief calls "n/a"
+/// (a harness whose only user dir is the shared one) is `Unknown` too.
+#[test]
+fn every_reader_only_row_restates_its_brief_read_facts() {
+    use crate::core::tool_adapters::reads::{
+        DuplicateBehaviour as D, Precedence as P, ReadMode as M, SharedRead, SharedRead::*,
+    };
+    type Row = (
+        &'static str,            // registry key
+        &'static str,            // brief row
+        &'static [&'static str], // detect dirs (default root, home-relative)
+        [SharedRead; 2],         // global: ~/.agents, ~/.claude
+        [SharedRead; 2],         // project: .agents, .claude
+        P,
+        D,
+        &'static [(&'static str, M)], // also_reads (home-relative)
+    );
+    const U: SharedRead = Unknown;
+    let expected: &[Row] = &[
+        (
+            "warp",
+            "Warp (AGENTS)",
+            &[".warp", ".config/warp-terminal"],
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Both,
+            D::ShowsAll,
+            &[
+                (".warp/skills", M::Default),
+                (".codex/skills", M::Default),
+                (".cursor/skills", M::Default),
+                (".gemini/skills", M::Default),
+                (".copilot/skills", M::Default),
+                (".factory/skills", M::Default),
+                (".github/skills", M::Default),
+                (".opencode/skills", M::Default),
+            ],
+        ),
+        (
+            "zed",
+            "Zed (AGENTS)",
+            &[".config/zed"],
+            [Yes, No],
+            [Yes, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "dexto",
+            "Dexto (AGENTS)",
+            &[".dexto"],
+            [Yes, No],
+            [Yes, No],
+            P::Unknown,
+            D::Unknown,
+            &[(".dexto/skills", M::Default)],
+        ),
+        (
+            "fx",
+            "fx (AGENTS)",
+            &[".fx"],
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Both,
+            D::LoadsNone,
+            &[
+                (".fx/skills", M::Default),
+                (".config/opencode/skills", M::Default),
+                (".codex/skills", M::Default),
+                (".claw/skills", M::Default),
+            ],
+        ),
+        (
+            "sarvam_code",
+            "Sarvam Code (AGENTS, LIKELY)",
+            &[".sarvam"],
+            [U, U],
+            [U, U],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "vt_code",
+            "VT Code (extra); addendum VT Code",
+            &[".config/vtcode", ".vtcode"],
+            [Yes, No],
+            [Yes, No],
+            P::Shared,
+            D::Shadows,
+            &[(".vtcode/skills", M::Default)],
+        ),
+        (
+            "dimcode",
+            "addendum DimCode",
+            &[".dimcode"],
+            [Yes, No],
+            [Yes, No],
+            P::Own,
+            D::Shadows,
+            &[(".dimcode/v2/skills", M::Default)],
+        ),
+        (
+            "crow_cli",
+            "addendum crow-cli",
+            &[".agents/crow"],
+            [Yes, No],
+            [Yes, Yes],
+            P::Unknown,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "corust_agent",
+            "addendum Corust Agent",
+            &[".corust-agent"],
+            [Yes, U],
+            [Yes, U],
+            P::Unknown,
+            D::Shadows,
+            &[(".corust-agent/skills", M::Default)],
+        ),
+    ];
+    let keys: Vec<&str> = reader_only_harnesses().iter().map(|r| r.key).collect();
+    assert_eq!(
+        expected.iter().map(|row| row.0).collect::<Vec<_>>(),
+        keys,
+        "the snapshot covers every reader-only row, in registry order"
+    );
+    for (key, brief_row, detect, global, project, precedence, duplicates, also_reads) in expected {
+        let row = reader(key);
+        let at = format!("{key} (brief row: {brief_row})");
+        assert_eq!(row.group, VirtualGroup::AgentsStandard, "{at}: group");
+        assert_eq!(
+            row.detect_dirs.iter().map(|d| d.rel).collect::<Vec<_>>(),
+            detect.to_vec(),
+            "{at}: detect dirs"
+        );
+        let facts = row.reads;
+        assert_eq!(
+            [facts.global.agents, facts.global.claude],
+            *global,
+            "{at}: global reads"
+        );
+        assert_eq!(
+            [facts.project.agents, facts.project.claude],
+            *project,
+            "{at}: project reads"
+        );
+        assert_eq!(facts.precedence, *precedence, "{at}: precedence");
+        assert_eq!(facts.duplicates, *duplicates, "{at}: duplicate behaviour");
+        let actual: Vec<(&str, M)> = facts
+            .also_reads
+            .iter()
+            .map(|a| {
+                assert_eq!(
+                    a.dir.root,
+                    HostRoot::Home,
+                    "{at}: also_reads are home-rooted"
+                );
+                assert!(a.dir.overrides.is_empty(), "{at}: no per-OS also_reads");
+                (a.dir.rel, a.mode)
+            })
+            .collect();
+        assert_eq!(actual, also_reads.to_vec(), "{at}: also_reads");
+    }
+}
+
+/// Facts vs `group` for reader-only members too (spec Q17): a harness absorbed
+/// into the AGENTS group's project roster must not ignore
+/// `<project>/.agents/skills`.
+#[test]
+fn no_reader_only_member_ignores_the_project_agents_folder() {
+    use crate::core::tool_adapters::reads::SharedRead;
+    for reader in reader_only_harnesses() {
+        assert_ne!(
+            reader.reads.project.agents,
+            SharedRead::No,
+            "{} is a reader-only AGENTS member but does not read <project>/.agents/skills",
+            reader.key
+        );
+    }
+}
+
+/// A reader-only harness is detected by its own config root, never by the
+/// shared folder it reads (`~/.agents`, `~/.agents/skills`, `~/.claude`):
+/// that folder's presence says nothing about the harness. crow-cli's root
+/// `~/.agents/crow` is its own folder inside `~/.agents`.
+#[test]
+fn a_reader_only_harness_is_detected_by_its_own_root_never_a_shared_folder() {
+    let shared = [".agents", ".agents/skills", ".claude", ".claude/skills"];
+    for reader in reader_only_harnesses() {
+        assert!(
+            !reader.detect_dirs.is_empty(),
+            "{} has no detect dir",
+            reader.key
+        );
+        for dir in reader.detect_dirs {
+            for os in [HostOs::MacOs, HostOs::Linux, HostOs::Windows] {
+                let (root, rel) = dir.effective(os);
+                assert!(
+                    !(root == HostRoot::Home && shared.contains(&rel)),
+                    "{}: detected by the shared folder {rel} on {os:?}",
+                    reader.key
+                );
+            }
+        }
+    }
+}
+
+/// Zed's config root on Windows is `%APPDATA%\Zed` (brief I7), the roaming
+/// root's `Zed`; elsewhere `~/.config/zed`. Its skills folder stays
+/// `~/.agents/skills` everywhere — it has no folder of its own.
+#[test]
+fn zeds_windows_detect_root_is_under_roaming_app_data() {
+    let base = tempfile::tempdir().unwrap();
+    let roots = distinct_roots(base.path());
+    let zed = reader("zed");
+    assert_eq!(zed.detect_dirs.len(), 1);
+    assert_eq!(
+        zed.detect_dirs[0].resolve_for(HostOs::Windows, &roots),
+        base.path().join("roaming").join("Zed")
+    );
+    for elsewhere in [HostOs::MacOs, HostOs::Linux] {
+        assert_eq!(
+            zed.detect_dirs[0].resolve_for(elsewhere, &roots),
+            base.path().join("home").join(".config").join("zed"),
+            "{elsewhere:?}"
+        );
+    }
+}
+
+/// Zed installed on this host — whatever the OS — marks the `.agents/skills`
+/// entry installed through its effective detect root.
+#[test]
+fn a_detected_zed_is_found_under_its_effective_root_on_this_host() {
+    let base = tempfile::tempdir().unwrap();
+    let roots = distinct_roots(base.path());
+    let zed = reader("zed");
+    assert!(!crate::core::tool_adapters::reader_installed_in(
+        &roots, zed
+    ));
+    crate::core::tool_adapters::mark_reader_installed_in(&roots, zed);
+    assert!(crate::core::tool_adapters::reader_installed_in(&roots, zed));
+    let expected = if cfg!(windows) {
+        base.path().join("roaming").join("Zed")
+    } else {
+        base.path().join("home").join(".config").join("zed")
+    };
+    assert!(expected.is_dir(), "created at {expected:?}");
+    assert!(is_installed_in(
+        &roots,
+        adapter_by_key("agents_skills").unwrap()
+    ));
+}
+
+/// Warp's documented config root per OS (brief T80): `~/.warp` on macOS,
+/// `~/.config/warp-terminal` on Linux, `%LOCALAPPDATA%\warp\Warp` on
+/// Windows — with `~/.warp` (MCP config, bundled skills) on every OS.
+#[test]
+fn warps_detect_roots_follow_its_documented_layout() {
+    let base = tempfile::tempdir().unwrap();
+    let roots = distinct_roots(base.path());
+    let home = base.path().join("home");
+    let resolved = |os: HostOs| {
+        reader("warp")
+            .detect_dirs
+            .iter()
+            .map(|d| d.resolve_for(os, &roots))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        resolved(HostOs::Windows),
+        vec![
+            home.join(".warp"),
+            base.path().join("local").join("warp").join("Warp")
+        ]
+    );
+    assert_eq!(
+        resolved(HostOs::Linux),
+        vec![
+            home.join(".warp"),
+            home.join(".config").join("warp-terminal")
+        ]
+    );
+    assert_eq!(resolved(HostOs::MacOs)[0], home.join(".warp"));
+}
+
+/// VT Code's config dir per OS (`VtCodePaths`, addendum P12) and its legacy
+/// home `~/.vtcode`.
+#[test]
+fn vt_codes_detect_roots_follow_its_platform_config_dir() {
+    let base = tempfile::tempdir().unwrap();
+    let roots = distinct_roots(base.path());
+    let home = base.path().join("home");
+    let resolved = |os: HostOs| {
+        reader("vt_code")
+            .detect_dirs
+            .iter()
+            .map(|d| d.resolve_for(os, &roots))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        resolved(HostOs::MacOs),
+        vec![
+            base.path().join("local").join("com.vinhnx.vtcode"),
+            home.join(".vtcode")
+        ]
+    );
+    assert_eq!(
+        resolved(HostOs::Windows),
+        vec![
+            base.path().join("roaming").join("vinhnx").join("vtcode"),
+            home.join(".vtcode")
+        ]
+    );
+    assert_eq!(
+        resolved(HostOs::Linux),
+        vec![home.join(".config").join("vtcode"), home.join(".vtcode")]
+    );
+}
+
+/// Codewhale's legacy `~/.deepseek` is a read fallback, too generic to mean
+/// Codewhale (B02 I13): it never detects the row.
+#[test]
+fn codewhale_is_never_detected_by_the_legacy_deepseek_root() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    let codewhale = adapter_by_key("codewhale").unwrap();
+    fs::create_dir_all(home.path().join(".deepseek/skills/x")).unwrap();
+    fs::write(home.path().join(".deepseek/config.toml"), b"").unwrap();
+    assert!(!is_installed_in(&roots, codewhale));
+    mark_installed_in(&roots, codewhale);
+    assert!(is_installed_in(&roots, codewhale));
 }

@@ -155,8 +155,8 @@ describe("duplicateWarning", () => {
 
 describe("harnessListGroups", () => {
   const agents = tool("agents_skills", true, undefined, [
-    { key: "zed", label: "Zed", installed: true },
-    { key: "warp", label: "Warp", installed: false },
+    { key: "zed", label: "Zed", installed: true, duplicate_readers: null },
+    { key: "warp", label: "Warp", installed: false, duplicate_readers: null },
   ]);
 
   it("keeps detected harnesses in catalog order and collapses the rest, readers included", () => {
@@ -171,7 +171,9 @@ describe("harnessListGroups", () => {
     ]);
     expect(groups.detected[0].readers.map((r) => r.key)).toEqual(["zed"]);
     expect(groups.undetected.tools.map((entry) => entry.key)).toEqual(["goose"]);
-    expect(groups.undetected.readers).toEqual([{ key: "warp", label: "Warp", installed: false, reads: "agents_skills" }]);
+    expect(groups.undetected.readers).toEqual([
+      { key: "warp", label: "Warp", installed: false, duplicate_readers: null, reads: "agents_skills" },
+    ]);
     expect(groups.undetected.count).toBe(2);
   });
 
@@ -179,5 +181,58 @@ describe("harnessListGroups", () => {
     const groups = harnessListGroups([tool("cursor", false), tool("pi", true)]);
     expect(groups.detected.map((entry) => entry.tool.key)).toEqual(["pi"]);
     expect(groups.undetected.tools.map((entry) => entry.key)).toEqual(["cursor"]);
+  });
+});
+
+// round 20 ticket 05 rows: a reader-only harness's pairs ride on its reader
+// entry under the `.agents/skills` entry, whose folder is its deploy dir. The
+// pair is live when that entry and the other harness are both selected.
+describe("reader-only pairs", () => {
+  const READ_ONLY: ToolInfoDto[] = [
+    tool("agents_skills", true, undefined, [
+      {
+        key: "fx_reader",
+        label: "fx",
+        installed: true,
+        duplicate_readers: { keys: ["claude_code", "codex"], behaviour: "loads_none" },
+      },
+      { key: "zed", label: "Zed", installed: true, duplicate_readers: null },
+    ]),
+    tool("cursor", true, { keys: ["agents_skills", "claude_code"], behaviour: "shows_all" }),
+    tool("claude_code", true),
+    tool("codex", true),
+  ];
+  const names = (key: string) =>
+    ({ agents_skills: ".agents/skills", fx_reader: "fx", cursor: "Cursor", claude_code: "Claude Code", codex: "Codex" })[
+      key
+    ] ?? key;
+  const K = "settingsDialog.harnesses.duplicates";
+
+  it("pairs the reader with the other harness only while its group entry is selected too", () => {
+    expect(duplicatePairs(READ_ONLY, new Set(["claude_code", "codex"]))).toEqual([]);
+    expect(duplicatePairs(READ_ONLY, new Set(["agents_skills", "claude_code"]))).toEqual([
+      { reader: "fx_reader", other: "claude_code", behaviour: "loads_none", via: "agents_skills" },
+    ]);
+  });
+
+  it("involves the group entry, the reader and the other harness", () => {
+    const pairs = duplicatePairs(READ_ONLY, new Set(["agents_skills", "claude_code"]));
+    for (const key of ["agents_skills", "fx_reader", "claude_code"]) expect(pairsInvolving(pairs, key)).toHaveLength(1);
+    expect(pairsInvolving(pairs, "codex")).toEqual([]);
+  });
+
+  it("warns on the group entry's row (the Deploy-now ask's subject) that invocation breaks in the reader", () => {
+    const pairs = duplicatePairs(READ_ONLY, new Set(["agents_skills", "claude_code", "codex", "cursor"]));
+    expect(duplicateWarning(pairs, "agents_skills", names, t)).toBe(
+      `${K}.reads.loadsNone {"reader":"fx","harnesses":"Claude Code and Codex","count":2} ` +
+        `${K}.readBy.showsTwice {"readers":"Cursor","harness":".agents/skills","count":1}`,
+    );
+  });
+
+  it("warns on the other harness's row that the reader reads its folder", () => {
+    const pairs = duplicatePairs(READ_ONLY, new Set(["agents_skills", "claude_code"]));
+    expect(duplicateWarning(pairs, "claude_code", names, t)).toBe(
+      `${K}.readBy.loadsNone {"readers":"fx","harness":"Claude Code","count":1}`,
+    );
   });
 });
