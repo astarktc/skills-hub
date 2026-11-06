@@ -33,7 +33,13 @@ fn shared_dirs(scope: ScopeKind) -> BTreeMap<String, Vec<&'static str>> {
     let mut dirs: BTreeMap<String, Vec<&'static str>> = BTreeMap::new();
     for adapter in default_tool_adapters() {
         let dir = match scope {
-            ScopeKind::Global => adapter.skills_dir.resolve(&roots()).display().to_string(),
+            // One spelling on every OS: Windows joins with `\\`.
+            ScopeKind::Global => adapter
+                .skills_dir
+                .resolve(&roots())
+                .display()
+                .to_string()
+                .replace('\\', "/"),
             ScopeKind::Project => match adapter.project_skills_dir {
                 Some(dir) => dir.to_string(),
                 None => continue,

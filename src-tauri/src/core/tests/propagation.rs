@@ -1232,7 +1232,7 @@ fn a_global_sibling_naming_another_artifact_lends_no_ownership() {
         .get_skill_target(&f.skill_id, "kimi_cli")
         .unwrap()
         .unwrap();
-    assert_eq!(kimi_row.target_path, old.to_string_lossy());
+    assert_eq!(std::path::Path::new(&kimi_row.target_path), old.as_path());
     assert_eq!(kimi_row.synced_at, Some(2000), "its own path, written");
     let amp_row = f
         .store

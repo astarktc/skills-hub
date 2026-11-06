@@ -1239,7 +1239,10 @@ fn every_row_writes_the_skills_place_and_an_answer_reaches_the_row_it_names() {
         "# Foreign K",
         "nothing is ever written at a stale recorded path"
     );
-    assert_eq!(row("kimi_cli").target_path, destination.to_string_lossy());
+    assert_eq!(
+        std::path::Path::new(&row("kimi_cli").target_path),
+        destination.as_path()
+    );
     assert!(row("kimi_cli").owns_artifact());
     assert!(!row("amp").owns_artifact(), "Amp's own row was not settled");
 
@@ -1328,7 +1331,10 @@ fn a_stale_recorded_path_is_never_a_destination() {
         .get_skill_target("skill-1", "claude_code")
         .expect("query")
         .expect("row");
-    assert_eq!(row.target_path, destination.to_string_lossy());
+    assert_eq!(
+        std::path::Path::new(&row.target_path),
+        destination.as_path()
+    );
 }
 
 /// A legacy row (Kimi Code's, on Amp's folder) is reached through its own

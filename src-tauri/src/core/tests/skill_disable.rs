@@ -2156,7 +2156,11 @@ fn legacy_sibling_rows_are_disabled_gated_and_enabled_each_by_itself() {
             .unwrap();
         assert_eq!(row.status, SyncStatus::Synced, "{tool}");
         assert!(row.owns_artifact(), "{tool}");
-        assert_eq!(row.target_path, shared.to_string_lossy(), "{tool}");
+        assert_eq!(
+            std::path::Path::new(&row.target_path),
+            shared.as_path(),
+            "{tool}"
+        );
     }
 }
 
@@ -2218,7 +2222,11 @@ fn global_enable_re_records_each_taken_row_under_its_own_key_at_the_skills_place
             .unwrap()
             .unwrap_or_else(|| panic!("{tool} is re-recorded under its own key"));
         assert_eq!(row.status, SyncStatus::Synced, "{tool}");
-        assert_eq!(row.target_path, shared.to_string_lossy(), "{tool}");
+        assert_eq!(
+            std::path::Path::new(&row.target_path),
+            shared.as_path(),
+            "{tool}"
+        );
     }
     assert_eq!(
         std::fs::read_to_string(old_name.join("SKILL.md")).unwrap(),
@@ -2285,10 +2293,14 @@ fn a_global_write_or_enable_never_repurposes_another_rows_record() {
         );
     }
     let amp = amp_record(&f);
-    assert_eq!(amp.target_path, shared.to_string_lossy(), "its own write");
+    assert_eq!(
+        std::path::Path::new(&amp.target_path),
+        shared.as_path(),
+        "its own write"
+    );
     assert!(foreign_bytes_survive(&independent));
     let kimi = kimi_record(&f);
-    assert_eq!(kimi.target_path, shared.to_string_lossy());
+    assert_eq!(std::path::Path::new(&kimi.target_path), shared.as_path());
     assert_eq!(kimi.status, SyncStatus::Synced);
 
     // Disable the folder, then a live Amp record at another path appears
@@ -2328,7 +2340,7 @@ fn a_global_write_or_enable_never_repurposes_another_rows_record() {
     );
     assert!(foreign_bytes_survive(&independent));
     let kimi = kimi_record(&f);
-    assert_eq!(kimi.target_path, shared.to_string_lossy());
+    assert_eq!(std::path::Path::new(&kimi.target_path), shared.as_path());
     assert_eq!(kimi.status, SyncStatus::Synced);
     assert!(kimi.owns_artifact());
     assert!(exists_any(&shared));
