@@ -2,7 +2,7 @@
 
 Status: ready-for-agent
 
-**Blocked by:** 09.
+**Blocked by:** 09, 18 (the occupant check).
 
 **Spec:** `.scratch/round20/spec.md` § Wave B spec → Implementation decisions § Redeploy, § Registry corrections; grill
 Q2–Q5, Q8, Q9, Q12; user stories 1–12, 15, 18, 19.

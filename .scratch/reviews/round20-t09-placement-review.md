@@ -263,3 +263,78 @@ deploy offer still appears.
 
 **Gate:** `npm run version:check && npm run check` passed (1,399 frontend tests; 1,068 Rust tests, 1 ignored), and
 `cargo test --all` passed. Three throwaway probe tests reproduced findings 9–11.
+
+---
+
+# Round 3 (Sol): an independent review of `c52ff4d`
+
+- **Reviewer:** GPT-6.1 Sol (high), 2026-11-06, in parallel with Astra.
+- **Verdict:** **BLOCK**.
+
+## Findings
+
+### 101. P1: an Overwrite answer can be applied to a different row's path than the one it asked about (regression on this branch)
+
+Enable picks a driver row and clears its ownership (`project_sync.rs:983–1008`). Collision resolution then picks the
+folder's driver again instead of finding the row that raised the collision (`:1074–1108`). The frontend retry carries
+project, skill and folder, not the assignment ID or the path it asked about (`useSyncOrchestration.ts:466–474`).
+
+Reproduced:
+1. An owning but disabled `trae_cn` row records `previous`, and a never-synced `trae` error row records `alpha`. Both
+   paths hold folders the app didn't create.
+2. Enable raises `TARGET_EXISTS` for `previous`, and the operator answers Overwrite.
+3. The retry picks `trae` and overwrites `alpha`, which the ask never showed.
+
+### 102. P1: a historical `synced_at` authorises deleting or replacing a new foreign folder (pre-existing)
+
+Same class as Astra's findings 10 and 11, reproduced both ways:
+- Disable, then a folder appears at the path, then Delete: the folder is deleted.
+- An owned link is replaced by a different folder, then resync: the folder is replaced and the report says `Synced`.
+
+### 103. P2: a successful global batch repurposes an independent record that holds the folder key (regression on this branch)
+
+The same finding as Astra's 9, reproduced through a successful global sync rather than Enable.
+
+### 104. P2: the project total shows an error from an independent row that resync never settles (regression on this branch)
+
+The listing shows one row per folder (`project_sync.rs:1331–1337`), and resync acts only on the driver
+(`:841–899`), but the project's status total still counts every raw row (`skill_store.rs:1909–1929`). The result is
+a Synced matrix next to an Error project total, and resyncing never clears it.
+
+### 105. P2: the sync confirmation counts a shared folder twice (regression on this branch)
+
+`CountConfirmModal.tsx:106–109` maps the selected harnesses to folder keys without de-duplicating, and
+`bulkCounts.ts:225–236` multiplies by that list. With Amp and Kimi selected, the confirmation says `added: 2`; the
+backend writes one Deployment.
+
+**Gate:** `npm run check` and `cargo test --all` passed (1,399 frontend tests; 1,068 Rust tests, 1 ignored). Five
+Rust probes and one TypeScript probe reproduced the findings above.
+
+## Disposition after round 3 (orchestrator, 2026-11-06)
+
+The two reviewers converge. Every finding the branch introduced (101, 9/103, 104, 105) and every finding of rounds
+1–2 has one cause: ticket 09 changed how mutations treat existing rows, by having them act on the rows of a folder as
+a group. Three fix passes made that grouping safer, and each review round found a new way it goes wrong.
+
+**Fix pass 3 takes that change out of ticket 09.**
+
+1. **Mutations act per raw row, exactly as on main.** Sync, resync, Propagation, collision answers, Disable/Enable and
+   Delete each act on a row at its own recorded path, with its own ownership and its own settlement. Remove the driver
+   row and every settlement shared between rows. A collision answer applies to exactly the row and path it was asked
+   about.
+2. **What ticket 09 still changes:**
+   - a new row is created under its folder key;
+   - one write no longer adds a row for every harness sharing the folder;
+   - a row's capability is resolved through placement for its folder;
+   - the selection works by folder;
+   - removal reports carry a folder key, and stored 1.3.4 reports are decoded.
+3. **Grouping by folder is presentation and counting only.**
+   - A folder's state is one pure fold over all its rows, and the listing and the project total use that same fold.
+   - The fold leaves no state that no action can clear, because per-row resync settles every row, as on main.
+   - Counts and confirmations de-duplicate folder keys (finding 105).
+4. **Collapsing the existing rows into one row per folder** stays with the redeploy (tickets 10 and 11). The ticket's
+   wording is amended to match.
+
+**Findings 10, 11 and 102** describe released behaviour, not regressions. They go to a new ticket, 18 (Deployment
+ownership means the current occupant). It is blocked by ticket 09 and blocks ticket 10, because the redeploy needs
+the same check: whatever is at a path right now must be verified as ours when the app acts on it.
