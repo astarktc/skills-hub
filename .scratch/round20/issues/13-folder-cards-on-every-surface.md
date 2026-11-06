@@ -37,3 +37,14 @@ Disable on a shared folder applies to the folder, and its confirmation names eve
       Disable confirmation, i18n coverage.
 - [ ] **Fixture:** every surface is shown in the new scenario.
 - [ ] `npm run version:check && npm run check` is green.
+
+## Comments
+
+- 2026-11-06 (orchestrator): carried over from the ticket 09 review, round 5 (Sol NB1–NB3). Fold these in.
+  - **NB1:** derive a folder's failure wording from its folder facts (`status`, `disabled`, `deployed`), never from
+    the representative row's `synced_at`. A folder with one synced row and one never-synced error row must not read
+    "the first deploy did not complete".
+  - **NB2:** give partly disabled project folders explicit presentation and actions: the matrix cell offers "Finish
+    disabling" alongside "Sync this". The run report's wording should acknowledge both the successful sync and the
+    disable that is still pending, never "Not deployed" while a copy is on disk.
+  - **NB3:** show "Removed … · Undo" only when the refreshed folder facts confirm the Disable finished.

@@ -87,3 +87,12 @@ duplicate of ours.
 - Prior art: `core/library_move.rs` (physical identity, verification, journal, resume) and the `artifact_removal` fence
   tests.
 - The edited-copy row here is functional. 16 gives the ask its provenance, diff and consequence copy.
+
+## Comments
+
+- 2026-11-06 (orchestrator): carried over from the ticket 09 review, round 5, finding N1.
+  - **Case to cover:** dropping a project harness whose legacy row records the same path as a kept harness's row.
+    Today, as on `main`, the shared artifact is removed and the kept row reconciles to `Missing` until a resync.
+  - **Requirement:** the project leg (ticket 11) must convert such pairs without this gap, and pin the sequence as a
+    permanent test.
+  - **ADR-0007 applies:** convert legacy rows explicitly and check ownership against the current occupant.

@@ -413,3 +413,54 @@ For display and counts (204/301, 302, 303, 205/304, 305):
 - Update/Edit, Import and Library move fold per folder.
 - Detection in the inspector checks every harness in the folder.
 - The fixture's totals use the shared fold.
+
+---
+
+# Round 5: review of fix pass 4 (`108ab53`, delta from `228190d`)
+
+- **Reviewers:** GPT-6 Astra (high) and GPT-6.1 Sol (high), working independently, 2026-11-06.
+- **Convergence bar:** only a P0 or P1, or a legacy row mutating differently from `main`, blocks the merge.
+- **Both verdicts:** **SHIP**. No blocking findings.
+
+## Astra
+
+- **Rule check: pass.** `placement::is_folder_row` is `own_folder(scope, key) == Some(key)`; unknown keys count as
+  legacy. `folder_reachable` and `row_reachable` are used correctly in:
+  - the global batch;
+  - Propagation;
+  - artifact removal's locatable check;
+  - project configuration.
+
+  No other mutation path needs them.
+- **201, 202, 203 and 206 are closed.** Seven differential probes give identical results on `07c4550` and `108ab53`.
+- **The rewritten regression tests still protect what Astra 9, Sol 103 and Sol 101 were about,** under `main`'s
+  destination policy.
+- **Enable's in-memory first-sync plan matches `main`** at pair grain and at skill grain.
+- **N1 (P2, matches `main`; goes to ticket 10).** Dropping Trae CN whose legacy row records the same path as the kept
+  Trae row removes the shared artifact. Trae then reconciles to `Missing`, and a resync restores it. Keep this as
+  permanent redeploy coverage.
+
+## Sol
+
+- **301–305 are closed.**
+  - Errors now outrank a disabled sibling, and the inspector offers "Finish disabling".
+  - The `deployed` fact keeps confirmations right.
+  - `isFolderDetected` is threaded through the inspector.
+  - Every report family counts per folder.
+  - The fixture's totals use the shared fold.
+- **Every displayed failure has a way to clear it.**
+- **Non-blocking items, all going to ticket 13:**
+  - **NB1 (P2).** A folder with one synced row and one never-synced error row still gets first-deploy wording
+    (`skillPresentation.ts:1147`). The wording should come from the folder's facts.
+  - **NB2 (P2).** In a partly disabled project folder, "Sync this" clears the failure, but the run then reports "Not
+    deployed" while the copy stays on disk (`projectPresentation.ts:103–140`, `reportOutcome.ts:475–483` and
+    `:980–981`).
+  - **NB3 (P2).** Retrying a failed pair Disable briefly shows "Removed … · Undo"
+    (`TargetsSection.tsx:75–97`, `:169–185`). Show Undo only once the refreshed folder facts confirm the Disable
+    finished.
+
+**Gate (both):** `npm run version:check && npm run check` passed (1,421 frontend tests; 1,085 Rust tests, 1 ignored),
+and `cargo test --all` passed.
+
+**CI:** `rust-windows` clippy failed on an unused `skill` parameter outside `cfg(unix)` in a test helper
+(`tests/project_sync.rs`). The orchestrator fixed it in `4696eb2`.

@@ -1,6 +1,6 @@
 # 09: Placement and one Deployment row per folder
 
-Status: ready-for-agent
+Status: claimed
 
 **Blocked by:** None (can start immediately).
 
@@ -63,3 +63,20 @@ instead of two.
 - 2026-11-06 (orchestrator): scope amended after review round 3 (`.scratch/reviews/round20-t09-placement-review.md`,
   "Disposition after round 3"). Mutations keep `main`'s per-row semantics, and grouping by folder is for presentation
   and counting only. The pre-existing finding about historical-ownership authority moved to ticket 18.
+- 2026-11-06 (orchestrator): implemented in PR #21 over the initial pass and four fix passes (`cf229bb` → `4824ef6` →
+  `c52ff4d` → `228190d` → `108ab53`, plus the orchestrator's Windows test fix `4696eb2`). Five review rounds are
+  recorded in `.scratch/reviews/round20-t09-placement-review.md`; Astra and Sol both said **ship** in round 5.
+  - **The result:**
+    - a pure placement module;
+    - new rows under the folder key, with no per-sharer fan-out;
+    - every mutation acts per raw row, and a legacy row (`placement::is_folder_row` false) behaves exactly as on `main`;
+    - capability comes through placement;
+    - the selection is per folder (v2 key, migration, whole-folder toggling);
+    - one `FolderFacts` fold (status, disabled, deployed) shared by every surface and total;
+    - per-folder counts in every report family;
+    - the stored 1.3.4 report decoder.
+  - **Follow-ups moved out:**
+    - historical `synced_at` authority → ticket 18 (ADR-0007);
+    - the same-path project removal case → ticket 10;
+    - folder wording and feedback, Sol NB1–NB3 → ticket 13.
+  - The children's per-pass Comments entries stayed uncommitted in their worktrees; this entry stands in for them.
