@@ -5,15 +5,16 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#112**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#116**.
 
 Round 19 closed 2026-11-05 (`archive/round19/spec.md` § Closure — 2026-11-05); every line it carried was re-derived from
 the code that day (`archive/round19/closure/extract-{A..G}.md`).
 
 **Order (operator 2026-11-05):**
 
-1. **1.3.3, a hygiene patch** — a solid base before roadmap features. #107 first, then tier 1 (#106 #105 #103 #95 #68
-   #63 #100 #102, #74's pointer) and tier 2 (#96 #97 #98 #90 #99 #101 #104 #73 #72 #76 #75).
+1. **1.3.3, a hygiene patch** — a solid base before roadmap features (`.scratch/release-1.3.3/spec.md`). Merged and
+   removed from this file: #63 #68 #72 #73 #74 (its pointer; persistence is #53's) #75 #90 #95 #96 #97 #98 #99 #100
+   #101 #102 (dark theme only — the README embeds one image per screen) #103 #104 #106. In review: #107 #76 #105 (L1).
 2. **Round 20**: #92 then #110, beside #91 (they touch different files); #108; #109 and #84 (both need the
    project defaults/overrides pattern); then #70, #85/#86, #93, #87.
 
@@ -166,81 +167,25 @@ code before scheduling.)
   only on project rows. **Decided (operator 2026-11-05): yes** — a read-only presence probe where the library is listed,
   status written through `try_serialized` like the project reconcile. Source: `archive/round19/review/ticket-34-backend-audit-3.md`
   F14 note; `archive/round19/closure/extract-F.md` F7.
-- **#95 A Disable that only records intent toasts "Nothing was removed".** Disabling a pair with nothing on disk (never
-  deployed, or its first deploy failed — D9) records the `disabled` marker (`skill_disable.rs:205–224`,
-  `artifact_removal.rs:645–655`) but adds nothing to the `RemovalReport`, so the fold reads it as a skipped no-op
-  (`reportOutcome.ts:677–683` → `unsyncNothingPlanned`). It worked; say so ("{skill} stays off {harness}"), with a
-  report field for flipped markers. Operator 2026-11-05: yes. Source: `archive/round19/issues/01-disabled-target-state.md:263`.
-- **#96 Selecting a project can rewrite Deployment statuses without refreshing My Skills.** `get_project_view` reconciles
-  (`project_sync.rs:1081–1147`), but the selection read's `applyView` (`useProjectState.ts:295–318`) does not
-  `converge()` the library as mutations do (`:321–349`, `:444`), so a copy found missing/stale leaves My Skills' mark,
-  Issues count and inspector stale until a later reload. Source: `archive/round19/review/ticket-31-audit.md:34`;
-  `archive/round19/closure/extract-F.md` F2.
-- **#97 Layer/focus-contract gaps.** (1) The row switch's inline Enable confirmation is a triggerless anchored
-  Popover (`SkillRow.tsx:299–305`; `popover.tsx` passes `anchor` to the Positioner only): it leaves an unnamed
-  `aria-hidden` focus-guard Tab stop and stays open — still on the layer stack — after a Tab-out (ticket 16 audit R1,
-  passed on by 16 → 17 → 23). (2) Popover focus return depends on Base UI's internal `data-tabindex` protocol
-  (`popover.tsx:80–93`), pinned only in jsdom, under a caret range (`@base-ui/react ^1.8.0`): add a browser regression
-  (`scripts/browser/cdp-keys.ts` drives it) or pin the version exactly. (3) `ProjectToolsModal` is conditionally
-  mounted (`ProjectToolsModal.tsx:181–184`), against "keep a dialog's shell mounted" — its focus return races the
-  unmount. Source: `archive/round19/review/ticket-16-audit.md:205, :226`; `ticket-20-audit.md:162`;
-  `archive/round19/closure/extract-D.md` D1/D3, `extract-E.md` E3/E7.
-- **#98 Import review gaps.** (1) Unreachable when only invalid manifests remain: the banner counts
-  `plan.group_count` only (`SkillsList.tsx:98`), so invalid copies in harness dirs become invisible — the operator asked
-  that unmanaged skills "always" be visible. (2) A divergent copy is deleted *before* the deploy
-  (`onboarding_import.rs:719–720`); if the deploy then fails, that harness has neither; the copy
-  (`resources.ts:1485`) should say so. Source: `archive/round19/review/ticket-21-audit.md:13, :156, :178`.
-- **#90 Fixture parity.** (1) The New harnesses dialog is unreachable under StrictMode: `src/fixtures/backend.ts`
-  reports newly detected harnesses once (`seenTools`, :1572–1575) and the dev startup effect runs twice
-  (`backend.test.ts:449–453` pins once-only on purpose) — give it a StrictMode-safe trigger (scenario flag, or report
-  until acknowledged). (2) The fixture's onboarding plan dedupes a shared skills dir (`backend.ts:1309–1316`,
-  `seenPaths`); the Rust plan reports every harness on it. (3) The fixture's `resolveProjectCollisions` throws on a
-  missing project (`backend.ts:1708–1709`) where Rust answers a per-decision `NOT_FOUND` row. Source:
-  `archive/round19/review/ticket-25-audit.md` § F3, `ticket-21-audit.md:114`, `ticket-04-review.md:92`.
-- **#99 Tests and guards that promise more than they check.** (1) Install batch: the git test passes `resolution: None`
-  (`core/tests/install_batch.rs:427–439`); no same-content first-pass or extraneous-override test; `resolve_collisions`'
-  owned-row / gone-row / disabled refusal arms are untested (`project_sync.rs` ~:907–947); no unknown-mtime test.
-  (2) The door's verb table asserts only that a call happened (`useSkillActions.test.ts:259–260`) and compares
-  reload-on-throw against the code's own `RELOAD_ON_THROW` (`:667`) — use a literal table and pin retry → catalog read
-  → `refreshView` → fold order. (3) The reverse i18n "unread key" scan is lexical (`resources.test.ts:98–116`): any
-  quoted occurrence counts as a read, a template prefix exempts a whole family, `t(prefix + leaf)` is invisible; add
-  the four counterexample self-tests and narrow it. (4) `styles:check`'s `importsAppCss` is a regex
-  (`scripts/check-styles.mjs:72–84`) a string can fool. Source: `archive/round19/review/ticket-04-review.md:89–93`,
-  `ticket-09-review.md:115`, `ticket-31-audit.md:119`, `ticket-25-audit.md` § F1.
-- **#100 Two guard-polling Rust tests flake under parallel load.** `core/tests/mutation_guard.rs:466–480` polls
-  `try_serialized` 100 × 50 ms while the same file's HOLD tests occupy the process-global guard;
-  `core/tests/project_sync.rs:745` (`missing_status_when_source_absent`) flakes alongside. Isolate the no-contention case
-  or add a deterministic test-only seam — never make the production reader block. Source:
-  `archive/round19/review/ticket-34-backend-audit.md` F9, `-3.md` § 8.
-- **#101 A run toast can sit over a dialog that is its own report.** Only Add's and Import's Results set
-  `resultShownIn` (`useAddSkillFlow.ts:557`, `useImportReview.ts:264`); e.g. the Delete dialog's report also raises the
-  run toast (`ticket-29-audit.md` check 2), and ticket 21's F5 showed a toast can intercept a dialog's Close. Measure
-  occlusion first. Source: `archive/round19/review/ticket-21-audit.md` § F5.
-- **#102 README screenshots show the pre-1.3 UI.** `docs/assets/*.png` (`README.md:20–29`) date from March 2026;
-  recapture from the fixture (`npm run dev:fixture`, `?scenario=rich`, both themes). The feature text was corrected at
-  round 19's closure. Source: `archive/round19/issues/19-docs-and-release-1.3.0.md:203`.
-- **#103 Windows Deployment paths mix separators.** The operator's Windows 11 install (1.3.1, 2026-11-05) recorded
-  `C:\Users\…\.claude/skills\grill-me` — registry relative dirs carry `/` and are joined onto a `\` home. Harmless to
-  `Path` comparisons (components accept both), ugly wherever a path is shown or copied. Normalise at the registry join.
-  Source: round 19 closure session (`ssh gpc`, DB read).
-- **#104 SQLite write contention fails on a slow Windows disk.** `skill_store::concurrent_readers_and_writers_all_succeed`
-  (8 writers × 50 rounds, default rollback journal, 5 s busy timeout, `core/skill_store.rs:1885`) fails even when run
-  alone on GitHub's `windows-latest` ("database is locked", run 42101089457) and is excluded from the Windows CI job
-  (1.3.2); it passes on the operator's Windows 11 PC. Refresh's pool is 4 workers, so first add a representative
-  four-worker probe; if it fails, decide the connection / write-admission policy (WAL, one writer, longer timeout).
-  Source: `.scratch/reviews/1.3.2-patch-review.md` § F3.
 - **#105 `derive_name_from_repo_url` splits only on `/`.** A Windows-style `file://C:\…` URL makes the derived skill name an
   absolute path (seen only through a test fixture in 1.3.2's Windows work). Guard it: split on both separators, or
   refuse a name that is not a plain leaf. Source: 1.3.2 implementer report, 2026-11-05.
+- **#112 The matrix's whole-cell hit area makes un-assign misclicks likelier.** Since 1.3.0 (ticket 17) the whole cell
+  (36 px × ≥144 px) toggles, and it is the same area hovered to read the state word; in 1.2.x only the 18 px checkbox
+  did. 1.3.3's 5 s Undo (#75) mitigates; shrinking or splitting the hit area is a design call. Source: 1.3.3 L5 report.
+- **#113 Import deletes a divergent original before deploying over it.** The deploy cannot go first (the copy occupies
+  the target path); a safe order is move-aside → deploy → delete on success / restore on failure
+  (`onboarding_import.rs` original removal). 1.3.3 only made the copy say a failed deploy leaves the harness without the
+  skill (#98). Source: 1.3.3 L5 report.
+- **#114 My Skills' sort mode is not remembered.** `useListLens` keeps sort in `useState` (`src/hooks/useListLens.ts`
+  ~:126), so "Problems first" (1.3.3) and the others reset on relaunch; persist it through `preferences.ts` (a new key;
+  keep `name` / `updated` / `added` / `issues` values). Source: 1.3.3 L4 review.
+- **#115 The bulk Enable confirmation shows a stale project count for a moment** after a Disable, until project
+  placements reload (pre-existing; seen in 1.3.3 L4's fixture checks). Source: 1.3.3 L4 report.
 - **#111 Registry drift check.** A scheduled workflow (like `update-featured-skills.yml`) diffs `vercel-labs/skills`'
   `src/agents.ts`, the ACP registry (`agentclientprotocol/registry`) and the upstream fork's registry against
   `TOOL_ADAPTERS`, and opens an issue on a new or changed row — replacing manual audits like this session's. Operator
   2026-11-05: worth designing. Source: this session.
-- **#106 An update-check failure shows the updater plugin's raw English.** Settings → Updates printed "None of the
-  fallback platforms `["windows-x86_64-nsis", "windows-x86_64"]` were found in the response `platforms` object" (operator,
-  Windows, 2026-11-05 — the feed lacked Windows; fixed in the release workflow). `useAppUpdate`'s check shows the
-  rejection text as-is; give it one copy line ("Couldn't check for updates — download the latest release from GitHub",
-  with the link) and keep the raw text as detail. Source: operator screenshot, 2026-11-05.
 - **#87 Project-scope relocation for corrected harness dirs.** Blocked by #108: `main` still has Kilo global *and*
   project `.kilocode/skills` (`tool_adapters/mod.rs:636, :639`) and Xum both `.mux/skills` (`:480, :483`) — ticket 34
   never merged. When #108 corrects the global dirs, the project dirs still need a project relocation pass (per project,
@@ -266,47 +211,9 @@ code before scheduling.)
   (`TOOL_NOT_WRITABLE`). (The "Removed from … lacks the project" bullet was struck at round 19's closure: both sides
   carry "· project" since `56da8d9`, `reportOutcome.ts:1475–1503`, pinned by `reportOutcome.test.ts:2196`.) Source:
   `archive/round19/issues/18-operator-think-aloud.md` § Findings (P2·Q10).
-- **#75 Undo on a project matrix cell's toggle-off.** One accidental click on a matrix cell un-assigns the skill (the
-  project's copy is removed), with no confirmation and no Undo (`useProjectActions.ts:173–178`). The inspector's targets
-  list has a 5 s Undo (D21, `TargetsSection.tsx:115–142`); the matrix should match. Check whether ticket 17's larger
-  cell hit area made misclicks likelier. Source: `archive/round19/issues/18-operator-think-aloud.md` § Findings (P6·Q1).
-- **#74 Notifications after a relaunch — the empty-panel pointer (1.3.3).** Asked "tomorrow morning, how would you find
-  today's failures?", the operator said he'd use the Notifications history. That history is session memory only
-  (`useNotificationHistory.ts:8–14`), so the panel is empty after a relaunch. Now: the empty panel points at "View N
-  skills with issues" (health is stored). Persisting runs moved to #53's unattended-runs effort (operator 2026-11-05). (The vanishing run toast was explained
-  at round 19's closure — a failure-tone run toast was a 5 s `warning`, `reportOutcome.ts:97–98` — and 1.3.2 makes it
-  persist, operator 2026-11-05.) Source: `archive/round19/issues/18-operator-think-aloud.md` § Findings (P2·Q7).
-- **#73 Bulk confirmation copy.** Ticket 32 changed the words, not the shapes:
-  - The Enable sentence ("Enable {{skills}} — {{targets}} on {{tools}} and {{assignments}} are deployed again, a first
-    deploy each.", `resources.ts:902–903`) was unparseable on first read: *"I have no clue what the hell that thing is
-    saying."*
-  - The Disable sentence's zero case, "no project deployment changes" (`:894`), reads as "a skill-grain Disable leaves
-    project assignments live". It means none exist. Say "None of these skills is assigned to a project".
-  - 2026-10-29 smoke: the select-all Disable reads "… are removed and kept disabled …" (`:893–894`) — accurate, but
-    "removed and kept disabled" reads as a contradiction.
-  - Source: `archive/round19/issues/18-operator-think-aloud.md` § Findings (P2·Q8).
-- **#72 My Skills reading fixes.**
-  - The summary "7 failed deployments · View 11 skills with issues" (`LibraryHeader.tsx:80–93`) was read as 7 skills:
-    two units side by side, and the first number taken.
-  - The list is grouped by source, so 4 of 11 issue rows sat below the fold and were missed. "View N skills" already
-    applies the Issues lens (`App.tsx:541`); the ask is problems-first ordering (sort modes are name / updated / added
-    only, `skillPresentation.ts:56`).
-  - The inspector offers Deploy on a harness it labels "(not detected)" and fails (`TOOL_NOT_INSTALLED`):
-    `targetActions` returns `["sync"]` for `not_synced` regardless of `mark.detected` (`TargetsSection.tsx:46–47`,
-    label :173). Refuse it in place with its reason.
-  - A run headline's "1 Edit to review" item sits last in a run collapsed by default (`reportOutcome.ts:490–496`,
-    `useStatusReporter.ts:600–603`); order skill-level items first, or link the headline to them.
-  - Imported skills group under "Local" while their source line says "Managed here · Imported from {Tool}"
-    (`skillPresentation.ts:277–281` vs `:155–168`): give them a "Managed here" group; folder sources keep "Local"
-    (operator 2026-11-05: yes; ticket 11 :126–127).
-  - The bulk rail at the window foot (`App.tsx:686–695`) was found only after three other paths (low; think-aloud P2·Q8
-    follow-up, `issues/18` :402–415).
-  - Source: `archive/round19/issues/18-operator-think-aloud.md` § Findings (P1·Q1, P2·Q5, P2·Q6, P6·Q1).
-- **#68 Retire the reporter's legacy `setError` dialect** — `notifyError` is meant to be the one failure dialect, but `useStatusReporter` still exposes `setError`, with six call sites (re-verified 2026-11-05): `useSyncOrchestration.ts:675`, `useAddSkillFlow.ts:337`, `:373`, `:674`, and `useImportReview.ts:211`, `:259` (added by ticket 21). `showActionErrors` / `showActionWarnings` have no production caller (`useStatusReporter.ts:418–420`, `:581–590`). Migrate those call sites to `notifyError` / `notify("error", …)`, delete the three reporter members, and drop AGENTS.md's "`setError` remains only in the sync, Add and Import-review worlds" clause in the same change. Source: `archive/round19/issues/09-action-door-lifecycle-health-fold.md` ~:250 ("Legacy reporter members").
 - **#66 One multi-skill delete command (round 19 ticket 13)** — `delete_managed_skill` takes one skill; the bulk rail's Remove loops it inside one `runAction` (failures collected, one `RemovalReport` fold — the rail's report dialog counts "N of M not deleted"). Add `delete_managed_skills(ids)` under one `serialized` section answering one report so a whole-command failure mid-batch still carries the settled rows (same class as #64 (1)). Source: ticket 13 Result "Delete batch shape".
 - **#65 Inspector metadata the wire does not carry (round 19 ticket 12, audit I9)** — three D15/D18/D22 clauses shipped honestly degraded because `ManagedSkillDto` / `SkillTargetDto` lack the fields: (1) a **typed settled error per target row** (`last_error` classified as `CommandError` where it settles, exported through specta, folded once by `skillHealth`) so a target row can read "permission denied" / "Overwrite and retry" instead of state words — today the inspector's Retry raises the ask from its fresh report and the row shows product-state copy only; (2) the **recorded git ref/SHA** on the skill (the store has it; the DTO does not) for the Upstream section's revision line (also #62's input); (3) a **detached-origin path** kept on Detach so the provenance line can read "Detached from ~/…" (today Detach clears source metadata and the line reads "No upstream — Refresh skips it"). Never hand-mirror these in TS; each is derive + `cargo test` + shim re-export. Source: `archive/round19/review/ticket-12-audit.md` § I9; ticket 12 Result "BACKLOG follow-ups".
 - **#64 Four accepted command-API compromises from round 19 ticket 09** — each ships in 1.3.0 under one outer lifecycle action with one ask/fold/run, but falls short of one-command-per-operator-action: (1) project assign/unassign over several skills is one `bulk_assign_skill` / `bulk_unassign_skill` per skill → a multi-skill command that still carries settled partial reports when a later skill fails whole-command; (2) Deploy all is Enable then first sync, two commands over disjoint partitions (no atomic cross-partition promise) → a combined backend surface; (3) a successfully answered project collision row is dropped from the Update/Edit report (`resolve_project_collisions` returns no sync mode; folds count only failures, views are re-read) → a lossless typed settled-target representation before any consumer treats the array as a complete audit; (4) the Enable retry re-runs the whole scope with overrides (it reselects only still-disabled rows) → a pair-exact answered-pair Enable API, keeping the tests that unrelated completed pairs stay untouched. Source: `archive/round19/review/ticket-09-review.md` § Re-review ("Four command-API compromises").
-- **#63 Tighten the secure-deletion zeroing test** — `core/tests/settings.rs` (~:768) asserts live bytes are zeroed but also passes without `secure_delete` (VACUUM alone hides it); use a page-spanning sentinel and a sensitivity check so `secure_delete` is pinned on its own. Source: Astra final check of `4f6e312`, `.scratch/archive/round18/review/ticket-02-review.md` § Final check.
 - **#48 Network-boundary lint** — a build-failing script that finds every `reqwest::Client` / `git2::FetchOptions` / `Repository::clone`
   outside one module (we construct clients in several). The proxy feature it guards upstream is not wanted. Source: `docs/design-inputs/2026-09-24-upstream-v0.10-and-field-survey.md` §B4.
 - **#62 Passive upstream update check** — a read-only "check upstream" that compares the recorded SHA with the remote (Contents API /
