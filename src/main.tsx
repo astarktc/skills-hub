@@ -24,6 +24,15 @@ if (import.meta.env.VITE_MOCK_BACKEND === '1') {
         </StrictMode>,
       ),
     )
+  } else if (new URLSearchParams(window.location.search).get('proto') === 'harnesses') {
+    // PROTOTYPE (round 20 Wave B, throwaway branch only): `/?proto=harnesses&variant=a|b|c`.
+    void import('./components/settings/prototype/HarnessesPrototype').then(({ default: HarnessesPrototype }) =>
+      createRoot(document.getElementById('root')!).render(
+        <StrictMode>
+          <HarnessesPrototype />
+        </StrictMode>,
+      ),
+    )
   } else {
     void import('./fixtures').then(({ installFixtureBackend }) => {
       installFixtureBackend()
