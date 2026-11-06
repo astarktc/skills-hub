@@ -46,13 +46,13 @@
 //! shared behind `&`, so a bounded parallel pool can call it from worker
 //! threads (each with its own [`HttpGithubApi`]).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 
 use super::cancel_token::CancelToken;
 use super::errors::SignalError;
-use super::git_cache::{fetch_through_cache, FetchRequest};
+use super::git_cache::{fetch_through_cache, CachedCheckout, FetchRequest};
 use super::git_fetcher::symlink_on_path;
 use super::github_download::{
     download_github_directory, fetch_branch_sha, fetch_matching_refs, parse_github_repo,
@@ -296,18 +296,21 @@ fn acquire_source(
 /// needs the full checkout (not copied skill bytes). The supplied checkout
 /// adapter preserves the listing → install git-cache reuse and permits local
 /// fixtures in tests.
-pub(crate) fn list_candidates_with(
+/// The checkout (a [`CachedCheckout`] in production) is held until the
+/// candidates are discovered.
+pub(crate) fn list_candidates_with<C: AsRef<Path>>(
     source: &GitSource,
     api: &dyn GithubApi,
-    checkout: impl FnOnce(&GitSource) -> Result<PathBuf>,
+    checkout: impl FnOnce(&GitSource) -> Result<C>,
 ) -> Result<(Vec<DiscoveredSkill>, GitSourceResolution)> {
     let resolved = Resolved::listing(source, api);
     let prefix = resolved.known_subpath();
     if let Some(prefix) = prefix {
         require_plain_subpath(prefix)?;
     }
-    let repo = checkout(&resolved.source)?;
-    let root = prefix.map_or_else(|| repo.clone(), |path| repo.join(path));
+    let checkout = checkout(&resolved.source)?;
+    let repo = checkout.as_ref();
+    let root = prefix.map_or_else(|| repo.to_path_buf(), |path| repo.join(path));
     let mut candidates = installable_candidates(&root);
     if let Some(prefix) = prefix {
         for candidate in &mut candidates {
@@ -403,26 +406,23 @@ fn fast_path(
 
 /// Adapter two: the git clone cache. Sparse when a subpath is known, then the
 /// intent decides which directory of the tree is the skill, and upstream
-/// symlinks on the way to it are followed through the cache.
+/// symlinks on the way to it are followed through the cache. The checkout
+/// is held until the bytes are copied out, so the cache cleanup counts the
+/// entry in use rather than deleting it mid-copy.
 fn clone_path(req: &ResolvedRequest, known_subpath: Option<&str>) -> Result<Acquired> {
-    let (mut repo_dir, mut revision) = fetch_repo(req, known_subpath)?;
+    let mut checkout = fetch_repo(req, known_subpath)?;
     check_cancelled(req.request.cancel)?;
 
-    let resolved_subpath = resolve_subpath(&repo_dir, req.intent, known_subpath)?;
+    let resolved_subpath = resolve_subpath(&checkout.dir, req.intent, known_subpath)?;
     // The directory the bytes are really in: the alias itself unless the
     // tree records a link somewhere on it. The alias is what gets reported.
     let checkout_subpath = match &resolved_subpath {
-        Some(alias) => Some(follow_upstream_links(
-            req,
-            &mut repo_dir,
-            &mut revision,
-            alias,
-        )?),
+        Some(alias) => Some(follow_upstream_links(req, &mut checkout, alias)?),
         None => None,
     };
     let copy_src = match &checkout_subpath {
-        Some(subpath) => repo_dir.join(subpath),
-        None => repo_dir.clone(),
+        Some(subpath) => checkout.dir.join(subpath),
+        None => checkout.dir.clone(),
     };
     if !copy_src.exists() {
         match &resolved_subpath {
@@ -441,7 +441,7 @@ fn clone_path(req: &ResolvedRequest, known_subpath: Option<&str>) -> Result<Acqu
         .with_context(|| format!("copy {:?} -> {:?}", copy_src, req.request.dest))?;
 
     Ok(Acquired {
-        revision,
+        revision: checkout.head,
         strategy: AcquireStrategy::GitClone {
             sparse: known_subpath.is_some(),
         },
@@ -452,7 +452,7 @@ fn clone_path(req: &ResolvedRequest, known_subpath: Option<&str>) -> Result<Acqu
 
 /// One fetch through the git cache for this request, sparse when `subpath`
 /// names one.
-fn fetch_repo(req: &ResolvedRequest, subpath: Option<&str>) -> Result<(PathBuf, String)> {
+fn fetch_repo(req: &ResolvedRequest, subpath: Option<&str>) -> Result<CachedCheckout> {
     fetch_through_cache(
         req.request.cache_dir,
         req.request.library,
@@ -474,18 +474,17 @@ fn fetch_repo(req: &ResolvedRequest, subpath: Option<&str>) -> Result<(PathBuf, 
 /// target within the repository root ([`LinkChain`] — the typed refusal and
 /// the depth bound live there), and fetches the resolved path through the
 /// cache: the entry is widened by the target, never narrowed, so the next
-/// Refresh of this alias is a plain hit. `repo_dir` and `revision` follow the
-/// last fetch, which is the tree the bytes are copied from. The alias is
-/// never rewritten — the resolved path is diagnostics only.
+/// Refresh of this alias is a plain hit. `checkout` follows the last fetch,
+/// which is the tree the bytes are copied from. The alias is never
+/// rewritten — the resolved path is diagnostics only.
 fn follow_upstream_links(
     req: &ResolvedRequest,
-    repo_dir: &mut PathBuf,
-    revision: &mut String,
+    checkout: &mut CachedCheckout,
     alias: &str,
 ) -> Result<String> {
     let mut chain = LinkChain::new();
     let mut subpath = normalize_subpath(alias);
-    while let Some((link, target)) = symlink_on_path(repo_dir, &subpath, req.request.cancel)? {
+    while let Some((link, target)) = symlink_on_path(&checkout.dir, &subpath, req.request.cancel)? {
         let rest = subpath
             .strip_prefix(&link)
             .map(|rest| rest.trim_start_matches('/'))
@@ -499,9 +498,8 @@ fn follow_upstream_links(
         } else {
             format!("{resolved}/{rest}")
         };
-        let (dir, rev) = fetch_repo(req, Some(&subpath))?;
-        *repo_dir = dir;
-        *revision = rev;
+        // The next checkout is taken before the previous one is let go.
+        *checkout = fetch_repo(req, Some(&subpath))?;
         check_cancelled(req.request.cancel)?;
     }
     if subpath != normalize_subpath(alias) {

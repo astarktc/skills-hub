@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::core::artifact_removal::RemovalReport;
-use crate::core::cache_cleanup::cleanup_git_cache_dirs;
+use crate::core::cache_cleanup::{cleanup_git_cache_dirs, GitCacheCleanup};
 use crate::core::cancel_token::CancelToken;
 use crate::core::clock::now_ms;
 use crate::core::credentials::KeyringStore;
@@ -296,12 +296,16 @@ pub async fn get_onboarding_plan(
     .map_err(CommandError::from_anyhow)
 }
 
+/// Clean Now: clear every git cache entry nobody is using. An entry an
+/// acquisition holds is skipped and counted (`in_use`), never waited on —
+/// the in-use rule lives in `core::cache_cleanup`. Takes no Mutation guard
+/// (acquisitions run outside it); the frontend runs it under `runAction`.
 #[tauri::command]
 #[specta::specta]
 pub async fn clear_git_cache_now(
     app: tauri::AppHandle,
     store: State<'_, SkillStore>,
-) -> Result<usize, CommandError> {
+) -> Result<GitCacheCleanup, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let central_dir = resolve_central_repo_path_for_app(&app, &store)?;

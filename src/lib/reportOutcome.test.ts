@@ -24,6 +24,7 @@ import {
   HEADLINE_DONE_KEY,
   headlineTone,
   enableOutcome,
+  gitCacheCleanOutcome,
   invocationEditOutcome,
   importGroupKind,
   importOutcome,
@@ -2744,5 +2745,37 @@ describe("libraryMoveOutcome", () => {
       ['libraryMove.report.setAsideTitle {"name":"a"}', 'libraryMove.report.setAsideMessage {"path":"/old/set_aside"}'],
     ]);
     expect(outcome.warnings.every((entry) => entry.subject?.skillId === "a")).toBe(true);
+  });
+});
+
+describe("gitCacheCleanOutcome (Clean Now)", () => {
+  const english = async () => {
+    const i18n = i18next.createInstance();
+    await i18n.init({ resources, lng: "en", interpolation: { escapeValue: false } });
+    return i18n.t.bind(i18n) as unknown as typeof t;
+  };
+
+  it("names the cleared repos and the ones in use, skipped", async () => {
+    const out = gitCacheCleanOutcome({ cleared: 4, in_use: 2 }, { t: await english() });
+    expect(out.toast).toEqual({
+      kind: "warning",
+      tone: "skipped",
+      message: "Cleared 4 cached repos; 2 in use, skipped",
+    });
+    expect(out.errors).toEqual([]);
+    expect(out.warnings).toEqual([]);
+    expect(out.completion).toEqual({ reload: false, closeModal: false, conflict: false });
+  });
+
+  it("omits the in-use clause at zero and agrees in number", async () => {
+    const en = await english();
+    expect(gitCacheCleanOutcome({ cleared: 1, in_use: 0 }, { t: en }).toast).toEqual({
+      kind: "success",
+      tone: "success",
+      message: "Cleared 1 cached repo",
+    });
+    expect(gitCacheCleanOutcome({ cleared: 0, in_use: 1 }, { t: en }).toast?.message).toBe(
+      "Cleared 0 cached repos; 1 in use, skipped",
+    );
   });
 });

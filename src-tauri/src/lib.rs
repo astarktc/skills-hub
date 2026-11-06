@@ -253,8 +253,12 @@ pub fn run() {
                                 max_age,
                             )
                         }) {
-                        Ok(0) => {}
-                        Ok(removed) => log::info!("cleaned up {} git cache dirs", removed),
+                        Ok(cleanup) if cleanup.cleared == 0 && cleanup.in_use == 0 => {}
+                        Ok(cleanup) => log::info!(
+                            "cleaned up {} git cache dirs ({} in use, skipped)",
+                            cleanup.cleared,
+                            cleanup.in_use
+                        ),
                         Err(err) => log::warn!("git cache cleanup skipped: {:#}", err),
                     }
                 }

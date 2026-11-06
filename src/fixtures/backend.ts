@@ -1952,9 +1952,10 @@ export function createFixtureBackend(
     },
     clearGitCacheNow: async () => {
       await pause(300);
-      const removed = state.gitCacheEntries;
-      state.gitCacheEntries = 0;
-      return removed;
+      // An entry an acquisition is using is skipped and counted, and stays.
+      const cleared = state.gitCacheEntries - state.gitCacheEntriesInUse;
+      state.gitCacheEntries = state.gitCacheEntriesInUse;
+      return { cleared, in_use: state.gitCacheEntriesInUse };
     },
     getOnboardingPlan: async () => {
       await pause(350);

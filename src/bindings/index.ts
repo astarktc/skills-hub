@@ -50,7 +50,13 @@ export const commands = {
 } | null>("take_resumed_library_move"),
 	getToolStatus: () => __TAURI_INVOKE<ToolStatusDto>("get_tool_status"),
 	getProjectToolStatus: () => __TAURI_INVOKE<ToolStatusDto>("get_project_tool_status"),
-	clearGitCacheNow: () => __TAURI_INVOKE<number>("clear_git_cache_now"),
+	/**
+	 *  Clean Now: clear every git cache entry nobody is using. An entry an
+	 *  acquisition holds is skipped and counted (`in_use`), never waited on —
+	 *  the in-use rule lives in `core::cache_cleanup`. Takes no Mutation guard
+	 *  (acquisitions run outside it); the frontend runs it under `runAction`.
+	 */
+	clearGitCacheNow: () => __TAURI_INVOKE<GitCacheCleanup>("clear_git_cache_now"),
 	getOnboardingPlan: () => __TAURI_INVOKE<OnboardingPlan>("get_onboarding_plan"),
 	listLocalSkillsCmd: (basePath: string) => __TAURI_INVOKE<LocalSkillCandidate[]>("list_local_skills_cmd", { basePath }),
 	listGitSkillsCmd: (repoUrl: string, targetName: string | null) => __TAURI_INVOKE<GitSkillListing>("list_git_skills_cmd", { repoUrl, targetName }),
@@ -582,6 +588,17 @@ export type FeaturedSkillDto = {
 export type FloatRange = {
 	min: number,
 	max: number,
+};
+
+/**
+ *  What one cleanup pass did: entries removed, and entries due for removal
+ *  that were skipped because an acquisition was using them — fetching into
+ *  one (its key lock held) or reading a checkout of it (`git_cache`'s
+ *  `with_idle_entry` is the rule).
+ */
+export type GitCacheCleanup = {
+	cleared: number,
+	in_use: number,
 };
 
 /**

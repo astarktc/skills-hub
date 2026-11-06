@@ -369,7 +369,6 @@ export const resources = {
         restored: "{{name}} restored.",
         repointed: "{{name}} re-pointed and updated.",
         detached: "{{name}} detached: the copy in Skills Hub is now its source.",
-        gitCacheCleared: "Git cache cleared ({{count}} removed).",
         installed: "Installed",
         targetsEnabled: "Enabled and deployed.",
       },
@@ -1757,6 +1756,16 @@ export const resources = {
           libraryFolderHint: "Change it in General.",
           tokenSaves: "The token saves only when you press Save token.",
         },
+      },
+      // Clean Now (round 20 #04): the action's words and its one toast. An
+      // entry an acquisition is using is skipped and counted; the in-use
+      // clause is omitted at zero.
+      gitCacheClean: {
+        label: "Clean the git cache",
+        activity: "Cleaning the git cache",
+        cleared_one: "Cleared {{count}} cached repo",
+        cleared_other: "Cleared {{count}} cached repos",
+        withInUse: "{{cleared}}; {{count}} in use, skipped",
       },
       // Move Library folder (round 20 #03): the confirmation, the progress
       // words and the report's lines.

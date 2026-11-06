@@ -282,6 +282,7 @@ function baseState(scenario: ScenarioName, now: number): FixtureState {
     projectOccupants: [],
     dialogPicks: [`${HOME}/Projects/team-skills`, `${HOME}/Projects/new-service`],
     gitCacheEntries: 6,
+    gitCacheEntriesInUse: 0,
     nextId: Math.floor(now / 1000) % 100_000,
     cancelRequested: false,
   };
@@ -536,6 +537,8 @@ function failures(now: number): FixtureState {
   // Kimi and Amp share ~/.config/agents/skills, which refuses writes.
   state.unwritableTools = ["amp", "kimi_cli"];
   state.unwritableProjectTools = ["prj-monorepo:agents_skills"];
+  // Clean Now: two cached repos are in an acquisition's hands and skipped.
+  state.gitCacheEntriesInUse = 2;
   // quartermaster's first view is read while a mutation holds the guard:
   // the matrix says its statuses may be out of date (Refresh view clears it).
   state.unreconciledViews = ["prj-quartermaster"];

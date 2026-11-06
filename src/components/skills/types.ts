@@ -39,6 +39,7 @@ export type { PropagationSkip } from "../../bindings";
 export type { AppSettings } from "../../bindings";
 export type { SettingUpdate } from "../../bindings";
 export type { SettingsBounds } from "../../bindings";
+export type { GitCacheCleanup } from "../../bindings";
 export type {
   LibraryMovePreview,
   LibraryMoveProgress,

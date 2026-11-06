@@ -8,7 +8,9 @@ use std::time::{Duration, SystemTime};
 use super::cleanup_git_cache_dirs_in;
 use crate::core::clock::now_ms;
 use crate::core::errors::{RemovalRefusal, SignalError};
-use crate::core::git_cache::{repo_cache_key, repo_cache_key_under_policy, CacheKeyInputs};
+use crate::core::git_cache::{
+    key_lock, repo_cache_key, repo_cache_key_under_policy, CacheKeyInputs,
+};
 use crate::core::removal_fence::ProtectedLibrary;
 use crate::core::skill_store::{SkillRecord, SkillStore};
 
@@ -16,6 +18,14 @@ const DAY: Duration = Duration::from_secs(24 * 60 * 60);
 
 const INPUTS: CacheKeyInputs<'static> = CacheKeyInputs {
     clone_url: "https://example.com/owner/repo.git",
+    branch: None,
+};
+
+/// Another repository's inputs. The key locks are process-wide and tests run
+/// in parallel, so two tests that clean entries of the same key would contend
+/// for its lock — and the loser rightly counts the entry `in_use`.
+const RECORDLESS: CacheKeyInputs<'static> = CacheKeyInputs {
+    clone_url: "https://example.com/owner/recordless.git",
     branch: None,
 };
 
@@ -51,7 +61,8 @@ fn an_orphaned_pre_policy_entry_ages_out_by_its_record() {
 
     let removed =
         cleanup_git_cache_dirs_in(cache.path(), &ProtectedLibrary::unrecorded(), 30 * DAY)
-            .expect("cleanup");
+            .expect("cleanup")
+            .cleared;
 
     assert_eq!(removed, 1);
     assert!(!old_entry.exists(), "the orphaned entry is reclaimed");
@@ -63,23 +74,104 @@ fn an_orphaned_pre_policy_entry_ages_out_by_its_record() {
 #[test]
 fn an_orphaned_recordless_pre_policy_entry_ages_out_by_its_directory_time() {
     let cache = tempfile::tempdir().expect("tempdir");
-    let old_entry = entry(cache.path(), &repo_cache_key_under_policy(&INPUTS, 0), None);
+    let old_entry = entry(
+        cache.path(),
+        &repo_cache_key_under_policy(&RECORDLESS, 0),
+        None,
+    );
     let long_ago = SystemTime::now() - 31 * DAY;
     filetime::set_file_mtime(&old_entry, filetime::FileTime::from_system_time(long_ago))
         .expect("age the directory");
-    let current = entry(cache.path(), &repo_cache_key(&INPUTS), Some(now_ms()));
+    let current = entry(cache.path(), &repo_cache_key(&RECORDLESS), Some(now_ms()));
 
     let removed =
         cleanup_git_cache_dirs_in(cache.path(), &ProtectedLibrary::unrecorded(), 30 * DAY)
-            .expect("cleanup");
+            .expect("cleanup")
+            .cleared;
 
     assert_eq!(removed, 1);
     assert!(!old_entry.exists(), "the orphaned entry is reclaimed");
     assert!(current.exists(), "the current policy's entry stays");
 }
 
+/// Round 20 #04, the in-use rule: Clean Now (an age of zero — every entry is
+/// due) never removes an entry whose key lock is held — an acquisition is
+/// fetching into it. It is skipped and counted, never waited on, while an
+/// idle entry beside it is cleared.
+#[test]
+fn clean_now_skips_and_counts_an_entry_whose_key_lock_is_held() {
+    let cache = tempfile::tempdir().expect("tempdir");
+    // Keys of their own: the lock table is process-wide and tests run in
+    // parallel, so a held lock must never be one another test's entry uses.
+    let busy_key = repo_cache_key(&CacheKeyInputs {
+        clone_url: "https://example.com/owner/clean-now-busy.git",
+        branch: None,
+    });
+    let idle_key = repo_cache_key(&CacheKeyInputs {
+        clone_url: "https://example.com/owner/clean-now-idle.git",
+        branch: None,
+    });
+    let busy = entry(cache.path(), &busy_key, Some(now_ms()));
+    let idle = entry(cache.path(), &idle_key, Some(now_ms()));
+    let lock = key_lock(&busy_key);
+    let held = lock.lock().expect("an acquisition holds the key");
+
+    let cleanup = cleanup_git_cache_dirs_in(
+        cache.path(),
+        &ProtectedLibrary::unrecorded(),
+        Duration::ZERO,
+    )
+    .expect("cleanup");
+
+    assert_eq!((cleanup.cleared, cleanup.in_use), (1, 1));
+    assert!(
+        busy.join("SKILL.md").is_file(),
+        "the entry in use stays whole"
+    );
+    assert!(!idle.exists(), "the idle entry is cleared");
+    drop(held);
+}
+
+/// The startup age-out obeys the same rule: an entry old enough to reclaim
+/// whose key lock is held stays on disk and is counted.
+#[test]
+fn the_age_out_skips_an_aged_entry_whose_key_lock_is_held() {
+    let cache = tempfile::tempdir().expect("tempdir");
+    let key = repo_cache_key(&CacheKeyInputs {
+        clone_url: "https://example.com/owner/age-out-busy.git",
+        branch: None,
+    });
+    let aged = entry(
+        cache.path(),
+        &key,
+        Some(now_ms() - 31 * DAY.as_millis() as i64),
+    );
+    let lock = key_lock(&key);
+    let held = lock.lock().expect("an acquisition holds the key");
+
+    let cleanup =
+        cleanup_git_cache_dirs_in(cache.path(), &ProtectedLibrary::unrecorded(), 30 * DAY)
+            .expect("cleanup");
+
+    assert_eq!((cleanup.cleared, cleanup.in_use), (0, 1));
+    assert!(
+        aged.join("SKILL.md").is_file(),
+        "the aged entry in use stays"
+    );
+    drop(held);
+    let cleanup =
+        cleanup_git_cache_dirs_in(cache.path(), &ProtectedLibrary::unrecorded(), 30 * DAY)
+            .expect("cleanup");
+    assert_eq!(
+        (cleanup.cleared, cleanup.in_use),
+        (1, 0),
+        "once free it ages out"
+    );
+    assert!(!aged.exists());
+}
+
 /// The typed refusal `reason` the cleanup ended with.
-fn refused(result: anyhow::Result<usize>) -> RemovalRefusal {
+fn refused<T: std::fmt::Debug>(result: anyhow::Result<T>) -> RemovalRefusal {
     let err = result.expect_err("the cleanup is refused");
     match err.downcast_ref::<SignalError>() {
         Some(SignalError::RemovalRefused { reason, .. }) => *reason,

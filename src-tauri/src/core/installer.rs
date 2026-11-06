@@ -308,18 +308,17 @@ pub fn list_git_skills(
                     cancel: None,
                 },
             )
-            .map(|(dir, _revision)| dir)
         },
     )
 }
 
 /// The listing with the GitHub adapter and checkout injected: the one
 /// candidate admission, shared with the Re-point preview's picker answer.
-pub(crate) fn list_git_skills_with(
+pub(crate) fn list_git_skills_with<C: AsRef<Path>>(
     repo_url: &str,
     target_name: Option<&str>,
     api: &dyn GithubApi,
-    checkout: impl FnOnce(&super::git_acquisition::GitSource) -> Result<PathBuf>,
+    checkout: impl FnOnce(&super::git_acquisition::GitSource) -> Result<C>,
 ) -> Result<GitSkillListing> {
     let (found, resolution) =
         super::git_acquisition::list_candidates_with(&parse_github_url(repo_url), api, checkout)?;
