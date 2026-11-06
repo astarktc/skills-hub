@@ -5,7 +5,7 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#118**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#119**.
 
 Round 19 closed 2026-11-05 (`archive/round19/spec.md` § Closure — 2026-11-05); every line it carried was re-derived from
 the code that day (`archive/round19/closure/extract-{A..G}.md`).
@@ -16,8 +16,10 @@ the code that day (`archive/round19/closure/extract-{A..G}.md`).
    removed from this file: #63 #68 #72 #73 #74 (its pointer; persistence is #53's) #75 #90 #95 #96 #97 #98 #99 #100
    #101 #102 (dark theme only — the README embeds one image per screen) #103 #104 #106 #107 #76 #105.
 2. **Round 20** (`round20/spec.md`): **Wave A = 1.3.4** absorbed #92, #110 and #91 (opened 2026-11-06, tickets
-   `round20/issues/01`–`08`). **Wave B** is grilled after Wave A lands: #108; #109 and #84 (both need the project
-   defaults/overrides pattern); then #70, #85/#86, #93, #87.
+   `round20/issues/01`–`08`). **Wave B = 1.4.0**, grilled 2026-11-06 (`round20/spec.md` § Wave B, Q1–Q29): #108 (with
+   #87 as its project leg), #109, #84, #116 and #70. Their lines stay here until Wave B's tickets open. Next: the A-vs-C
+   folder-card prototype and the T3 Code study, then the spec body.
+3. **After 1.4.0:** #85/#86, #93.
 
 Harness research behind #92 and #108–#110: `docs/design-inputs/2026-11-05-harness-candidates-and-shared-dir-reads.md` and
 `docs/design-inputs/2026-11-05-harness-candidates-acp-addendum.md`.
@@ -138,7 +140,12 @@ code before scheduling.)
   `src/agents.ts`, the ACP registry (`agentclientprotocol/registry`) and the upstream fork's registry against
   `TOOL_ADAPTERS`, and opens an issue on a new or changed row — replacing manual audits like this session's. Operator
   2026-11-05: worth designing. Source: this session.
-- **#87 Project-scope relocation for corrected harness dirs.** Blocked by #108: `main` still has Kilo global *and*
+- **#118 QwenPaw's folder correction (deferred from Wave B, Q13).** The row targets `~/.copaw/skill_pool`, which is right
+  only for legacy installs: the root is `~/.qwenpaw` unless `~/.copaw` exists, a first-existing-root rule the registry
+  can't express. Pool skills may also need a `skill.json` manifest and a per-workspace broadcast to reach an agent
+  (UNKNOWN). Verify on a real install, then correct through #108's redeploy and add detect `.qwenpaw`. Source:
+  `docs/design-inputs/2026-11-05-harness-candidates-and-shared-dir-reads.md` I6; `round20/spec.md` § Wave B Q13.
+- **#87 Project-scope relocation for corrected harness dirs — absorbed by #108 as its project leg (Wave B Q7).** Blocked by #108: `main` still has Kilo global *and*
   project `.kilocode/skills` (`tool_adapters/mod.rs:636, :639`) and Xum both `.mux/skills` (`:480, :483`) — ticket 34
   never merged. When #108 corrects the global dirs, the project dirs still need a project relocation pass (per project,
   under the guard, same byte-identical-replace rule, reported in the project view) before they flip; the same pass

@@ -387,3 +387,165 @@ The operator keeps one skill Library and deploys it to many harnesses. Three thi
 - 04 merged as `6a8c235` (PR #19). All of Wave A is on `main`. Final release review dispatched.
 - Final review blocked (OpenAI usage limit); release held. The CHANGELOG is committed. Handoff `handoffs/2026-11-06-1.3.4-ready-awaiting-final-review.md`.
 - **Wave A released as v1.3.4** (`ed8e442`, 2026-11-06). Next: the Wave B grill in this effort.
+- 2026-11-06: Wave B grilled (below, Q1–Q29); prototype and T3 Code study dispatched.
+
+# Wave B — redeploy, shared folders, link vs copy (grilled 2026-11-06)
+
+Status: needs-triage (the spec body lands after the A-vs-C prototype and the T3 Code study, Q27)
+
+Ships as **1.4.0** (operator 2026-11-06, Q1 + Q29). Absorbs BACKLOG **#108** (with **#87** as its project leg), **#109**,
+**#84**, **#116** and **#70**. #85/#86 and #93 go to the release after (Q23). Grilled against the registry facts as built
+in Wave A. Every recommendation was accepted except where noted.
+
+## Grill log (2026-11-06)
+
+Facts found first (code and a read-only copy of the operator's DB):
+
+- None of #108's corrections is on `main`. `core/target_relocation.rs` is unwired (`lib.rs:201`); only Augment has a
+  `former_skills_dirs` entry.
+- The operator's global Deployments are Claude Code 33, Codex 33, Pi 33 and `.agents/skills` 9 (all nine also on Codex), all
+  symlinks; 4 projects. Only Codex's correction touches this machine. Pi reads `~/.agents/skills` as well as its own
+  folder, so moving Codex there without #109 would show about 33 duplicates in Pi. The nine `.agents` skills already
+  show twice in Pi today.
+
+### Redeploy (#108)
+
+- **Q1 — One release.** The operator rejected splitting #108 from #109/#84. Everything ships together, which also
+  removes the hazard above: Codex moves into `.agents` together with the rule that serves Pi from it alone.
+- **Q2 — One mechanism.** It compares each Deployment's place as it should be (path and link/copy, worked out from the
+  registry and settings) with its place as recorded. It acts on every difference. Corrections, retired keys, the
+  shared-folder preference and the link/copy choice are its inputs; no pass is written for one cause.
+  - `core/redeploy.rs` replaces `target_relocation.rs`, borrowing `library_move`'s physical identity and verification.
+  - `former_skills_dirs` keeps only the deletion rule and the onboarding scan.
+  - An old artifact is removed only when no remaining live row records it, which handles the Kimi/Amp
+    `.config/agents/skills` hazard.
+- **Q3 — Always an operator action.** A setting change redeploys inside the action that changes it.
+  - Registry corrections: a read-only check at launch finds the work and offers one dialog ("N Deployments are in
+    folders {harnesses} no longer read: move them now?"). It then runs under `runAction` with progress, the one
+    overwrite ask and a report.
+  - Declined: Settings → Harnesses keeps a "Move N Deployments" line.
+- **Q4 — Deploy first.** For each Deployment:
+  1. Deploy to the new place. Ours or identical content there is adopted; a different folder gets the overwrite ask
+     (D12), and Keep leaves that Deployment unmoved.
+  2. Re-record the row.
+  3. Remove the old artifact only when provably ours: an owned link resolving to its central copy (physical identity),
+     or a copy identical to the Library, with no other live row recording it.
+  - A copy with local edits gets one question: delete your edited copy, or leave it (it becomes an unmanaged folder;
+    the report names the harnesses that will show it twice). Leaving it never blocks the move.
+- **Q5 — Journal.** The row switch and a "pending removal of X for row R" journal entry (with physical identity) are one
+  transaction. The removal clears it, and every redeploy run (including the launch check) finishes it. Closes audit
+  F18's class.
+- **Q6 — Retirements.** The Clawdbot and MoltBot `ToolId`s are deleted; their dirs become OpenClaw's former dirs.
+  Stored rows, the saved selection and project assignments under those keys are re-keyed to `openclaw` (merging into an
+  existing row) and redeployed. Unknown keys stay tolerated.
+- **Q7 — Project leg (#87 absorbed).** Projects run in the same action, under the same rules: `folder_missing` for a
+  gone project folder, and one report spanning both scopes.
+- **Q8 — Report.**
+  - Per Deployment: `moved | adopted | unchanged | left_old { edited } | kept { declined } | skipped { folder_missing,
+    disabled } | failed { error }`.
+  - An old copy that could not be removed is reported as the duplicate it leaves, naming its readers from the read
+    facts.
+  - `reportOutcome` folds it and surfaces pending/incomplete moves; today the fold skips every non-failed status.
+- **Q9 — Disabled and never-synced rows** are re-recorded at the new place with nothing written, so Enable deploys to the
+  right folder.
+- **Q10 — Onboarding scans former dirs** as their harness's, excluding our own links by physical identity.
+- **Q11 — No research re-check.** The 2026-11-02 and 2026-11-05 briefs count as current.
+- **Q12 — Correction table:**
+
+  | Harness | Global (old → new) | Project (old → new) | Detect |
+  |---|---|---|---|
+  | Codex | `.codex/skills` → `.agents/skills` | unchanged (`.agents/skills`) | — |
+  | Goose | `.config/goose/skills` → `.agents/skills` | `.goose/skills` → `.agents/skills` (joins the group) | — |
+  | OpenHands | `.openhands/skills` → `.agents/skills` | `.openhands/skills` → `.agents/skills` (group) | — |
+  | Zencoder / Zenflow | `.zencoder/skills` → `.agents/skills` | `.zencoder/skills` → `.agents/skills` (group) | — |
+  | Antigravity | `.gemini/antigravity/global_skills` → `.gemini/config/skills` | unchanged | + `.gemini/antigravity-cli` |
+  | Kimi Code | `.config/agents/skills` → `.kimi-code/skills` | unchanged | — |
+  | Kilo | `.kilocode/skills` → `.kilo/skills` | `.kilocode/skills` → `.kilo/skills` | + `.kilo` |
+  | Xum (key `mux`) | `.mux/skills` → `.xum/skills` | `.mux/skills` → `.xum/skills` | + `.xum` |
+  | Devin (Windsurf) | `.codeium/windsurf/skills` → `.config/devin/skills` (Windows `%APPDATA%\devin\skills`) | `.windsurf/skills` → `.devin/skills` | + `.config/devin` |
+
+  Devin caveat: whether Devin's CLI reads `.config/devin/skills` is UNKNOWN; with the preference on (default) Devin is
+  served by `.agents` anyway. Sources: `docs/design-inputs/2026-11-02-harness-global-skills-dirs.md` § 5 and I4–I9;
+  `docs/design-inputs/2026-11-05-harness-candidates-and-shared-dir-reads.md` § Part 2, I5–I6.
+- **Q13 — QwenPaw deferred** (BACKLOG #118). The row keeps `.copaw/skill_pool` and its label.
+
+### Shared folders (#109, #116)
+
+- **Q14 — Folder cards** (reopened at the operator's prompt). A harness sees every folder it reads whatever is
+  selected, so a per-harness switch cannot promise "keep it away from this harness". The Harnesses pane shows **one
+  card per folder, one switch per thing written**:
+  - Harness names come first. An own-folder card looks like today's row.
+  - A shared card names every installed harness it serves and every other installed reader ("comes along for the
+    ride"), before anything is flipped.
+  - Reader-only harnesses appear in the shared card, with no switch.
+  - "Codex yes, Pi no" is not expressible, because no design can make it true.
+  - Chosen over A (per-harness switches with explanation lines) and B (a flat folder list). Confirm A vs C on screen
+    with a fixture prototype first (Q27).
+- **Q25 — One model on every surface.** The Add dialog's checkboxes, the inspector's Targets section, `DeployHarnessAsk`
+  and the project tools modal all use the folder cards. No bare harness switch hides a shared folder.
+- **Q15 — Which folder serves a harness, preference on.**
+  - Reads `.agents` by default and not `.claude` → `.agents`.
+  - Reads `.claude` and not `.agents` → `.claude` (Claude Code, Cortex Code, Neovate).
+  - Reads both → the dropdown.
+  - `Conditional | OptIn | No | Unknown` → its own folder.
+  - Preference off → its own folder (`.agents` for Codex, Goose, OpenHands and Zencoder, per Q12).
+- **Q16 — The dropdown is one global setting** ("When a harness reads both shared folders, use: `.agents` / `.claude`",
+  default `.agents`). There is no per-harness dropdown.
+- **Q17 — Default on for every install.** Settings define where each Deployment belongs. The first 1.4.0 launch's offer
+  (Q3) covers the corrections and the preference together. Declining never turns the preference off; the "Move N" line
+  stays.
+- **Q18 — A Deployment is a folder; harnesses are its readers.**
+  - My Skills rows show one dot per folder.
+  - The inspector groups detected harnesses under the folder serving them.
+  - Unavoidable duplicates are marked where they hurt (fx `LoadsNone`, Cortex Code `FlagsConflict`).
+- **Q19 — Disable on a shared folder is per folder.** Its copy names every reader. One reader cannot be excluded while
+  another selected harness needs the folder, and the UI says so.
+- **Q24 — Existing per-harness disables on a newly shared folder.** The folder keeps the skill when any harness it
+  serves had it live, and the report names each disable that no longer holds. If every harness it serves had it
+  disabled, the folder records it disabled.
+- **Q26 — Selection migration.** A shared card is on when any harness it serves was selected. An own-folder card keeps
+  its harness's state.
+- **Q20 — #116.** The warning counts installed readers, selected or not, with one line per affected harness naming the
+  folders it reads twice. Harnesses that read many folders (Firebender, Warp, Kimchi, fx) also get one line.
+
+### Link vs copy (#84)
+
+- **Q21 — Levels, most specific wins:** folder › project › scope (global / all projects) › default (link).
+  - A harness's own folder is the per-harness level. A shared folder has one mode, set on its card.
+  - A copy-only harness (registry `supports_symlink: false`: Deep Agents Code) that reads `.agents` is served by its own
+    folder (copy) unless `.agents` is set to copy. A group's capability is still never the AND of its readers.
+  - Changing a level redeploys through Q2–Q5.
+- **Q22 — Projects inherit and override.** Each project inherits the preference, the dropdown and the link/copy mode,
+  and may override any of them. The project matrix's columns become the folders serving that project's harnesses. The
+  defaults/overrides UI is designed after the T3 Code study.
+
+### Overwrite ask (#70)
+
+- **Q23 — #70 ships in 1.4.0.** The redeploy leans on the ask. It gets:
+  - who put the folder there;
+  - a content or diff view, and Reveal in Finder per row;
+  - each button's consequence;
+  - overwritten rows recorded in the run report;
+  - an ask after Cancel saying the skill was already being added.
+
+### Process
+
+- **Q27 — Order:**
+  1. A vs C prototype in the fixture (`registry` scenario; throwaway; the operator picks on screen).
+  2. T3 Code study (project defaults and per-project overrides) as a dated note in `docs/design-inputs/`.
+  3. This part's spec body.
+  4. Tickets from `09`.
+- **Q28 — Routing.**
+  - Opus 5.5 `high` implements.
+  - GPT-6 Astra reviews every lane adversarially.
+  - The redeploy and removal lanes also get GPT-6.1 Sol in parallel. Reviewers get the principle: delete only what is
+    provably a duplicate, at the moment of deletion, only inside the folder you own.
+  - The prototype child runs on Opus 5.5 `medium`.
+- **Q29 — Version 1.4.0.**
+
+Carried into the spec body (from #108/#109's BACKLOG text, not re-grilled):
+- audit 3's F14–F16 as acceptance tests (aliased roots, a destination aliased onto the central repo, Keep over a copy
+  with local-only edits);
+- the release-smoke line (a real machine's first-launch move checked with `ls -la` over old and new folders);
+- #88's residue: preview copy ("would move N"), the shadowed-own-copy flag, Import near-misses under the preference,
+  the layout read once per operation, and onboarding's reader roster for shared or aliased dirs.
