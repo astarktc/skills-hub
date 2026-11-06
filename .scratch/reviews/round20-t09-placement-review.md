@@ -338,3 +338,78 @@ a group. Three fix passes made that grouping safer, and each review round found 
 **Findings 10, 11 and 102** describe released behaviour, not regressions. They go to a new ticket, 18 (Deployment
 ownership means the current occupant). It is blocked by ticket 09 and blocks ticket 10, because the redeploy needs
 the same check: whatever is at a path right now must be verified as ours when the app acts on it.
+
+---
+
+# Round 4: review of fix pass 3 (`228190d`)
+
+- **Reviewers:** GPT-6 Astra (high) and GPT-6.1 Sol (high), working independently, 2026-11-06.
+- **Both verdicts:** **FIX-THEN-SHIP**. Neither found a P0 or P1. Neither found a row lending ownership to another, and
+  finding 101 is closed. Ticket 18 keeps the historical-`synced_at` findings.
+
+## Astra (201–206): mutations that still differ from `main`
+
+- **201. P2: global sync writes an existing row at its stale recorded path.** It should write at `main`'s destination:
+  the planned registry root plus the current skill name (`global_sync.rs:375–386`, `:540–562`, `:115`). Reproduced on
+  both commits: the PR creates a destination outside any harness folder.
+- **202. P2: global Enable adds a lasting `pending` state** (`EnableAdmitted`) that survives an ordinary
+  not-installed skip. `main` deleted the disabled rows (`skill_disable.rs:451–466`, `:483–504`;
+  `skill_store.rs:1658–1672`).
+- **203. P2: global Propagation admits an uninstalled old row** because a sibling harness of the folder is installed.
+  On `main` such a row was `ToolNotInstalled` (`propagation.rs:234–248`). Reproduced on both commits.
+- **204. P2: a disabled sibling hides a surviving error**, and the project total reads empty while a link is still on
+  disk (`placement.rs:439–481`, `project_sync.rs:1274`, `skill_store.rs:1959`).
+- **205. P2: per-folder counting is missing from the Update/Edit (Propagation), Import and Library-move reports**
+  (`propagation.rs:101`; `reportOutcome.ts:373–389`, `:675–709`, `:1281`, `:1794–1802`, `:1923`).
+- **206. P2: dropping a configured project harness keeps its independent old assignment and artifact** when another
+  configured harness shares the folder. On `main`, its removal ran (`project_ops.rs:289–305`).
+
+Astra's module-by-module conformance table is in the child thread. Every other module conforms.
+
+## Sol (301–305): what the surfaces show
+
+- **301. P2:** the same as 204. After a partial Disable, the inspector offers Enable where it should offer to repair
+  the failed removal (`skillPresentation.ts:1103–1106`, `:1160–1190`).
+- **302. P2: the single row standing in for a folder loses facts the confirmations need.** A Disable confirmation can
+  count 0 while Disable removes a deployed copy (`placement.rs:473–477`, `skill_catalog.rs:170–175`,
+  `bulkCounts.ts:79–95`, `skillPresentation.ts:629–654`).
+- **303. P2: with only Kimi installed, the inspector refuses Retry or Enable on the Amp/Kimi folder as "not
+  detected".** The backend can reach the folder through Kimi (`skillPresentation.ts:1084–1097`, `:1187–1190`).
+- **304. P2:** the same as 205 (Propagation outcomes).
+- **305. P2: the fixture's project totals count raw rows**, while its listing and production fold per folder
+  (`fixtures/backend.ts:689–710`, `:733–734`).
+
+## Rulings on the implementer's open items
+
+- The recorded path (Astra) is finding 201, to fix. Sol had accepted it.
+- The first-pass conflict on an old pair, and two rows in one ask: both reviewers accept these. Don't regroup
+  mutations to remove them.
+- Disabled outranking an error: fix (204/301).
+- Enable keeping rows: Astra rules fix (202); Sol had accepted it.
+- Propagation's missing `folder_key`: fix (205/304).
+
+**Gate (both reviewers):** `npm run check` and `cargo test --all` passed (1,403 frontend tests; 1,071 Rust tests, 1
+ignored), with no binding drift. Probes reproduced every finding.
+
+## Disposition (orchestrator, 2026-11-06)
+
+Fix pass 4 applies one rule to Astra's 201–203 and 206:
+
+- **A row keyed by its own folder key is a folder row.** It follows the folder rules: the folder's reachability and
+  its capability through placement.
+- **A row with any other key is a legacy row.** It behaves exactly as on `main` in every mutation: destination,
+  installedness, the Enable lifecycle and project-tool removal.
+- **Destinations follow `main` for every row:** the planned root plus the current skill name.
+- **Enable doesn't change a folder-key record it wasn't asked about.** It carries each row's identity through an
+  in-memory first-sync plan rather than through a lasting `pending` state.
+
+For display and counts (204/301, 302, 303, 205/304, 305):
+
+- The fold returns facts about the whole folder instead of one stand-in row:
+  - the displayed status, with failure ahead of muted, as `skillHealth` already orders it;
+  - the disabled intent, kept separately;
+  - whether any live row owns an artifact Disable would remove.
+- `PropagationOutcome` gains `folder_key`.
+- Update/Edit, Import and Library move fold per folder.
+- Detection in the inspector checks every harness in the folder.
+- The fixture's totals use the shared fold.
