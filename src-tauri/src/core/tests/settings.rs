@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::core::credentials::{CredentialStore, MemoryStore};
+use crate::core::environment::HostRoots;
 use crate::core::errors::SignalError;
 use crate::core::settings::{
     apply_setting, effective_global_tool_targets, featured_skills_cache, git_cache_cleanup_days,
@@ -261,7 +262,7 @@ fn global_selected_tools_prunes_keys_the_registry_no_longer_knows() {
         Some(vec!["claude_code".to_string()])
     );
     assert_eq!(
-        effective_global_tool_targets(&store, &home).unwrap(),
+        effective_global_tool_targets(&store, &HostRoots::under_home(&home)).unwrap(),
         vec!["claude_code".to_string()]
     );
     // Pruning is a read-side view; the row is repaired by the next save, not here.
@@ -282,7 +283,7 @@ fn global_selected_tools_prunes_keys_the_registry_no_longer_knows() {
 fn install_tool(home: &std::path::Path, key: &str) {
     let adapter =
         crate::core::tool_adapters::adapter_by_key(key).unwrap_or_else(|| panic!("adapter {key}"));
-    crate::core::tool_adapters::mark_installed_in(home, adapter);
+    crate::core::tool_adapters::mark_installed_in(&HostRoots::under_home(home), adapter);
 }
 
 #[test]
@@ -294,7 +295,7 @@ fn effective_global_tool_targets_prefers_the_recorded_selection_over_detection()
 
     // Never configured: detection is the fallback.
     assert_eq!(
-        effective_global_tool_targets(&store, &home).unwrap(),
+        effective_global_tool_targets(&store, &HostRoots::under_home(&home)).unwrap(),
         vec!["claude_code".to_string(), "codex".to_string()]
     );
 
@@ -302,28 +303,30 @@ fn effective_global_tool_targets_prefers_the_recorded_selection_over_detection()
     // operator deselected.
     raw(&store, "global_selected_tools_v1", r#"["claude_code"]"#);
     assert_eq!(
-        effective_global_tool_targets(&store, &home).unwrap(),
+        effective_global_tool_targets(&store, &HostRoots::under_home(&home)).unwrap(),
         vec!["claude_code".to_string()]
     );
 
     // An empty selection means "sync nowhere" — never a fallback to detection.
     raw(&store, "global_selected_tools_v1", "[]");
-    assert!(effective_global_tool_targets(&store, &home)
-        .unwrap()
-        .is_empty());
+    assert!(
+        effective_global_tool_targets(&store, &HostRoots::under_home(&home))
+            .unwrap()
+            .is_empty()
+    );
 
     // A selected-but-uninstalled key survives: the set is never intersected
     // with detection, so downstream can report it as a stale-selection skip.
     raw(&store, "global_selected_tools_v1", r#"["cursor","codex"]"#);
     assert_eq!(
-        effective_global_tool_targets(&store, &home).unwrap(),
+        effective_global_tool_targets(&store, &HostRoots::under_home(&home)).unwrap(),
         vec!["cursor".to_string(), "codex".to_string()]
     );
 
     // A blank row is "never configured", hence detection again.
     raw(&store, "global_selected_tools_v1", "  ");
     assert_eq!(
-        effective_global_tool_targets(&store, &home).unwrap(),
+        effective_global_tool_targets(&store, &HostRoots::under_home(&home)).unwrap(),
         vec!["claude_code".to_string(), "codex".to_string()]
     );
 }
@@ -335,7 +338,7 @@ fn effective_global_tool_targets_refuses_a_corrupt_selection() {
     install_tool(&home, "claude_code");
     for stored in ["not json", "{\"a\":1}", "[1,2]"] {
         raw(&store, "global_selected_tools_v1", stored);
-        let err = effective_global_tool_targets(&store, &home)
+        let err = effective_global_tool_targets(&store, &HostRoots::under_home(&home))
             .expect_err("corrupt selection must not fall back to detection");
         match err.downcast_ref::<SignalError>() {
             Some(SignalError::SettingCorrupt { key, detail }) => {

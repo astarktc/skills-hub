@@ -536,7 +536,8 @@ fn remove_project_tool_and_artifacts_handles_missing_skill_gracefully() {
 fn pi_adapter() -> &'static crate::core::tool_adapters::ToolAdapter {
     let adapter = crate::core::tool_adapters::adapter_by_key("pi").expect("pi adapter");
     assert_ne!(
-        adapter.relative_skills_dir, adapter.project_relative_skills_dir,
+        Some(adapter.skills_dir.rel),
+        adapter.project_skills_dir,
         "test precondition: pi's global and project mappings must diverge"
     );
     adapter
@@ -585,7 +586,8 @@ fn setup_pi_assignment(
     )
     .expect("assign");
 
-    let target = project_sync::resolve_project_sync_target(&project_dir, pi_adapter(), name);
+    let target = project_sync::resolve_project_sync_target(&project_dir, pi_adapter(), name)
+        .expect("project dir");
     assert!(
         target.symlink_metadata().is_ok(),
         "precondition: project-scope target should exist at {:?}",

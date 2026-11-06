@@ -137,6 +137,18 @@ export function matrixCell({ skill, tool, assignment, inFlight }: MatrixCellInpu
   };
 }
 
+/**
+ * A project-scope catalog entry's label. A virtual group entry (the AGENTS
+ * group) names the harnesses it absorbs — its constituents, reader-only
+ * harnesses included — by count: `.agents/skills (9 harnesses)`. The count is
+ * derived from the backend's roster, never written down, so it cannot drift
+ * as registry rows are added.
+ */
+export function projectToolLabel(tool: { label: string; constituents: readonly string[] }, t: Translate): string {
+  if (tool.constituents.length === 0) return tool.label;
+  return t("projectsSurface.groupLabel", { dir: tool.label, count: tool.constituents.length });
+}
+
 /** A project Tool's column header: the catalog's label, and whether detection sees it. */
 export type MatrixColumn = { key: string; label: string; detected: boolean };
 

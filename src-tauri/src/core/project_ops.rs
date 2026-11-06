@@ -256,7 +256,7 @@ pub(crate) fn configure_project_tools_unlocked(
 ) -> Result<Vec<RemovalReport>> {
     require_project(store, project_id)?;
     for tool in tools {
-        if tool_adapters::adapter_by_key(tool).is_none() {
+        if tool_adapters::project_adapter_by_key(tool).is_none() {
             bail!(SignalError::UnknownTool { tool: tool.clone() });
         }
     }

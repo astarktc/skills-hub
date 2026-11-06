@@ -6,6 +6,7 @@
 //! the environment-probing entry points take an explicit `home`, so no test
 //! touches the operator's real home directory or installed tools.
 
+use crate::core::environment::HostRoots;
 use crate::core::removal_fence::central_repo_of;
 use crate::core::sync_status::{SyncMode, SyncStatus};
 use std::fs;
@@ -618,7 +619,7 @@ fn batch_override_applies_to_named_tool_and_its_shared_dir_group() {
     let amp = adapter_by_key("amp").expect("amp adapter");
     if let Some(kimi) = kimi {
         assert_eq!(
-            kimi.relative_skills_dir, amp.relative_skills_dir,
+            kimi.skills_dir, amp.skills_dir,
             "test premise: amp and kimi share a skills dir"
         );
         let root_b = dir.path().join("root-b");
@@ -773,7 +774,7 @@ fn classification_leaves_unrelated_errors_as_other_even_with_suspicious_prose() 
 
 fn install_tool(home: &Path, key: &str) {
     let adapter = adapter_by_key(key).expect("adapter");
-    mark_installed_in(home, adapter);
+    mark_installed_in(&HostRoots::under_home(home), adapter);
 }
 
 #[test]
@@ -789,7 +790,7 @@ fn plan_resolves_root_installedness_and_installed_shared_group_from_home() {
         .iter()
         .map(|k| k.to_string())
         .collect::<Vec<_>>();
-    let plans = plan_batch_tool_targets(home.path(), &keys);
+    let plans = plan_batch_tool_targets(&HostRoots::under_home(home.path()), &keys);
     assert_eq!(plans.len(), 4);
 
     let claude = plans[0].as_ref().expect("claude plan");
@@ -835,7 +836,7 @@ fn sync_skills_to_tools_writes_under_temp_home_and_reports_unknown_tools() {
         .map(|k| k.to_string())
         .collect::<Vec<_>>();
     let outcomes = sync_skills_to_tools(
-        &home,
+        &HostRoots::under_home(&home),
         &store,
         &central_repo_of(&store),
         &[batch_skill("skill-1", "skill-1", &source)],

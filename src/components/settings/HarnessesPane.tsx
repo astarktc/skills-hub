@@ -229,7 +229,7 @@ function HarnessRow({
             <dl className="m-0 grid grid-cols-[8rem_1fr] gap-x-4 gap-y-1.5 text-xs">
               <dt className="text-muted-foreground">{t("settingsDialog.harnesses.skillsFolder")}</dt>
               <dd className="m-0 flex min-w-0 flex-col gap-0.5">
-                <span className="font-mono break-all text-foreground">~/{placement.skills_dir}</span>
+                <span className="font-mono break-all text-foreground">{placement.skills_dir}</span>
                 {sharers.length > 0 ? (
                   <span className="text-muted-foreground">
                     {t("settingsDialog.harnesses.sharedWith", { harnesses: sharers.join(t("common.listSeparator")) })}
@@ -242,7 +242,7 @@ function HarnessRow({
               </dd>
               <dt className="text-muted-foreground">{t("settingsDialog.harnesses.detectedBy")}</dt>
               <dd className="m-0 font-mono break-all text-foreground">
-                {placement.detect_dirs.map((dir) => `~/${dir}`).join(t("common.listSeparator"))}
+                {placement.detect_dirs.join(t("common.listSeparator"))}
               </dd>
             </dl>
           ) : null}

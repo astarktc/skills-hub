@@ -508,7 +508,8 @@ fn a_reported_target_is_selected_and_a_vanished_one_selects_its_ancestor() {
         &project_dir,
         adapter_by_key("pi").unwrap(),
         "release-train",
-    );
+    )
+    .expect("project dir");
     fs::create_dir_all(&assigned).unwrap();
     let probe = |p: &Path| p.symlink_metadata().is_ok();
     let reveal = |requested: &Path| {

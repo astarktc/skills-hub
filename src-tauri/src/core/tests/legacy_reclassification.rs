@@ -5,6 +5,7 @@
 //! Every case runs against a temp home / central dir / DB; nothing touches
 //! the operator's real library.
 
+use crate::core::environment::HostRoots;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -69,7 +70,7 @@ fn seed_local_row(f: &Fixture, id: &str, source: &Path) -> SkillRecord {
 /// A real skill directory inside a Tool's global skills dir under the temp home.
 fn tool_skill_dir(f: &Fixture, key: &str, name: &str) -> PathBuf {
     let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("adapter {}", key));
-    let dir = f.home.join(adapter.relative_skills_dir).join(name);
+    let dir = f.home.join(adapter.skills_dir.rel).join(name);
     fs::create_dir_all(&dir).expect("create tool skill dir");
     dir
 }
@@ -98,7 +99,8 @@ fn a_local_row_inside_a_tool_skills_dir_becomes_imported_from_that_tool() {
     let source = tool_skill_dir(&f, "claude_code", "foo");
     seed_local_row(&f, "foo", &source);
 
-    let changed = reclassify_legacy_imports(&f.store, &f.home, &f.central).expect("pass");
+    let changed = reclassify_legacy_imports(&f.store, &HostRoots::under_home(&f.home), &f.central)
+        .expect("pass");
 
     assert_eq!(changed, 1);
     let after = row(&f, "foo");
@@ -120,7 +122,8 @@ fn a_local_row_whose_path_links_into_central_becomes_imported() {
     symlink_dir(&central_copy, &link);
     seed_local_row(&f, "bar", &link);
 
-    let changed = reclassify_legacy_imports(&f.store, &f.home, &f.central).expect("pass");
+    let changed = reclassify_legacy_imports(&f.store, &HostRoots::under_home(&f.home), &f.central)
+        .expect("pass");
 
     assert_eq!(changed, 1);
     let after = row(&f, "bar");
@@ -142,7 +145,8 @@ fn a_local_row_below_a_link_into_central_becomes_imported() {
     symlink_dir(&f.central, &link);
     seed_local_row(&f, "baz", &link.join("baz"));
 
-    let changed = reclassify_legacy_imports(&f.store, &f.home, &f.central).expect("pass");
+    let changed = reclassify_legacy_imports(&f.store, &HostRoots::under_home(&f.home), &f.central)
+        .expect("pass");
 
     assert_eq!(changed, 1);
     let after = row(&f, "baz");
@@ -164,7 +168,8 @@ fn a_missing_path_shaped_like_a_tool_skills_dir_becomes_imported() {
     seed_local_row(&f, "root", Path::new("/root/.claude/skills/root"));
     seed_local_row(&f, "tilde", Path::new("~/.claude/skills/tilde"));
 
-    let changed = reclassify_legacy_imports(&f.store, &f.home, &f.central).expect("pass");
+    let changed = reclassify_legacy_imports(&f.store, &HostRoots::under_home(&f.home), &f.central)
+        .expect("pass");
 
     assert_eq!(changed, 6);
     let wsl = row(&f, "wsl");
@@ -217,7 +222,8 @@ fn a_vanished_project_scope_tool_dir_is_not_reclassified() {
         Path::new("/Users/x/Projects/repo/.claude/skills/other-project"),
     );
 
-    let changed = reclassify_legacy_imports(&f.store, &f.home, &f.central).expect("pass");
+    let changed = reclassify_legacy_imports(&f.store, &HostRoots::under_home(&f.home), &f.central)
+        .expect("pass");
 
     assert_eq!(changed, 0);
     for expected in [under_home, on_volume, tilde_project, other_users_project] {
@@ -266,7 +272,8 @@ fn genuine_local_git_and_imported_rows_are_left_exactly_as_they_are() {
         },
     );
 
-    let changed = reclassify_legacy_imports(&f.store, &f.home, &f.central).expect("pass");
+    let changed = reclassify_legacy_imports(&f.store, &HostRoots::under_home(&f.home), &f.central)
+        .expect("pass");
 
     assert_eq!(changed, 0);
     for expected in [existing, vanished, other, git, imported] {
@@ -289,12 +296,14 @@ fn running_the_pass_twice_changes_nothing_the_second_time() {
     seed_local_row(&f, "wsl", Path::new("/mnt/c/Users/x/.claude/skills/wsl"));
     seed_local_row(&f, "mine", &f.home.join("mine"));
     assert_eq!(
-        reclassify_legacy_imports(&f.store, &f.home, &f.central).expect("first"),
+        reclassify_legacy_imports(&f.store, &HostRoots::under_home(&f.home), &f.central)
+            .expect("first"),
         2
     );
     let after_first: Vec<_> = f.store.list_skills().expect("list").into_iter().collect();
 
-    let second = reclassify_legacy_imports(&f.store, &f.home, &f.central).expect("second");
+    let second = reclassify_legacy_imports(&f.store, &HostRoots::under_home(&f.home), &f.central)
+        .expect("second");
 
     assert_eq!(second, 0);
     let after_second = f.store.list_skills().expect("list");

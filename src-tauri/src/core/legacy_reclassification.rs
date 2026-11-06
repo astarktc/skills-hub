@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use super::environment::{HostRoot, HostRoots};
 use super::provenance::Provenance;
 use super::skill_store::{SkillRecord, SkillStore};
 use super::tool_adapters::{default_tool_adapters, skills_dir_in, tool_holding_path};
@@ -23,7 +24,7 @@ use super::tool_adapters::{default_tool_adapters, skills_dir_in, tool_holding_pa
 /// skills directory as `imported`. Returns how many rows changed.
 pub fn reclassify_legacy_imports(
     store: &SkillStore,
-    home: &Path,
+    roots: &HostRoots,
     central_dir: &Path,
 ) -> Result<usize> {
     // Canonical once: on macOS a temp `/var/...` central dir is really
@@ -37,7 +38,7 @@ pub fn reclassify_legacy_imports(
         let Some(source) = record.source_ref.as_deref().map(PathBuf::from) else {
             continue;
         };
-        let Some(verdict) = classify(home, canonical_central.as_deref(), &source) else {
+        let Some(verdict) = classify(roots, canonical_central.as_deref(), &source) else {
             continue;
         };
         log::info!(
@@ -90,13 +91,13 @@ struct ImportEvidence {
 
 /// The three rules, in order. `None` means "leave the row alone".
 fn classify(
-    home: &Path,
+    roots: &HostRoots,
     canonical_central: Option<&Path>,
     source: &Path,
 ) -> Option<ImportEvidence> {
     // A Tool's skills dir itself names no skill; require a strict descendant.
     if let Some(tool) =
-        tool_holding_path(home, source).filter(|adapter| source != skills_dir_in(home, adapter))
+        tool_holding_path(roots, source).filter(|adapter| source != skills_dir_in(roots, adapter))
     {
         return Some(ImportEvidence {
             rule: Rule::InsideToolDir,
@@ -105,7 +106,7 @@ fn classify(
     }
     if resolves_into(source, canonical_central) {
         // The path itself may still name the Tool it sat in (a Tool dir
-        // outside this `home`); when it does not, there is no history to keep.
+        // outside this home); when it does not, there is no history to keep.
         return Some(ImportEvidence {
             rule: Rule::ResolvesIntoCentral,
             found_in_tool: tool_by_home_shaped_prefix(source),
@@ -114,7 +115,7 @@ fn classify(
     // Rule (i) is the whole answer for a path under this home: one that is
     // not inside a Tool's global skills dir is the operator's own, whether or
     // not it exists right now (a removed worktree is not an import).
-    if !source.starts_with(home) && !source.exists() {
+    if !source.starts_with(&roots.home) && !source.exists() {
         if let Some(tool) = tool_by_home_shaped_prefix(source) {
             return Some(ImportEvidence {
                 rule: Rule::ToolDirShape,
@@ -152,7 +153,11 @@ fn tool_by_home_shaped_prefix(path: &Path) -> Option<&'static str> {
     default_tool_adapters()
         .iter()
         .find(|adapter| {
-            let dir: Vec<&str> = adapter.relative_skills_dir.split('/').collect();
+            // Legacy rows were recorded under home-rooted defaults only.
+            if adapter.skills_dir.root != HostRoot::Home {
+                return false;
+            }
+            let dir: Vec<&str> = adapter.skills_dir.rel.split('/').collect();
             // The run must end exactly one component before the path's end.
             if components.len() <= dir.len() {
                 return false;

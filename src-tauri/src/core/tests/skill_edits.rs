@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::environment::HostRoots;
 use crate::core::{
     installer::install_local_skill,
     refresh::{refresh_managed_skills, RefreshReport, RefreshSelection, SkillRefreshStatus},
@@ -20,11 +21,11 @@ impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let paths = InstallerPaths {
-            home: dir.path().join("home"),
+            roots: HostRoots::under_home(&dir.path().join("home")),
             central_dir: dir.path().join("central"),
             cache_dir: dir.path().join("cache"),
         };
-        fs::create_dir_all(&paths.home).unwrap();
+        fs::create_dir_all(&paths.roots.home).unwrap();
         let source = dir.path().join("source");
         fs::create_dir_all(&source).unwrap();
         fs::write(source.join("SKILL.md"), UPSTREAM).unwrap();
@@ -64,7 +65,7 @@ impl Fixture {
 fn edit_returns_a_failed_copy_target_in_its_propagation_report() {
     let f = Fixture::new();
     let adapter = crate::core::tool_adapters::adapter_by_key("cursor").unwrap();
-    crate::core::tool_adapters::mark_installed_in(&f.paths.home, adapter);
+    crate::core::tool_adapters::mark_installed_in(&f.paths.roots, adapter);
     let blocker = f.dir.path().join("blocked");
     fs::write(&blocker, "not a directory").unwrap();
     f.store
@@ -320,8 +321,13 @@ fn set_propagates_to_copy_fallback_target() {
         .clone();
     adapter.supports_symlink = false;
     let adapter = crate::core::tool_adapters::test_overrides::shadow(adapter);
-    crate::core::tool_adapters::mark_installed_in(&f.paths.home, adapter);
-    let target = f.paths.home.join(adapter.relative_skills_dir).join("alpha");
+    crate::core::tool_adapters::mark_installed_in(&f.paths.roots, adapter);
+    let target = f
+        .paths
+        .roots
+        .home
+        .join(adapter.skills_dir.rel)
+        .join("alpha");
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("SKILL.md"), UPSTREAM).unwrap();
     f.store

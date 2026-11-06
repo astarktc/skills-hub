@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::environment::HostRoots;
 use crate::core::test_git_api::StubApi;
 use std::{fs, path::Path};
 fn make_store() -> (tempfile::TempDir, SkillStore) {
@@ -13,11 +14,11 @@ fn make_store() -> (tempfile::TempDir, SkillStore) {
 fn make_paths() -> (tempfile::TempDir, InstallerPaths) {
     let dir = tempfile::tempdir().expect("tempdir");
     let paths = InstallerPaths {
-        home: dir.path().join("home"),
+        roots: HostRoots::under_home(&dir.path().join("home")),
         central_dir: dir.path().join("central"),
         cache_dir: dir.path().join("cache"),
     };
-    fs::create_dir_all(&paths.home).unwrap();
+    fs::create_dir_all(&paths.roots.home).unwrap();
     (dir, paths)
 }
 
@@ -270,8 +271,8 @@ fn every_byte_adapter_settles_and_reports_propagation() {
         let mut adapter = tool_adapters::adapter_by_key("cursor").unwrap().clone();
         adapter.supports_symlink = false;
         let adapter = tool_adapters::test_overrides::shadow(adapter);
-        crate::core::tool_adapters::mark_installed_in(&paths.home, adapter);
-        let target = paths.home.join("target");
+        crate::core::tool_adapters::mark_installed_in(&paths.roots, adapter);
+        let target = paths.roots.home.join("target");
         fs::create_dir(&target).unwrap();
         fs::write(target.join("SKILL.md"), "old").unwrap();
         store
@@ -513,8 +514,8 @@ fn git_restore_rebuilds_the_central_copy_and_its_dangling_link() {
     .unwrap();
     let record = store.get_skill_by_id(&installed.skill_id).unwrap().unwrap();
     let adapter = crate::core::tool_adapters::adapter_by_key("claude_code").unwrap();
-    crate::core::tool_adapters::mark_installed_in(&paths.home, adapter);
-    let target = paths.home.join("linked");
+    crate::core::tool_adapters::mark_installed_in(&paths.roots, adapter);
+    let target = paths.roots.home.join("linked");
     let synced = crate::core::sync_engine::sync_dir_hybrid(
         Path::new(&record.central_path),
         crate::core::content_identity::Source::Directory(Path::new(&record.central_path)),
@@ -594,8 +595,8 @@ fn a_refresh_keeps_an_executable_script_executable_in_the_central_copy_and_a_cop
     let mut adapter = tool_adapters::adapter_by_key("cursor").unwrap().clone();
     adapter.supports_symlink = false;
     let adapter = tool_adapters::test_overrides::shadow(adapter);
-    tool_adapters::mark_installed_in(&paths.home, adapter);
-    let target = paths.home.join("copy-target");
+    tool_adapters::mark_installed_in(&paths.roots, adapter);
+    let target = paths.roots.home.join("copy-target");
     fs::create_dir(&target).unwrap();
     fs::write(target.join("SKILL.md"), "old").unwrap();
     store

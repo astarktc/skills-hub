@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+
+use super::environment::HostRoots;
 use serde::Serialize;
 use specta::Type;
 
@@ -88,19 +90,19 @@ pub enum OnboardingScanScope {
 }
 
 impl OnboardingScanScope {
-    fn includes(&self, home: &Path, adapter: &ToolAdapter) -> bool {
+    fn includes(&self, roots: &HostRoots, adapter: &ToolAdapter) -> bool {
         match self {
-            OnboardingScanScope::Installed => is_installed_in(home, adapter),
+            OnboardingScanScope::Installed => is_installed_in(roots, adapter),
             OnboardingScanScope::Selected(keys) => keys.iter().any(|k| k == adapter.key()),
         }
     }
 }
 
-/// Scan the Tools in `scope` under `home` for unmanaged skills, excluding
+/// Scan the Tools in `scope` under `roots` for unmanaged skills, excluding
 /// anything already living in (or linked into) `central_dir` and every
 /// target the store already manages.
 pub fn build_onboarding_plan(
-    home: &Path,
+    roots: &HostRoots,
     central_dir: &Path,
     store: &SkillStore,
     scope: &OnboardingScanScope,
@@ -113,7 +115,7 @@ pub fn build_onboarding_plan(
         .collect::<std::collections::HashSet<_>>();
     let managed_names = managed_names(store)?;
     let mut plan = build_onboarding_plan_in_home(
-        home,
+        roots,
         scope,
         Some(central_dir),
         Some(&managed_targets),
@@ -178,7 +180,7 @@ fn managed_names(store: &SkillStore) -> Result<HashMap<String, String>> {
 }
 
 fn build_onboarding_plan_in_home(
-    home: &Path,
+    roots: &HostRoots,
     scope: &OnboardingScanScope,
     exclude_root: Option<&Path>,
     exclude_managed_targets: Option<&std::collections::HashSet<String>>,
@@ -190,11 +192,11 @@ fn build_onboarding_plan_in_home(
     let mut scanned = 0usize;
 
     for adapter in adapters {
-        if !scope.includes(home, adapter) {
+        if !scope.includes(roots, adapter) {
             continue;
         }
         scanned += 1;
-        let scan = scan_tool_dir(adapter, &skills_dir_in(home, adapter))?;
+        let scan = scan_tool_dir(adapter, &skills_dir_in(roots, adapter))?;
         all_detected.extend(filter_detected(
             scan.skills,
             exclude_root,

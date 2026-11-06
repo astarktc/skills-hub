@@ -5,6 +5,7 @@
 //! Every case runs against a temp home / central dir / DB; the git arm uses
 //! an injected `GithubApi` (or a seeded clone cache), never the network.
 
+use crate::core::environment::HostRoots;
 use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -74,7 +75,7 @@ fn sync_to(f: &Fixture, tool: &str) {
     use crate::core::global_sync::{sync_skills_to_tools, BatchPolicy, BatchSkill};
     let skill = record(f);
     sync_skills_to_tools(
-        &f.paths.home,
+        &f.paths.roots,
         &f.store,
         &central_repo_of(&f.store),
         &[BatchSkill {
@@ -221,7 +222,7 @@ fn git_repoint_slash_branch_persists_resolved_path_and_original_url() {
 fn git_repoint_acquires_before_rewriting_and_rebuilds_central() {
     let f = fixture();
     let tool = adapter_by_key("claude_code").unwrap();
-    mark_installed_in(&f.paths.home, tool);
+    mark_installed_in(&f.paths.roots, tool);
     sync_to(&f, "claude_code");
     let mut original = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
     original.source_type = "git".into();
@@ -249,8 +250,9 @@ fn git_repoint_acquires_before_rewriting_and_rebuilds_central() {
     );
     assert!(f
         .paths
+        .roots
         .home
-        .join(tool.relative_skills_dir)
+        .join(tool.skills_dir.rel)
         .join("alpha/SKILL.md")
         .is_file());
     assert!(
@@ -447,8 +449,8 @@ fn git_repoint_to_another_repo_propagates_every_existing_scope() {
     use crate::core::sync_status::{SyncMode, SyncStatus};
     let f = git_repoint_fixture();
     let tool = adapter_by_key("claude_code").unwrap();
-    mark_installed_in(&f.paths.home, tool);
-    let target = f.paths.home.join(tool.relative_skills_dir).join("alpha");
+    mark_installed_in(&f.paths.roots, tool);
+    let target = f.paths.roots.home.join(tool.skills_dir.rel).join("alpha");
     f.store
         .upsert_skill_target(&SkillTargetRecord {
             id: "global".into(),
@@ -461,7 +463,7 @@ fn git_repoint_to_another_repo_propagates_every_existing_scope() {
             synced_at: Some(1),
         })
         .unwrap();
-    let project = f.paths.home.join("project");
+    let project = f.paths.roots.home.join("project");
     fs::create_dir_all(&project).unwrap();
     f.store
         .register_project(&ProjectRecord {
@@ -678,11 +680,11 @@ struct Fixture {
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let paths = InstallerPaths {
-        home: dir.path().join("home"),
+        roots: HostRoots::under_home(&dir.path().join("home")),
         central_dir: dir.path().join("central"),
         cache_dir: dir.path().join("cache"),
     };
-    fs::create_dir_all(&paths.home).expect("create home");
+    fs::create_dir_all(&paths.roots.home).expect("create home");
     let store = SkillStore::new(dir.path().join("test.db"));
     store.ensure_schema().expect("ensure_schema");
 
@@ -741,7 +743,7 @@ fn fixture_repo() -> tempfile::TempDir {
 /// names the old folder, which is gone; the new one holds `a.txt = v2`.
 fn moved_source(f: Fixture) -> (Fixture, PathBuf) {
     let old = PathBuf::from(record(&f).source_ref.unwrap());
-    let new = f.paths.home.join("Documents/new-place");
+    let new = f.paths.roots.home.join("Documents/new-place");
     fs::create_dir_all(new.parent().unwrap()).unwrap();
     // A rename across temp dirs may cross filesystems; copy then delete.
     crate::core::sync_engine::copy_dir_recursive(&old, &new).unwrap();
@@ -762,7 +764,7 @@ fn central(f: &Fixture) -> PathBuf {
 fn repoint_of_a_delete_incomplete_skill_is_skipped() {
     let (f, new) = moved_source(fixture());
     let tool = adapter_by_key("claude_code").unwrap();
-    mark_installed_in(&f.paths.home, tool);
+    mark_installed_in(&f.paths.roots, tool);
     sync_to(&f, "claude_code");
     crate::core::skill_health::record_outcome(
         &f.store,
@@ -873,14 +875,15 @@ fn local_repoint_validates_the_new_folder_the_way_add_does() {
     let repoint = |folder: &Path| repoint_local(&f.paths, &f.store, &f.skill_id, folder);
 
     // Not there.
-    let err = repoint(&f.paths.home.join("nowhere")).expect_err("a missing folder is refused");
+    let err =
+        repoint(&f.paths.roots.home.join("nowhere")).expect_err("a missing folder is refused");
     assert!(matches!(
         err.downcast_ref::<SignalError>(),
         Some(SignalError::SourcePathMissing { .. })
     ));
 
     // No SKILL.md.
-    let empty = f.paths.home.join("Documents/empty");
+    let empty = f.paths.roots.home.join("Documents/empty");
     fs::create_dir_all(&empty).unwrap();
     let err = repoint(&empty).expect_err("a folder without SKILL.md is refused");
     assert!(matches!(
@@ -889,7 +892,7 @@ fn local_repoint_validates_the_new_folder_the_way_add_does() {
     ));
 
     // Inside a Tool's skills dir: a Tool's copy is not a source.
-    let in_tool = f.paths.home.join(".claude/skills/alpha");
+    let in_tool = f.paths.roots.home.join(".claude/skills/alpha");
     fs::create_dir_all(&in_tool).unwrap();
     fs::write(in_tool.join("SKILL.md"), "---\nname: alpha\n---\n").unwrap();
     let err = repoint(&in_tool).expect_err("a Tool-dir folder is refused");
@@ -916,7 +919,7 @@ fn local_repoint_validates_the_new_folder_the_way_add_does() {
 #[test]
 fn an_unknown_skill_is_refused_typed_for_either_target() {
     let f = fixture();
-    let dir = f.paths.home.join("Documents/any");
+    let dir = f.paths.roots.home.join("Documents/any");
     for target in [
         RepointTarget::Local {
             path: dir.to_string_lossy().into_owned(),
@@ -949,7 +952,7 @@ fn an_unknown_skill_is_refused_typed_for_either_target() {
 
 /// A skill folder outside every Tool's skills dir with fresh bytes.
 fn new_folder(f: &Fixture, body: &str) -> PathBuf {
-    let folder = f.paths.home.join("Documents/maintained/alpha");
+    let folder = f.paths.roots.home.join("Documents/maintained/alpha");
     fs::create_dir_all(&folder).unwrap();
     fs::write(
         folder.join("SKILL.md"),
@@ -974,7 +977,7 @@ fn as_git(f: &Fixture) -> SkillRecord {
 /// Onboarding import records one: no source, found-in Tool kept.
 fn as_imported(f: &Fixture) -> SkillRecord {
     let claude = adapter_by_key("claude_code").unwrap();
-    let found = f.paths.home.join(claude.relative_skills_dir).join("alpha");
+    let found = f.paths.roots.home.join(claude.skills_dir.rel).join("alpha");
     fs::create_dir_all(&found).unwrap();
     fs::write(found.join("SKILL.md"), "---\nname: alpha\n---\n").unwrap();
     let id = install_imported_skill(
@@ -1315,7 +1318,7 @@ fn preview_flags_a_name_mismatch_without_refusing() {
     assert_eq!(git.git_ref.as_deref(), Some("main"));
     assert!(!git.name_matches);
 
-    let folder = f.paths.home.join("Documents/other");
+    let folder = f.paths.roots.home.join("Documents/other");
     fs::create_dir_all(&folder).unwrap();
     fs::write(folder.join("SKILL.md"), "---\nname: Beta\n---\n").unwrap();
     let local = preview(&f, local_target(&folder), &RepointApi).unwrap();
@@ -1502,7 +1505,7 @@ fn preview_refuses_typed_as_the_repoint_does() {
         Some(SignalError::InvalidGithubUrl { .. })
     ));
 
-    let gone = f.paths.home.join("Downloads/scratchpad");
+    let gone = f.paths.roots.home.join("Downloads/scratchpad");
     let err = preview(&f, local_target(&gone), &RepointApi).unwrap_err();
     assert!(matches!(
         err.downcast_ref::<SignalError>(),
@@ -1510,8 +1513,8 @@ fn preview_refuses_typed_as_the_repoint_does() {
     ));
 
     let claude = adapter_by_key("claude_code").unwrap();
-    mark_installed_in(&f.paths.home, claude);
-    let inside = f.paths.home.join(claude.relative_skills_dir).join("alpha");
+    mark_installed_in(&f.paths.roots, claude);
+    let inside = f.paths.roots.home.join(claude.skills_dir.rel).join("alpha");
     fs::create_dir_all(&inside).unwrap();
     fs::write(inside.join("SKILL.md"), "---\nname: alpha\n---\n").unwrap();
     let err = preview(&f, local_target(&inside), &RepointApi).unwrap_err();

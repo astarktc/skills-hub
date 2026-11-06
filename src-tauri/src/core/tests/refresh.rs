@@ -4,6 +4,7 @@
 //! Every case runs against a temp home / central dir / DB; installedness is
 //! faked by creating a Tool's detect dir under the temp home.
 
+use crate::core::environment::HostRoots;
 use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -93,11 +94,11 @@ struct Fixture {
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let paths = InstallerPaths {
-        home: dir.path().join("home"),
+        roots: HostRoots::under_home(&dir.path().join("home")),
         central_dir: dir.path().join("central"),
         cache_dir: dir.path().join("cache"),
     };
-    fs::create_dir_all(&paths.home).expect("create home");
+    fs::create_dir_all(&paths.roots.home).expect("create home");
     let store = SkillStore::new(dir.path().join("test.db"));
     store.ensure_schema().expect("ensure_schema");
 
@@ -132,7 +133,7 @@ fn refresh(f: &Fixture) -> crate::core::refresh::RefreshReport {
 fn a_refreshed_skill_gets_its_new_bytes_and_reports_its_targets() {
     let f = fixture();
     let claude = adapter_by_key("claude_code").expect("claude_code adapter");
-    mark_installed_in(&f.paths.home, claude);
+    mark_installed_in(&f.paths.roots, claude);
     fs::write(f.source.path().join("a.txt"), "v2").expect("write a.txt");
 
     let mut phases: Vec<(RefreshPhase, String)> = Vec::new();
@@ -227,7 +228,7 @@ fn refresh_all_with_auto_sync_on_creates_no_deployment() {
     use crate::core::global_sync::{sync_skills_to_tools, BatchPolicy, BatchSkill};
     let f = fixture();
     for key in ["claude_code", "codex", "cursor"] {
-        mark_installed_in(&f.paths.home, adapter_by_key(key).expect("adapter"));
+        mark_installed_in(&f.paths.roots, adapter_by_key(key).expect("adapter"));
     }
     f.store
         .set_setting(
@@ -244,7 +245,7 @@ fn refresh_all_with_auto_sync_on_creates_no_deployment() {
         .expect("query")
         .expect("skill");
     sync_skills_to_tools(
-        &f.paths.home,
+        &f.paths.roots,
         &f.store,
         &central_repo_of(&f.store),
         &[BatchSkill {
@@ -294,8 +295,8 @@ fn refresh_all_with_auto_sync_on_creates_no_deployment() {
         .map(|row| row.tool)
         .collect();
     assert_eq!(rows, vec!["claude_code".to_string()], "no row is created");
-    assert!(!f.paths.home.join(".codex/skills/alpha").exists());
-    assert!(!f.paths.home.join(".cursor/skills/alpha").exists());
+    assert!(!f.paths.roots.home.join(".codex/skills/alpha").exists());
+    assert!(!f.paths.roots.home.join(".cursor/skills/alpha").exists());
 }
 
 /// Record the stored health a kept Delete leaves behind (`artifact_removal`).
@@ -319,14 +320,14 @@ fn a_delete_incomplete_skill_is_skipped_by_refresh_all_and_by_a_named_update() {
     use crate::core::refresh::RefreshSkipReason;
     let f = fixture();
     let claude = adapter_by_key("claude_code").expect("claude_code adapter");
-    mark_installed_in(&f.paths.home, claude);
+    mark_installed_in(&f.paths.roots, claude);
     let skill = f
         .store
         .get_skill_by_id(&f.skill_id)
         .expect("query")
         .expect("skill");
     crate::core::global_sync::sync_skills_to_tools(
-        &f.paths.home,
+        &f.paths.roots,
         &f.store,
         &central_repo_of(&f.store),
         &[crate::core::global_sync::BatchSkill {
@@ -475,7 +476,7 @@ fn refresh_all_reports_delete_incomplete_before_unlocatable_and_never_for_a_non_
     ] {
         let f = fixture();
         mark_installed_in(
-            &f.paths.home,
+            &f.paths.roots,
             adapter_by_key("claude_code").expect("claude_code adapter"),
         );
         let skill = f
@@ -484,7 +485,7 @@ fn refresh_all_reports_delete_incomplete_before_unlocatable_and_never_for_a_non_
             .expect("query")
             .expect("skill");
         crate::core::global_sync::sync_skills_to_tools(
-            &f.paths.home,
+            &f.paths.roots,
             &f.store,
             &central_repo_of(&f.store),
             &[crate::core::global_sync::BatchSkill {
@@ -615,11 +616,11 @@ struct PoolFixture {
 fn pool_fixture(n: usize) -> PoolFixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let paths = InstallerPaths {
-        home: dir.path().join("home"),
+        roots: HostRoots::under_home(&dir.path().join("home")),
         central_dir: dir.path().join("central"),
         cache_dir: dir.path().join("cache"),
     };
-    fs::create_dir_all(&paths.home).expect("create home");
+    fs::create_dir_all(&paths.roots.home).expect("create home");
     let store = SkillStore::new(dir.path().join("test.db"));
     store.ensure_schema().expect("ensure_schema");
 
@@ -968,7 +969,7 @@ fn two_skills_from_one_repository_share_the_cache_without_corrupting_it() {
 /// installed the way Onboarding import records it.
 fn install_imported(paths: &InstallerPaths, store: &SkillStore, name: &str) -> String {
     let claude = adapter_by_key("claude_code").expect("claude_code adapter");
-    let found = paths.home.join(claude.relative_skills_dir).join(name);
+    let found = paths.roots.home.join(claude.skills_dir.rel).join(name);
     fs::create_dir_all(&found).expect("tool skill dir");
     fs::write(found.join("SKILL.md"), format!("---\nname: {name}\n---\n")).expect("write");
     install_imported_skill(
@@ -1106,7 +1107,7 @@ fn refresh_all_skips_unlocatable_skills_and_mints_no_targets_for_them() {
     use crate::core::refresh::RefreshSkipReason;
     let f = pool_fixture(3);
     let claude = adapter_by_key("claude_code").expect("claude_code adapter");
-    mark_installed_in(&f.paths.home, claude);
+    mark_installed_in(&f.paths.roots, claude);
     let ids: Vec<String> = f
         .store
         .list_skills()
@@ -1126,6 +1127,7 @@ fn refresh_all_skips_unlocatable_skills_and_mints_no_targets_for_them() {
     let mut source_gone = by_name("s1");
     source_gone.source_ref = Some(
         f.paths
+            .roots
             .home
             .join("moved-away")
             .to_string_lossy()
@@ -1211,5 +1213,5 @@ fn refresh_all_skips_unlocatable_skills_and_mints_no_targets_for_them() {
             "no target is minted for a skipped skill ({name})"
         );
     }
-    assert!(!f.paths.home.join(".claude/skills/s2").exists());
+    assert!(!f.paths.roots.home.join(".claude/skills/s2").exists());
 }

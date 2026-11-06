@@ -66,6 +66,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::core::{
+    environment::HostRoots,
     errors::{CommandError, SignalError},
     mutation_guard,
     project_sync::resolve_assignment_artifact,
@@ -93,13 +94,13 @@ pub enum RemovalScope {
     /// One skill × Tool pair at global scope, expanded across the tool's
     /// shared skills dir group — or, when the registry can no longer locate
     /// the Tool, planned as the single row by its own stored path (fenced by
-    /// the registry's deletion rule). Carries the operator's home because it
+    /// the registry's deletion rule). Carries the host roots because it
     /// is the only scope whose planning depends on Tool installedness; every
     /// other scope resolves its paths from stored rows.
     SkillTool {
         skill_id: String,
         tool_key: String,
-        home: PathBuf,
+        roots: HostRoots,
     },
     /// Every Sync target of one Project. Planned by
     /// `project_ops::remove_project_and_artifacts`.
@@ -314,8 +315,8 @@ impl fmt::Display for RemovalReport {
 
 /// Read-only: resolve every path `scope` touches, deduped by path with the
 /// rows describing each path attached. Every root a scope needs travels
-/// inside the scope itself ([`RemovalScope::SkillTool`] carries the home
-/// that decides Tool installedness), so planning takes no ambient roots.
+/// inside the scope itself ([`RemovalScope::SkillTool`] carries the host
+/// roots that decide Tool installedness), so planning takes no ambient roots.
 /// Unlocked internal seam.
 pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPlan> {
     let mut builder = TargetBuilder::default();
@@ -338,10 +339,10 @@ pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPl
         RemovalScope::SkillTool {
             skill_id,
             tool_key,
-            home,
+            roots,
         } => {
             let rows = store.list_skill_targets(skill_id)?;
-            match global_group_keys(home, tool_key) {
+            match global_group_keys(roots, tool_key) {
                 Some(group_keys) => {
                     for row in rows {
                         if group_keys.iter().any(|k| k == &row.tool) {
@@ -361,7 +362,7 @@ pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPl
                 // planning keeps every row.
                 None => {
                     for row in rows.iter().filter(|row| &row.tool == tool_key) {
-                        ensure_path_within_tool_dirs(home, Path::new(&row.target_path))?;
+                        ensure_path_within_tool_dirs(roots, Path::new(&row.target_path))?;
                         builder.push_global(row);
                     }
                 }
@@ -440,12 +441,12 @@ pub(crate) fn recorded_target_paths(store: &SkillStore) -> Result<Vec<PathBuf>> 
 /// operator — so no path may be *derived* for it; the caller falls back to
 /// the row's own recorded `target_path`. An unknown key stands for itself:
 /// its rows still carry their own paths.
-fn global_group_keys(home: &Path, tool_key: &str) -> Option<Vec<String>> {
+fn global_group_keys(roots: &HostRoots, tool_key: &str) -> Option<Vec<String>> {
     let Some(adapter) = adapter_by_key(tool_key) else {
         return Some(vec![tool_key.to_string()]);
     };
     let group = adapters_sharing_skills_dir(adapter);
-    if !group.iter().any(|a| is_installed_in(home, a)) {
+    if !group.iter().any(|a| is_installed_in(roots, a)) {
         return None;
     }
     Some(group.into_iter().map(|a| a.key().to_string()).collect())
@@ -777,12 +778,12 @@ fn settle_row_as_error(store: &SkillStore, row: &RowRef, error: &str) -> Result<
 )]
 pub(crate) fn remove_superseded_artifact_unlocked(
     store: &SkillStore,
-    home: &Path,
+    roots: &HostRoots,
     central_dir: &Path,
     adapter: &ToolAdapter,
     path: &Path,
 ) -> Result<()> {
-    let former = former_skills_dirs_in(home, adapter);
+    let former = former_skills_dirs_in(roots, adapter);
     let fenced = former
         .iter()
         .any(|dir| path.parent() == Some(dir.as_path()));

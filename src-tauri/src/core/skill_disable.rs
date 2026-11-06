@@ -59,6 +59,7 @@ use anyhow::Result;
 use uuid::Uuid;
 
 use super::artifact_removal::{self, RemovalPlan, RemovalReport, RemovalScope, RowRef, Settlement};
+use super::environment::HostRoots;
 use super::errors::{CommandError, SignalError};
 use super::global_sync::{
     sync_skills_to_tools_unlocked, BatchOverride, BatchPolicy, BatchSkill, BatchTargetOutcome,
@@ -103,11 +104,11 @@ pub struct EnableReport {
 pub fn disable_targets(
     store: &SkillStore,
     central_dir: &Path,
-    home: &Path,
+    roots: &HostRoots,
     scope: &DisableScope,
     now: i64,
 ) -> Result<RemovalReport> {
-    mutation_guard::serialized(|| disable_unlocked(store, central_dir, home, scope, now))
+    mutation_guard::serialized(|| disable_unlocked(store, central_dir, roots, scope, now))
 }
 
 /// Enable `scope`: clear the Disabled marker and re-sync as a first sync.
@@ -119,11 +120,11 @@ pub fn disable_targets(
 pub fn enable_targets(
     store: &SkillStore,
     central_dir: &Path,
-    home: &Path,
+    roots: &HostRoots,
     scope: &DisableScope,
     now: i64,
 ) -> Result<EnableReport> {
-    enable_targets_with(store, central_dir, home, scope, &[], now)
+    enable_targets_with(store, central_dir, roots, scope, &[], now)
 }
 
 /// [`enable_targets`] carrying the operator's answers to the overwrite ask
@@ -138,12 +139,12 @@ pub fn enable_targets(
 pub fn enable_targets_with(
     store: &SkillStore,
     central_dir: &Path,
-    home: &Path,
+    roots: &HostRoots,
     scope: &DisableScope,
     overrides: &[BatchOverride],
     now: i64,
 ) -> Result<EnableReport> {
-    mutation_guard::serialized(|| enable_unlocked(store, central_dir, home, scope, overrides, now))
+    mutation_guard::serialized(|| enable_unlocked(store, central_dir, roots, scope, overrides, now))
 }
 
 // ---------------------------------------------------------------------------
@@ -153,14 +154,14 @@ pub fn enable_targets_with(
 fn disable_unlocked(
     store: &SkillStore,
     central_dir: &Path,
-    home: &Path,
+    roots: &HostRoots,
     scope: &DisableScope,
     now: i64,
 ) -> Result<RemovalReport> {
     match scope {
         DisableScope::SkillTool { skill_id, tool } => {
             let skill = require_skill(store, skill_id)?;
-            disable_pair(store, central_dir, home, &skill, tool)
+            disable_pair(store, central_dir, roots, &skill, tool)
         }
         DisableScope::Skill { skill_id } => {
             let skill = require_skill(store, skill_id)?;
@@ -183,7 +184,7 @@ fn disable_unlocked(
 fn disable_pair(
     store: &SkillStore,
     central_dir: &Path,
-    home: &Path,
+    roots: &HostRoots,
     skill: &SkillRecord,
     tool: &str,
 ) -> Result<RemovalReport> {
@@ -202,7 +203,7 @@ fn disable_pair(
         &RemovalScope::SkillTool {
             skill_id: skill.id.clone(),
             tool_key: tool.to_string(),
-            home: home.to_path_buf(),
+            roots: roots.clone(),
         },
     )?;
     let mut report = execute_disable(store, central_dir, plan)?;
@@ -215,7 +216,7 @@ fn disable_pair(
         // retry that removes it records the marker then. The row may also
         // have appeared meanwhile; it is never overwritten.
         if report.failed_rows() == 0 && store.get_skill_target(&skill.id, tool)?.is_none() {
-            let target_path = skills_dir_in(home, adapter).join(&skill.name);
+            let target_path = skills_dir_in(roots, adapter).join(&skill.name);
             let mode = if adapter.supports_symlink {
                 SyncMode::Symlink
             } else {
@@ -335,7 +336,7 @@ fn row_is_disabled(store: &SkillStore, row: &RowRef) -> Result<bool> {
 fn enable_unlocked(
     store: &SkillStore,
     central_dir: &Path,
-    home: &Path,
+    roots: &HostRoots,
     scope: &DisableScope,
     overrides: &[BatchOverride],
     now: i64,
@@ -343,17 +344,17 @@ fn enable_unlocked(
     match scope {
         DisableScope::SkillTool { skill_id, tool } => {
             let skill = require_skill(store, skill_id)?;
-            enable_pair(store, central_dir, home, &skill, tool, overrides, now)
+            enable_pair(store, central_dir, roots, &skill, tool, overrides, now)
         }
         DisableScope::Skill { skill_id } => {
             let skill = require_skill(store, skill_id)?;
-            enable_skill(store, central_dir, home, &skill, overrides, now)
+            enable_skill(store, central_dir, roots, &skill, overrides, now)
         }
         DisableScope::Skills { skill_ids } => {
             let mut report = EnableReport::default();
             for skill_id in skill_ids {
                 if let Some(skill) = store.get_skill_by_id(skill_id)? {
-                    let one = enable_skill(store, central_dir, home, &skill, overrides, now)?;
+                    let one = enable_skill(store, central_dir, roots, &skill, overrides, now)?;
                     report.global.extend(one.global);
                     report.projects.absorb(one.projects);
                 }
@@ -371,7 +372,7 @@ fn enable_unlocked(
 fn enable_pair(
     store: &SkillStore,
     central_dir: &Path,
-    home: &Path,
+    roots: &HostRoots,
     skill: &SkillRecord,
     tool: &str,
     overrides: &[BatchOverride],
@@ -414,7 +415,7 @@ fn enable_pair(
         global: first_sync_global(
             store,
             central_dir,
-            home,
+            roots,
             skill,
             &[tool.to_string()],
             overrides,
@@ -430,7 +431,7 @@ fn enable_pair(
 fn enable_skill(
     store: &SkillStore,
     central_dir: &Path,
-    home: &Path,
+    roots: &HostRoots,
     skill: &SkillRecord,
     overrides: &[BatchOverride],
     now: i64,
@@ -454,7 +455,7 @@ fn enable_skill(
         global: if tools.is_empty() {
             Vec::new()
         } else {
-            first_sync_global(store, central_dir, home, skill, &tools, overrides, now)
+            first_sync_global(store, central_dir, roots, skill, &tools, overrides, now)
         },
         projects: first_sync_assignments_unlocked(store, central_dir, &assignments, now)?,
     })
@@ -466,7 +467,7 @@ fn enable_skill(
 fn first_sync_global(
     store: &SkillStore,
     central_dir: &Path,
-    home: &Path,
+    roots: &HostRoots,
     skill: &SkillRecord,
     tools: &[String],
     overrides: &[BatchOverride],
@@ -487,7 +488,7 @@ fn first_sync_global(
             .collect(),
     };
     let outcomes = sync_skills_to_tools_unlocked(
-        home,
+        roots,
         store,
         central_dir,
         &skills,

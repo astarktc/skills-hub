@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import type { ToolStatusDto } from "../skills/types";
+import { projectToolLabel } from "../../lib/projectPresentation";
 import { visibleToolChoices } from "../../lib/skillPresentation";
 
 function buildInitialSelection(
@@ -136,7 +137,7 @@ const ProjectToolsBody = ({
                   />
                   <div className="flex min-w-0 flex-col gap-0.5">
                     <span className="flex items-center gap-2">
-                      <FieldLabel>{tool.label}</FieldLabel>
+                      <FieldLabel>{projectToolLabel(tool, t)}</FieldLabel>
                       {installed.includes(tool.key) ? (
                         <Badge tone="ok">{t("status.installed")}</Badge>
                       ) : (

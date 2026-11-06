@@ -1222,6 +1222,8 @@ export const resources = {
       // cell vocabulary (projectPresentation.ts), the project dialogs.
       projectsSurface: {
         heading: "Projects",
+        groupLabel_one: "{{dir}} ({{count}} harness)",
+        groupLabel_other: "{{dir}} ({{count}} harnesses)",
         done: {
           unassigned_one: "{{count}} removed from project",
           unassigned_other: "{{count}} removed from project",

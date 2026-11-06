@@ -3,6 +3,7 @@
 //! `core::repoint`; Restore is the single-skill Update and is tested with
 //! `core::refresh`.
 
+use crate::core::environment::HostRoots;
 use std::fs;
 use std::path::PathBuf;
 
@@ -29,11 +30,11 @@ struct Fixture {
 fn fixture_with_moved_source() -> (Fixture, PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
     let paths = InstallerPaths {
-        home: dir.path().join("home"),
+        roots: HostRoots::under_home(&dir.path().join("home")),
         central_dir: dir.path().join("central"),
         cache_dir: dir.path().join("cache"),
     };
-    fs::create_dir_all(&paths.home).expect("create home");
+    fs::create_dir_all(&paths.roots.home).expect("create home");
     let store = SkillStore::new(dir.path().join("test.db"));
     store.ensure_schema().expect("ensure_schema");
 
@@ -141,7 +142,7 @@ fn detach_is_refused_when_the_central_copy_is_also_gone() {
 #[test]
 fn only_a_local_skill_can_be_detached() {
     let (f, _new) = fixture_with_moved_source();
-    let found = f.paths.home.join(".claude/skills/taken-over");
+    let found = f.paths.roots.home.join(".claude/skills/taken-over");
     fs::create_dir_all(&found).unwrap();
     fs::write(found.join("SKILL.md"), "---\nname: taken-over\n---\n").unwrap();
     let imported = install_imported_skill(

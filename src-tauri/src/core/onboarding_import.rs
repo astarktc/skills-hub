@@ -238,7 +238,7 @@ pub fn import_onboarding_selection(
 ) -> Result<ImportReport> {
     // The authority on which paths a group owns. Reading it is the only
     // failure that fails the whole operation.
-    let plan = build_onboarding_plan(&paths.home, &paths.central_dir, store, &policy.scan_scope)?;
+    let plan = build_onboarding_plan(&paths.roots, &paths.central_dir, store, &policy.scan_scope)?;
 
     let total = selections.len();
     let mut report = ImportReport::default();
@@ -389,7 +389,7 @@ fn replace_with_managed_unlocked(
         overrides: Vec::new(),
     };
     let targets = sync_skills_to_tools_unlocked(
-        &paths.home,
+        &paths.roots,
         store,
         &paths.central_dir,
         &skills,
@@ -540,7 +540,7 @@ fn sync_imported_unlocked(
     let mut tools = match policy.tools.clone() {
         Some(selected) => selected,
         None => {
-            super::settings::effective_global_tool_targets(store, &paths.home).unwrap_or_default()
+            super::settings::effective_global_tool_targets(store, &paths.roots).unwrap_or_default()
         }
     };
     let mut identical_tools: Vec<String> = Vec::new();
@@ -581,7 +581,7 @@ fn sync_imported_unlocked(
         overrides: Vec::new(),
     };
     let targets = sync_skills_to_tools_unlocked(
-        &paths.home,
+        &paths.roots,
         store,
         &paths.central_dir,
         &skills,
@@ -721,7 +721,7 @@ fn remove_divergent_copy(
             unknown("the copy's or the managed skill's content could not be read".to_string())
         }
         Comparison::Different => Some(
-            match ensure_path_within_tool_dirs(&paths.home, path)
+            match ensure_path_within_tool_dirs(&paths.roots, path)
                 .and_then(|()| remove_original(paths, store, path))
             {
                 Ok(()) => OriginalStatus::Removed,
@@ -739,7 +739,7 @@ fn remove_divergent_copy(
 /// dir linked onto the library.
 fn remove_original(paths: &InstallerPaths, store: &SkillStore, path: &Path) -> Result<()> {
     let library = ProtectedLibrary::new(store, &paths.central_dir);
-    let dirs = deletable_skills_dirs_in(&paths.home);
+    let dirs = deletable_skills_dirs_in(&paths.roots);
     remove_path_any(path, &Fence::new(&library).claiming(Claim::Within(&dirs)))
 }
 
@@ -753,7 +753,7 @@ fn settle_original(
     path: &Path,
     tool: &str,
 ) -> OriginalOutcome {
-    let status = match ensure_path_within_tool_dirs(&paths.home, path) {
+    let status = match ensure_path_within_tool_dirs(&paths.roots, path) {
         Err(error) => OriginalStatus::Failed {
             error: CommandError::from_anyhow(error),
         },

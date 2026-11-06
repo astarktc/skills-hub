@@ -5,10 +5,9 @@
 //! tools, how shared skills dirs group, and what "installed" means lives here
 //! so it is testable against a temp home.
 
-use std::path::Path;
-
 use super::{
-    adapters_sharing_skills_dir, constituents_of, is_installed_in, ToolAdapter, TOOL_ADAPTERS,
+    adapters_sharing_skills_dir, catalog_rows, constituents_of, is_installed_in, HostRoots,
+    ToolAdapter,
 };
 
 /// One row of a tool list, with every backend-owned fact already resolved.
@@ -32,18 +31,20 @@ pub struct ToolCatalogEntry {
     /// Where this Tool lives on the operator's machine and how Skills Hub
     /// deploys into it — the global catalog only (`None` in the project
     /// catalog, whose dirs are project-relative and whose detection is a
-    /// group's union). Every path is relative to the operator's home.
+    /// group's union).
     pub placement: Option<GlobalPlacement>,
 }
 
-/// A global catalog entry's placement facts, straight from the registry.
+/// A global catalog entry's placement facts, straight from the registry,
+/// spelled for display (`RegistryPath::display`: `~/.claude/skills` under
+/// home, the absolute path under another root).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GlobalPlacement {
-    /// The global skills dir, relative to home (`.claude/skills`).
-    pub skills_dir: &'static str,
-    /// The dirs any one of whose presence marks the Tool installed, relative
-    /// to home, in registry order.
-    pub detect_dirs: &'static [&'static str],
+    /// The global skills dir (`~/.claude/skills`).
+    pub skills_dir: String,
+    /// The dirs any one of whose presence marks the Tool installed, in
+    /// registry order.
+    pub detect_dirs: Vec<String>,
     /// The registry capability (`ToolAdapter::supports_symlink`): `true`
     /// deploys a link (symlink → junction → copy fallback), `false` a copy.
     pub supports_symlink: bool,
@@ -58,21 +59,24 @@ pub struct GlobalPlacement {
 /// constituent roster — the roster renders exactly when ticking this box
 /// covers those tools — its label is the plain `display_name`, and its
 /// installedness is its own detect dir like any other entry.
-pub fn global_tool_entries(home: &Path) -> Vec<ToolCatalogEntry> {
-    TOOL_ADAPTERS
-        .iter()
+pub fn global_tool_entries(roots: &HostRoots) -> Vec<ToolCatalogEntry> {
+    catalog_rows()
         .map(|adapter| ToolCatalogEntry {
             key: adapter.key(),
             label: adapter.display_name,
-            installed: is_installed_in(home, adapter),
+            installed: is_installed_in(roots, adapter),
             shared_with: adapters_sharing_skills_dir(adapter)
                 .into_iter()
                 .map(ToolAdapter::key)
                 .collect(),
             constituents: vec![],
             placement: Some(GlobalPlacement {
-                skills_dir: adapter.relative_skills_dir,
-                detect_dirs: adapter.relative_detect_dirs,
+                skills_dir: adapter.skills_dir.display(roots),
+                detect_dirs: adapter
+                    .detect_dirs
+                    .iter()
+                    .map(|dir| dir.display(roots))
+                    .collect(),
                 supports_symlink: adapter.supports_symlink,
             }),
         })
@@ -81,11 +85,11 @@ pub fn global_tool_entries(home: &Path) -> Vec<ToolCatalogEntry> {
 
 /// Project-scope catalog: constituent tools are absorbed into their virtual
 /// group's entry, which counts as installed when any constituent is. Entries
-/// are grouped by shared project skills dir.
-pub fn project_tool_entries(home: &Path) -> Vec<ToolCatalogEntry> {
-    let listed: Vec<&'static ToolAdapter> = TOOL_ADAPTERS
-        .iter()
-        .filter(|adapter| adapter.group.is_none())
+/// are grouped by shared project skills dir. A tool with no project skills
+/// dir is not listed.
+pub fn project_tool_entries(roots: &HostRoots) -> Vec<ToolCatalogEntry> {
+    let listed: Vec<&'static ToolAdapter> = catalog_rows()
+        .filter(|adapter| adapter.group.is_none() && adapter.project_skills_dir.is_some())
         .collect();
 
     listed
@@ -95,21 +99,19 @@ pub fn project_tool_entries(home: &Path) -> Vec<ToolCatalogEntry> {
                 Some(group) => {
                     let members: Vec<&'static ToolAdapter> = constituents_of(group).collect();
                     (
-                        members.iter().any(|a| is_installed_in(home, a)),
+                        members.iter().any(|a| is_installed_in(roots, a)),
                         members.iter().map(|a| a.display_name).collect(),
                     )
                 }
-                None => (is_installed_in(home, adapter), vec![]),
+                None => (is_installed_in(roots, adapter), vec![]),
             };
             ToolCatalogEntry {
                 key: adapter.key(),
-                label: adapter.project_display_name(),
+                label: adapter.display_name,
                 installed,
                 shared_with: listed
                     .iter()
-                    .filter(|a| {
-                        a.project_relative_skills_dir == adapter.project_relative_skills_dir
-                    })
+                    .filter(|a| a.project_skills_dir == adapter.project_skills_dir)
                     .map(|a| a.key())
                     .collect(),
                 constituents,

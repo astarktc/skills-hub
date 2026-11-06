@@ -1,5 +1,6 @@
 //! Real mutation + wire-result composition, without a Tauri window or operator roots.
 use super::*;
+use crate::core::environment::HostRoots;
 use crate::core::removal_fence::central_repo_of;
 use crate::core::{
     installer::install_local_skill,
@@ -24,11 +25,11 @@ impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let paths = InstallerPaths {
-            home: dir.path().join("home"),
+            roots: HostRoots::under_home(&dir.path().join("home")),
             central_dir: dir.path().join("central"),
             cache_dir: dir.path().join("cache"),
         };
-        fs::create_dir_all(&paths.home).unwrap();
+        fs::create_dir_all(&paths.roots.home).unwrap();
         let source = dir.path().join("source");
         fs::create_dir_all(&source).unwrap();
         fs::write(source.join("SKILL.md"), "---\nname: alpha\n---\nold\n").unwrap();
@@ -60,7 +61,7 @@ impl Fixture {
     fn deploy_to(&self, tool: &str) {
         use crate::core::global_sync::{sync_skills_to_tools, BatchPolicy, BatchSkill};
         let outcomes = sync_skills_to_tools(
-            &self.paths.home,
+            &self.paths.roots,
             &self.store,
             &central_repo_of(&self.store),
             &[BatchSkill {
@@ -84,8 +85,8 @@ impl Fixture {
     }
     fn blocked_target(&self) {
         let tool = crate::core::tool_adapters::adapter_by_key("cursor").unwrap();
-        crate::core::tool_adapters::mark_installed_in(&self.paths.home, tool);
-        let blocker = self.paths.home.join("blocked");
+        crate::core::tool_adapters::mark_installed_in(&self.paths.roots, tool);
+        let blocker = self.paths.roots.home.join("blocked");
         fs::write(&blocker, "not a directory").unwrap();
         self.store
             .upsert_skill_target(&SkillTargetRecord {
@@ -108,7 +109,7 @@ fn update_and_restore_catalog_include_replayed_override_and_propagated_targets()
         let f = Fixture::new();
         set_invocation_override(&f.paths, &f.store, &f.id, Some(InvocationMode::UserOnly)).unwrap();
         let tool = crate::core::tool_adapters::adapter_by_key("claude_code").unwrap();
-        crate::core::tool_adapters::mark_installed_in(&f.paths.home, tool);
+        crate::core::tool_adapters::mark_installed_in(&f.paths.roots, tool);
         f.deploy_to("claude_code");
         fs::write(
             f.source.join("SKILL.md"),
@@ -160,7 +161,7 @@ fn update_failure_returns_full_catalog_not_just_report_members() {
 fn local_repoint_catalog_has_new_source_and_settled_target_failure() {
     let f = Fixture::new();
     f.blocked_target();
-    let new_source = f.paths.home.join("new-source");
+    let new_source = f.paths.roots.home.join("new-source");
     fs::rename(&f.source, &new_source).unwrap();
     let report = repoint_skill_source_with(
         &f.paths,
@@ -301,6 +302,7 @@ fn acquisition_skips_return_current_catalog_and_wire_reason() {
                 } else {
                     row.source_ref = Some(
                         f.paths
+                            .roots
                             .home
                             .join("new-source")
                             .to_string_lossy()
@@ -331,7 +333,7 @@ fn acquisition_skips_return_current_catalog_and_wire_reason() {
             assert_eq!(result.skills[0].description.as_deref(), Some("current row"));
             assert_eq!(
                 result.skills[0].source_ref.as_deref(),
-                f.paths.home.join("new-source").to_str()
+                f.paths.roots.home.join("new-source").to_str()
             );
         }
     }

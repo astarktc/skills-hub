@@ -1603,9 +1603,15 @@ export type ToolInfoDto = {
 
 /**  A global tool's registry placement (the Settings → Harnesses row). */
 export type ToolPlacementDto = {
-	/**  The global skills dir, relative to the operator's home. */
+	/**
+	 *  The global skills dir as shown: `~/.claude/skills` under home, the
+	 *  absolute path under another host root (`RegistryPath::display`).
+	 */
 	skills_dir: string,
-	/**  The detect dirs (any one present marks the tool installed), relative to home. */
+	/**
+	 *  The detect dirs (any one present marks the tool installed), spelled
+	 *  like `skills_dir`.
+	 */
 	detect_dirs: string[],
 	/**  `true`: deployed as a link (symlink → junction → copy fallback); `false`: copied. */
 	supports_symlink: boolean,

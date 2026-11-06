@@ -7,8 +7,6 @@ export type FixtureTool = {
   key: string;
   /** Global-scope label (`display_name`). */
   label: string;
-  /** Project-scope label, when it differs (the virtual group's). */
-  groupLabel?: string;
   /** Global skills dir, relative to home. */
   globalDir: string;
   /** Project skills dir, relative to the project root. */
@@ -21,7 +19,7 @@ export type FixtureTool = {
 export const VIRTUAL_GROUP_KEY = "agents_skills";
 
 export const TOOL_REGISTRY: readonly FixtureTool[] = [
-  { key: "agents_skills", label: ".agents/skills", groupLabel: ".agents/skills (9 harnesses)", globalDir: ".agents/skills", projectDir: ".agents/skills", grouped: false },
+  { key: "agents_skills", label: ".agents/skills", globalDir: ".agents/skills", projectDir: ".agents/skills", grouped: false },
   { key: "cursor", label: "Cursor", globalDir: ".cursor/skills", projectDir: ".agents/skills", grouped: true },
   { key: "claude_code", label: "Claude Code", globalDir: ".claude/skills", projectDir: ".claude/skills", grouped: false },
   { key: "codex", label: "Codex", globalDir: ".codex/skills", projectDir: ".agents/skills", grouped: true },

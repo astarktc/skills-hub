@@ -38,6 +38,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use uuid::Uuid;
 
+use super::environment::HostRoots;
 use super::errors::{CommandError, SignalError};
 use super::installer::InstallerPaths;
 use super::project_sync::AssignmentSyncContext;
@@ -161,7 +162,7 @@ pub(crate) fn propagate_unlocked(
     propagate_global_rows(
         store,
         &paths.central_dir,
-        &paths.home,
+        &paths.roots,
         &central_path,
         skill_id,
         now,
@@ -190,7 +191,7 @@ fn missing_source(central_path: &Path) -> anyhow::Error {
 fn propagate_global_rows(
     store: &SkillStore,
     central_dir: &Path,
-    home: &Path,
+    roots: &HostRoots,
     central_path: &Path,
     skill_id: &str,
     now: i64,
@@ -260,7 +261,7 @@ fn propagate_global_rows(
 
         let (installed, absent): (Vec<_>, Vec<_>) = group
             .into_iter()
-            .partition(|(_, a)| is_installed_in(home, a));
+            .partition(|(_, a)| is_installed_in(roots, a));
         for (member, _) in &absent {
             report.targets.push(skipped_global(
                 &member.tool,
@@ -308,7 +309,7 @@ fn propagate_global_rows(
                 .iter()
                 .copied()
                 .filter(|a| !rows.iter().any(|(r, _)| r.tool == a.key()))
-                .filter(|a| is_installed_in(home, a))
+                .filter(|a| is_installed_in(roots, a))
                 .collect()
         };
         for sibling in &siblings {

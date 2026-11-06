@@ -19,15 +19,15 @@ use crate::core::{
 /// The single place that joins a project root with a tool's skills dir.
 ///
 /// Takes the adapter (not a bare dir string) so the project-scope mapping
-/// (`ToolAdapter::project_relative_skills_dir`) is chosen here and callers cannot reach for
-/// the global `relative_skills_dir` by mistake — that mix-up has shipped more
+/// (`ToolAdapter::project_skills_dir`) is chosen here and callers cannot reach for
+/// the global `skills_dir` by mistake — that mix-up has shipped more
 /// than once (see `gitignore.rs` and the Artifact removal callers in `project_ops.rs`).
 pub(crate) fn resolve_project_sync_target(
     project_path: &Path,
     adapter: &ToolAdapter,
     skill_name: &str,
-) -> PathBuf {
-    tool_adapters::project_skills_dir_in(project_path, adapter).join(skill_name)
+) -> Option<PathBuf> {
+    tool_adapters::project_skills_dir_in(project_path, adapter).map(|dir| dir.join(skill_name))
 }
 
 /// Which name locates a Project assignment's artifact on disk.
@@ -61,7 +61,8 @@ pub(crate) fn assignment_artifact_name(
 
 /// The path of a Project assignment's artifact: the project's Tool skills
 /// dir joined with [`assignment_artifact_name`] (`live_name` is its
-/// fallback supplier). `None` when the name cannot be resolved.
+/// fallback supplier). `None` when the name cannot be resolved, or the Tool
+/// reads no project skills dir.
 pub(crate) fn resolve_assignment_artifact(
     project_path: &Path,
     adapter: &ToolAdapter,
@@ -69,7 +70,7 @@ pub(crate) fn resolve_assignment_artifact(
     live_name: impl FnOnce() -> Result<Option<String>>,
 ) -> Result<Option<PathBuf>> {
     Ok(assignment_artifact_name(assignment, live_name)?
-        .map(|name| resolve_project_sync_target(project_path, adapter, &name)))
+        .and_then(|name| resolve_project_sync_target(project_path, adapter, &name)))
 }
 
 /// What one Project assignment's sync needs and its caller has already
@@ -164,9 +165,10 @@ pub(crate) fn sync_assignment_target(
     Ok(outcome)
 }
 
-/// The registry record for an assignment's Tool, or the typed `UnknownTool`.
+/// The registry record for an assignment's Tool at project scope, or the
+/// typed `UnknownTool` (also for a Tool that reads no project skills dir).
 fn require_adapter(tool_key: &str) -> Result<&'static ToolAdapter> {
-    tool_adapters::adapter_by_key(tool_key).ok_or_else(|| {
+    tool_adapters::project_adapter_by_key(tool_key).ok_or_else(|| {
         anyhow::anyhow!(SignalError::UnknownTool {
             tool: tool_key.to_string(),
         })
@@ -1326,7 +1328,7 @@ pub(crate) fn unassign_and_remove_artifacts(
     skill: &SkillRecord,
     tool_key: &str,
 ) -> Result<artifact_removal::RemovalReport> {
-    if tool_adapters::adapter_by_key(tool_key).is_none() {
+    if tool_adapters::project_adapter_by_key(tool_key).is_none() {
         anyhow::bail!(SignalError::UnknownTool {
             tool: tool_key.to_string(),
         });
