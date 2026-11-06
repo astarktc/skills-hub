@@ -124,6 +124,19 @@ export const TOOL_REGISTRY: readonly FixtureTool[] = [
   { key: "astrbot", label: "AstrBot", globalDir: ".astrbot/data/skills", projectDir: null, grouped: false },
   { key: "oh_my_pi", label: "oh-my-pi", globalDir: ".omp/agent/skills", projectDir: ".omp/skills", grouped: false },
   { key: "stakpak", label: "Stakpak", globalDir: ".stakpak/skills", projectDir: ".stakpak/skills", grouped: false },
+  // round 20 ticket 06 rows (Reasonix's Windows `%APPDATA%` override is not modelled)
+  { key: "grok_build", label: "Grok Build", globalDir: ".grok/skills", projectDir: ".grok/skills", grouped: false },
+  { key: "deep_agents_code", label: "Deep Agents Code", globalDir: ".deepagents/agent/skills", projectDir: ".deepagents/skills", grouped: false },
+  { key: "reasonix", label: "Reasonix", globalDir: ".reasonix/skills", projectDir: ".reasonix/skills", grouped: false },
+  { key: "cortex_code", label: "Cortex Code", globalDir: ".snowflake/cortex/skills", projectDir: ".cortex/skills", grouped: false },
+  { key: "rovo_dev", label: "Rovo Dev", globalDir: ".rovodev/skills", projectDir: ".rovodev/skills", grouped: false },
+  { key: "ibm_bob", label: "IBM Bob", globalDir: ".bob/skills", projectDir: ".bob/skills", grouped: false },
+  { key: "forgecode", label: "ForgeCode", globalDir: ".forge/skills", projectDir: ".forge/skills", grouped: false },
+  { key: "firebender", label: "Firebender", globalDir: ".firebender/skills", projectDir: ".firebender/skills", grouped: false },
+  { key: "minimax_code", label: "MiniMax Code", globalDir: ".minimax/skills", projectDir: ".minimax/skills", grouped: false },
+  { key: "posit_assistant", label: "Posit Assistant", globalDir: ".posit/assistant/skills", projectDir: ".posit/assistant/skills", grouped: false },
+  { key: "aider_desk", label: "AiderDesk", globalDir: ".aider-desk/skills", projectDir: ".aider-desk/skills", grouped: false },
+  { key: "autohand_code", label: "Autohand Code CLI", globalDir: ".autohand/skills", projectDir: ".autohand/skills", grouped: false },
 ];
 
 /**
@@ -169,4 +182,15 @@ export const DUPLICATE_READS: Readonly<Record<string, { keys: readonly string[];
   code_studio: { keys: ["agents_skills", "claude_code", "github_copilot"], behaviour: "unknown" },
   kimchi: { keys: ["agents_skills", "cursor", "codex", "pi", "gemini_cli", "github_copilot", "droid"], behaviour: "shadows" },
   oh_my_pi: { keys: ["agents_skills", "claude_code", "codex", "opencode"], behaviour: "shadows" },
+  // round 20 ticket 06 rows
+  grok_build: { keys: ["agents_skills", "cursor", "claude_code"], behaviour: "shadows" },
+  deep_agents_code: { keys: ["agents_skills", "claude_code"], behaviour: "shadows" },
+  reasonix: { keys: ["agents_skills", "claude_code"], behaviour: "unknown" },
+  cortex_code: { keys: ["claude_code"], behaviour: "flags_conflict" },
+  rovo_dev: { keys: ["agents_skills"], behaviour: "unknown" },
+  forgecode: { keys: ["agents_skills"], behaviour: "shadows" },
+  firebender: { keys: ["agents_skills", "cursor", "claude_code", "codex"], behaviour: "shows_all" },
+  minimax_code: { keys: ["agents_skills", "claude_code", "codex"], behaviour: "shadows" },
+  posit_assistant: { keys: ["agents_skills"], behaviour: "shadows" },
+  autohand_code: { keys: ["agents_skills", "claude_code", "codex"], behaviour: "shadows" },
 };

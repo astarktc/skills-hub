@@ -1,12 +1,12 @@
 use std::path::Path;
 
-use crate::core::environment::HostRoots;
+use crate::core::environment::{HostOs, HostRoot, HostRoots};
 use crate::core::tool_adapters::catalog::{DuplicateReads, ReaderEntry};
 use crate::core::tool_adapters::reads::DuplicateBehaviour;
 use crate::core::tool_adapters::{
     adapter_by_key, constituents_of, default_tool_adapters, global_tool_entries, installed_keys,
     mark_installed_in, mark_reader_installed_in, project_tool_entries, skills_dir_in,
-    test_overrides, ToolCatalogEntry, ToolId, VirtualGroup,
+    test_overrides, RegistryPath, ToolCatalogEntry, ToolId, VirtualGroup,
 };
 
 fn install(home: &Path, key: &str) {
@@ -266,20 +266,24 @@ fn project_catalog_groups_by_project_skills_dir() {
 #[test]
 fn only_the_global_catalog_carries_placement_straight_from_the_registry() {
     let home = tempfile::tempdir().unwrap();
+    // `HostRoots::under_home` lays the app-data roots out as Windows does, so
+    // a path whose effective root on this host is one of them (Reasonix on
+    // Windows) is spelled under `~/AppData/…`.
+    let shown = |path: &RegistryPath| {
+        let (root, rel) = path.effective(HostOs::CURRENT);
+        match root {
+            HostRoot::Home => format!("~/{rel}"),
+            HostRoot::RoamingAppData => format!("~/AppData/Roaming/{rel}"),
+            HostRoot::LocalAppData => format!("~/AppData/Local/{rel}"),
+        }
+    };
     for entry in global_tool_entries(&HostRoots::under_home(home.path())) {
         let adapter = adapter_by_key(entry.key).unwrap();
         let placement = entry.placement.expect("every global entry is placed");
-        assert_eq!(
-            placement.skills_dir,
-            format!("~/{}", adapter.skills_dir.rel)
-        );
+        assert_eq!(placement.skills_dir, shown(&adapter.skills_dir));
         assert_eq!(
             placement.detect_dirs,
-            adapter
-                .detect_dirs
-                .iter()
-                .map(|dir| format!("~/{}", dir.rel))
-                .collect::<Vec<_>>()
+            adapter.detect_dirs.iter().map(shown).collect::<Vec<_>>()
         );
         assert_eq!(placement.supports_symlink, adapter.supports_symlink);
         // Spelled under `~`: the catalog never shows the operator's real home.
@@ -610,4 +614,62 @@ fn kimchi_reads_an_installed_agents_folder_but_not_claudes_by_default() {
             behaviour: DuplicateBehaviour::Shadows,
         })
     );
+}
+
+// round 20 ticket 06 rows
+
+/// With every harness installed, the ticket 06 rows resolve the pairs their
+/// brief facts promise (the fixture's `DUPLICATE_READS` restates them):
+/// Cortex Code flags a conflict with Claude Code's copy, Grok Build and
+/// Firebender also read Cursor's folder, and the harnesses that read no
+/// shared folder (IBM Bob, AiderDesk) make no pair.
+#[test]
+fn the_ticket_06_rows_resolve_their_cross_read_pairs() {
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    for adapter in default_tool_adapters() {
+        mark_installed_in(&roots, adapter);
+    }
+    let pair = |keys: &[&'static str], behaviour| {
+        Some(DuplicateReads {
+            keys: keys.to_vec(),
+            behaviour,
+        })
+    };
+    use DuplicateBehaviour::{FlagsConflict, Shadows, ShowsAll, Unknown};
+    let expected = [
+        (
+            "grok_build",
+            pair(&["agents_skills", "cursor", "claude_code"], Shadows),
+        ),
+        (
+            "deep_agents_code",
+            pair(&["agents_skills", "claude_code"], Shadows),
+        ),
+        ("reasonix", pair(&["agents_skills", "claude_code"], Unknown)),
+        ("cortex_code", pair(&["claude_code"], FlagsConflict)),
+        ("rovo_dev", pair(&["agents_skills"], Unknown)),
+        ("ibm_bob", None),
+        ("forgecode", pair(&["agents_skills"], Shadows)),
+        (
+            "firebender",
+            pair(
+                &["agents_skills", "cursor", "claude_code", "codex"],
+                ShowsAll,
+            ),
+        ),
+        (
+            "minimax_code",
+            pair(&["agents_skills", "claude_code", "codex"], Shadows),
+        ),
+        ("posit_assistant", pair(&["agents_skills"], Shadows)),
+        ("aider_desk", None),
+        (
+            "autohand_code",
+            pair(&["agents_skills", "claude_code", "codex"], Shadows),
+        ),
+    ];
+    for (key, pairs) in expected {
+        assert_eq!(duplicate_readers_of(&roots, key), pairs, "{key}");
+    }
 }

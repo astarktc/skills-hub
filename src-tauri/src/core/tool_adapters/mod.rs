@@ -80,6 +80,19 @@ pub enum ToolId {
     AstrBot,
     OhMyPi,
     Stakpak,
+    // round 20 ticket 06 rows
+    GrokBuild,
+    DeepAgentsCode,
+    Reasonix,
+    CortexCode,
+    RovoDev,
+    IbmBob,
+    ForgeCode,
+    Firebender,
+    MiniMaxCode,
+    PositAssistant,
+    AiderDesk,
+    AutohandCode,
 }
 
 impl ToolId {
@@ -148,6 +161,19 @@ impl ToolId {
             ToolId::AstrBot => "astrbot",
             ToolId::OhMyPi => "oh_my_pi",
             ToolId::Stakpak => "stakpak",
+            // round 20 ticket 06 rows
+            ToolId::GrokBuild => "grok_build",
+            ToolId::DeepAgentsCode => "deep_agents_code",
+            ToolId::Reasonix => "reasonix",
+            ToolId::CortexCode => "cortex_code",
+            ToolId::RovoDev => "rovo_dev",
+            ToolId::IbmBob => "ibm_bob",
+            ToolId::ForgeCode => "forgecode",
+            ToolId::Firebender => "firebender",
+            ToolId::MiniMaxCode => "minimax_code",
+            ToolId::PositAssistant => "posit_assistant",
+            ToolId::AiderDesk => "aider_desk",
+            ToolId::AutohandCode => "autohand_code",
         }
     }
 }
@@ -209,9 +235,10 @@ pub struct ToolAdapter {
     /// `None` for standalone tools and for group entries themselves.
     pub group: Option<VirtualGroup>,
     /// Whether the tool can consume a symlinked/junctioned skills dir.
-    /// `false` forces copy mode in every sync path. Every current entry is
-    /// `true`; the capability stays as the lever for a tool that regresses
-    /// (Cursor was `false` until IDE 2.5 / CLI 2026-06 fixed discovery).
+    /// `false` forces copy mode in every sync path. Every current entry but
+    /// Deep Agents Code (which rejects links resolving outside its skill
+    /// roots) is `true`; the capability is also the lever for a tool that
+    /// regresses (Cursor was `false` until IDE 2.5 / CLI 2026-06 fixed discovery).
     pub supports_symlink: bool,
     /// Which shared skills folders the harness reads, what wins, what it
     /// does with a duplicate, and which other folders it also reads — each
@@ -2048,6 +2075,396 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
             precedence: Precedence::Unknown,
             duplicates: DuplicateBehaviour::Unknown,
             also_reads: &[],
+        },
+    },
+    // round 20 ticket 06 rows
+    ToolAdapter {
+        id: ToolId::GrokBuild,
+        display_name: "Grok Build",
+        // Brief § Part 1 A, row "Grok Build" (T14): `~/.grok/skills`, Windows
+        // `%USERPROFILE%\.grok` (= home). `GROK_HOME` is not honoured.
+        skills_dir: home(".grok/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".grok")],
+        project_skills_dir: Some(".grok/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2 "Recommended Part 1 additions", row "Grok Build".
+        // VERIFIED T14: `~/.grok` first-seen wins over `~/.agents`; `.claude` and
+        // `.cursor` are default-on compat cells (`[compat.*].skills`).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[AlsoRead {
+                dir: home(".cursor/skills"),
+                mode: ReadMode::Default,
+            }],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::DeepAgentsCode,
+        display_name: "Deep Agents Code",
+        // Brief § Part 1 A, row "Deep Agents Code" (T8): the default agent's
+        // `~/.deepagents/agent/skills`; custom-named agents are unreachable.
+        // `DEEPAGENTS_HOME` is not honoured.
+        skills_dir: home(".deepagents/agent/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".deepagents")],
+        project_skills_dir: Some(".deepagents/skills"),
+        group: None,
+        // Copy (spec Q29, brief I8): it rejects a skill whose resolved path
+        // leaves its skill roots unless allow-listed, and a link resolves into
+        // the central repo. #84 later makes the mode the operator's choice.
+        supports_symlink: false,
+        // Read facts: brief § Part 2 "Recommended Part 1 additions", row "Deep Agents Code".
+        // VERIFIED T8: `~/.agents` overrides `~/.deepagents/<agent>`; the
+        // `.claude` reads are labelled experimental but on by default.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Shared,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::Reasonix,
+        display_name: "Reasonix",
+        // Brief § Part 1 A, row "Reasonix" (T27, I7): `<Reasonix home>/skills`,
+        // home `~/.reasonix` on macOS/Linux and `%APPDATA%\reasonix` on Windows
+        // (the registry's first per-OS override). `REASONIX_HOME` is not honoured.
+        skills_dir: home(".reasonix/skills").overridden(&[OsOverride {
+            os: HostOs::Windows,
+            root: HostRoot::RoamingAppData,
+            rel: "reasonix/skills",
+        }]),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".reasonix").overridden(&[OsOverride {
+            os: HostOs::Windows,
+            root: HostRoot::RoamingAppData,
+            rel: "reasonix",
+        }])],
+        project_skills_dir: Some(".reasonix/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2 "Recommended Part 1 additions", row "Reasonix".
+        // VERIFIED T27 reads. Precedence is LIKELY own (the global list puts the
+        // Reasonix home first; the doc orders scopes, not dirs within one), so
+        // `Unknown`, as is what a same-scope duplicate does. It also scans
+        // `~/.reasonix/skills` on Windows (not modelled: no other row's dir).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[AlsoRead {
+                dir: home(".agent/skills"),
+                mode: ReadMode::Default,
+            }],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::CortexCode,
+        display_name: "Cortex Code",
+        // Brief § Part 1 A, row "Cortex Code" (T5): CLI and Desktop share
+        // `~/.snowflake/cortex`. Detected there, **never** on `.snowflake`, which
+        // the Snowflake CLI shares (brief I4, spec: binding).
+        skills_dir: home(".snowflake/cortex/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".snowflake/cortex")],
+        project_skills_dir: Some(".cortex/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2 "Recommended Part 1 additions", row "Cortex Code".
+        // VERIFIED T5: both copies listed; differing copies show a conflict
+        // indicator (`/skill sync` resolves).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: Yes,
+            },
+            precedence: Precedence::Both,
+            duplicates: DuplicateBehaviour::FlagsConflict,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::RovoDev,
+        display_name: "Rovo Dev",
+        // Brief § Part 1 A, row "Rovo Dev" (T15); `~/.rovodev` holds `config.yml`.
+        skills_dir: home(".rovodev/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".rovodev")],
+        project_skills_dir: Some(".rovodev/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2 "Recommended Part 1 additions", row "Rovo Dev".
+        // VERIFIED T15: `~/.rovodev` and `~/.agents` are one "User" tier; which
+        // copy wins inside it is undocumented.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::IbmBob,
+        display_name: "IBM Bob",
+        // Brief § Part 1 A, row "IBM Bob" (T4); `~/.bob` holds `settings/settings.json`.
+        skills_dir: home(".bob/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".bob")],
+        project_skills_dir: Some(".bob/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2 "Recommended Part 1 additions", row "IBM Bob".
+        // VERIFIED T4: its own folders only (project > global).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::ForgeCode,
+        display_name: "ForgeCode",
+        // Brief § Part 1 A, row "ForgeCode" (T13): `~/.forge/skills`. Detected on
+        // `.forge` only: Forge keeps its base at the legacy `~/forge` while that
+        // directory exists (`forge_config` `resolve_base_path`, re-verified
+        // 2026-11-06), so a legacy install reads `~/forge/skills`, not this dir —
+        // detecting `forge` (brief I4) would deploy into a folder it does not
+        // read. `FORGE_CONFIG` is not honoured.
+        skills_dir: home(".forge/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".forge")],
+        project_skills_dir: Some(".forge/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2 "Recommended Part 1 additions", row "ForgeCode".
+        // VERIFIED T13: `~/.agents` > `~/.forge` (last occurrence kept).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            precedence: Precedence::Shared,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::Firebender,
+        display_name: "Firebender",
+        // Brief § Part 1 A, row "Firebender" (T12); `~/.firebender` holds
+        // `firebender.json`, `rules/` and `commands/`.
+        skills_dir: home(".firebender/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".firebender")],
+        project_skills_dir: Some(".firebender/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2 "Recommended Part 1 additions", row "Firebender".
+        // VERIFIED T12: up to six copies are listed (one USER tier). Its
+        // `~/.goose/skills` is not the Goose row's `~/.config/goose/skills`.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::ShowsAll,
+            also_reads: &[
+                AlsoRead {
+                    dir: home(".codex/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".cursor/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".goose/skills"),
+                    mode: ReadMode::Default,
+                },
+            ],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::MiniMaxCode,
+        display_name: "MiniMax Code",
+        // Brief § Part 1 A, row "MiniMax Code" (T24): `<dataDir>/skills`, dataDir
+        // `~/.minimax` (`packages/config/src/data-dir.ts`, re-verified 2026-11-06;
+        // legacy `~/.mavis` migrates). Detect-dir flag (brief I4, spec Q29):
+        // `.minimax` may be shared with other MiniMax products (UNKNOWN).
+        // `MINIMAX_DATA_DIR` is not honoured.
+        skills_dir: home(".minimax/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".minimax")],
+        project_skills_dir: Some(".minimax/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2 "Recommended Part 1 additions", row "MiniMax Code".
+        // VERIFIED T24: the external roots (priority 30–40) outrank its own
+        // `<dataDir>/skills` root (no priority, 0) in one rank, so the shared
+        // copy wins; `duplicateWarn` logs the shadowed one.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Shared,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[AlsoRead {
+                dir: home(".codex/skills"),
+                mode: ReadMode::Default,
+            }],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::PositAssistant,
+        display_name: "Posit Assistant",
+        // Brief § Part 1 A, row "Posit Assistant" (T18): `~/.posit/assistant`
+        // holds `settings.json`. Detected there only: **never** on `.posit` (brief
+        // I4, spec: binding), and never on the pre-rename `.positai`: an old release
+        // reads `~/.positai/skills`, so detecting it would deploy into a folder that
+        // install does not read (spec Q7; orchestrator 2026-11-06, as ForgeCode's `forge`).
+        skills_dir: home(".posit/assistant/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".posit/assistant")],
+        project_skills_dir: Some(".posit/assistant/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2 "Recommended Part 1 additions", row "Posit Assistant".
+        // VERIFIED T18: the later dir wins, and `.posit/assistant` loads after
+        // `.agents`. `skills.paths` replaces the defaults (a setting: still `Yes`).
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: No,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::AiderDesk,
+        display_name: "AiderDesk",
+        // Brief § Part 1 A, row "AiderDesk" (T3): `~/.aider-desk` holds its rules,
+        // prompts, extensions and projects. `AIDER_DESK_HOME_DIR` is not honoured.
+        skills_dir: home(".aider-desk/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".aider-desk")],
+        project_skills_dir: Some(".aider-desk/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2 "Recommended Part 1 additions", row "AiderDesk".
+        // VERIFIED T3: its own folders only; skills load only with "Use Skills
+        // Tools" on in the agent profile.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            project: ScopeReads {
+                agents: No,
+                claude: No,
+            },
+            precedence: Precedence::Unknown,
+            duplicates: DuplicateBehaviour::Unknown,
+            also_reads: &[],
+        },
+    },
+    ToolAdapter {
+        id: ToolId::AutohandCode,
+        display_name: "Autohand Code CLI",
+        // Brief § Part 1 A, row "Autohand Code CLI" (T25): `~/.autohand` holds
+        // its config and sessions. `AUTOHAND_HOME` is not honoured.
+        skills_dir: home(".autohand/skills"),
+        former_skills_dirs: &[],
+        detect_dirs: &[home(".autohand")],
+        project_skills_dir: Some(".autohand/skills"),
+        group: None,
+        supports_symlink: true,
+        // Read facts: brief § Part 2 "Recommended Part 1 additions", row "Autohand Code CLI".
+        // VERIFIED T25: later location wins and `~/.autohand` loads last.
+        reads: ReadFacts {
+            global: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            project: ScopeReads {
+                agents: Yes,
+                claude: Yes,
+            },
+            precedence: Precedence::Own,
+            duplicates: DuplicateBehaviour::Shadows,
+            also_reads: &[
+                AlsoRead {
+                    dir: home(".codex/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".agent/skills"),
+                    mode: ReadMode::Default,
+                },
+            ],
         },
     },
 ];

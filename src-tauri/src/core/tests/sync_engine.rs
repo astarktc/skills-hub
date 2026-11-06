@@ -220,9 +220,35 @@ fn symlink_capable_tool_gets_a_link() {
         .is_symlink());
 }
 
+/// Deep Agents Code deploys by copy (spec Q29, brief I8): it rejects a skill
+/// whose resolved path leaves its skill roots, and a link would resolve into
+/// the central repo. The shipped registry row, not a flipped clone, says so.
+#[test]
+fn deep_agents_code_is_deployed_by_copy() {
+    let src_dir = tempfile::tempdir().unwrap();
+    fs::write(src_dir.path().join("SKILL.md"), b"---\nname: t\n---\n").unwrap();
+    let dst_dir = tempfile::tempdir().unwrap();
+    let target = dst_dir.path().join("t");
+
+    let deep_agents = adapter_by_key("deep_agents_code").expect("deep agents row");
+    let out = sync_dir_for_tool_with_overwrite(
+        deep_agents,
+        src_dir.path(),
+        Source::Directory(src_dir.path()),
+        &target,
+        false,
+        &ProtectedLibrary::unrecorded(),
+    )
+    .unwrap();
+    assert!(matches!(out.mode_used, SyncMode::Copy));
+    let meta = fs::symlink_metadata(&target).unwrap();
+    assert!(meta.is_dir() && !meta.file_type().is_symlink());
+    assert!(target.join("SKILL.md").is_file());
+}
+
 /// The capability, not the tool's identity, decides the mode: any adapter
-/// with `supports_symlink: false` is copied (no current registry entry is,
-/// so the record is cloned and flipped locally).
+/// with `supports_symlink: false` is copied (the record is cloned and
+/// flipped locally, so the case does not depend on a shipped row).
 #[test]
 fn any_adapter_without_symlink_support_is_copied() {
     let src_dir = tempfile::tempdir().unwrap();

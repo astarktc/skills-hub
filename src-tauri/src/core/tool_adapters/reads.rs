@@ -63,7 +63,6 @@ pub enum DuplicateBehaviour {
     /// An ambiguous name loads neither copy: invocation by name breaks (fx).
     LoadsNone,
     /// Differing copies are flagged as a conflict (Cortex Code).
-    #[allow(dead_code, reason = "first row: Cortex Code, round 20 ticket 06")]
     FlagsConflict,
     Unknown,
 }

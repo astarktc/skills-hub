@@ -94,6 +94,18 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 | `astrbot` | AstrBot | `.astrbot/data/skills` | — | `.astrbot` |
 | `oh_my_pi` | oh-my-pi | `.omp/agent/skills` | `.omp/skills` | `.omp` |
 | `stakpak` | Stakpak | `.stakpak/skills` | `.stakpak/skills` | `.stakpak` |
+| `grok_build` | Grok Build | `.grok/skills` | `.grok/skills` | `.grok` |
+| `deep_agents_code` | Deep Agents Code | `.deepagents/agent/skills` | `.deepagents/skills` | `.deepagents` |
+| `reasonix` | Reasonix | `.reasonix/skills` | `.reasonix/skills` | `.reasonix` |
+| `cortex_code` | Cortex Code | `.snowflake/cortex/skills` | `.cortex/skills` | `.snowflake/cortex` |
+| `rovo_dev` | Rovo Dev | `.rovodev/skills` | `.rovodev/skills` | `.rovodev` |
+| `ibm_bob` | IBM Bob | `.bob/skills` | `.bob/skills` | `.bob` |
+| `forgecode` | ForgeCode | `.forge/skills` | `.forge/skills` | `.forge` |
+| `firebender` | Firebender | `.firebender/skills` | `.firebender/skills` | `.firebender` |
+| `minimax_code` | MiniMax Code | `.minimax/skills` | `.minimax/skills` | `.minimax` |
+| `posit_assistant` | Posit Assistant | `.posit/assistant/skills` | `.posit/assistant/skills` | `.posit/assistant` |
+| `aider_desk` | AiderDesk | `.aider-desk/skills` | `.aider-desk/skills` | `.aider-desk` |
+| `autohand_code` | Autohand Code CLI | `.autohand/skills` | `.autohand/skills` | `.autohand` |
 | `warp` | Warp | — | — | `.warp` or `.config/warp-terminal` |
 | `zed` | Zed | — | — | `.config/zed` |
 | `dexto` | Dexto | — | — | `.dexto` |
@@ -127,6 +139,12 @@ config dir is `~/Library/Application Support/com.vinhnx.vtcode`.
 Environment-variable homes (`KIMI_CODE_HOME`, `DSH_HOME`, `CODEWHALE_HOME`, `VTCODE_HOME`, `DIMCODE_HOME`,
 `CORUST_HOME` and the like) are not honoured: Skills Hub always uses the
 default folders above (an app launched from the Finder does not see your shell environment).
+
+<!-- round 20 ticket 06 notes -->
+That includes `GROK_HOME`, `DEEPAGENTS_HOME`, `REASONIX_HOME`, `AUTOHAND_HOME`, `AIDER_DESK_HOME_DIR`,
+`FORGE_CONFIG` and `MINIMAX_DATA_DIR`. On Windows, Reasonix lives under `%APPDATA%\reasonix` instead of
+`~/.reasonix` (skills in `%APPDATA%\reasonix\skills`), as Reasonix documents. Deep Agents Code is deployed
+by copy, not by link: it refuses a skill whose real path lies outside its skill folders.
 
 ## Development
 

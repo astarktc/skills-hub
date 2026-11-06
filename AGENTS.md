@@ -479,8 +479,8 @@ than re-tagging.
 
 - Never hand-edit version numbers (use `version:set`).
 - Never special-case a tool by name in sync code. Copy-vs-symlink is decided only by the registry capability
-  `supports_symlink` (`sync_dir_for_tool_with_overwrite`, `core/sync_engine.rs`); every current entry is
-  `true` (Cursor was copy-only until Cursor 2.5 fixed `~/.cursor/skills` symlink discovery — flipped in v-next
+  `supports_symlink` (`sync_dir_for_tool_with_overwrite`, `core/sync_engine.rs`); every current entry but Deep
+  Agents Code is `true` (it rejects a link resolving outside its skill roots, spec round 20 Q29; Cursor was copy-only until Cursor 2.5 fixed `~/.cursor/skills` symlink discovery — flipped in v-next
   ticket 38; the flag is the revert lever if a tool regresses). A capability describes **one entry**: a virtual
   group's capability is its own registry fact, not the AND of its constituents (decision: v-next ticket 36).
 - Never commit `.claude/`, `.agents/`, `.pi/`, `.mcp.json`, or `docs/conversation-logs/` (all gitignored). `.scratch/` **is**

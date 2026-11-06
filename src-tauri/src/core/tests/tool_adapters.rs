@@ -52,6 +52,17 @@ fn path_resolution_joins_adapter_dirs_onto_home() {
 /// exactly these paths, on every OS (no production row carries an override).
 #[test]
 fn every_existing_row_resolves_to_the_paths_it_always_has() {
+    // `HostRoots::under_home` puts roaming app data at `~/AppData/Roaming`.
+    const REASONIX_SKILLS: &str = if cfg!(windows) {
+        "AppData/Roaming/reasonix/skills"
+    } else {
+        ".reasonix/skills"
+    };
+    const REASONIX_DETECT: &str = if cfg!(windows) {
+        "AppData/Roaming/reasonix"
+    } else {
+        ".reasonix"
+    };
     #[allow(clippy::type_complexity)]
     let expected: &[(&str, &str, &[&str], &[&str])] = &[
         ("agents_skills", ".agents/skills", &[], &[".agents"]),
@@ -162,6 +173,35 @@ fn every_existing_row_resolves_to_the_paths_it_always_has() {
         ("astrbot", ".astrbot/data/skills", &[], &[".astrbot"]),
         ("oh_my_pi", ".omp/agent/skills", &[], &[".omp"]),
         ("stakpak", ".stakpak/skills", &[], &[".stakpak"]),
+        // round 20 ticket 06 rows (new, so "always" is their first form;
+        // Reasonix resolves under `%APPDATA%` on Windows)
+        ("grok_build", ".grok/skills", &[], &[".grok"]),
+        (
+            "deep_agents_code",
+            ".deepagents/agent/skills",
+            &[],
+            &[".deepagents"],
+        ),
+        ("reasonix", REASONIX_SKILLS, &[], &[REASONIX_DETECT]),
+        (
+            "cortex_code",
+            ".snowflake/cortex/skills",
+            &[],
+            &[".snowflake/cortex"],
+        ),
+        ("rovo_dev", ".rovodev/skills", &[], &[".rovodev"]),
+        ("ibm_bob", ".bob/skills", &[], &[".bob"]),
+        ("forgecode", ".forge/skills", &[], &[".forge"]),
+        ("firebender", ".firebender/skills", &[], &[".firebender"]),
+        ("minimax_code", ".minimax/skills", &[], &[".minimax"]),
+        (
+            "posit_assistant",
+            ".posit/assistant/skills",
+            &[],
+            &[".posit/assistant"],
+        ),
+        ("aider_desk", ".aider-desk/skills", &[], &[".aider-desk"]),
+        ("autohand_code", ".autohand/skills", &[], &[".autohand"]),
     ];
     assert_eq!(
         expected.len(),
@@ -289,19 +329,126 @@ fn a_registry_path_displays_under_tilde_only_when_it_lies_under_home() {
     );
 }
 
-/// No production row uses an override yet (Reasonix, ticket 06, is the
-/// first), and every default root is home: a row moving off home is a
-/// deliberate registry edit that updates this pin.
+/// Every default root is home, and the only per-OS overrides are Reasonix's
+/// (round 20 ticket 06, the first production consumer): its skills and its
+/// config root live under `%APPDATA%\reasonix` on Windows. A row moving off
+/// home, or a second override, is a deliberate registry edit that updates
+/// this pin.
 #[test]
-fn every_production_path_is_home_rooted_without_overrides() {
+fn every_production_path_is_home_rooted_and_only_reasonix_overrides() {
+    let reasonix_overrides: [(&str, &[OsOverride]); 2] = [
+        (
+            ".reasonix/skills",
+            &[OsOverride {
+                os: HostOs::Windows,
+                root: HostRoot::RoamingAppData,
+                rel: "reasonix/skills",
+            }],
+        ),
+        (
+            ".reasonix",
+            &[OsOverride {
+                os: HostOs::Windows,
+                root: HostRoot::RoamingAppData,
+                rel: "reasonix",
+            }],
+        ),
+    ];
     for adapter in default_tool_adapters() {
         let mut paths = vec![adapter.skills_dir];
         paths.extend(adapter.former_skills_dirs.iter().copied());
         paths.extend(adapter.detect_dirs.iter().copied());
         for path in paths {
             assert_eq!(path.root, HostRoot::Home, "{}: {path:?}", adapter.key());
-            assert!(path.overrides.is_empty(), "{}: {path:?}", adapter.key());
+            if adapter.key() == "reasonix" {
+                let expected = reasonix_overrides
+                    .iter()
+                    .find(|(rel, _)| *rel == path.rel)
+                    .map(|(_, overrides)| *overrides);
+                assert_eq!(Some(path.overrides), expected, "reasonix: {path:?}");
+            } else {
+                assert!(path.overrides.is_empty(), "{}: {path:?}", adapter.key());
+            }
         }
+    }
+}
+
+/// Reasonix's documented home (`docs/SKILLS.md`, brief T27) is `~/.reasonix`
+/// on macOS/Linux and `%APPDATA%\reasonix` on Windows: both its skills dir
+/// and its detect dir follow it, resolved against substituted roots.
+#[test]
+fn reasonix_lives_under_roaming_app_data_on_windows_only() {
+    let base = tempfile::tempdir().unwrap();
+    let roots = distinct_roots(base.path());
+    let reasonix = adapter_by_key("reasonix").expect("reasonix row");
+    let roaming = base.path().join("roaming").join("reasonix");
+    let home = base.path().join("home").join(".reasonix");
+
+    assert_eq!(
+        reasonix.skills_dir.resolve_for(HostOs::Windows, &roots),
+        roaming.join("skills")
+    );
+    assert_eq!(
+        reasonix.detect_dirs[0].resolve_for(HostOs::Windows, &roots),
+        roaming
+    );
+    for elsewhere in [HostOs::MacOs, HostOs::Linux] {
+        assert_eq!(
+            reasonix.skills_dir.resolve_for(elsewhere, &roots),
+            home.join("skills"),
+            "{elsewhere:?}"
+        );
+        assert_eq!(
+            reasonix.detect_dirs[0].resolve_for(elsewhere, &roots),
+            home,
+            "{elsewhere:?}"
+        );
+    }
+
+    // On this host: installed where its config root lives, deployed beside it.
+    let here = if cfg!(windows) { &roaming } else { &home };
+    assert!(!is_installed_in(&roots, reasonix));
+    mark_installed_in(&roots, reasonix);
+    assert!(is_installed_in(&roots, reasonix));
+    assert_eq!(skills_dir_in(&roots, reasonix), here.join("skills"));
+    assert_eq!(detect_dirs_in(&roots, reasonix), vec![here.clone()]);
+}
+
+/// Brief I4 detect-dir hazards for the round 20 ticket 06 rows (spec:
+/// binding): a harness is detected only by its own config root, never by a
+/// parent another product shares. ForgeCode is also never detected by its
+/// legacy un-dotted `~/forge`: Forge keeps reading `~/forge/skills` while
+/// that directory exists (`forge_config` `resolve_base_path`), so detecting it
+/// would deploy into a folder it does not read; Posit Assistant likewise never
+/// by its pre-rename `~/.positai` (an old release reads `~/.positai/skills`).
+#[test]
+fn new_rows_are_never_detected_by_a_shared_or_unread_root() {
+    let forbidden = [
+        ("cortex_code", ".snowflake"),
+        ("posit_assistant", ".posit"),
+        ("posit_assistant", ".positai"),
+        ("forgecode", "forge"),
+    ];
+    for (key, rel) in forbidden {
+        let adapter = adapter_by_key(key).unwrap_or_else(|| panic!("{key}"));
+        assert!(
+            adapter.detect_dirs.iter().all(|dir| dir.rel != rel),
+            "{key} must never be detected by `{rel}`"
+        );
+    }
+    // A shared parent alone is not the harness.
+    let home = tempfile::tempdir().unwrap();
+    let roots = HostRoots::under_home(home.path());
+    fs::create_dir_all(home.path().join(".snowflake")).unwrap();
+    fs::write(home.path().join(".snowflake/config.toml"), b"").unwrap();
+    fs::create_dir_all(home.path().join(".posit/connect")).unwrap();
+    fs::create_dir_all(home.path().join("forge/skills")).unwrap();
+    fs::create_dir_all(home.path().join(".positai/skills")).unwrap();
+    for key in ["cortex_code", "posit_assistant", "forgecode"] {
+        assert!(
+            !is_installed_in(&roots, adapter_by_key(key).unwrap()),
+            "{key} detected by a root that is not its own"
+        );
     }
 }
 
@@ -768,6 +915,19 @@ fn project_relative_skills_dir_for_every_tool() {
         ("astrbot", None),
         ("oh_my_pi", Some(".omp/skills")),
         ("stakpak", Some(".stakpak/skills")),
+        // round 20 ticket 06 rows
+        ("grok_build", Some(".grok/skills")),
+        ("deep_agents_code", Some(".deepagents/skills")),
+        ("reasonix", Some(".reasonix/skills")),
+        ("cortex_code", Some(".cortex/skills")),
+        ("rovo_dev", Some(".rovodev/skills")),
+        ("ibm_bob", Some(".bob/skills")),
+        ("forgecode", Some(".forge/skills")),
+        ("firebender", Some(".firebender/skills")),
+        ("minimax_code", Some(".minimax/skills")),
+        ("posit_assistant", Some(".posit/assistant/skills")),
+        ("aider_desk", Some(".aider-desk/skills")),
+        ("autohand_code", Some(".autohand/skills")),
     ];
     assert_eq!(
         expected.len(),
@@ -861,17 +1021,19 @@ fn agents_standard_group_lists_its_constituents_and_one_entry() {
     );
 }
 
-/// Every registry entry can take a symlinked skills dir (Cursor was the last
-/// copy-only entry; flipped in v-next ticket 38). Pinned so a regression to
-/// copy mode is a deliberate registry edit, not drift.
+/// Every registry entry but Deep Agents Code can take a symlinked skills dir
+/// (Cursor was copy-only until v-next ticket 38). Deep Agents Code rejects a
+/// skill whose resolved path leaves its skill roots (brief I8, T8), and a
+/// Skills Hub link resolves into the central repo, so it deploys by copy
+/// (spec Q29). Pinned so a change of mode is a deliberate registry edit.
 #[test]
-fn every_adapter_supports_symlink() {
+fn only_deep_agents_code_deploys_by_copy() {
     let no_symlink: Vec<&str> = default_tool_adapters()
         .iter()
         .filter(|a| !a.supports_symlink)
         .map(|a| a.key())
         .collect();
-    assert!(no_symlink.is_empty(), "copy-only entries: {no_symlink:?}");
+    assert_eq!(no_symlink, vec!["deep_agents_code"], "copy-only entries");
 }
 
 /// Keys are unique across both registry tables: a reader-only harness's key
@@ -1777,6 +1939,119 @@ fn every_row_restates_its_brief_read_facts() {
             P::Unknown,
             D::Unknown,
             &[],
+        ),
+        // round 20 ticket 06 rows: brief § Part 2 "Recommended Part 1 additions"
+        (
+            "grok_build",
+            "Grok Build",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Own,
+            D::Shadows,
+            &[(".cursor/skills", M::Default)],
+        ),
+        (
+            "deep_agents_code",
+            "Deep Agents Code",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Shared,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "reasonix",
+            "Reasonix",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Unknown,
+            D::Unknown,
+            &[(".agent/skills", M::Default)],
+        ),
+        (
+            "cortex_code",
+            "Cortex Code",
+            [No, Yes],
+            [No, Yes],
+            P::Both,
+            D::FlagsConflict,
+            &[],
+        ),
+        (
+            "rovo_dev",
+            "Rovo Dev",
+            [Yes, No],
+            [Yes, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "ibm_bob",
+            "IBM Bob",
+            [No, No],
+            [No, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "forgecode",
+            "ForgeCode",
+            [Yes, No],
+            [No, No],
+            P::Shared,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "firebender",
+            "Firebender",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Unknown,
+            D::ShowsAll,
+            &[
+                (".codex/skills", M::Default),
+                (".cursor/skills", M::Default),
+                (".goose/skills", M::Default),
+            ],
+        ),
+        (
+            "minimax_code",
+            "MiniMax Code",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Shared,
+            D::Shadows,
+            &[(".codex/skills", M::Default)],
+        ),
+        (
+            "posit_assistant",
+            "Posit Assistant",
+            [Yes, No],
+            [Yes, No],
+            P::Own,
+            D::Shadows,
+            &[],
+        ),
+        (
+            "aider_desk",
+            "AiderDesk",
+            [No, No],
+            [No, No],
+            P::Unknown,
+            D::Unknown,
+            &[],
+        ),
+        (
+            "autohand_code",
+            "Autohand Code CLI",
+            [Yes, Yes],
+            [Yes, Yes],
+            P::Own,
+            D::Shadows,
+            &[(".codex/skills", M::Default), (".agent/skills", M::Default)],
         ),
     ];
     let keys: Vec<&str> = default_tool_adapters().iter().map(|a| a.key()).collect();
