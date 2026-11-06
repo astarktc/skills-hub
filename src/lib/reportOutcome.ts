@@ -1867,21 +1867,24 @@ export function libraryMoveOutcome(
   }
   for (const deployment of report.deployments) {
     const { status } = deployment;
+    // Named by the Deployment folder its rows describe (`folder_key`), never a
+    // pre-1.4.0 sibling's own key: a stored 1.3.4 report has the key filled
+    // by the backend's compatibility decoder.
     const row = deployment.rows[0];
     const subject: EntrySubject = {
       skillId: deployment.skill_id,
       skillName: deployment.name,
-      ...(row ? { tool: row.tool } : {}),
+      ...(row ? { tool: row.folder_key } : {}),
       ...(row?.scope === "assignment" ? { projectId: row.project_id } : {}),
     };
-    const where = row ? tool(row.tool) : deployment.path;
+    const where = row ? tool(row.folder_key) : deployment.path;
     if (status.status === "failed") {
       out.errors.push({
         title: ctx.t("libraryMove.report.relinkFailedTitle", { name: deployment.name, tool: where }),
         message: errorMessage(ctx, status.error),
         subject,
         error: status.error,
-        ...(row && row.scope === "global_target" ? { repair: { verb: "retry" as const, tool: row.tool } } : {}),
+        ...(row && row.scope === "global_target" ? { repair: { verb: "retry" as const, tool: row.folder_key } } : {}),
       });
     } else if (status.status === "skipped" && status.reason === "not_ours") {
       out.warnings.push({

@@ -2580,6 +2580,69 @@ describe("libraryMoveOutcome", () => {
     expect(outcome.completion).toEqual({ reload: false, closeModal: false, conflict: false });
   });
 
+  it("names a stored 1.3.4 report's Deployments by their folder, not a sibling's own key", () => {
+    // The shape `decode_stored_report` hands out for the 1.3.4 fixture
+    // (`src-tauri/src/core/tests/fixtures/library-move-report-1.3.4.json`):
+    // Kimi's pre-1.4.0 rows carry the folder key the backend's rule filled in.
+    const failure = { code: "OTHER", message: "permission denied" } as const;
+    const r = report({
+      skills: [moved("alpha")],
+      deployments: [
+        {
+          skill_id: "alpha",
+          name: "alpha",
+          path: "/Users/op/.config/agents/skills/alpha",
+          rows: [
+            { scope: "global_target", id: "t-kimi", skill_id: "alpha", tool: "kimi_cli", folder_key: "amp" },
+            { scope: "global_target", id: "t-amp", skill_id: "alpha", tool: "amp", folder_key: "amp" },
+          ],
+          status: { status: "failed", error: failure },
+        },
+        {
+          skill_id: "alpha",
+          name: "alpha",
+          path: "/Users/op/code/app/.agents/skills/alpha",
+          rows: [
+            {
+              scope: "assignment",
+              id: "a-kimi",
+              project_id: "project-app",
+              skill_id: "alpha",
+              tool: "kimi_cli",
+              folder_key: "agents_skills",
+            },
+            {
+              scope: "assignment",
+              id: "a-amp",
+              project_id: "project-app",
+              skill_id: "alpha",
+              tool: "amp",
+              folder_key: "agents_skills",
+            },
+          ],
+          status: { status: "skipped", reason: "not_ours" },
+        },
+      ],
+    });
+    const labels = { ...ctx, toolLabelById: { amp: "Amp folder", kimi_cli: "Kimi", agents_skills: "Agents folder" } };
+
+    const outcome = libraryMoveOutcome(r, labels);
+
+    expect(libraryMoveCounts(r)).toMatchObject({ failed: 1, notOurs: 1 });
+    expect(outcome.errors).toHaveLength(1);
+    expect(outcome.errors[0]).toMatchObject({
+      title: 'libraryMove.report.relinkFailedTitle {"name":"alpha","tool":"Amp folder"}',
+      repair: { verb: "retry", tool: "amp" },
+      subject: { skillId: "alpha", tool: "amp" },
+    });
+    expect(outcome.warnings.map((entry) => [entry.title, entry.subject])).toEqual([
+      [
+        'libraryMove.report.notOursTitle {"name":"alpha","tool":"Agents folder"}',
+        { skillId: "alpha", skillName: "alpha", tool: "agents_skills", projectId: "project-app" },
+      ],
+    ]);
+  });
+
   it("a clean move is a success whose old folder is a note, not a skip", () => {
     const outcome = libraryMoveOutcome(
       report({ skills: [moved("a")], deployments: [deployment("a", { status: "relinked", mode: "symlink" })] }),

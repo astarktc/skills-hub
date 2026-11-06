@@ -2158,6 +2158,83 @@ fn legacy_sibling_rows_are_disabled_gated_and_enabled_as_one_folder() {
     );
 }
 
+/// Global Enable never deletes or re-records an independent row: a Kimi Code
+/// Keep marker recorded under another name over a foreign folder neither
+/// blocks the folder's Enable nor is touched by it, and its folder stays.
+#[test]
+fn global_enable_leaves_an_independent_keep_marker_alone() {
+    let f = fixture(&["amp", "kimi_cli"]);
+    f.sync(&["amp"]);
+    let shared = f.global_path(".config/agents/skills");
+    let old_name = shared.with_file_name("old-name");
+    std::fs::create_dir_all(&old_name).unwrap();
+    std::fs::write(old_name.join("SKILL.md"), "foreign").unwrap();
+    f.store
+        .upsert_skill_target(&crate::core::skill_store::SkillTargetRecord {
+            id: "legacy-kimi-keep".into(),
+            skill_id: f.skill_id.clone(),
+            tool: "kimi_cli".into(),
+            target_path: old_name.to_string_lossy().into(),
+            mode: crate::core::sync_status::SyncMode::Symlink,
+            status: SyncStatus::Disabled,
+            last_error: None,
+            synced_at: None,
+        })
+        .unwrap();
+    let roots = HostRoots::under_home(f.home());
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &roots,
+        &f.pair("amp"),
+        NOW,
+    )
+    .unwrap();
+    assert!(!exists_any(&shared));
+    let marker_before = f
+        .store
+        .get_skill_target(&f.skill_id, "kimi_cli")
+        .unwrap()
+        .unwrap();
+
+    let enabled = enable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &roots,
+        &f.pair("amp"),
+        NOW,
+    )
+    .unwrap();
+
+    assert!(
+        matches!(
+            enabled.global.as_slice(),
+            [o] if matches!(o.status, crate::core::global_sync::BatchTargetStatus::Synced { .. })
+        ),
+        "{:?}",
+        enabled.global
+    );
+    assert!(exists_any(&shared));
+    assert_eq!(f.status("amp"), Some(SyncStatus::Synced));
+    let marker = f
+        .store
+        .get_skill_target(&f.skill_id, "kimi_cli")
+        .unwrap()
+        .expect("the independent record is kept");
+    assert_eq!(
+        (marker.status, marker.synced_at, &marker.target_path),
+        (
+            marker_before.status,
+            marker_before.synced_at,
+            &marker_before.target_path
+        )
+    );
+    assert_eq!(
+        std::fs::read_to_string(old_name.join("SKILL.md")).unwrap(),
+        "foreign"
+    );
+}
+
 /// The batch's Disabled rule reads a sibling's disabled row as its folder's.
 #[test]
 fn a_disabled_legacy_sibling_row_gates_the_folder() {

@@ -9,7 +9,7 @@ use crate::core::{
     mutation_guard,
     placement::{self, row_folder, PlacementSettings, ScopeKind},
     project_ops,
-    removal_fence::{self, ProtectedLibrary},
+    removal_fence::ProtectedLibrary,
     skill_store::{
         AssignmentTransition, ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore,
     },
@@ -177,23 +177,17 @@ pub(crate) fn project_folder(tool_key: &str) -> String {
         .unwrap_or_else(|| row_folder(ScopeKind::Project, tool_key))
 }
 
-/// The assignment of `skill_id` in `project_id` describing the folder
-/// `tool_key` names — the row keyed by the folder itself when there is one,
-/// else a row written for a sibling sharing it before rows were per folder.
+/// The assignment standing for the folder `tool_key` names in `project_id`
+/// for `skill_id`: the folder's driver ([`folder_rows_of`]), whichever key
+/// wrote it — the row keyed by the folder itself, or one a sibling sharing it
+/// wrote before rows were per folder.
 pub(crate) fn folder_assignment(
     store: &SkillStore,
     project_id: &str,
     skill_id: &str,
     tool_key: &str,
 ) -> Result<Option<ProjectSkillAssignmentRecord>> {
-    let folder = project_folder(tool_key);
-    if let Some(own) = store.get_project_skill_assignment(project_id, skill_id, &folder)? {
-        return Ok(Some(own));
-    }
-    Ok(store
-        .list_project_skill_assignments(project_id)?
-        .into_iter()
-        .find(|a| a.skill_id == skill_id && row_folder(ScopeKind::Project, &a.tool) == folder))
+    Ok(folder_rows_of(store, project_id, skill_id, tool_key)?.map(|group| group.driver))
 }
 
 /// The registry entry that deploys into the project folder a row keyed
@@ -213,52 +207,18 @@ pub(crate) fn deploy_adapter(tool_key: &str) -> Result<&'static ToolAdapter> {
         })
 }
 
-/// Group assignment rows by (project, skill, folder) and split each folder by
-/// the **physical** artifact its rows name (`placement::folder_rows`, with
-/// `removal_fence::same_artifact` as the test): only rows proven to name the
-/// driver's artifact share its ownership and settlement. A row whose artifact
-/// cannot be located (its project or Tool gone, no name) is proven the same as
-/// nothing but itself.
+/// Group assignment rows by (project, skill, folder) and split each folder
+/// by recorded path (`placement::folder_rows`): the driver, the rows recording
+/// its very path (they share its state and settle with it) and independent
+/// rows recording another name, which no write of the folder touches.
 pub(crate) fn project_folder_rows(
-    store: &SkillStore,
     rows: Vec<ProjectSkillAssignmentRecord>,
-) -> Result<Vec<placement::FolderRows<ProjectSkillAssignmentRecord>>> {
-    let mut projects: HashMap<String, Option<ProjectRecord>> = HashMap::new();
-    let mut paths: HashMap<String, Option<PathBuf>> = HashMap::new();
-    for row in &rows {
-        if !projects.contains_key(&row.project_id) {
-            projects.insert(
-                row.project_id.clone(),
-                store.get_project_by_id(&row.project_id)?,
-            );
-        }
-        let path = match (
-            projects.get(&row.project_id).and_then(Option::as_ref),
-            tool_adapters::project_adapter_by_key(&row.tool),
-        ) {
-            (Some(project), Some(adapter)) => {
-                resolve_assignment_artifact(Path::new(&project.path), adapter, row, || {
-                    Ok(store
-                        .get_skill_by_id(&row.skill_id)?
-                        .map(|skill| skill.name))
-                })?
-            }
-            _ => None,
-        };
-        paths.insert(row.id.clone(), path);
-    }
-    Ok(placement::folder_rows(
-        ScopeKind::Project,
-        rows,
-        |driver, row| match (paths.get(&driver.id), paths.get(&row.id)) {
-            (Some(Some(a)), Some(Some(b))) => removal_fence::same_artifact(a, b),
-            _ => false,
-        },
-    ))
+) -> Vec<placement::FolderRows<ProjectSkillAssignmentRecord>> {
+    placement::folder_rows(ScopeKind::Project, rows)
 }
 
 /// The rows of one (project, skill) describing the folder `tool_key` names,
-/// split by artifact; `None` when the folder has no row.
+/// split by recorded path; `None` when the folder has no row.
 fn folder_rows_of(
     store: &SkillStore,
     project_id: &str,
@@ -271,7 +231,7 @@ fn folder_rows_of(
         .into_iter()
         .filter(|a| a.skill_id == skill_id && row_folder(ScopeKind::Project, &a.tool) == folder)
         .collect();
-    Ok(project_folder_rows(store, rows)?.into_iter().next())
+    Ok(project_folder_rows(rows).into_iter().next())
 }
 
 /// Test fixture over [`assign_and_settle`]: create one assignment row and
@@ -603,66 +563,70 @@ pub(crate) fn assign_skill_to_tools(
         folders.push(folder);
     }
     for tool_key in &folders {
-        let (assignment_id, status) =
-            match folder_assignment(store, &project.id, &skill.id, tool_key)? {
-                // A skill disabled at skill grain answers Disabled for every
-                // existing row too: a failed Disable leaves it `error`, and
-                // that row is not "already assigned" — it is off until Enable.
-                Some(existing) if existing.status == SyncStatus::Disabled || skill_disabled => (
-                    Some(existing.id),
-                    ProjectSyncOutcomeStatus::Skipped {
-                        reason: ProjectSyncSkip::Disabled,
+        let (assignment_id, status) = match folder_rows_of(store, &project.id, &skill.id, tool_key)?
+        {
+            // A skill disabled at skill grain answers Disabled for every
+            // existing row too: a failed Disable leaves it `error`, and
+            // that row is not "already assigned" — it is off until Enable.
+            // The folder is off when a row on its driver's path is; an
+            // independent row's status never counts.
+            Some(existing) if existing.disabled() || skill_disabled => (
+                Some(existing.driver.id),
+                ProjectSyncOutcomeStatus::Skipped {
+                    reason: ProjectSyncSkip::Disabled,
+                },
+            ),
+            Some(existing) => (
+                Some(existing.driver.id),
+                ProjectSyncOutcomeStatus::AlreadyAssigned,
+            ),
+            None if skill_disabled => match deploy_adapter(tool_key) {
+                Ok(_) => {
+                    let record = ProjectSkillAssignmentRecord {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        project_id: project.id.clone(),
+                        skill_id: skill.id.clone(),
+                        skill_name: skill.name.clone(),
+                        tool: tool_key.to_string(),
+                        mode: SyncMode::Symlink,
+                        status: SyncStatus::Disabled,
+                        last_error: None,
+                        synced_at: None,
+                        content_hash: None,
+                        created_at: now,
+                    };
+                    store.add_project_skill_assignment(&record)?;
+                    (
+                        Some(record.id),
+                        ProjectSyncOutcomeStatus::Skipped {
+                            reason: ProjectSyncSkip::Disabled,
+                        },
+                    )
+                }
+                Err(refusal) => (
+                    None,
+                    ProjectSyncOutcomeStatus::Failed {
+                        error: CommandError::from_anyhow(refusal),
                     },
                 ),
-                Some(existing) => (Some(existing.id), ProjectSyncOutcomeStatus::AlreadyAssigned),
-                None if skill_disabled => match deploy_adapter(tool_key) {
-                    Ok(_) => {
-                        let record = ProjectSkillAssignmentRecord {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            project_id: project.id.clone(),
-                            skill_id: skill.id.clone(),
-                            skill_name: skill.name.clone(),
-                            tool: tool_key.to_string(),
-                            mode: SyncMode::Symlink,
-                            status: SyncStatus::Disabled,
-                            last_error: None,
-                            synced_at: None,
-                            content_hash: None,
-                            created_at: now,
-                        };
-                        store.add_project_skill_assignment(&record)?;
-                        (
-                            Some(record.id),
-                            ProjectSyncOutcomeStatus::Skipped {
-                                reason: ProjectSyncSkip::Disabled,
-                            },
-                        )
-                    }
-                    Err(refusal) => (
-                        None,
-                        ProjectSyncOutcomeStatus::Failed {
-                            error: CommandError::from_anyhow(refusal),
-                        },
-                    ),
-                },
-                None => match assign_and_settle(store, central_dir, project, skill, tool_key, now)?
-                {
-                    AssignAttempt::Settled {
-                        record,
-                        sync_error: None,
-                    } => (Some(record.id), ProjectSyncOutcomeStatus::Synced),
-                    AssignAttempt::Settled {
-                        record,
-                        sync_error: Some(error),
-                    } => (Some(record.id), ProjectSyncOutcomeStatus::Failed { error }),
-                    AssignAttempt::Refused(refusal) => (
-                        None,
-                        ProjectSyncOutcomeStatus::Failed {
-                            error: CommandError::from_anyhow(refusal),
-                        },
-                    ),
-                },
-            };
+            },
+            None => match assign_and_settle(store, central_dir, project, skill, tool_key, now)? {
+                AssignAttempt::Settled {
+                    record,
+                    sync_error: None,
+                } => (Some(record.id), ProjectSyncOutcomeStatus::Synced),
+                AssignAttempt::Settled {
+                    record,
+                    sync_error: Some(error),
+                } => (Some(record.id), ProjectSyncOutcomeStatus::Failed { error }),
+                AssignAttempt::Refused(refusal) => (
+                    None,
+                    ProjectSyncOutcomeStatus::Failed {
+                        error: CommandError::from_anyhow(refusal),
+                    },
+                ),
+            },
+        };
         items.push(ProjectSyncOutcome {
             assignment_id,
             project_id: project.id.clone(),
@@ -877,7 +841,7 @@ fn resync_assignments_unlocked(
     // so the row status alone cannot gate the re-sync.
     let mut skill_disabled: HashMap<String, bool> = HashMap::new();
 
-    for group in project_folder_rows(store, assignments.to_vec())? {
+    for group in project_folder_rows(assignments.to_vec()) {
         let assignment = &group.driver;
         let disabled_skill = match skill_disabled.get(&assignment.skill_id) {
             Some(disabled) => *disabled,
@@ -888,8 +852,9 @@ fn resync_assignments_unlocked(
             }
         };
         // Skipped before any filesystem work; an `error` row keeps its
-        // status and `last_error` (the failed removal stays observable).
-        if assignment.status == SyncStatus::Disabled || disabled_skill {
+        // status and `last_error` (the failed removal stays observable). The
+        // folder is off when a row on the driver's path is.
+        if group.disabled() || disabled_skill {
             report.items.push(ProjectSyncOutcome {
                 assignment_id: Some(assignment.id.clone()),
                 project_id: assignment.project_id.clone(),
@@ -905,19 +870,19 @@ fn resync_assignments_unlocked(
         // Re-sync replaces only an artifact of ours: a row that never
         // materialised (a failed first sync or Enable met someone else's
         // folder) is a first sync again, so that folder stays and the
-        // collision is `TARGET_EXISTS` report data (`owns_artifact`). Only a
-        // row naming the same physical artifact can vouch for it: a sibling
-        // owning an artifact under another name says nothing about this one.
-        let overwrite = group.artifact_rows().any(|row| row.owns_artifact());
+        // collision is `TARGET_EXISTS` report data (`owns_artifact`). The
+        // permission is the driver's own (the driver is an owner whenever
+        // any row of the folder is); no sibling lends it.
+        let overwrite = assignment.owns_artifact();
         let status =
             match sync_single_assignment(store, central_dir, project, assignment, overwrite, now) {
                 Ok(()) => {
-                    settle_same_artifact(store, assignment, &group.same_artifact)?;
+                    settle_same_path(store, assignment, &group.same_path)?;
                     ProjectSyncOutcomeStatus::Synced
                 }
                 Err(e) => {
                     let err_msg = format!("{:#}", e);
-                    settle_failed(store, group.artifact_rows(), &err_msg, "re-sync")?;
+                    settle_failed(store, group.path_rows(), &err_msg, "re-sync")?;
                     ProjectSyncOutcomeStatus::Failed {
                         error: CommandError::from_anyhow(e),
                     }
@@ -936,17 +901,18 @@ fn resync_assignments_unlocked(
     Ok(report)
 }
 
-/// Settle `same_artifact` exactly as `driver`'s successful sync settled it.
-/// Only rows proven to name the driver's physical artifact
-/// (`project_folder_rows`) are passed: they describe the artifact the sync
-/// just wrote. A row naming another artifact is never settled from this one —
-/// only a successful sync of an artifact makes a row its owner.
-pub(crate) fn settle_same_artifact(
+/// Settle `same_path` exactly as `driver`'s successful sync settled it. Only
+/// rows recording the driver's very path (`FolderRows::same_path`) are passed:
+/// the app has just written exactly that path, so they now name an artifact of
+/// ours. A row recording any other path — another name, or another spelling
+/// of the same place — is never settled from this one: only a successful
+/// write of a row's own recorded path makes it an owner.
+pub(crate) fn settle_same_path(
     store: &SkillStore,
     driver: &ProjectSkillAssignmentRecord,
-    same_artifact: &[ProjectSkillAssignmentRecord],
+    same_path: &[ProjectSkillAssignmentRecord],
 ) -> Result<()> {
-    if same_artifact.is_empty() {
+    if same_path.is_empty() {
         return Ok(());
     }
     let Some(settled) =
@@ -954,7 +920,7 @@ pub(crate) fn settle_same_artifact(
     else {
         return Ok(());
     };
-    for row in same_artifact {
+    for row in same_path {
         store.transition_assignment(
             &row.id,
             AssignmentTransition::SyncCompleted {
@@ -967,7 +933,7 @@ pub(crate) fn settle_same_artifact(
     Ok(())
 }
 
-/// Settle every row naming one artifact `error` after its sync failed.
+/// Settle every row recording one path `error` after its sync failed.
 fn settle_failed<'r>(
     store: &SkillStore,
     rows: impl Iterator<Item = &'r ProjectSkillAssignmentRecord>,
@@ -987,16 +953,23 @@ fn settle_failed<'r>(
     Ok(())
 }
 
-/// Enable's project half (`core::skill_disable`): a **first** sync of each
-/// given assignment row — overwrite off, so a directory in the way is the
-/// typed `TARGET_EXISTS`, as for a new assignment. Each row settles
-/// `synced`, or `error` with its chain (report data); a store failure fails
-/// the whole operation. The caller has already decided these rows may be
-/// materialised (their skill is not disabled), so their stored status is not
-/// consulted here — except to admit a `disabled` row: a successful Disable
-/// removed its artifact, so its ownership is cleared first
-/// (`EnableAdmitted`) and a collision leaves a non-owner the overwrite ask
-/// can settle (Keep → `disabled`, Overwrite → synced and owning again).
+/// Enable's project half (`core::skill_disable`): a **first** sync of every
+/// disabled Deployment folder among the given assignment rows — overwrite
+/// off, so a directory in the way is the typed `TARGET_EXISTS`, as for a new
+/// assignment.
+///
+/// The rows are grouped by folder (`project_folder_rows`) and a folder is
+/// enabled only when it is off: a row on its driver's recorded path is
+/// `disabled`. Its disabled rows on that path are admitted first — a
+/// successful Disable removed their artifact, so their ownership is cleared
+/// (`EnableAdmitted`) and a collision leaves a non-owner the overwrite ask can
+/// settle (Keep → `disabled`, Overwrite → synced and owning again) — then the
+/// driver gets its first sync and the rows on its path settle with it,
+/// `synced`, or `error` with its chain (report data). An **independent** row
+/// (another recorded name) is never admitted, deleted, synced or settled here,
+/// whatever its status: it neither blocks the folder nor is touched, and the
+/// redeploy (ticket 10) reconciles it. A store failure fails the whole
+/// operation.
 ///
 /// A row of a project whose folder is missing is left exactly as it is (not
 /// admitted, not synced) and its project answers one `folder_missing` skip:
@@ -1010,13 +983,10 @@ pub(crate) fn first_sync_assignments_unlocked(
     now: i64,
 ) -> Result<ProjectSyncReport> {
     let mut report = ProjectSyncReport::default();
-    // One folder, one first sync, of the driver's artifact; rows naming that
-    // artifact settle with it. A pre-1.4.0 sibling row naming another artifact
-    // (another skill name) is admitted with the folder and then cleared: its
-    // Disable removed its artifact, so it owns nothing, and the folder's row
-    // now stands for the folder (as the global Enable records the folder
-    // afresh) — no path of it is touched.
-    for group in project_folder_rows(store, assignments.to_vec())? {
+    for group in project_folder_rows(assignments.to_vec()) {
+        if !group.disabled() {
+            continue;
+        }
         let assignment = &group.driver;
         let project = project_ops::require_project(store, &assignment.project_id);
         if let Ok(project) = &project {
@@ -1025,14 +995,9 @@ pub(crate) fn first_sync_assignments_unlocked(
                 continue;
             }
         }
-        for row in group.artifact_rows().chain(group.independent.iter()) {
+        for row in group.path_rows() {
             if row.status == SyncStatus::Disabled {
                 store.transition_assignment(&row.id, AssignmentTransition::EnableAdmitted)?;
-            }
-        }
-        for row in &group.independent {
-            if row.status == SyncStatus::Disabled {
-                store.remove_project_skill_assignment(&row.project_id, &row.skill_id, &row.tool)?;
             }
         }
         let result = project.and_then(|project| {
@@ -1040,12 +1005,12 @@ pub(crate) fn first_sync_assignments_unlocked(
         });
         let status = match result {
             Ok(()) => {
-                settle_same_artifact(store, assignment, &group.same_artifact)?;
+                settle_same_path(store, assignment, &group.same_path)?;
                 ProjectSyncOutcomeStatus::Synced
             }
             Err(e) => {
                 let err_msg = format!("{:#}", e);
-                settle_failed(store, group.artifact_rows(), &err_msg, "enable")?;
+                settle_failed(store, group.path_rows(), &err_msg, "enable")?;
                 ProjectSyncOutcomeStatus::Failed {
                     error: CommandError::from_anyhow(e),
                 }
@@ -1136,18 +1101,18 @@ fn resolve_collisions_unlocked(
             ));
             continue;
         };
-        // The answer is about the folder's artifact: the driver and the rows
-        // naming it. A sibling naming another artifact is not part of the
-        // collision and is left as it is.
+        // The answer is about the driver's recorded path: the driver and the
+        // rows recording that very path. A row recording another path is not
+        // part of the collision and is left as it is.
         let assignment = &group.driver;
         let name = reported_skill_name(store, assignment);
         let id = Some(assignment.id.clone());
         let skill_disabled = store.skill_disabled_at(&assignment.skill_id)?.is_some();
-        let status = if assignment.status == SyncStatus::Disabled || skill_disabled {
+        let status = if group.disabled() || skill_disabled {
             ProjectSyncOutcomeStatus::Skipped {
                 reason: ProjectSyncSkip::Disabled,
             }
-        } else if group.artifact_rows().any(|row| row.owns_artifact()) {
+        } else if assignment.owns_artifact() {
             ProjectSyncOutcomeStatus::AlreadyAssigned
         } else if store
             .get_project_by_id(&assignment.project_id)?
@@ -1158,7 +1123,7 @@ fn resolve_collisions_unlocked(
         } else {
             match decision.decision {
                 OverrideDecision::Keep => {
-                    for row in group.artifact_rows() {
+                    for row in group.path_rows() {
                         store.transition_assignment(&row.id, AssignmentTransition::Disabled)?;
                     }
                     ProjectSyncOutcomeStatus::Declined
@@ -1177,12 +1142,12 @@ fn resolve_collisions_unlocked(
                         });
                     match result {
                         Ok(()) => {
-                            settle_same_artifact(store, assignment, &group.same_artifact)?;
+                            settle_same_path(store, assignment, &group.same_path)?;
                             ProjectSyncOutcomeStatus::Synced
                         }
                         Err(e) => {
                             let err_msg = format!("{:#}", e);
-                            settle_failed(store, group.artifact_rows(), &err_msg, "overwrite")?;
+                            settle_failed(store, group.path_rows(), &err_msg, "overwrite")?;
                             ProjectSyncOutcomeStatus::Failed {
                                 error: CommandError::from_anyhow(e),
                             }

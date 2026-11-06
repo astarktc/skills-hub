@@ -2227,3 +2227,106 @@ fn the_unverifiable_extended_attributes() {
         }
     }
 }
+
+/// A 1.3.4 report stored by an interrupted move's resume, as 1.3.4 wrote it:
+/// its row references carry no `folder_key`.
+const STORED_1_3_4_REPORT: &str = include_str!("fixtures/library-move-report-1.3.4.json");
+
+/// Round 20 t09 review finding 8: `RowRef::folder_key` stays required on the
+/// wire, and a stored 1.3.4 report still decodes — each reference gets the
+/// key the backend's folder rule gives its scope and Tool, so Amp's and Kimi's
+/// pre-1.4.0 rows name their one folder at both scopes.
+#[test]
+fn a_stored_1_3_4_report_decodes_with_each_rows_folder() {
+    use crate::core::artifact_removal::RowRef;
+    use crate::core::library_move::{decode_stored_report, RelinkStatus};
+
+    assert!(
+        serde_json::from_str::<crate::core::library_move::LibraryMoveReport>(STORED_1_3_4_REPORT)
+            .is_err(),
+        "test premise: the wire type still requires folder_key"
+    );
+
+    let report = decode_stored_report(STORED_1_3_4_REPORT).expect("a 1.3.4 report decodes");
+
+    let folders: Vec<Vec<(&str, &str, &str)>> = report
+        .deployments
+        .iter()
+        .map(|deployment| {
+            deployment
+                .rows
+                .iter()
+                .map(|row| match row {
+                    RowRef::GlobalTarget {
+                        tool, folder_key, ..
+                    } => ("global", tool.as_str(), folder_key.as_str()),
+                    RowRef::Assignment {
+                        tool, folder_key, ..
+                    } => ("project", tool.as_str(), folder_key.as_str()),
+                })
+                .collect()
+        })
+        .collect();
+    assert_eq!(
+        folders,
+        vec![
+            vec![("global", "amp", "amp"), ("global", "kimi_cli", "amp")],
+            vec![("global", "claude_code", "claude_code")],
+            vec![
+                ("project", "kimi_cli", "agents_skills"),
+                ("project", "amp", "agents_skills"),
+            ],
+            vec![("project", "trae_cn", "trae")],
+        ]
+    );
+    // Nothing else is rewritten: the rest of the report reads as stored.
+    assert_eq!(report.from, "/Users/op/.skillshub");
+    assert_eq!(report.skills.len(), 2);
+    assert!(matches!(
+        report.deployments[0].status,
+        RelinkStatus::Relinked { .. }
+    ));
+    assert_eq!(report.left_behind.len(), 2);
+}
+
+/// The compatibility step fills only a missing key: a current report (keys
+/// present) round-trips as itself, and a malformed one still fails.
+#[test]
+fn the_stored_report_decoder_leaves_a_current_report_alone() {
+    use crate::core::library_move::decode_stored_report;
+
+    let mut current: serde_json::Value = serde_json::from_str(STORED_1_3_4_REPORT).unwrap();
+    current["deployments"][0]["rows"][1]["folder_key"] = "custom-folder".into();
+    let decoded = decode_stored_report(&current.to_string()).unwrap();
+    assert_eq!(
+        serde_json::to_value(&decoded.deployments[0].rows[1]).unwrap()["folder_key"],
+        "custom-folder"
+    );
+
+    let mut broken = current;
+    broken["deployments"][0]["rows"][0]["scope"] = "nowhere".into();
+    assert!(decode_stored_report(&broken.to_string()).is_err());
+}
+
+/// End to end: a 1.3.4 report sitting in the settings table is handed out by
+/// the take, decoded, instead of being dropped.
+#[test]
+fn a_stored_1_3_4_report_is_handed_out_not_dropped() {
+    use crate::core::library_move::take_resumed_library_move;
+    let (_db, store) = {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SkillStore::new(dir.path().join("test.db"));
+        store.ensure_schema().unwrap();
+        (dir, store)
+    };
+    store
+        // `settings::keys::LIBRARY_MOVE_RESUMED`, as 1.3.4 stored it.
+        .set_setting("library_move_resumed_report", STORED_1_3_4_REPORT)
+        .unwrap();
+
+    let report = take_resumed_library_move(&store)
+        .unwrap()
+        .expect("the stored report is handed out");
+    assert_eq!(report.deployments.len(), 4);
+    assert!(take_resumed_library_move(&store).unwrap().is_none());
+}

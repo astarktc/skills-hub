@@ -19,7 +19,7 @@ use crate::core::{
     removal_fence::ProtectedLibrary,
     skill_store::{SkillStore, TargetTransition},
     sync_engine::{self, SyncOutcome},
-    sync_status::{SyncMode, SyncStatus},
+    sync_status::SyncMode,
     tool_adapters::{adapter_by_key, installed_set_in, ToolAdapter},
 };
 
@@ -94,7 +94,7 @@ pub struct OverwritePolicy {
 /// the folder `folder_key` through [`TargetTransition::Recorded`]. `adapter`
 /// is the registry entry whose capability governs the folder
 /// (`placement::capability_entry`). The batch engine
-/// ([`sync_skills_to_planned_tools`]) drives this per attempted pair; tests
+/// ([`sync_planned_tools_lifting`]) drives this per attempted pair; tests
 /// drive it directly. Unlocked internal seam — callers reach it through an
 /// entry point that has already taken the mutation guard.
 #[allow(clippy::too_many_arguments)]
@@ -263,7 +263,7 @@ pub struct BatchPolicy {
 /// capability governs it, its resolved skills root, and whether any harness it
 /// serves is installed. Produced by [`plan_batch_tool_targets`] (placement
 /// over the environment); consumed by the deterministic
-/// [`sync_skills_to_planned_tools`], which tests drive with fabricated roots.
+/// [`sync_planned_tools_lifting`], which tests drive with fabricated roots.
 #[derive(Debug)]
 pub struct PlannedToolTarget {
     pub adapter: &'static ToolAdapter,
@@ -351,18 +351,51 @@ pub fn plan_batch_tool_targets(
         .collect()
 }
 
-/// Deterministic batch engine: dedupe targets by folder key (a folder is
-/// written once, whichever of its harnesses was asked for, and every outcome
-/// names the folder), emit `Skipped` for a folder no installed harness reads,
-/// apply the per-pair overwrite policy, and isolate failures per target — one
-/// bad pair never aborts the batch. Unlocked internal seam — callers reach it
-/// through an entry point that has already taken the mutation guard.
+/// The batch engine with nothing lifted — test fixtures' door, driven with
+/// fabricated roots ([`sync_planned_tools_lifting`]).
+#[cfg(test)]
 pub(crate) fn sync_skills_to_planned_tools(
     store: &SkillStore,
     central_dir: &Path,
     skills: &[BatchSkill],
     targets: &[PlannedToolTarget],
     policy: &BatchPolicy,
+    now: i64,
+    on_progress: impl FnMut(BatchProgress),
+) -> Vec<BatchTargetOutcome> {
+    sync_planned_tools_lifting(
+        store,
+        central_dir,
+        skills,
+        targets,
+        policy,
+        &[],
+        now,
+        on_progress,
+    )
+}
+
+/// Deterministic batch engine: dedupe targets by folder key (a folder is
+/// written once, whichever of its harnesses was asked for, and every outcome
+/// names the folder), emit `Skipped` for a folder no installed harness reads,
+/// apply the Disabled rule and the per-pair overwrite policy, and isolate
+/// failures per target — one bad pair never aborts the batch. Unlocked
+/// internal seam — callers reach it through an entry point that has already
+/// taken the mutation guard.
+///
+/// `lifted` (Enable only, else empty) names the folders whose Disabled state
+/// Enable has just lifted (`skill_disable`): a row still `disabled` there — an
+/// independent row recording another path, never the folder's own (Enable
+/// cleared those) — does not block the folder. A skill disabled at skill
+/// grain still blocks everything.
+#[allow(clippy::too_many_arguments)]
+fn sync_planned_tools_lifting(
+    store: &SkillStore,
+    central_dir: &Path,
+    skills: &[BatchSkill],
+    targets: &[PlannedToolTarget],
+    policy: &BatchPolicy,
+    lifted: &[String],
     now: i64,
     mut on_progress: impl FnMut(BatchProgress),
 ) -> Vec<BatchTargetOutcome> {
@@ -417,13 +450,14 @@ pub(crate) fn sync_skills_to_planned_tools(
             });
 
             let blocked = match &gate {
-                Ok(gate) => gate
-                    .blocks(&target.folder_key)
-                    .then(|| BatchTargetStatus::Skipped {
-                        error: CommandError::from(GlobalSyncError::TargetDisabled {
-                            tool_key: tool_key.to_string(),
-                        }),
-                    }),
+                Ok(gate) => {
+                    gate.blocks(&target.folder_key, lifted)
+                        .then(|| BatchTargetStatus::Skipped {
+                            error: CommandError::from(GlobalSyncError::TargetDisabled {
+                                tool_key: tool_key.to_string(),
+                            }),
+                        })
+                }
                 Err(error) => Some(BatchTargetStatus::Failed {
                     error: CommandError::internal(format!("{error:#}")),
                 }),
@@ -574,10 +608,11 @@ fn record_kept(
 }
 
 /// The Disabled rule of the batch (see **Disabled** in `CONTEXT.md`): a pair
-/// is skipped when its skill is disabled at skill grain, or when **any** row
-/// of the skill describing the target's folder is `Disabled` — the folder's
-/// own row, or a row written per shared-dir sibling before rows were per
-/// folder (`placement::row_folder` reads it as the folder).
+/// is skipped when its skill is disabled at skill grain, or when the target's
+/// folder is off (`placement::FolderRows::disabled`): a row of the skill on
+/// the folder driver's recorded path is `Disabled` — the folder's own row, or
+/// a row a shared-dir sibling wrote on that same path before rows were per
+/// folder. An independent row (another recorded path) never blocks it.
 struct DisabledGate {
     skill_disabled: bool,
     disabled_folders: Vec<String>,
@@ -587,23 +622,27 @@ impl DisabledGate {
     fn read(store: &SkillStore, skill_id: &str) -> Result<Self> {
         Ok(Self {
             skill_disabled: store.skill_disabled_at(skill_id)?.is_some(),
-            disabled_folders: store
-                .list_skill_targets(skill_id)?
-                .into_iter()
-                .filter(|row| row.status == SyncStatus::Disabled)
-                .map(|row| row_folder(ScopeKind::Global, &row.tool))
-                .collect(),
+            disabled_folders: placement::folder_rows(
+                ScopeKind::Global,
+                store.list_skill_targets(skill_id)?,
+            )
+            .into_iter()
+            .filter(|group| group.disabled())
+            .map(|group| group.folder)
+            .collect(),
         })
     }
 
-    fn blocks(&self, folder_key: &str) -> bool {
-        self.skill_disabled || self.disabled_folders.iter().any(|f| f == folder_key)
+    fn blocks(&self, folder_key: &str, lifted: &[String]) -> bool {
+        self.skill_disabled
+            || (self.disabled_folders.iter().any(|f| f == folder_key)
+                && !lifted.iter().any(|f| f == folder_key))
     }
 }
 
 /// Sync N skills to M tools in one call: environment probing under `roots`
 /// ([`plan_batch_tool_targets`]) composed with the deterministic engine
-/// ([`sync_skills_to_planned_tools`]). Planning failures surface as `Failed`
+/// ([`sync_planned_tools_lifting`]). Planning failures surface as `Failed`
 /// outcomes per skill; the function itself never errors.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
@@ -643,6 +682,33 @@ pub(crate) fn sync_skills_to_tools_unlocked(
     now: i64,
     on_progress: impl FnMut(BatchProgress),
 ) -> Vec<BatchTargetOutcome> {
+    sync_skills_to_tools_lifting_unlocked(
+        roots,
+        store,
+        central_dir,
+        skills,
+        tool_keys,
+        policy,
+        &[],
+        now,
+        on_progress,
+    )
+}
+
+/// [`sync_skills_to_tools_unlocked`] for Enable, lifting the Disabled state of
+/// the folders `lifted` names ([`sync_planned_tools_lifting`]).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn sync_skills_to_tools_lifting_unlocked(
+    roots: &HostRoots,
+    store: &SkillStore,
+    central_dir: &Path,
+    skills: &[BatchSkill],
+    tool_keys: &[String],
+    policy: &BatchPolicy,
+    lifted: &[String],
+    now: i64,
+    on_progress: impl FnMut(BatchProgress),
+) -> Vec<BatchTargetOutcome> {
     let mut targets: Vec<PlannedToolTarget> = Vec::new();
     let mut outcomes: Vec<BatchTargetOutcome> = Vec::new();
     for plan in plan_batch_tool_targets(roots, tool_keys) {
@@ -664,12 +730,13 @@ pub(crate) fn sync_skills_to_tools_unlocked(
             }
         }
     }
-    outcomes.extend(sync_skills_to_planned_tools(
+    outcomes.extend(sync_planned_tools_lifting(
         store,
         central_dir,
         skills,
         &targets,
         policy,
+        lifted,
         now,
         on_progress,
     ));

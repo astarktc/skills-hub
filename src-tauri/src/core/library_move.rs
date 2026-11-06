@@ -77,6 +77,7 @@ use super::errors::{CommandError, LibraryDestinationRefusal, SignalError};
 use super::git_cache;
 use super::installer::InstallerPaths;
 use super::mutation_guard;
+use super::placement::{row_folder, ScopeKind};
 use super::project_ops;
 use super::project_sync::resolve_assignment_artifact;
 use super::removal_fence::{EntryId, Place, ProtectedLibrary};
@@ -472,18 +473,59 @@ pub fn resume_library_move(
 
 /// The report of the last interrupted move a resume finished, handed out
 /// once: taking it removes it. `None` when no resume settled since the last
-/// take. A stored report that cannot be read is dropped and logged.
+/// take. A stored report that cannot be read is dropped and logged; one an
+/// earlier version stored is read through [`decode_stored_report`].
 pub fn take_resumed_library_move(store: &SkillStore) -> Result<Option<LibraryMoveReport>> {
     let Some(raw) = settings::take_resumed_library_move(store)? else {
         return Ok(None);
     };
-    match serde_json::from_str(&raw) {
+    match decode_stored_report(&raw) {
         Ok(report) => Ok(Some(report)),
         Err(err) => {
             log::warn!("[library move] dropped an unreadable resumed-move report: {err}");
             Ok(None)
         }
     }
+}
+
+/// Read a stored Move Library folder report, including one 1.3.4 stored.
+///
+/// 1.3.4's row references predate `RowRef::folder_key`, which stays required
+/// on the wire (a defaulted `""` would name no folder). This compatibility
+/// step fills a reference missing it with the backend's folder rule for its
+/// scope and Tool (`placement::row_folder`: `global_target` → global scope,
+/// `assignment` → project scope) — the key a current report carries for the
+/// same row — and touches nothing else, so any other malformation still fails
+/// to decode.
+pub(crate) fn decode_stored_report(raw: &str) -> serde_json::Result<LibraryMoveReport> {
+    use serde_json::Value;
+    let mut report: Value = serde_json::from_str(raw)?;
+    let rows = report
+        .get_mut("deployments")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+        .filter_map(|deployment| deployment.get_mut("rows").and_then(Value::as_array_mut))
+        .flatten();
+    for row in rows {
+        let Some(row) = row.as_object_mut() else {
+            continue;
+        };
+        if row.contains_key("folder_key") {
+            continue;
+        }
+        let scope = match row.get("scope").and_then(Value::as_str) {
+            Some("global_target") => ScopeKind::Global,
+            Some("assignment") => ScopeKind::Project,
+            _ => continue,
+        };
+        let Some(tool) = row.get("tool").and_then(Value::as_str) else {
+            continue;
+        };
+        let folder_key = row_folder(scope, tool);
+        row.insert("folder_key".to_string(), Value::String(folder_key));
+    }
+    serde_json::from_value(report)
 }
 
 /// What a switched move still owes: the Library folders on either side and,

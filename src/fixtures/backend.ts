@@ -84,6 +84,7 @@ import {
   projectFolderOf,
   hashFiles,
   isProjectToolInstalled,
+  folderDriver,
   oneRowPerFolder,
   projectCatalog,
   projectToolDir,
@@ -202,7 +203,11 @@ export function createFixtureBackend(
       for (const entry of list) entry.deployments = oneRowPerFolder(entry.deployments, projectFolderOf);
     return state.skills.map((s) => {
       const dto = clone(s.dto);
-      return { ...dto, targets: oneRowPerFolder(dto.targets, globalFolderOf), projects: bySkill.get(s.dto.id) ?? [] };
+      return {
+        ...dto,
+        targets: oneRowPerFolder(dto.targets, globalFolderOf, undefined, (t) => t.target_path),
+        projects: bySkill.get(s.dto.id) ?? [],
+      };
     });
   };
 
@@ -291,6 +296,12 @@ export function createFixtureBackend(
    */
   const folderRows = (skill: FixtureSkill, folder: string) =>
     skill.dto.targets.filter((t) => globalFolderOf(t.tool) === folder);
+
+  /** The folder's rows on its driver's recorded path (Rust `FolderRows::path_rows`). */
+  const pathRows = (skill: FixtureSkill, folder: string) => {
+    const group = folderRows(skill, folder);
+    return group.length === 0 ? [] : folderDriver(group, folder, (t) => t.target_path).onPath;
+  };
 
   /** Record (or refresh) the folder's one row (Rust `sync_skill_into_root`). */
   const recordTargets = (skill: FixtureSkill, folder: string) => {
@@ -444,11 +455,11 @@ export function createFixtureBackend(
 
   /**
    * The batch's Disabled rule (Rust `global_sync::DisabledGate`): a skill
-   * disabled at skill grain, or any `disabled` row describing the folder,
-   * skips it — one folder, one artifact.
+   * disabled at skill grain, or a `disabled` row on the folder driver's
+   * recorded path, skips it — a row recording another path never does.
    */
   const isDisabledFor = (skill: FixtureSkill, folder: string) =>
-    skill.dto.disabled_at !== null || folderRows(skill, folder).some((t) => t.status === "disabled");
+    skill.dto.disabled_at !== null || pathRows(skill, folder).some((t) => t.status === "disabled");
 
   /** Effective global target set: the recorded selection, else every detected Tool. */
   const effectiveTargets = () => state.settings.global_selected_tools ?? state.installedTools;
@@ -1063,12 +1074,13 @@ export function createFixtureBackend(
           out.push({ scope: { scope: "project", project_id: project.id, tool: a.tool }, status: { status: "skipped", reason: { reason: "disabled" } } });
       return out;
     }
-    // One folder at a time (Rust `propagate_global_rows`): its rows — the
-    // folder's own plus any a pre-1.4.0 scenario wrote per sibling — are
-    // settled together and reported once, by the folder key.
+    // One folder at a time (Rust `propagate_global_rows`): the driver's path
+    // with the rows recording it — the folder's own plus any a pre-1.4.0
+    // scenario wrote per sibling on that path — settled together and reported
+    // once, by the folder key. A row recording another path is left alone.
     const folders = [...new Set(skill.dto.targets.map((row) => globalFolderOf(row.tool)))];
     for (const folder of folders) {
-      const group = folderRows(skill, folder);
+      const group = pathRows(skill, folder);
       if (group.some((member) => member.status === "disabled")) {
         skippedGlobal(folder, { reason: "disabled" });
         continue;
@@ -1087,7 +1099,7 @@ export function createFixtureBackend(
         skippedGlobal(folder, { reason: "link_follows_source" });
         continue;
       }
-      const driverPath = (group.find((member) => member.tool === folder) ?? group[0]).target_path;
+      const driverPath = folderDriver(group, folder).driver.target_path;
       const firstSync = !group.some(ownsArtifact);
       // A first sync (no row owns the path) meets a foreign folder as
       // TARGET_EXISTS; an owner replaces it.

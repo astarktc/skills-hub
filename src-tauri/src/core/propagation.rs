@@ -42,14 +42,14 @@ use super::errors::{CommandError, SignalError};
 use super::installer::InstallerPaths;
 use super::placement::{self, folder_rows, one_row_per_folder, row_folder, FolderRows, ScopeKind};
 use super::project_sync::{
-    deploy_adapter, project_folder_rows, settle_same_artifact, AssignmentSyncContext,
+    deploy_adapter, project_folder_rows, settle_same_path, AssignmentSyncContext,
 };
-use super::removal_fence::{same_artifact, ProtectedLibrary};
+use super::removal_fence::ProtectedLibrary;
 use super::skill_store::{
     AssignmentTransition, ProjectSkillAssignmentRecord, SkillRecord, SkillStore, TargetTransition,
 };
 use super::sync_engine;
-use super::sync_status::{SyncMode, SyncStatus};
+use super::sync_status::SyncMode;
 use super::tool_adapters::{catalog_rows, installed_set_in, ToolAdapter};
 
 /// Which Sync target an outcome is about.
@@ -191,12 +191,12 @@ fn missing_source(central_path: &Path) -> anyhow::Error {
 /// outcome per folder, named by its folder key. A folder's rows are its own
 /// row plus any written once per shared-dir sibling before rows were per
 /// folder (`placement::row_folder` reads them as the folder) until the
-/// redeploy collapses them. The folder's state is logical (one `disabled` row
-/// keeps it off); its **artifact** is physical: the driver's, and only rows
-/// proven to name that same entry (`removal_fence::same_artifact`) decide
-/// whether it is ours to replace and whether it needs new bytes, and settle
-/// with it. A sibling naming another artifact is left as it is. A folder
-/// whose artifact no row ever materialised gets a first deploy.
+/// redeploy collapses them. The write acts on the driver's recorded path
+/// (`placement::folder_rows`) with the driver's own permission: it is ours to
+/// replace only when the driver materialised it. The rows recording that very
+/// path decide whether it is off and whether it needs new bytes, and settle
+/// with it; a row recording any other path is left as it is. A folder whose
+/// driver never materialised its path gets a first deploy.
 fn propagate_global_rows(
     store: &SkillStore,
     central_dir: &Path,
@@ -206,11 +206,7 @@ fn propagate_global_rows(
     now: i64,
     report: &mut PropagationReport,
 ) -> Result<()> {
-    let groups = folder_rows(
-        ScopeKind::Global,
-        store.list_skill_targets(skill_id)?,
-        |driver, row| same_artifact(Path::new(&driver.target_path), Path::new(&row.target_path)),
-    );
+    let groups = folder_rows(ScopeKind::Global, store.list_skill_targets(skill_id)?);
     if groups.is_empty() {
         return Ok(());
     }
@@ -218,10 +214,9 @@ fn propagate_global_rows(
 
     for group in &groups {
         let folder = &group.folder;
-        // One disabled row disables the folder (the driver is a disabled row
-        // when any is): writing it for a sibling would re-materialise it
-        // where the disabled harness reads.
-        if group.driver.status == SyncStatus::Disabled {
+        // A disabled row on the driver's path disables the folder: writing it
+        // would re-materialise it where the disabled harness reads.
+        if group.disabled() {
             report
                 .targets
                 .push(skipped_global(folder, PropagationSkip::Disabled));
@@ -251,15 +246,16 @@ fn propagate_global_rows(
             continue;
         }
 
-        // The artifact is ours to replace only when a row naming it
-        // materialised it (`owns_artifact`); otherwise this is a first sync
-        // and foreign bytes there are `TARGET_EXISTS`. A link of ours already
-        // follows the central copy — unless a row naming it says it is a copy
-        // (`needs_new_bytes` over every such row, not one representative).
-        let owned = group.artifact_rows().any(|row| row.owns_artifact());
+        // The artifact is ours to replace only when the driver materialised
+        // its path (`owns_artifact` — the driver is an owner whenever any row
+        // is); otherwise this is a first sync and foreign bytes there are
+        // `TARGET_EXISTS`. A link of ours already follows the central copy —
+        // unless a row on that path says it is a copy (`needs_new_bytes` over
+        // every such row, not one representative).
+        let owned = group.driver.owns_artifact();
         if owned
             && !group
-                .artifact_rows()
+                .path_rows()
                 .any(|row| needs_new_bytes(row.mode, adapter))
         {
             report
@@ -285,7 +281,7 @@ fn propagate_global_rows(
         let status = match result {
             Ok(outcome) => {
                 let target_path = outcome.target_path.to_string_lossy().to_string();
-                for row in group.artifact_rows() {
+                for row in group.path_rows() {
                     store.transition_skill_target(
                         &row.id,
                         TargetTransition::SyncCompleted {
@@ -302,9 +298,9 @@ fn propagate_global_rows(
             Err(error) => {
                 // A failed first sync records nothing new (D9): a
                 // `TARGET_EXISTS` is answered by the operator's ask, any other
-                // failure settles the artifact's rows `error`.
+                // failure settles the rows on the driver's path `error`.
                 let detail = format!("{:#}", error);
-                for row in group.artifact_rows() {
+                for row in group.path_rows() {
                     store.transition_skill_target(
                         &row.id,
                         TargetTransition::SyncFailed { error: &detail },
@@ -346,14 +342,10 @@ fn propagate_project_rows(
     now: i64,
     report: &mut PropagationReport,
 ) -> Result<()> {
-    // One folder per project, one sync of its artifact: the driver's, with the
-    // rows proven to name the same physical entry
-    // (`project_sync::project_folder_rows`). A pre-1.4.0 sibling naming
-    // another artifact is left as it is.
-    let groups = project_folder_rows(
-        store,
-        store.list_project_skill_assignments_by_skill(&skill.id)?,
-    )?;
+    // One folder per project, one sync of the driver's recorded path, with
+    // the rows recording that very path (`project_sync::project_folder_rows`).
+    // A pre-1.4.0 sibling recording another name is left as it is.
+    let groups = project_folder_rows(store.list_project_skill_assignments_by_skill(&skill.id)?);
     for group in groups {
         let scope = PropagationScope::Project {
             project_id: group.driver.project_id.clone(),
@@ -365,11 +357,11 @@ fn propagate_project_rows(
     Ok(())
 }
 
-/// One project folder's artifact: decide whether it needs new bytes, from
-/// every row naming it, then sync the driver through
+/// One project folder's driver path: decide whether it needs new bytes, from
+/// every row recording it, then sync the driver through
 /// `project_sync::sync_assignment_target` (which locates the artifact by the
-/// driver's stored name and records `SyncCompleted`), settle the rows naming
-/// the same artifact as the driver settled, and settle a failure here. The
+/// driver's stored name and records `SyncCompleted`), settle the rows
+/// recording the same path as the driver settled, and settle a failure here. The
 /// deploy capability is the folder's (`project_sync::deploy_adapter`, through
 /// placement), never a pre-1.4.0 member key's; the skill was read once for
 /// the whole Propagation — both travel down in the [`AssignmentSyncContext`].
@@ -381,7 +373,7 @@ fn propagate_one_folder(
     group: &FolderRows<ProjectSkillAssignmentRecord>,
 ) -> Result<PropagationStatus> {
     let assignment = &group.driver;
-    if assignment.status == SyncStatus::Disabled {
+    if group.disabled() {
         return Ok(PropagationStatus::Skipped {
             reason: PropagationSkip::Disabled,
         });
@@ -409,13 +401,13 @@ fn propagate_one_folder(
             reason: unavailable,
         });
     }
-    // Only a link of ours follows the source; an artifact no row naming it
-    // materialised gets a first sync (see the global arm). Any row naming it
-    // that records a copy means the bytes may be stale.
-    let owned = group.artifact_rows().any(|row| row.owns_artifact());
+    // Only a link of ours follows the source; a path the driver never
+    // materialised gets a first sync (see the global arm). Any row on that
+    // path recording a copy means the bytes may be stale.
+    let owned = assignment.owns_artifact();
     if owned
         && !group
-            .artifact_rows()
+            .path_rows()
             .any(|row| needs_new_bytes(row.mode, adapter))
     {
         return Ok(PropagationStatus::Skipped {
@@ -433,7 +425,7 @@ fn propagate_one_folder(
             project_path: &project_path,
             adapter,
             skill,
-            // Only an artifact of ours is replaced; one no row naming it
+            // Only the driver's own artifact is replaced; a path it never
             // materialised gets a first sync (`owns_artifact`).
             overwrite: owned,
             now,
@@ -445,14 +437,14 @@ fn propagate_one_folder(
 
     match result {
         Ok(outcome) => {
-            settle_same_artifact(store, assignment, &group.same_artifact)?;
+            settle_same_path(store, assignment, &group.same_path)?;
             Ok(PropagationStatus::Synced {
                 mode_used: outcome.mode_used,
             })
         }
         Err(error) => {
             let detail = format!("{:#}", error);
-            for row in group.artifact_rows() {
+            for row in group.path_rows() {
                 store.transition_assignment(
                     &row.id,
                     AssignmentTransition::SyncFailed { error: &detail },

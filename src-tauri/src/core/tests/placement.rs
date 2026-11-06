@@ -337,29 +337,31 @@ fn one_disabled_sibling_keeps_the_folder_disabled() {
     assert_eq!(folded[0].status, SyncStatus::Disabled);
 }
 
-/// The write paths' split: the folder's driver (by the same representative
-/// rule), the rows the caller's physical test proves name its artifact, and
-/// the rest — independent rows that share nothing with it.
+fn never_synced(mut row: SkillTargetRecord) -> SkillTargetRecord {
+    row.synced_at = None;
+    row
+}
+
+/// The write paths' split: the driver, the rows recording its very path
+/// (byte for byte) and the rest — independent rows that share nothing with it.
 #[test]
-fn folder_rows_split_a_folder_by_the_artifact_its_rows_name() {
+fn folder_rows_split_a_folder_by_recorded_path() {
     let mut renamed = row("3", "alpha", "kimi_cli", SyncStatus::Synced);
-    renamed.target_path = "/elsewhere/old-name".to_string();
+    renamed.target_path = "/home/op/.config/agents/skills/old-name".to_string();
     let rows = vec![
-        row("1", "alpha", "kimi_cli", SyncStatus::Error),
+        never_synced(row("1", "alpha", "kimi_cli", SyncStatus::Error)),
         row("2", "alpha", "amp", SyncStatus::Synced),
         renamed,
         row("4", "alpha", "claude_code", SyncStatus::Synced),
     ];
-    let groups = folder_rows(ScopeKind::Global, rows, |driver, row| {
-        driver.target_path == row.target_path
-    });
+    let groups = folder_rows(ScopeKind::Global, rows);
     let seen: Vec<(String, &str, Vec<&str>, Vec<&str>)> = groups
         .iter()
         .map(|g| {
             (
                 g.folder.clone(),
                 g.driver.id.as_str(),
-                g.same_artifact.iter().map(|r| r.id.as_str()).collect(),
+                g.same_path.iter().map(|r| r.id.as_str()).collect(),
                 g.independent.iter().map(|r| r.id.as_str()).collect(),
             )
         })
@@ -367,34 +369,93 @@ fn folder_rows_split_a_folder_by_the_artifact_its_rows_name() {
     assert_eq!(
         seen,
         vec![
-            // The row keyed by the folder drives it; the sibling on its path
-            // shares its artifact; the old-name sibling is independent.
+            // The owner keyed by the folder drives it; the sibling on its
+            // path shares it; the old-name owner is independent.
             ("amp".to_string(), "2", vec!["1"], vec!["3"]),
             ("claude_code".to_string(), "4", vec![], vec![]),
         ]
     );
     // Rows keep their own keys: settlement acts on the raw rows.
-    assert_eq!(groups[0].same_artifact[0].tool, "kimi_cli");
-    let artifact: Vec<&str> = groups[0].artifact_rows().map(|r| r.id.as_str()).collect();
-    assert_eq!(artifact, vec!["2", "1"]);
+    assert_eq!(groups[0].same_path[0].tool, "kimi_cli");
+    let on_path: Vec<&str> = groups[0].path_rows().map(|r| r.id.as_str()).collect();
+    assert_eq!(on_path, vec!["2", "1"]);
 }
 
-/// A disabled row still stands for its folder (the folder is off), and among
-/// disabled rows the one keyed by the folder does.
+/// Two spellings of one place are two recorded paths: nothing here reads
+/// the filesystem, so an alias, a hard link or a case variant never joins a
+/// row to the driver's path.
+#[test]
+fn another_spelling_of_the_same_place_is_independent() {
+    let mut alias = row("2", "alpha", "kimi_cli", SyncStatus::Synced);
+    alias.target_path = "/Users/op/.config/agents/skills/alpha".to_string();
+    let mut case = row("3", "alpha", "kimi_cli", SyncStatus::Synced);
+    case.target_path = "/home/op/.config/agents/skills/Alpha".to_string();
+    let groups = folder_rows(
+        ScopeKind::Global,
+        vec![row("1", "alpha", "amp", SyncStatus::Synced), alias, case],
+    );
+    assert_eq!(groups[0].driver.id, "1");
+    assert!(groups[0].same_path.is_empty());
+    assert_eq!(groups[0].independent.len(), 2);
+}
+
+/// The driver is an owner whenever any row is, so overwrite permission is
+/// always its own: a never-synced row keyed by the folder never drives over
+/// an owning sibling, and an owner is never lent to it.
+#[test]
+fn an_owning_row_drives_the_folder() {
+    let mut owner = row("1", "alpha", "kimi_cli", SyncStatus::Synced);
+    owner.target_path = "/home/op/.config/agents/skills/old-name".to_string();
+    let groups = folder_rows(
+        ScopeKind::Global,
+        vec![
+            owner,
+            never_synced(row("2", "alpha", "amp", SyncStatus::Error)),
+        ],
+    );
+    assert_eq!(groups[0].driver.id, "1");
+    assert!(groups[0].driver.owns_artifact());
+    assert_eq!(groups[0].independent[0].id, "2");
+}
+
+/// The folder's state is its driver path's: a disabled row there keeps it
+/// off (and stands for it in a listing); an independent disabled row — a Keep
+/// marker under another name — neither blocks it nor stands for it.
+#[test]
+fn only_a_disabled_row_on_the_drivers_path_turns_the_folder_off() {
+    let same = vec![
+        row("1", "alpha", "amp", SyncStatus::Synced),
+        never_synced(row("2", "alpha", "kimi_cli", SyncStatus::Disabled)),
+    ];
+    assert!(folder_rows(ScopeKind::Global, same.clone())[0].disabled());
+    let listed = one_row_per_folder(ScopeKind::Global, same);
+    assert_eq!(
+        (listed[0].id.as_str(), listed[0].tool.as_str()),
+        ("2", "amp")
+    );
+    assert_eq!(listed[0].status, SyncStatus::Disabled);
+
+    let mut keep_marker = never_synced(row("2", "alpha", "kimi_cli", SyncStatus::Disabled));
+    keep_marker.target_path = "/home/op/.config/agents/skills/old-name".to_string();
+    let independent = vec![row("1", "alpha", "amp", SyncStatus::Synced), keep_marker];
+    let groups = folder_rows(ScopeKind::Global, independent.clone());
+    assert!(!groups[0].disabled());
+    assert_eq!(groups[0].independent[0].id, "2");
+    let listed = one_row_per_folder(ScopeKind::Global, independent);
+    assert_eq!(listed[0].id, "1");
+    assert_eq!(listed[0].status, SyncStatus::Synced);
+}
+
+/// Among rows of one standing the one keyed by the folder drives, whatever
+/// its status.
 #[test]
 fn a_disabled_row_keyed_by_the_folder_drives_it() {
     let rows = vec![
         row("1", "alpha", "kimi_cli", SyncStatus::Disabled),
         row("2", "alpha", "amp", SyncStatus::Disabled),
     ];
-    let groups = folder_rows(ScopeKind::Global, rows, |_, _| true);
+    let groups = folder_rows(ScopeKind::Global, rows.clone());
     assert_eq!(groups[0].driver.id, "2");
-    let folded = one_row_per_folder(
-        ScopeKind::Global,
-        vec![
-            row("1", "alpha", "kimi_cli", SyncStatus::Disabled),
-            row("2", "alpha", "amp", SyncStatus::Disabled),
-        ],
-    );
+    let folded = one_row_per_folder(ScopeKind::Global, rows);
     assert_eq!(folded[0].id, "2");
 }

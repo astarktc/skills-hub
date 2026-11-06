@@ -281,6 +281,8 @@ pub struct SkillProjectDeploymentRecord {
     pub project_id: String,
     pub project_path: String,
     pub tool: String,
+    /// The artifact name the row records (`ProjectSkillAssignmentRecord::skill_name`).
+    pub skill_name: String,
     pub status: SyncStatus,
     pub synced_at: Option<i64>,
 }
@@ -1471,13 +1473,13 @@ impl SkillStore {
         self.with_conn(|conn| {
             let sql = match only {
                 Some(_) => {
-                    "SELECT a.id, a.skill_id, a.project_id, p.path, a.tool, a.mode, a.status, a.last_error, a.synced_at
+                    "SELECT a.id, a.skill_id, a.project_id, p.path, a.tool, a.mode, a.status, a.last_error, a.synced_at, a.skill_name
                      FROM project_skill_assignments a JOIN projects p ON p.id = a.project_id
                      WHERE a.skill_id = ?1
                      ORDER BY a.skill_id ASC, p.path ASC, a.tool ASC"
                 }
                 None => {
-                    "SELECT a.id, a.skill_id, a.project_id, p.path, a.tool, a.mode, a.status, a.last_error, a.synced_at
+                    "SELECT a.id, a.skill_id, a.project_id, p.path, a.tool, a.mode, a.status, a.last_error, a.synced_at, a.skill_name
                      FROM project_skill_assignments a JOIN projects p ON p.id = a.project_id
                      ORDER BY a.skill_id ASC, p.path ASC, a.tool ASC"
                 }
@@ -1491,6 +1493,7 @@ impl SkillStore {
                     project_id: row.get(2)?,
                     project_path: row.get(3)?,
                     tool: row.get(4)?,
+                    skill_name: row.get(9)?,
                     status,
                     synced_at: row.get(8)?,
                 })

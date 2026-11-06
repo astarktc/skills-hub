@@ -214,15 +214,35 @@ export function projectFolderOf(key: string): string {
 }
 
 /**
- * Rust `placement::one_row_per_folder`: rows written once per shared-dir
- * sibling read as their folder — per owner, one row keyed by the folder, a
- * `disabled` one when any is, else the row already keyed by it, else the
- * first — in the order each folder first appears.
+ * Rust `placement::folder_rows` for one folder's rows: the driver — among the
+ * rows owning their artifact (`synced_at` set) when any does, the row keyed by
+ * the folder, else the first — and the rows recording its very location
+ * (`locationOf`, compared byte for byte). Every other row is independent: no
+ * write of the folder touches it. Without `locationOf` every row records one
+ * location (a scenario's pre-1.4.0 siblings were all written on one path).
  */
-export function oneRowPerFolder<R extends { tool: string; status: string }>(
+export function folderDriver<R extends { tool: string; synced_at?: number | null }>(
+  members: readonly R[],
+  folder: string,
+  locationOf: (row: R) => string = () => "",
+): { driver: R; onPath: R[] } {
+  const owns = (row: R) => row.synced_at !== undefined && row.synced_at !== null;
+  const candidates = members.some(owns) ? members.filter(owns) : members;
+  const driver = candidates.find((row) => row.tool === folder) ?? candidates[0];
+  return { driver, onPath: members.filter((row) => locationOf(row) === locationOf(driver)) };
+}
+
+/**
+ * Rust `placement::one_row_per_folder`: rows written once per shared-dir
+ * sibling read as their folder — per owner, one row keyed by the folder: a
+ * `disabled` row on the driver's location when there is one, else the driver
+ * ([`folderDriver`]) — in the order each folder first appears.
+ */
+export function oneRowPerFolder<R extends { tool: string; status: string; synced_at?: number | null }>(
   rows: readonly R[],
   folderOf: (tool: string) => string,
   ownerOf: (row: R) => string = () => "",
+  locationOf?: (row: R) => string,
 ): R[] {
   const groups = new Map<string, { folder: string; rows: R[] }>();
   for (const row of rows) {
@@ -233,8 +253,8 @@ export function oneRowPerFolder<R extends { tool: string; status: string }>(
     groups.set(key, group);
   }
   return [...groups.values()].map(({ folder, rows: members }) => {
-    const pick =
-      members.find((row) => row.status === "disabled") ?? members.find((row) => row.tool === folder) ?? members[0];
+    const { driver, onPath } = folderDriver(members, folder, locationOf);
+    const pick = driver.status === "disabled" ? driver : (onPath.find((row) => row.status === "disabled") ?? driver);
     return { ...pick, tool: folder };
   });
 }

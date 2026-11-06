@@ -7,8 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{
-    admit, admit_central_copy, same_artifact, test_seams, Claim, Entry, Fence, OwnedDir,
-    ProtectedLibrary,
+    admit, admit_central_copy, test_seams, Claim, Entry, Fence, OwnedDir, ProtectedLibrary,
 };
 use crate::core::errors::{RemovalRefusal, SignalError};
 use crate::core::skill_store::{SkillRecord, SkillStore};
@@ -868,77 +867,4 @@ mod macos_mounts {
         remove_path_any(&target, &Fence::new(&library)).unwrap();
         assert!(!target.exists());
     }
-}
-
-// ---------------------------------------------------------------------------
-// `same_artifact`: the physical test that lets two stored rows share one
-// artifact's ownership (round 20 t09 review finding 1).
-// ---------------------------------------------------------------------------
-
-#[test]
-fn one_spelling_names_one_artifact_present_or_not() {
-    let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("skills/alpha");
-    assert!(same_artifact(&path, &path), "absent");
-    fs::create_dir_all(&path).unwrap();
-    assert!(same_artifact(&path, &path), "present");
-}
-
-#[test]
-fn different_names_in_one_folder_are_different_artifacts() {
-    let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path().join("skills");
-    fs::create_dir_all(dir.join("previous-name")).unwrap();
-    // One present, one absent.
-    assert!(!same_artifact(
-        &dir.join("previous-name"),
-        &dir.join("current-name")
-    ));
-    // Both present.
-    fs::create_dir_all(dir.join("current-name")).unwrap();
-    assert!(!same_artifact(
-        &dir.join("previous-name"),
-        &dir.join("current-name")
-    ));
-    // Both absent.
-    assert!(!same_artifact(&dir.join("one"), &dir.join("two")));
-}
-
-/// Two spellings of one entry through an aliased folder are one artifact,
-/// present (by entry identity) or absent (by the parent's identity and the
-/// name); a link leaf is identified as itself, never as its referent.
-#[cfg(unix)]
-#[test]
-fn two_spellings_through_an_aliased_folder_name_one_artifact() {
-    let tmp = tempfile::tempdir().unwrap();
-    let real = tmp.path().join("real/skills");
-    fs::create_dir_all(&real).unwrap();
-    let alias = tmp.path().join("alias");
-    std::os::unix::fs::symlink(tmp.path().join("real"), &alias).unwrap();
-    let via_alias = alias.join("skills");
-
-    assert!(
-        same_artifact(&real.join("alpha"), &via_alias.join("alpha")),
-        "absent"
-    );
-    fs::create_dir_all(real.join("alpha")).unwrap();
-    assert!(
-        same_artifact(&real.join("alpha"), &via_alias.join("alpha")),
-        "present"
-    );
-
-    // A link at the leaf is not the folder it points at.
-    std::os::unix::fs::symlink(real.join("alpha"), real.join("beta")).unwrap();
-    assert!(!same_artifact(&real.join("alpha"), &real.join("beta")));
-}
-
-#[test]
-fn an_absent_entry_under_a_missing_folder_is_not_proven_the_same() {
-    let tmp = tempfile::tempdir().unwrap();
-    let a = tmp.path().join("gone/skills/alpha");
-    let b = tmp.path().join("gone/skills/../skills/alpha");
-    assert!(
-        !same_artifact(&a, &b),
-        "no folder to compare: never proven, so never shared"
-    );
 }

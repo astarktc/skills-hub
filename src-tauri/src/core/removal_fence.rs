@@ -894,47 +894,6 @@ impl EntryId {
     }
 }
 
-/// Whether the artifact paths `a` and `b` provably name **one physical
-/// entry** — the test that lets two stored Deployment rows share an
-/// artifact's ownership and settlement (a pre-1.4.0 row written once per
-/// shared-dir sibling describes its folder's artifact only when it names the
-/// same entry; a sibling written under another skill name names another).
-///
-/// - The same spelling names the same entry.
-/// - Two present entries are one when their identities agree ([`EntryId`]:
-///   device + inode on Unix, read without following a link at the leaf), so
-///   two spellings of one entry through an aliased folder, or a
-///   case-folding volume, are one.
-/// - Two absent entries are one when their parents are one existing
-///   directory ([`Place::same`]) and their names are byte-equal: the same
-///   slot, nothing there yet.
-///
-/// Anything else — one present and one absent, an identity that cannot be
-/// read, a parent that does not exist — is **not** proven the same: two rows
-/// stay independent, each owning only its own artifact. Never a reason to
-/// remove anything by itself.
-pub(crate) fn same_artifact(a: &Path, b: &Path) -> bool {
-    if a == b {
-        return true;
-    }
-    match (EntryId::of(a), EntryId::of(b)) {
-        (Ok(Some(left)), Ok(Some(right))) => left == right,
-        (Ok(None), Ok(None)) => {
-            let (Some(a_parent), Some(b_parent)) = (a.parent(), b.parent()) else {
-                return false;
-            };
-            if a.file_name().is_none() || a.file_name() != b.file_name() {
-                return false;
-            }
-            match (Place::of(a_parent), Place::of(b_parent)) {
-                (Ok(left), Ok(right)) => left.same(&right),
-                _ => false,
-            }
-        }
-        _ => false,
-    }
-}
-
 #[cfg(unix)]
 fn entry_identity(path: &Path) -> std::io::Result<(EntryId, u64)> {
     use std::os::unix::fs::MetadataExt;

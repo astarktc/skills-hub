@@ -1028,10 +1028,11 @@ fn a_disabled_member_mints_no_sharer_and_skips_the_group() {
 }
 
 // ---------------------------------------------------------------------------
-// A folder's artifact is physical (round 20 t09 review findings 1 and 3):
-// whether it needs new bytes, whether it is ours to replace, and which rows
-// settle with it are decided by every row naming the same physical entry —
-// never by one representative, never by a sibling naming another artifact.
+// A folder's write acts on its driver's recorded path (round 20 t09 review
+// findings 1, 3 and 6): it is ours to replace only when the driver owns it,
+// it needs new bytes when any row recording that very path records a copy,
+// and only those rows settle with it — never a row recording another path,
+// however physically close.
 // ---------------------------------------------------------------------------
 
 /// A project with Trae and Trae CN rows, as a pre-1.4.0 project wrote them.
@@ -1122,9 +1123,10 @@ fn a_project_copy_recorded_by_any_row_of_its_artifact_gets_new_bytes() {
     }
 }
 
-/// A project sibling naming another artifact neither lends its ownership nor
-/// settles with the folder's: the never-synced driver over a foreign folder is
-/// a first deploy that collides, and the owned old-name row is left as it is.
+/// A project sibling recording another name neither lends its ownership nor
+/// settles with the folder's: the owned old-name copy drives the folder and is
+/// refreshed in place; the never-synced row over a foreign folder at the
+/// current name is independent and untouched.
 #[test]
 fn a_project_sibling_naming_another_artifact_lends_no_ownership() {
     let f = fixture();
@@ -1145,35 +1147,37 @@ fn a_project_sibling_naming_another_artifact_lends_no_ownership() {
         SyncMode::Copy,
         true,
     );
-    seed_stale_copy(&project.path().join(".trae/skills/old-name"));
+    let old = project.path().join(".trae/skills/old-name");
+    seed_stale_copy(&old);
     let foreign = project.path().join(".trae/skills/skill");
     foreign_folder(&foreign);
 
     let outcomes = propagate(&f);
 
-    match outcome_for(&outcomes, &trae_scope()) {
-        PropagationStatus::Failed {
-            error: crate::core::errors::CommandError::TargetExists { .. },
-            first_deploy: true,
-        } => {}
-        other => panic!("expected a first-deploy collision, got {other:?}"),
-    }
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &trae_scope()),
+            PropagationStatus::Synced { .. }
+        ),
+        "the owner's own copy is refreshed, got {outcomes:?}"
+    );
+    assert_eq!(fs::read_to_string(old.join("a.txt")).unwrap(), "v2");
     assert_eq!(
         fs::read_to_string(foreign.join("SKILL.md")).unwrap(),
         "foreign"
     );
-    let trae_cn = f
+    let trae = f
         .store
-        .get_project_skill_assignment("p1", &f.skill_id, "trae_cn")
+        .get_project_skill_assignment("p1", &f.skill_id, "trae")
         .unwrap()
         .unwrap();
-    assert_eq!(trae_cn.synced_at, Some(1), "untouched");
-    assert_eq!(trae_cn.status, SyncStatus::Synced);
+    assert!(!trae.owns_artifact(), "never lent ownership");
+    assert_eq!(trae.status, SyncStatus::Error, "untouched");
 }
 
-/// The global arm: Amp's never-synced row over a foreign folder is not
-/// authorised by Kimi's row owning an artifact under another name, and Kimi's
-/// row is neither re-pointed at the folder's path nor settled.
+/// The global arm: Kimi's row owning a copy under another name drives the
+/// folder and is refreshed in place; Amp's never-synced row over a foreign
+/// folder at the current name is neither authorised, written nor settled.
 #[test]
 fn a_global_sibling_naming_another_artifact_lends_no_ownership() {
     let f = fixture();
@@ -1189,13 +1193,14 @@ fn a_global_sibling_naming_another_artifact_lends_no_ownership() {
 
     let outcomes = propagate(&f);
 
-    match outcome_for(&outcomes, &global("amp")) {
-        PropagationStatus::Failed {
-            error: crate::core::errors::CommandError::TargetExists { .. },
-            first_deploy: true,
-        } => {}
-        other => panic!("expected a first-deploy collision, got {other:?}"),
-    }
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &global("amp")),
+            PropagationStatus::Synced { .. }
+        ),
+        "the owner's own copy is refreshed, got {outcomes:?}"
+    );
+    assert_eq!(fs::read_to_string(old.join("a.txt")).unwrap(), "v2");
     assert_eq!(
         fs::read_to_string(foreign.join("SKILL.md")).unwrap(),
         "foreign"
@@ -1206,11 +1211,111 @@ fn a_global_sibling_naming_another_artifact_lends_no_ownership() {
         .unwrap()
         .unwrap();
     assert_eq!(kimi_row.target_path, old.to_string_lossy());
-    assert_eq!(kimi_row.synced_at, Some(1), "untouched");
+    assert_eq!(kimi_row.synced_at, Some(2000), "its own path, written");
     let amp_row = f
         .store
         .get_skill_target(&f.skill_id, "amp")
         .unwrap()
         .unwrap();
     assert!(!amp_row.owns_artifact());
+    assert_eq!(amp_row.status, SyncStatus::Error, "untouched");
+}
+
+/// Legitimate pre-1.4.0 Amp/Kimi siblings record one path byte for byte: the
+/// owner drives, the stale copy there is refreshed once, and the never-synced
+/// sibling on that very path settles synced with it.
+#[test]
+fn global_siblings_recording_the_same_path_settle_together() {
+    let f = fixture();
+    let (amp, kimi) = amp_and_kimi();
+    install_tool(&f, amp);
+    install_tool(&f, kimi);
+    let shared = shared_target(&f);
+    seed_stale_copy(&shared);
+    seed_unowned_target(&f, "amp", &shared);
+    seed_global_target(&f, "t-kimi", "kimi_cli", &shared, SyncMode::Copy);
+
+    let outcomes = propagate(&f);
+
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &global("amp")),
+            PropagationStatus::Synced { .. }
+        ),
+        "{outcomes:?}"
+    );
+    assert_eq!(outcomes.len(), 1, "one folder, one outcome");
+    for tool in ["amp", "kimi_cli"] {
+        let row = f
+            .store
+            .get_skill_target(&f.skill_id, tool)
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.status, SyncStatus::Synced, "{tool}");
+        assert_eq!(row.synced_at, Some(2000), "{tool}");
+    }
+}
+
+/// Review finding 6: two spellings naming one empty slot (the folder reached
+/// directly and through an aliased home) are two recorded paths. The first
+/// deploy writes the driver's spelling and settles only the row recording it,
+/// so the alias-spelled row is never made an owner; when a foreign folder
+/// later occupies the slot, that row's own write is a collision, never a
+/// replacement.
+#[cfg(unix)]
+#[test]
+fn an_absent_slot_reached_by_two_spellings_lends_nothing() {
+    let f = fixture();
+    let (amp, kimi) = amp_and_kimi();
+    install_tool(&f, amp);
+    install_tool(&f, kimi);
+    let canonical = shared_target(&f);
+    let alias_home = f.paths.roots.home.parent().unwrap().join("alias-home");
+    std::os::unix::fs::symlink(&f.paths.roots.home, &alias_home).unwrap();
+    let aliased = alias_home.join(".config/agents/skills/skill");
+    // One existing skills folder, its `skill` slot empty under both spellings.
+    fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+    assert!(canonical.symlink_metadata().is_err() && aliased.symlink_metadata().is_err());
+    seed_unowned_target(&f, "amp", &canonical);
+    seed_unowned_target(&f, "kimi_cli", &aliased);
+
+    let outcomes = propagate(&f);
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &global("amp")),
+            PropagationStatus::Synced { .. }
+        ),
+        "{outcomes:?}"
+    );
+    let kimi_row = f
+        .store
+        .get_skill_target(&f.skill_id, "kimi_cli")
+        .unwrap()
+        .unwrap();
+    assert!(
+        !kimi_row.owns_artifact(),
+        "an empty slot matched by spelling is not a write of this row's path"
+    );
+
+    // A foreign folder takes the slot, and the folder's own row goes (the
+    // alias-spelled row is all that is left to act on it).
+    fs::remove_file(&canonical).expect("remove our link");
+    foreign_folder(&canonical);
+    f.store
+        .delete_skill_target(&f.skill_id, "amp")
+        .expect("drop the folder's row");
+
+    let outcomes = propagate(&f);
+    match outcome_for(&outcomes, &global("amp")) {
+        PropagationStatus::Failed {
+            error: crate::core::errors::CommandError::TargetExists { .. },
+            first_deploy: true,
+        } => {}
+        other => panic!("expected a first-deploy collision, got {other:?}"),
+    }
+    assert_eq!(
+        fs::read_to_string(aliased.join("SKILL.md")).unwrap(),
+        "foreign",
+        "the foreign occupant is not replaced"
+    );
 }

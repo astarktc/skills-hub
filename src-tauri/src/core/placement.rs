@@ -409,83 +409,111 @@ fn reads_folder(
 // Reading stored rows as folders
 // ---------------------------------------------------------------------------
 
-/// A stored Deployment row, as [`one_row_per_folder`] reads it.
+/// A stored Deployment row, as [`folder_rows`] and [`one_row_per_folder`]
+/// read it.
 pub trait FolderRow {
     /// What the row belongs to beside its folder: the skill (global rows), or
     /// the project and the skill (project rows).
     fn owner(&self) -> String;
     fn tool(&self) -> &str;
     fn status(&self) -> SyncStatus;
+    /// Whether a sync of ours succeeded at the row's recorded path
+    /// (`synced_at` set) — the only source of overwrite permission.
+    fn owns_artifact(&self) -> bool;
+    /// The part of the row's **recorded** artifact path that can differ
+    /// between rows of one (owner, folder), compared byte for byte: a global
+    /// row's whole `target_path`; a project row's artifact name (every row of
+    /// one project folder lives in the same project dir, so its name is the
+    /// only part of its path that varies). Never resolved, canonicalised or
+    /// compared by physical identity.
+    fn recorded_location(&self) -> &str;
     fn set_tool(&mut self, tool: String);
 }
 
 /// One row per (owner, folder): rows written once per shared-dir sibling read
-/// as their folder. Each group's representative is a `disabled` row when any is
-/// (one disabled sibling keeps the whole folder off, the batch and Propagation's
-/// rule), else the row already keyed by the folder, else the first; it comes out
-/// keyed by the folder key, in the order its group first appeared. Rows of a
-/// folder of their own pass through unchanged.
+/// as their folder — for display, counting and selection, never ownership.
+/// Each group comes out as the row standing for its folder's state (a
+/// `disabled` row on the driver's recorded path when there is one, else the
+/// [`FolderRows::driver`]), keyed by the folder key, in the order its group
+/// first appeared. Rows of a folder of their own pass through unchanged.
 pub fn one_row_per_folder<R: FolderRow>(scope: ScopeKind, rows: Vec<R>) -> Vec<R> {
-    group_by_folder(scope, rows)
+    folder_rows(scope, rows)
         .into_iter()
-        .map(|(folder, mut members)| {
-            let mut row = members.swap_remove(representative(&members, &folder));
-            row.set_tool(folder);
+        .map(|group| {
+            let mut row = match group
+                .same_path
+                .iter()
+                .position(|r| r.status() == SyncStatus::Disabled)
+            {
+                Some(index) if group.driver.status() != SyncStatus::Disabled => {
+                    let mut same_path = group.same_path;
+                    same_path.swap_remove(index)
+                }
+                _ => group.driver,
+            };
+            row.set_tool(group.folder);
             row
         })
         .collect()
 }
 
 /// One (owner, folder)'s stored rows as the write paths act on them. Folder
-/// grouping is **logical** (which folder a row describes, which row stands for
-/// it); artifact ownership is **physical**: only rows proven to name the
-/// driver's artifact share its ownership and settlement.
+/// grouping is for display, counting and selection; it never transfers
+/// ownership. A write acts on the **driver's** recorded path with the
+/// driver's own overwrite permission, and its settlement extends only to rows
+/// recording that very path, byte for byte.
 #[derive(Debug)]
 pub struct FolderRows<R> {
     /// The folder key every row here describes.
     pub folder: String,
-    /// The row standing for the folder, by [`one_row_per_folder`]'s rule (a
-    /// `disabled` row when any is, else the row keyed by the folder, else the
-    /// first) — the folder's state, and the artifact a write acts on.
+    /// The row a write of the folder acts on: among the rows owning their
+    /// artifact when any does (so overwrite permission is always the
+    /// driver's own), the row keyed by the folder, else the first.
     pub driver: R,
-    /// Other rows proven to name the driver's physical artifact: an owner
-    /// among them authorises replacing it, and they settle with the driver.
-    pub same_artifact: Vec<R>,
-    /// Rows of the folder naming another artifact (a pre-1.4.0 sibling written
-    /// under another skill name): each owns only its own artifact, and no
-    /// write of the folder's artifact touches or settles it — the redeploy
-    /// (ticket 10) reconciles it. Removal still plans it by its own row.
+    /// Other rows whose recorded path is byte-identical to the driver's
+    /// ([`FolderRow::recorded_location`]): a write of the driver's path is a
+    /// write of theirs, so they share its state and settle with it.
+    pub same_path: Vec<R>,
+    /// Rows recording any other path — another name, or another spelling of
+    /// the same place (an alias, a hard link, a case variant): each stands
+    /// only for itself. No write of the folder touches, settles or consults
+    /// it; the redeploy (ticket 10) reconciles it. Removal still plans it by
+    /// its own row and ownership. Kept, never read by a write path, so the
+    /// split is whole and testable.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub independent: Vec<R>,
 }
 
-impl<R> FolderRows<R> {
-    /// The driver and every row naming its artifact.
-    pub fn artifact_rows(&self) -> impl Iterator<Item = &R> {
-        std::iter::once(&self.driver).chain(self.same_artifact.iter())
+impl<R: FolderRow> FolderRows<R> {
+    /// The driver and every row recording its path.
+    pub fn path_rows(&self) -> impl Iterator<Item = &R> {
+        std::iter::once(&self.driver).chain(self.same_path.iter())
+    }
+
+    /// Whether the folder is off: a row on the driver's recorded path is
+    /// `disabled`. An independent row's status never counts.
+    pub fn disabled(&self) -> bool {
+        self.path_rows().any(|r| r.status() == SyncStatus::Disabled)
     }
 }
 
-/// Group `rows` by (owner, folder) and split each group by artifact:
-/// `same_artifact(driver, row)` decides, per row, whether it names the
-/// driver's physical artifact (the caller supplies the physical test — this
-/// module reads no filesystem). Groups come out in the order they first
-/// appeared; rows keep their order within a group.
-pub fn folder_rows<R: FolderRow>(
-    scope: ScopeKind,
-    rows: Vec<R>,
-    same_artifact: impl Fn(&R, &R) -> bool,
-) -> Vec<FolderRows<R>> {
+/// Group `rows` by (owner, folder), pick each group's driver and split the
+/// rest by recorded path: byte-identical to the driver's, or independent.
+/// Pure: nothing here reads the filesystem, so no physical identity can
+/// widen a group. Groups come out in the order they first appeared; rows keep
+/// their order within a group.
+pub fn folder_rows<R: FolderRow>(scope: ScopeKind, rows: Vec<R>) -> Vec<FolderRows<R>> {
     group_by_folder(scope, rows)
         .into_iter()
         .map(|(folder, mut members)| {
-            let driver = members.remove(representative(&members, &folder));
-            let (same, independent) = members
+            let driver = members.remove(driver_index(&members, &folder));
+            let (same_path, independent) = members
                 .into_iter()
-                .partition(|row| same_artifact(&driver, row));
+                .partition(|row| row.recorded_location() == driver.recorded_location());
             FolderRows {
                 folder,
                 driver,
-                same_artifact: same,
+                same_path,
                 independent,
             }
         })
@@ -513,17 +541,19 @@ fn group_by_folder<R: FolderRow>(scope: ScopeKind, rows: Vec<R>) -> Vec<(String,
         .collect()
 }
 
-/// The index of the row standing for `folder` among `members` (non-empty): a
-/// `disabled` row when any is (one disabled row keeps the folder off), else
-/// the row keyed by the folder, else the first. Among several candidates the
-/// row keyed by the folder comes first.
-fn representative<R: FolderRow>(members: &[R], folder: &str) -> usize {
-    let disabled = |r: &R| r.status() == SyncStatus::Disabled;
+/// The index of the driver among `members` (non-empty). Candidates are the
+/// rows owning their artifact when any does, else every row; among them the
+/// row keyed by the folder, else the first. Status plays no part: the folder's
+/// state is read from the driver's path ([`FolderRows::disabled`]), so a
+/// `disabled` row recording another name can never become the driver and
+/// turn the folder off.
+fn driver_index<R: FolderRow>(members: &[R], folder: &str) -> usize {
+    let any_owner = members.iter().any(FolderRow::owns_artifact);
+    let candidate = |r: &R| !any_owner || r.owns_artifact();
     members
         .iter()
-        .position(|r| disabled(r) && r.tool() == folder)
-        .or_else(|| members.iter().position(disabled))
-        .or_else(|| members.iter().position(|r| r.tool() == folder))
+        .position(|r| candidate(r) && r.tool() == folder)
+        .or_else(|| members.iter().position(candidate))
         .unwrap_or(0)
 }
 
@@ -536,6 +566,12 @@ impl FolderRow for SkillTargetRecord {
     }
     fn status(&self) -> SyncStatus {
         self.status
+    }
+    fn owns_artifact(&self) -> bool {
+        SkillTargetRecord::owns_artifact(self)
+    }
+    fn recorded_location(&self) -> &str {
+        &self.target_path
     }
     fn set_tool(&mut self, tool: String) {
         self.tool = tool;
@@ -552,6 +588,15 @@ impl FolderRow for ProjectSkillAssignmentRecord {
     fn status(&self) -> SyncStatus {
         self.status
     }
+    fn owns_artifact(&self) -> bool {
+        ProjectSkillAssignmentRecord::owns_artifact(self)
+    }
+    /// The stored artifact name (`project_sync::assignment_artifact_name`'s
+    /// rule; an empty, un-backfilled name resolves to the same live name for
+    /// every row of the skill, so two empty names are one path too).
+    fn recorded_location(&self) -> &str {
+        &self.skill_name
+    }
     fn set_tool(&mut self, tool: String) {
         self.tool = tool;
     }
@@ -566,6 +611,12 @@ impl FolderRow for SkillProjectDeploymentRecord {
     }
     fn status(&self) -> SyncStatus {
         self.status
+    }
+    fn owns_artifact(&self) -> bool {
+        self.synced_at.is_some()
+    }
+    fn recorded_location(&self) -> &str {
+        &self.skill_name
     }
     fn set_tool(&mut self, tool: String) {
         self.tool = tool;

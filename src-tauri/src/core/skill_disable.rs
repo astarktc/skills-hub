@@ -34,7 +34,8 @@
 //!    with no path touched. This module never removes a path.
 //! 2. **Enable is a first sync again.** It clears the marker and re-syncs
 //!    through the existing batches — `global_sync` for global targets (the
-//!    cleared rows are deleted so the batch records them afresh) and
+//!    disabled rows on each off folder's driver path are deleted so the batch
+//!    records the folder afresh) and
 //!    `project_sync::first_sync_assignments_unlocked` for assignments — with
 //!    overwrite off, so `TARGET_EXISTS` can occur and is report data. A
 //!    global pair whose folder is in the way stays `disabled` until the
@@ -42,6 +43,9 @@
 //!    scope with per-pair decisions ([`enable_targets_with`]); any other
 //!    failed pair is the batch's `error` row; an assignment keeps its row
 //!    `error` and is retried through `project_sync::resolve_collisions`.
+//!    A folder is off, and Enable acts on it, only when a row on its driver's
+//!    recorded path is `disabled` (`placement::FolderRows`); a row recording
+//!    another path is never deleted, admitted or re-synced by Enable.
 //!
 //! Both answer with report types that cross the wire as themselves:
 //! [`RemovalReport`] for Disable, [`EnableReport`] for Enable. Only a store
@@ -63,8 +67,8 @@ use super::artifact_removal::{self, RemovalPlan, RemovalReport, RemovalScope, Ro
 use super::environment::HostRoots;
 use super::errors::{CommandError, SignalError};
 use super::global_sync::{
-    sync_skills_to_tools_unlocked, BatchOverride, BatchPolicy, BatchSkill, BatchTargetOutcome,
-    BatchTargetStatus, GlobalSyncError,
+    sync_skills_to_tools_lifting_unlocked, BatchOverride, BatchPolicy, BatchSkill,
+    BatchTargetOutcome, BatchTargetStatus, GlobalSyncError,
 };
 use super::mutation_guard;
 use super::placement::{self, row_folder, PlacementSettings, ScopeKind};
@@ -381,9 +385,8 @@ fn enable_unlocked(
 
 /// One pair. A skill disabled at skill grain stays off: only a skill-grain
 /// Enable lifts that, so the pair is reported skipped and nothing changes.
-/// Otherwise every disabled row describing the folder serving `tool` is
-/// cleared (the batch's Disabled rule would otherwise still skip the folder)
-/// and the folder is synced as a first sync.
+/// Otherwise the folder serving `tool` is enabled ([`admit_folders`]) and
+/// synced as a first sync.
 fn enable_pair(
     store: &SkillStore,
     central_dir: &Path,
@@ -409,21 +412,54 @@ fn enable_pair(
             projects: ProjectSyncReport::default(),
         });
     }
-    for row in store.list_skill_targets(&skill.id)? {
-        if row.status == SyncStatus::Disabled && row_folder(ScopeKind::Global, &row.tool) == folder
-        {
-            store.delete_skill_target(&skill.id, &row.tool)?;
-        }
-    }
+    let lifted = admit_folders(store, &skill.id, |group| group == folder)?;
     Ok(EnableReport {
-        global: first_sync_global(store, central_dir, roots, skill, &[folder], overrides, now),
+        global: first_sync_global(
+            store,
+            central_dir,
+            roots,
+            skill,
+            &[folder],
+            &lifted,
+            overrides,
+            now,
+        ),
         projects: ProjectSyncReport::default(),
     })
 }
 
-/// One skill: clear the skill-level marker, then re-sync every disabled row —
-/// the global ones through the batch (rows deleted first so the batch records
-/// them afresh), the assignments through `project_sync`.
+/// Clear the Disabled state of the skill's global folders `wanted` selects
+/// that are off (`placement::FolderRows::disabled`: a row on the driver's
+/// recorded path is `disabled`), so the batch records them afresh: the
+/// `disabled` rows on the driver's path are deleted (a successful Disable
+/// removed their artifact; the batch's first sync records the folder again).
+/// An **independent** row — one recording another path — is never deleted or
+/// re-recorded here, whatever its status (the redeploy reconciles it).
+/// Answers the folder keys it enabled, in row order.
+fn admit_folders(
+    store: &SkillStore,
+    skill_id: &str,
+    wanted: impl Fn(&str) -> bool,
+) -> Result<Vec<String>> {
+    let mut admitted = Vec::new();
+    for group in placement::folder_rows(ScopeKind::Global, store.list_skill_targets(skill_id)?) {
+        if !wanted(&group.folder) || !group.disabled() {
+            continue;
+        }
+        for row in group.path_rows() {
+            if row.status == SyncStatus::Disabled {
+                store.delete_skill_target(skill_id, &row.tool)?;
+            }
+        }
+        admitted.push(group.folder);
+    }
+    Ok(admitted)
+}
+
+/// One skill: clear the skill-level marker, then re-sync every disabled
+/// Deployment folder — the global ones through the batch ([`admit_folders`]
+/// first, so the batch records them afresh), the project ones through
+/// `project_sync`. Independent rows are left as they are at both scopes.
 fn enable_skill(
     store: &SkillStore,
     central_dir: &Path,
@@ -434,24 +470,25 @@ fn enable_skill(
 ) -> Result<EnableReport> {
     store.set_skill_disabled_at(&skill.id, None)?;
 
-    let mut tools = Vec::new();
-    for row in store.list_skill_targets(&skill.id)? {
-        if row.status == SyncStatus::Disabled {
-            store.delete_skill_target(&skill.id, &row.tool)?;
-            tools.push(row.tool);
-        }
-    }
-    let assignments: Vec<_> = store
-        .list_project_skill_assignments_by_skill(&skill.id)?
-        .into_iter()
-        .filter(|assignment| assignment.status == SyncStatus::Disabled)
-        .collect();
+    let tools = admit_folders(store, &skill.id, |_| true)?;
+    // Every assignment of the skill: the project half groups them by folder
+    // and enables only the folders that are off.
+    let assignments = store.list_project_skill_assignments_by_skill(&skill.id)?;
 
     Ok(EnableReport {
         global: if tools.is_empty() {
             Vec::new()
         } else {
-            first_sync_global(store, central_dir, roots, skill, &tools, overrides, now)
+            first_sync_global(
+                store,
+                central_dir,
+                roots,
+                skill,
+                &tools,
+                &tools,
+                overrides,
+                now,
+            )
         },
         projects: first_sync_assignments_unlocked(store, central_dir, &assignments, now)?,
     })
@@ -460,12 +497,16 @@ fn enable_skill(
 /// The global sync batch as a first sync: overwrite off, identical content
 /// replaced silently (the same policy as every operator-initiated sync),
 /// plus the operator's per-pair answers to an earlier ask for this skill.
+/// `lifted` names the folders [`admit_folders`] just enabled: an independent
+/// `disabled` row left there (another recorded path) does not block them.
+#[allow(clippy::too_many_arguments)]
 fn first_sync_global(
     store: &SkillStore,
     central_dir: &Path,
     roots: &HostRoots,
     skill: &SkillRecord,
     tools: &[String],
+    lifted: &[String],
     overrides: &[BatchOverride],
     now: i64,
 ) -> Vec<BatchTargetOutcome> {
@@ -483,13 +524,14 @@ fn first_sync_global(
             .cloned()
             .collect(),
     };
-    let outcomes = sync_skills_to_tools_unlocked(
+    let outcomes = sync_skills_to_tools_lifting_unlocked(
         roots,
         store,
         central_dir,
         &skills,
         tools,
         &policy,
+        lifted,
         now,
         |_| {},
     );
