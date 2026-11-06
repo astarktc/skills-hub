@@ -540,11 +540,7 @@ fn seed_repoint_repository(f: &Fixture, matching_name: bool) {
     git(&["add", "-A"], repo.path());
     git(&["commit", "-q", "-m", "two skills"], repo.path());
     let url = repo.path().to_string_lossy();
-    let CachedCheckout {
-        dir: cached,
-        head: _,
-        ..
-    } = fetch_through_cache(
+    let CachedCheckout { dir: cached, .. } = fetch_through_cache(
         &f.paths.cache_dir,
         &crate::core::removal_fence::ProtectedLibrary::new(&f.store, &f.paths.central_dir),
         &FetchRequest {
@@ -577,11 +573,7 @@ fn git_repoint_root_manifest_stores_no_subpath() {
     .unwrap();
     git(&["add", "-A"], repo.path());
     git(&["commit", "-q", "-m", "root skill"], repo.path());
-    let CachedCheckout {
-        dir: cached,
-        head: _,
-        ..
-    } = fetch_through_cache(
+    let CachedCheckout { dir: cached, .. } = fetch_through_cache(
         &f.paths.cache_dir,
         &crate::core::removal_fence::ProtectedLibrary::new(&f.store, &f.paths.central_dir),
         &FetchRequest {
