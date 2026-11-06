@@ -1613,6 +1613,7 @@ export function createFixtureBackend(
           detect_dirs: [`~/${fixtureDetectDir(t.globalDir)}`],
           supports_symlink: true,
         },
+        duplicate_readers: null,
       })),
       installed,
       newly_installed: newly,
@@ -1632,6 +1633,7 @@ export function createFixtureBackend(
           : [],
       readers: [],
       placement: null,
+      duplicate_readers: null,
     }));
     return { tools, installed: tools.filter((t) => t.installed).map((t) => t.key), newly_installed: [] };
   };

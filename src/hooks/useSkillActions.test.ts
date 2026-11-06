@@ -905,7 +905,7 @@ describe("report data (D11)", () => {
 
 describe("one operator action, one overwrite ask (the real sync world)", () => {
   const TOOL_STATUS: ToolStatusDto = {
-    tools: ["claude", "cursor"].map((key) => ({ key, label: key.toUpperCase(), installed: true, shared_with: [key], constituents: [], readers: [], placement: null })),
+    tools: ["claude", "cursor"].map((key) => ({ key, label: key.toUpperCase(), installed: true, shared_with: [key], constituents: [], readers: [], placement: null, duplicate_readers: null })),
     installed: ["claude", "cursor"],
     newly_installed: [],
   };

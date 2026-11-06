@@ -61,8 +61,10 @@ pub enum DuplicateBehaviour {
     /// One copy wins; the other is hidden (often with a warning).
     Shadows,
     /// An ambiguous name loads neither copy: invocation by name breaks (fx).
+    #[allow(dead_code, reason = "first row: fx, round 20 ticket 05")]
     LoadsNone,
     /// Differing copies are flagged as a conflict (Cortex Code).
+    #[allow(dead_code, reason = "first row: Cortex Code, round 20 ticket 06")]
     FlagsConflict,
     Unknown,
 }
@@ -76,6 +78,10 @@ pub enum ReadMode {
     /// Read only by a legacy release of the harness (Kimi's `kimi-cli`).
     Legacy,
     /// Read only after the operator opts in.
+    #[allow(
+        dead_code,
+        reason = "no existing row has an opt-in cross-read yet; later rows (tickets 05–07) may"
+    )]
     OptIn,
     /// Read only under the stated condition.
     Conditional(&'static str),
