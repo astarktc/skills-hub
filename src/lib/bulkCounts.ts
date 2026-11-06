@@ -5,12 +5,14 @@
  * switch's inline Enable confirmation and the Delete dialog read them; each
  * counts exactly what the backend's settlement for that verb touches:
  *
- * - **Disable** (skill grain, `DisableScope::Skills`): every Sync target row
- *   the app materialised (`synced_at` set) and not already `disabled` is
- *   removed and kept `disabled`; every project assignment that is not
- *   `disabled` is disabled too; never-synced rows only flip.
- * - **Enable**: every `disabled` target row and assignment re-syncs (a first
- *   sync); the skill-grain mark clears.
+ * - **Disable** (skill grain, `DisableScope::Skills`): every Deployment
+ *   folder holding a deployed artifact (the folder fact `deployed`: a row
+ *   that is not `disabled` owns its artifact — a folder whose Disable did not
+ *   finish included) has it removed and is kept `disabled`; every project
+ *   folder with a row that is not `disabled` is disabled too; never-synced
+ *   rows only flip.
+ * - **Enable**: every folder a Disable holds on (the folder fact `disabled`)
+ *   re-syncs its disabled rows (a first sync); the skill-grain mark clears.
  * - **Sync to Tools**: skills × picked Tools, less the pairs already synced
  *   and the pairs a Disable gates (skipped as report data, never failed).
  * - **Update**: the skills Refresh can re-acquire; the rest are skipped.
@@ -24,34 +26,34 @@
  * for — a zero, an unread placement — is decided beside the count.
  */
 
-import type { ManagedSkillDto as ManagedSkill, ProjectSkillAssignmentDto, SkillTargetDto } from "../bindings";
+import type { ManagedSkillDto as ManagedSkill, ProjectSkillAssignmentDto } from "../bindings";
 
 /** A skill's assignment rows across projects, by project; null while unread. */
 export type AssignmentsOf = (skillId: string) => readonly SkillProjectRows[] | null;
 export type SkillProjectRows = {
   projectId: string;
   projectName: string;
-  assignments: readonly Pick<ProjectSkillAssignmentDto, "tool" | "status">[];
+  assignments: readonly Pick<ProjectSkillAssignmentDto, "tool" | "status" | "disabled" | "deployed">[];
 };
 
-const ownsArtifact = (target: Pick<SkillTargetDto, "synced_at">) => target.synced_at !== null;
+type AssignmentRow = SkillProjectRows["assignments"][number];
 
 /**
- * Across the selection, how many project assignment rows match `wanted`;
+ * Across the selection, how many project Deployment folders match `wanted`;
  * null when any skill's placement has not been read (the count is unknown,
  * never a guessed zero).
  */
 function countAssignments(
   skills: readonly ManagedSkill[],
   assignmentsOf: AssignmentsOf | null,
-  wanted: (status: ProjectSkillAssignmentDto["status"]) => boolean,
+  wanted: (row: AssignmentRow) => boolean,
 ): number | null {
   if (!assignmentsOf) return null;
   let count = 0;
   for (const skill of skills) {
     const rows = assignmentsOf(skill.id);
     if (rows === null) return null;
-    for (const project of rows) count += project.assignments.filter((row) => wanted(row.status)).length;
+    for (const project of rows) count += project.assignments.filter(wanted).length;
   }
   return count;
 }
@@ -81,7 +83,7 @@ export function disableCounts(skills: readonly ManagedSkill[], assignmentsOf: As
   let targets = 0;
   for (const skill of skills) {
     for (const target of skill.targets) {
-      if (target.status === "disabled" || !ownsArtifact(target)) continue;
+      if (!target.deployed) continue;
       targets++;
       tools.add(target.tool);
     }
@@ -91,7 +93,9 @@ export function disableCounts(skills: readonly ManagedSkill[], assignmentsOf: As
     alreadyDisabled: skills.filter((skill) => skill.disabled_at !== null).length,
     tools: tools.size,
     targets,
-    assignments: countAssignments(skills, assignmentsOf, (status) => status !== "disabled"),
+    // A folder Disable still turns off: one showing anything but `disabled`
+    // (a failure shows ahead of a disabled sibling), or holding a live copy.
+    assignments: countAssignments(skills, assignmentsOf, (row) => row.status !== "disabled" || row.deployed),
     assigned: countAssignments(skills, assignmentsOf, () => true),
   };
 }
@@ -119,10 +123,9 @@ export function enableCounts(skills: readonly ManagedSkill[], assignmentsOf: Ass
   let targets = 0;
   let alreadyEnabled = 0;
   for (const skill of skills) {
-    const disabled = skill.targets.filter((target) => target.status === "disabled");
+    const disabled = skill.targets.filter((target) => target.disabled);
     const disabledAssignment =
-      assignmentsOf?.(skill.id)?.some((project) => project.assignments.some((row) => row.status === "disabled")) ??
-      false;
+      assignmentsOf?.(skill.id)?.some((project) => project.assignments.some((row) => row.disabled)) ?? false;
     if (skill.disabled_at === null && disabled.length === 0 && !disabledAssignment) alreadyEnabled++;
     for (const target of disabled) {
       targets++;
@@ -134,7 +137,7 @@ export function enableCounts(skills: readonly ManagedSkill[], assignmentsOf: Ass
     alreadyEnabled,
     tools: tools.size,
     targets,
-    assignments: countAssignments(skills, assignmentsOf, (status) => status === "disabled"),
+    assignments: countAssignments(skills, assignmentsOf, (row) => row.disabled),
   };
 }
 
@@ -232,7 +235,7 @@ export function syncCounts(skills: readonly ManagedSkill[], tools: readonly stri
   for (const skill of skills) {
     for (const tool of folders) {
       const target = skill.targets.find((row) => row.tool === tool);
-      if (skill.disabled_at !== null || target?.status === "disabled") disabled++;
+      if (skill.disabled_at !== null || target?.disabled) disabled++;
       else if (target && (target.status === "synced" || target.status === "stale")) alreadySynced++;
     }
   }
@@ -253,7 +256,7 @@ export function harnessArrivals(skills: readonly ManagedSkill[], folder: string)
   return skills.filter((skill) => {
     if (skill.disabled_at !== null || skill.unlocatable !== null) return false;
     const target = skill.targets.find((row) => row.tool === folder);
-    return !target || !(target.status === "disabled" || target.status === "synced" || target.status === "stale");
+    return !target || !(target.disabled || target.status === "synced" || target.status === "stale");
   });
 }
 
@@ -275,7 +278,7 @@ export function updateCounts(skills: readonly ManagedSkill[]): UpdateCounts {
 export type DeleteScope = {
   skillId: string;
   name: string;
-  /** Tools the skill is deployed to (a materialised target, not disabled), registry order kept. */
+  /** Tools the skill is deployed to (a folder holding a deployed artifact: `deployed`), registry order kept. */
   tools: string[];
   /** Projects that carry an assignment of it; null while unread. */
   projects: string[] | null;
@@ -295,9 +298,7 @@ export function deleteScope(
   return {
     skillId: skill.id,
     name: skill.name,
-    tools: skill.targets
-      .filter((target) => target.status !== "disabled" && ownsArtifact(target))
-      .map((target) => labelOf(target.tool)),
+    tools: skill.targets.filter((target) => target.deployed).map((target) => labelOf(target.tool)),
     projects: rows === null ? null : rows.filter((row) => row.assignments.length > 0).map((row) => row.projectName),
     edits: skill.invocation_override ? 1 : 0,
     onlyCopy: skill.source_ref === null,

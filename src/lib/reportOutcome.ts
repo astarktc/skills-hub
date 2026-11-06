@@ -375,7 +375,7 @@ function refreshCounts(report: RefreshReport) {
   for (const { status } of report.skills) {
     if (status.status === "refreshed") {
       counts.refreshed++;
-      for (const target of status.targets) {
+      for (const target of propagationDeployments(status.targets)) {
         if (target.status.status !== "failed") continue;
         if (unansweredCollision(target.status.error)) counts.collisions++;
         else counts.target_failures++;
@@ -481,6 +481,39 @@ function projectDeployments(report: ProjectSyncReport): ProjectSyncReport {
       (item) => syncRank(item.status),
     ).map((item) => ({ ...item, tool: item.folder_key })),
   };
+}
+
+/**
+ * One skill's Propagation targets (Update / Refresh / Restore / Re-point, an
+ * Edit's Propagation), one per Deployment (`onePerDeployment`): per (scope,
+ * project, folder) by the backend's `folder_key`, each keeping its strongest
+ * row (failed › to review › skipped › synced) named by its folder. The
+ * overwrite ask and its retry read the raw rows, never this.
+ */
+export function propagationDeployments(targets: readonly PropagationOutcome[]): PropagationOutcome[] {
+  const rank = ({ status }: PropagationOutcome) =>
+    status.status === "failed" ? (unansweredCollision(status.error) ? 4 : 5) : status.status === "skipped" ? 3 : 1;
+  return onePerDeployment(
+    targets,
+    (target) =>
+      [target.scope.scope, target.scope.scope === "project" ? target.scope.project_id : "", target.folder_key].join("\n"),
+    rank,
+  ).map((target) => ({ ...target, scope: { ...target.scope, tool: target.folder_key } }));
+}
+
+/**
+ * A Library move's Deployments, one per (scope, project, skill, folder)
+ * (`deploymentOf` over each outcome's rows; one with no row stands for its
+ * path), keeping the strongest (failed › skipped › relinked › unchanged).
+ */
+function libraryMoveDeployments(report: LibraryMoveReport): LibraryMoveReport["deployments"] {
+  const rank = ({ status }: LibraryMoveReport["deployments"][number]) =>
+    status.status === "failed" ? 4 : status.status === "skipped" ? 3 : status.status === "relinked" ? 2 : 1;
+  return onePerDeployment(
+    report.deployments,
+    (deployment) => (deployment.rows[0] ? deploymentOf(deployment.rows[0]) : `path\n${deployment.path}`),
+    rank,
+  );
 }
 
 function projectSyncCounts(report: ProjectSyncReport) {
@@ -669,8 +702,9 @@ export function refreshOutcome(
 }
 
 /**
- * One skill's Propagation targets as entries: a failed target is an error
- * (a global one offers Retry); a collision nobody answered is "to review".
+ * One skill's Propagation targets as entries, one per Deployment
+ * (`propagationDeployments`): a failed one is an error (a global one offers
+ * Retry); a collision nobody answered is "to review".
  */
 function propagationEntries(
   targets: PropagationOutcome[],
@@ -679,7 +713,7 @@ function propagationEntries(
 ): { errors: OutcomeEntry[]; reviews: OutcomeEntry[] } {
   const errors: OutcomeEntry[] = [];
   const reviews: OutcomeEntry[] = [];
-  for (const target of targets) {
+  for (const target of propagationDeployments(targets)) {
     if (target.status.status !== "failed") continue;
     const { tool } = target.scope;
     const subject: EntrySubject & { tool: string } = {
@@ -1278,7 +1312,9 @@ export function importOutcome(
       forcedLines.push(
         t("status.importSourceToolForced", { name, tool: label(ctx, tool) }),
       );
-    for (const target of group.status.targets) {
+    // One per Deployment (`batchDeployments`): a pre-1.4.0 sibling's row of
+    // a shared folder is the same Deployment, counted once.
+    for (const target of batchDeployments(group.status.targets)) {
       if (target.status.status === "synced" || skips.absorb(target)) continue;
       // The same skip policy as the bulk sync fold: a Disabled pair is
       // skipped by design, silently — never a sync failure.
@@ -1791,7 +1827,7 @@ export function libraryMoveCounts(report: LibraryMoveReport) {
     else if (skill.status.status === "kept") counts.kept++;
     else counts.missing++;
   }
-  for (const deployment of report.deployments) {
+  for (const deployment of libraryMoveDeployments(report)) {
     const { status } = deployment;
     if (status.status === "relinked") counts.relinked++;
     else if (status.status === "unchanged") counts.unchanged++;
@@ -1920,7 +1956,7 @@ export function libraryMoveOutcome(
       });
     }
   }
-  for (const deployment of report.deployments) {
+  for (const deployment of libraryMoveDeployments(report)) {
     const { status } = deployment;
     // Named by the Deployment folder its rows describe (`folder_key`), never a
     // pre-1.4.0 sibling's own key: a stored 1.3.4 report has the key filled

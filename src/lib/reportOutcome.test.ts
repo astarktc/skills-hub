@@ -107,6 +107,7 @@ function changed(
   if (kind === "target")
     row.status.targets.push({
       scope: { scope: "project", project_id: "project", tool: "claude" },
+      folder_key: "claude",
       status: {
         status: "failed",
         error: { code: "OTHER", message: "target failed" },
@@ -371,6 +372,7 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
     const en = i18n.t.bind(i18n) as unknown as typeof t;
     const failure = (tool: string): InvocationEditReport["propagation"]["targets"][number] => ({
       scope: { scope: "global", tool },
+      folder_key: tool,
       status: { status: "failed", error: { code: "OTHER", message: "blocked" }, first_deploy: false },
     });
     const out = invocationEditOutcome(
@@ -409,8 +411,8 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
     const success = refreshed("alpha");
     if (success.status.status !== "refreshed") throw new Error("fixture");
     success.status.targets.push(
-      { scope: { scope: "global", tool: "claude" }, status: { status: "synced", mode_used: "symlink" } },
-      { scope: { scope: "global", tool: "cursor" }, status: { status: "synced", mode_used: "copy" } },
+      { scope: { scope: "global", tool: "claude" }, folder_key: "claude", status: { status: "synced", mode_used: "symlink" } },
+      { scope: { scope: "global", tool: "cursor" }, folder_key: "cursor", status: { status: "synced", mode_used: "copy" } },
     );
     const out = refreshOutcome(refreshReport([success]), ctx);
     expect(out.notes).toEqual([]);
@@ -441,8 +443,8 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
     const success = refreshed("alpha");
     if (success.status.status !== "refreshed") throw new Error("fixture");
     success.status.targets.push(
-      { scope: { scope: "global", tool: "claude" }, status: { status: "failed", error: { code: "OTHER", message: "io" }, first_deploy: true } },
-      { scope: { scope: "global", tool: "cursor" }, status: { status: "failed", error: { code: "OTHER", message: "io" }, first_deploy: false } },
+      { scope: { scope: "global", tool: "claude" }, folder_key: "claude", status: { status: "failed", error: { code: "OTHER", message: "io" }, first_deploy: true } },
+      { scope: { scope: "global", tool: "cursor" }, folder_key: "cursor", status: { status: "failed", error: { code: "OTHER", message: "io" }, first_deploy: false } },
     );
     const out = refreshOutcome(refreshReport([success]), ctx);
     expect(out.errors.map((entry) => entry.title)).toEqual([
@@ -456,6 +458,7 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
     if (success.status.status !== "refreshed") throw new Error("fixture");
     success.status.targets.push({
       scope: { scope: "global", tool: "unknown" },
+      folder_key: "unknown",
       status: { status: "skipped", reason: { reason: "link_follows_source" } },
     });
     const out = refreshOutcome(
@@ -505,15 +508,17 @@ describe("refreshOutcome: composite headline, tone precedence, completion policy
 describe("invocationEditOutcome", () => {
   const globalFailure: InvocationEditReport["propagation"]["targets"][number] = {
     scope: { scope: "global", tool: "claude" },
+    folder_key: "claude",
     status: { status: "failed", error: { code: "OTHER", message: "global blocked" }, first_deploy: false },
   };
   const projectFailure: InvocationEditReport["propagation"]["targets"][number] = {
     scope: { scope: "project", project_id: "p1", tool: "unknown" },
+    folder_key: "unknown",
     status: { status: "failed", error: { code: "OTHER", message: "project blocked" }, first_deploy: false },
   };
   it.each([
     { name: "no targets / no-op", propagation: [], errors: [] },
-    { name: "synced", propagation: [{ scope: { scope: "global", tool: "claude" }, status: { status: "synced", mode_used: "copy" } }], errors: [] },
+    { name: "synced", propagation: [{ scope: { scope: "global", tool: "claude" }, folder_key: "claude", status: { status: "synced", mode_used: "copy" } }], errors: [] },
     { name: "global failure", propagation: [globalFailure], errors: [{ title: 'errors.propagationFailedTitle {"name":"alpha","tool":"CLAUDE"}', message: "global blocked" }] },
     { name: "project failure", propagation: [projectFailure], errors: [{ title: 'errors.propagationFailedTitle {"name":"alpha","tool":"unknown"}', message: "project blocked" }] },
     { name: "both failures", propagation: [globalFailure, projectFailure], errors: [
@@ -521,10 +526,10 @@ describe("invocationEditOutcome", () => {
       { title: 'errors.propagationFailedTitle {"name":"alpha","tool":"unknown"}', message: "project blocked" },
     ] },
     { name: "expected skips", propagation: [
-      { scope: { scope: "global", tool: "claude" }, status: { status: "skipped", reason: { reason: "link_follows_source" } } },
-      { scope: { scope: "global", tool: "absent" }, status: { status: "skipped", reason: { reason: "tool_not_installed", tool: "absent" } } },
-      { scope: { scope: "global", tool: "unknown" }, status: { status: "skipped", reason: { reason: "unknown_tool", tool: "unknown" } } },
-      { scope: { scope: "project", project_id: "p1", tool: "claude" }, status: { status: "skipped", reason: { reason: "project_unavailable", project_id: "p1" } } },
+      { scope: { scope: "global", tool: "claude" }, folder_key: "claude", status: { status: "skipped", reason: { reason: "link_follows_source" } } },
+      { scope: { scope: "global", tool: "absent" }, folder_key: "absent", status: { status: "skipped", reason: { reason: "tool_not_installed", tool: "absent" } } },
+      { scope: { scope: "global", tool: "unknown" }, folder_key: "unknown", status: { status: "skipped", reason: { reason: "unknown_tool", tool: "unknown" } } },
+      { scope: { scope: "project", project_id: "p1", tool: "claude" }, folder_key: "claude", status: { status: "skipped", reason: { reason: "project_unavailable", project_id: "p1" } } },
     ], errors: [] },
   ] satisfies { name: string; propagation: InvocationEditReport["propagation"]["targets"]; errors: { title: string; message: string }[] }[])("$name: central-settled completion, saved even with drift", ({ propagation, errors }) => {
     const report: InvocationEditReport = { skill_id: "s1", skill_name: "alpha", propagation: { targets: propagation } };
@@ -1275,7 +1280,7 @@ describe("syncOutcome", () => {
     it("a Refresh's Propagation collision is to review, not a target failure", () => {
       const success = refreshed("alpha");
       if (success.status.status !== "refreshed") throw new Error("fixture");
-      success.status.targets.push({ scope: { scope: "global", tool: "cursor" }, status: { status: "failed", error: exists, first_deploy: true } });
+      success.status.targets.push({ scope: { scope: "global", tool: "cursor" }, folder_key: "cursor", status: { status: "failed", error: exists, first_deploy: true } });
       const out = refreshOutcome(refreshReport([success]), ctx);
       expect(out.errors).toEqual([]);
       expect(out.toast).toMatchObject({
@@ -1820,8 +1825,8 @@ describe("Disabled is a skip in every fold", () => {
     status: { status: "skipped", error: { code: "TARGET_DISABLED", tool: "claude" } },
   };
   const disabledPropagation = [
-    { scope: { scope: "global", tool: "claude" }, status: { status: "skipped", reason: { reason: "disabled" } } },
-    { scope: { scope: "project", project_id: "p1", tool: "claude" }, status: { status: "skipped", reason: { reason: "disabled" } } },
+    { scope: { scope: "global", tool: "claude" }, folder_key: "claude", status: { status: "skipped", reason: { reason: "disabled" } } },
+    { scope: { scope: "project", project_id: "p1", tool: "claude" }, folder_key: "claude", status: { status: "skipped", reason: { reason: "disabled" } } },
   ] satisfies InvocationEditReport["propagation"]["targets"];
   const refreshedDisabled = (): SkillRefreshOutcome => {
     const row = refreshed();
@@ -2571,10 +2576,10 @@ describe("libraryMoveOutcome", () => {
         deployment("a", { status: "relinked", mode: "symlink" }),
         deployment("a", { status: "relinked", mode: "symlink" }, "cursor"),
         deployment("b", { status: "failed", error: failure }),
-        deployment("c", { status: "skipped", reason: "not_ours" }),
+        deployment("c", { status: "skipped", reason: "not_ours" }, "cursor"),
         deployment("c", { status: "skipped", reason: "folder_missing" }),
-        deployment("c", { status: "unchanged", reason: "copy" }),
-        deployment("c", { status: "skipped", reason: "disabled" }),
+        deployment("c", { status: "unchanged", reason: "copy" }, "pi"),
+        deployment("c", { status: "skipped", reason: "disabled" }, "codex"),
       ],
       left_behind: [
         { path: "/old", reason: "old_library", skill_id: null, error: null },
@@ -2617,7 +2622,7 @@ describe("libraryMoveOutcome", () => {
     // Unlocatable, not ours, folder missing and the kept copy are warnings.
     expect(outcome.warnings.map((entry) => entry.title)).toEqual([
       'libraryMove.report.missingTitle {"name":"gone"}',
-      'libraryMove.report.notOursTitle {"name":"c","tool":"CLAUDE"}',
+      'libraryMove.report.notOursTitle {"name":"c","tool":"tools.cursor {\\"defaultValue\\":\\"cursor\\"}"}',
       'libraryMove.report.folderMissingTitle {"name":"c","tool":"CLAUDE"}',
       'libraryMove.report.stillLinkedTitle {"name":"b"}',
     ]);
@@ -2971,5 +2976,77 @@ describe("removal reports count one Deployment per folder", () => {
       ctx,
     );
     expect(rows[0].removedFrom).toEqual(["amp"]);
+  });
+});
+
+// Round 20 t09 review round 4 (Astra 205, Sol 304): Update/Edit
+// (Propagation), Import and Library-move reports count one Deployment per
+// (scope, project, skill, folder) by the backend's `folder_key`, however many
+// pre-1.4.0 rows describe it; the raw rows stay for the asks and mutations.
+describe("per-Deployment folds of the per-row reports (round 4)", () => {
+  const blocked = { code: "OTHER", message: "blocked" } as const;
+  const legacyPair = (scope: "global" | "project") =>
+    (["amp", "kimi_cli"] as const).map((tool) => ({
+      scope: scope === "global" ? { scope: "global" as const, tool } : { scope: "project" as const, project_id: "p1", tool },
+      folder_key: "amp",
+      status: { status: "failed" as const, error: blocked, first_deploy: false },
+    }));
+
+  it("an Update whose two legacy rows of one folder both failed counts one failed target, named by its folder", () => {
+    const row = refreshed("alpha");
+    if (row.status.status !== "refreshed") throw new Error("fixture");
+    row.status.targets.push(...legacyPair("global"));
+    const out = refreshOutcome(refreshReport([row, refreshed("beta")]), ctx);
+    expect(out.errors).toHaveLength(1);
+    expect(out.errors[0]).toMatchObject({ subject: { tool: "amp" }, repair: { verb: "retry", tool: "amp" } });
+    expect(out.toast?.message).toContain('outcome.targetsFailed {"count":1}');
+  });
+
+  it("an Edit's Propagation folds per folder and per project", () => {
+    const out = invocationEditOutcome(
+      {
+        skill_id: "s1",
+        skill_name: "alpha",
+        propagation: { targets: [...legacyPair("global"), ...legacyPair("project")] },
+      },
+      ctx,
+    );
+    expect(out.errors).toHaveLength(2);
+    expect(out.toast?.message).toContain('outcome.targetsFailed {"count":2}');
+  });
+
+  it("an Import's target rows of one folder are one Deployment", () => {
+    const row = (tool: string): BatchTargetOutcome => ({
+      skill_id: "git",
+      skill_name: "git",
+      tool_key: tool,
+      folder_key: "amp",
+      status: { status: "failed", error: blocked },
+    });
+    const out = importOutcome(importReport(imported({ targets: [row("amp"), row("kimi_cli")] })), ctx);
+    expect(out.errors).toHaveLength(1);
+    expect(out.errors[0]).toMatchObject({ subject: { tool: "amp" } });
+  });
+
+  it("a Library move's two outcomes for one folder count once, the stronger kept", () => {
+    const relink = (tool: string, status: LibraryMoveReport["deployments"][number]["status"], path: string) => ({
+      skill_id: "a",
+      name: "a",
+      path,
+      rows: [{ scope: "global_target" as const, id: `a-${tool}`, skill_id: "a", tool, folder_key: "amp" }],
+      status,
+    });
+    const report: LibraryMoveReport = {
+      from: "/old",
+      to: "/new",
+      skills: [{ skill_id: "a", name: "a", status: { status: "moved", from: "/old/a", to: "/new/a" } }],
+      deployments: [
+        relink("amp", { status: "relinked", mode: "symlink" }, "/h/.config/agents/skills/a"),
+        relink("kimi_cli", { status: "failed", error: blocked }, "/h/.config/agents/skills/previous"),
+      ],
+      left_behind: [],
+    };
+    expect(libraryMoveCounts(report)).toMatchObject({ relinked: 0, failed: 1 });
+    expect(libraryMoveOutcome(report, ctx).errors).toHaveLength(1);
   });
 });

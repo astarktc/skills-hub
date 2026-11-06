@@ -3,6 +3,7 @@ use tauri::State;
 
 use crate::core::environment::home_dir;
 use crate::core::gitignore::{self, IgnoreUpdateOptions};
+use crate::core::placement::Folded;
 use crate::core::project_ops::{
     self, ProjectDto, ProjectSkillAssignmentDto, ProjectToolDto, ProjectView,
 };
@@ -256,7 +257,8 @@ pub async fn toggle_project_skill_assignment(
     .map_err(CommandError::from_anyhow)
 }
 
-fn to_assignment_dto(record: ProjectSkillAssignmentRecord) -> ProjectSkillAssignmentDto {
+fn to_assignment_dto(folded: Folded<ProjectSkillAssignmentRecord>) -> ProjectSkillAssignmentDto {
+    let Folded { row: record, facts } = folded;
     ProjectSkillAssignmentDto {
         id: record.id,
         project_id: record.project_id,
@@ -269,6 +271,8 @@ fn to_assignment_dto(record: ProjectSkillAssignmentRecord) -> ProjectSkillAssign
         synced_at: record.synced_at,
         content_hash: record.content_hash,
         created_at: record.created_at,
+        disabled: facts.disabled,
+        deployed: facts.deployed,
     }
 }
 

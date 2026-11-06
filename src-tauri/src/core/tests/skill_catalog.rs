@@ -360,10 +360,13 @@ fn seed_assignment(
 }
 
 fn deployment(tool: &str, status: SyncStatus, synced_at: Option<i64>) -> SkillProjectDeployment {
+    // A folder of one row: its facts are that row's.
     SkillProjectDeployment {
         tool: tool.to_string(),
         status,
         synced_at,
+        disabled: status == SyncStatus::Disabled,
+        deployed: status != SyncStatus::Disabled && synced_at.is_some(),
     }
 }
 
@@ -542,4 +545,56 @@ fn the_catalog_shows_a_folders_state_folded_over_every_row() {
     assert_eq!(entry.targets[0].tool, "amp");
     assert_eq!(entry.targets[0].status, SyncStatus::Error);
     assert_eq!(entry.targets[0].id, "s1-kimi_cli", "the row the fold shows");
+}
+
+/// Astra 204 / Sol 301–302: the catalog carries whole-folder facts. After a
+/// partial Disable — Kimi Code's legacy row settled `disabled`, the folder
+/// row's removal failed and it still owns its artifact — the folder shows the
+/// failure (failure ahead of muted), carries the disabled intent, and counts
+/// the artifact a finished Disable would remove; the row standing for it is
+/// the failed one, with its own timestamp.
+#[test]
+fn the_catalog_carries_a_partially_disabled_folders_facts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = tmp.path().join("central");
+    let alpha = write_manifest(&central, "alpha", "---\nname: alpha\n---\n");
+    seed_skill(&store, "s1", "alpha", &alpha);
+    seed_target(&store, "s1", "amp");
+    store
+        .transition_skill_target(
+            "s1-amp",
+            crate::core::skill_store::TargetTransition::SyncFailed {
+                error: "removal failed",
+            },
+        )
+        .unwrap();
+    store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "s1-kimi_cli".to_string(),
+            skill_id: "s1".to_string(),
+            tool: "kimi_cli".to_string(),
+            target_path: "/tmp/amp/s1".to_string(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Disabled,
+            last_error: None,
+            synced_at: Some(3),
+        })
+        .unwrap();
+
+    let entry = managed_skill_entry(&store, "s1").unwrap().unwrap();
+    assert_eq!(entry.targets.len(), 1);
+    let folder = &entry.targets[0];
+    assert_eq!(
+        (folder.id.as_str(), folder.tool.as_str(), folder.synced_at),
+        ("s1-amp", "amp", Some(9))
+    );
+    assert_eq!(
+        folder.facts,
+        crate::core::placement::FolderFacts {
+            status: SyncStatus::Error,
+            disabled: true,
+            deployed: true,
+        }
+    );
 }

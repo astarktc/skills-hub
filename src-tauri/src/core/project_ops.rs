@@ -9,6 +9,7 @@ use super::environment::expand_home_path_in;
 use super::errors::SignalError;
 use super::gitignore::{self, IgnoreUpdateOptions};
 use super::mutation_guard;
+use super::placement::{self, ScopeKind};
 use super::project_sync::{self, AssignmentListing};
 use super::skill_store::{ProjectAggregate, ProjectRecord, ProjectToolRecord, SkillStore};
 use super::sync_status::{ProjectSyncStatus, SyncMode, SyncStatus};
@@ -47,11 +48,20 @@ pub struct ProjectSkillAssignmentDto {
     pub skill_name: String,
     pub tool: String,
     pub mode: SyncMode,
+    /// The folder's displayed status (`placement::FolderFacts::status`:
+    /// failure ahead of muted).
     pub status: SyncStatus,
     pub last_error: Option<String>,
     pub synced_at: Option<i64>,
     pub content_hash: Option<String>,
     pub created_at: i64,
+    /// The Disabled rule holds on the folder: some row of it is `disabled`
+    /// (`placement::FolderFacts::disabled`).
+    pub disabled: bool,
+    /// Some row of the folder that is not `disabled` owns its artifact — what
+    /// a Disable or unassign would remove (`placement::FolderFacts::deployed`;
+    /// presentation only).
+    pub deployed: bool,
 }
 
 pub fn project_name_from_path(path: &str) -> String {
@@ -186,12 +196,15 @@ pub fn register_project_path(
     to_project_dto(&record, store)
 }
 
-/// Remove one configured Tool from a project: the
-/// [`RemovalScope::ProjectTool`] plan, executed once, then this caller's
-/// final policy — the project-tool row is removed **only** when every
-/// artifact went. A tool whose artifact stayed keeps its row (and its `error`
-/// assignment rows) so the operator can retry the same removal; the failures
-/// are returned in the report for the caller to raise.
+/// Remove one configured Tool from a project: a
+/// [`RemovalScope::ProjectTool`] plan per row key — the harness's own rows
+/// here; [`configure_project_tools_unlocked`] also names the folder's rows
+/// when no harness left serves the folder, or none — executed once and
+/// merged into one report scoped to `tool`, then this caller's final policy —
+/// the project-tool row is removed **only** when every artifact went. A tool
+/// whose artifact stayed keeps its row (and its `error` assignment rows) so
+/// the operator can retry the same removal; the failures are returned in the
+/// report for the caller to raise. No row key: only the tool row goes.
 ///
 /// Rows the plan could not locate an artifact for (unknown tool key, missing
 /// skill name) are left alone by the module; an unknown tool key cannot reach
@@ -199,20 +212,43 @@ pub fn register_project_path(
 ///
 /// Unlocked internal seam: callers reach it through an entry point that has
 /// already taken the mutation guard (`mutation_guard`).
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn remove_project_tool_and_artifacts(
     store: &SkillStore,
     central_dir: &Path,
     project_id: &str,
     tool: &str,
 ) -> Result<RemovalReport> {
+    remove_project_tool_rows(store, central_dir, project_id, tool, &[tool.to_string()])
+}
+
+/// [`remove_project_tool_and_artifacts`] over explicit row keys.
+fn remove_project_tool_rows(
+    store: &SkillStore,
+    central_dir: &Path,
+    project_id: &str,
+    tool: &str,
+    row_keys: &[String],
+) -> Result<RemovalReport> {
     require_project(store, project_id)?;
 
-    let scope = RemovalScope::ProjectTool {
+    let scope = |tool_key: &str| RemovalScope::ProjectTool {
         project_id: project_id.to_string(),
-        tool_key: tool.to_string(),
+        tool_key: tool_key.to_string(),
     };
-    let plan = artifact_removal::plan(store, &scope)?;
-    let report = artifact_removal::execute_unlocked(store, central_dir, plan)?;
+    let mut reports = vec![RemovalReport {
+        scope: scope(tool),
+        ..RemovalReport::merge([])
+    }];
+    for key in row_keys {
+        let plan = artifact_removal::plan(store, &scope(key))?;
+        reports.push(artifact_removal::execute_unlocked(
+            store,
+            central_dir,
+            plan,
+        )?);
+    }
+    let report = RemovalReport::merge(reports);
 
     if report.failures().is_empty() {
         store.remove_project_tool(project_id, tool)?;
@@ -285,29 +321,27 @@ pub(crate) fn configure_project_tools_unlocked(
         if tools.contains(&record.tool) {
             continue;
         }
-        // One folder, one set of rows: a dropped tool whose project folder
-        // another kept tool still uses (Trae and Trae CN share `.trae/skills`)
-        // leaves that folder's Deployments in place — only its tool row goes.
+        // Which rows go with the dropped harness (`placement::is_folder_row`):
+        // its own legacy rows always, as before rows were per folder; the
+        // folder's rows only when no kept harness still serves the folder
+        // (Trae and Trae CN share `.trae/skills`, keyed `trae`).
         let folder = project_sync::project_folder(&record.tool);
-        if tools
+        let served = tools
             .iter()
-            .any(|kept| project_sync::project_folder(kept) == folder)
-        {
-            store.remove_project_tool(project_id, &record.tool)?;
-            removals.push(RemovalReport {
-                scope: RemovalScope::ProjectTool {
-                    project_id: project_id.to_string(),
-                    tool_key: record.tool.clone(),
-                },
-                ..RemovalReport::merge([])
-            });
-            continue;
+            .any(|kept| project_sync::project_folder(kept) == folder);
+        let mut row_keys: Vec<String> = Vec::new();
+        if !(served && placement::is_folder_row(ScopeKind::Project, &record.tool)) {
+            row_keys.push(record.tool.clone());
         }
-        removals.push(remove_project_tool_and_artifacts(
+        if !served && folder != record.tool {
+            row_keys.push(folder);
+        }
+        removals.push(remove_project_tool_rows(
             store,
             central_dir,
             project_id,
             &record.tool,
+            &row_keys,
         )?);
     }
 

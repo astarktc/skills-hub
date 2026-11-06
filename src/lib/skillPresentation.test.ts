@@ -62,6 +62,13 @@ const skill = (
 const t = (key: string, opts?: Record<string, unknown>) =>
   opts ? `${key}(${JSON.stringify(opts)})` : key;
 
+
+/** A folder of one row: its facts are that row's (Rust `placement::fold_status`). */
+const facts = (status: string, synced_at: number | null) => ({
+  disabled: status === "disabled",
+  deployed: status !== "disabled" && synced_at !== null,
+});
+
 describe("unlocatable translation maps", () => {
   it("maps wire states and repairs to presentation keys", () => {
     expect(UNLOCATABLE_STATE_KEY).toEqual({
@@ -591,6 +598,7 @@ describe("skillToolChips", () => {
     status: "synced",
     target_path: `/tools/${tool}/skill`,
     synced_at: 1,
+    ...facts("synced", 1),
   });
   const allTools = [
     { id: "claude_code", label: "Claude Code", folder: "claude_code" },
@@ -699,8 +707,8 @@ describe("visibleToolChoices", () => {
 
 describe("deployAction", () => {
   const targets = (...statuses: SkillTargetDto["status"][]) =>
-    statuses.map((status) => ({ status, synced_at: 1 as number | null }));
-  const neverSynced = (status: SkillTargetDto["status"]) => ({ status, synced_at: null });
+    statuses.map((status) => ({ status, synced_at: 1 as number | null, ...facts(status, 1) }));
+  const neverSynced = (status: SkillTargetDto["status"]) => ({ status, synced_at: null, ...facts(status, null) });
   it.each([
     ["no target at all syncs", null, targets(), { kind: "sync" }],
     ["a live target is deployed", null, targets("synced", "disabled"), { kind: "deployed" }],
@@ -764,10 +772,15 @@ describe("skillHealth (the fold)", () => {
     disabled_at: null,
     health: null,
     invocation_override: null,
-    targets: [{ tool: "claude", status: "synced", synced_at: 1 }],
+    targets: [{ tool: "claude", status: "synced", synced_at: 1, ...facts("synced", 1) }],
   };
   const failure = { code: "OTHER", message: "x" } as const;
-  const row = (tool: string, status: SkillTargetDto["status"], synced_at: number | null = 1) => ({ tool, status, synced_at });
+  const row = (tool: string, status: SkillTargetDto["status"], synced_at: number | null = 1) => ({
+    tool,
+    status,
+    synced_at,
+    ...facts(status, synced_at),
+  });
   const kinds = (fields: Partial<Fields>) =>
     skillHealth({ ...healthy, ...fields }, { t }).rows.map((r) => r.kind);
 
@@ -883,7 +896,7 @@ describe("skillHealth (the fold)", () => {
     const project = (id: string, name: string, deployments: { tool: string; status: SkillTargetDto["status"]; synced_at: number | null }[]) => ({
       project_id: id,
       project_name: name,
-      deployments,
+      deployments: deployments.map((d) => ({ ...d, ...facts(d.status, d.synced_at) })),
     });
 
     it("an error or missing project deployment is a failed target row naming its project", () => {
@@ -971,7 +984,12 @@ describe("My Skills folds (ticket 11)", () => {
     invocation_override: null,
     targets: [],
   };
-  const row = (tool: string, status: SkillTargetDto["status"], synced_at: number | null = 1) => ({ tool, status, synced_at });
+  const row = (tool: string, status: SkillTargetDto["status"], synced_at: number | null = 1) => ({
+    tool,
+    status,
+    synced_at,
+    ...facts(status, synced_at),
+  });
   const TOOLS = [
     { id: "cursor", label: "Cursor", folder: "cursor" },
     { id: "claude_code", label: "Claude Code", folder: "claude_code" },
@@ -980,6 +998,7 @@ describe("My Skills folds (ticket 11)", () => {
   const context = {
     labelOf: (id: string) => ({ windsurf: "Windsurf" })[id] ?? id,
     isDetected: (id: string) => id !== "windsurf",
+    isFolderDetected: (folder: string) => folder !== "windsurf",
   };
   const strip = (fields: Partial<Fields>) => syncedStrip({ ...base, ...fields }, TOOLS, context);
   const states = (fields: Partial<Fields>) => strip(fields).marks.map((mark) => mark.state);
@@ -1133,7 +1152,7 @@ describe("My Skills folds (ticket 11)", () => {
       const inProject: Fields = {
         ...base,
         targets: [row("cursor", "synced")],
-        projects: [{ project_id: "p", project_name: "api", deployments: [{ tool: "pi", status: "error", synced_at: null }] }],
+        projects: [{ project_id: "p", project_name: "api", deployments: [{ tool: "pi", status: "error", synced_at: null, ...facts("error", null) }] }],
       };
       expect(libraryExceptions([inProject])).toEqual({ failedTargets: 1, staleTargets: 0, skillsWithIssues: 1 });
       expect(SKILL_FILTERS.issues(inProject)).toBe(true);
@@ -1211,7 +1230,12 @@ describe("My Skills folds (ticket 11)", () => {
   // projects holding at least one live deployment (the ownership rule of
   // `isLiveTarget`, so a never-synced failed row does not count).
   describe("skillScope", () => {
-    const deployment = (tool: string, status: SkillTargetDto["status"], synced_at: number | null = 1) => ({ tool, status, synced_at });
+    const deployment = (tool: string, status: SkillTargetDto["status"], synced_at: number | null = 1) => ({
+      tool,
+      status,
+      synced_at,
+      ...facts(status, synced_at),
+    });
 
     it("a skill in three projects and globally", () => {
       const scope = skillScope({
@@ -1353,5 +1377,86 @@ describe("onScreenOrder (ticket 31, D42)", () => {
   it("is the display order when nothing is collapsed or the list is flat", () => {
     expect(onScreenOrder([a, b, c], groups, new Set())).toEqual([a, b, c]);
     expect(onScreenOrder([c, a], null, new Set(["x/one"]))).toEqual([c, a]);
+  });
+});
+
+// Round 20 t09 review round 4 (Astra 204, Sol 301–303): a folder carries
+// whole-folder facts, so a partly disabled folder shows its failure and offers
+// the repair that can settle it, and a mark standing for a shared folder is
+// reachable through any detected harness the folder serves.
+describe("a Deployment folder's facts (round 4)", () => {
+  type Fields = Parameters<typeof skillHealth>[0];
+  const t = (key: string) => key;
+  const base: Fields = {
+    source_type: "local",
+    source_ref: "/src/alpha",
+    central_path: "/hub/alpha",
+    imported_from_tool: null,
+    unlocatable: null,
+    refreshable: true,
+    detachable: true,
+    disabled_at: null,
+    health: null,
+    invocation_override: null,
+    targets: [],
+  };
+  // Amp's folder after a pair Disable: Kimi Code's legacy row settled
+  // `disabled`, the folder row's removal failed (`error`, still owning it).
+  const partlyDisabled = { tool: "amp", status: "error" as const, synced_at: 7, disabled: true, deployed: true };
+  const context = {
+    labelOf: (id: string) => id,
+    isDetected: (id: string) => id === "kimi_cli",
+    isFolderDetected: (folder: string) => folder === "amp",
+  };
+
+  it("shows the failed removal and offers finishing the Disable, not a re-sync the gate would skip", () => {
+    const fold = skillHealth({ ...base, targets: [partlyDisabled] }, { t });
+    expect(fold.rows.map((row) => [row.kind, row.repairs])).toEqual([
+      ["targets_failed", ["disable"]],
+      ["targets_disabled", ["enable"]],
+    ]);
+    expect(fold.severity).toBe("failed");
+    expect(deployAction({ disabled_at: null, targets: [partlyDisabled] })).toEqual({ kind: "deployed" });
+  });
+
+  it("a failed folder beside a folder that only failed to sync offers both repairs", () => {
+    const fold = skillHealth(
+      { ...base, targets: [partlyDisabled, { tool: "cursor", status: "error", synced_at: 3, disabled: false, deployed: true }] },
+      { t },
+    );
+    expect(fold.rows[0]).toMatchObject({ kind: "targets_failed", tools: ["amp", "cursor"], repairs: ["retryTargets", "disable"] });
+  });
+
+  it("the inspector mark reads the failed removal and offers Disable (finish) and Enable", () => {
+    const strip = syncedStrip({ ...base, targets: [partlyDisabled] }, [{ id: "kimi_cli", label: "Kimi Code", folder: "amp" }], context);
+    expect(strip.marks[0]).toMatchObject({ state: "failed", nameKey: "failed_disable", held: true });
+    expect(targetActions(strip.marks[0], base).map((offered) => offered.action)).toEqual(["disable", "enable"]);
+  });
+
+  it("Sol 303: a mark standing for a folder is detected through any detected harness it serves", () => {
+    // Nothing selected; only Kimi Code is installed; the folder's row is keyed `amp`.
+    const failed: Fields["targets"][number] = { tool: "amp", status: "error", synced_at: 3, disabled: false, deployed: true };
+    const strip = syncedStrip(
+      { ...base, targets: [failed] },
+      [],
+      context,
+    );
+    expect(strip.marks[0]).toMatchObject({ tool: "amp", detected: true });
+    expect(targetActions(strip.marks[0], base)).toEqual([
+      { action: "retry", refusal: null },
+      { action: "disable", refusal: null },
+    ]);
+    const unreachable = syncedStrip(
+      { ...base, targets: [failed] },
+      [],
+      { ...context, isFolderDetected: () => false },
+    );
+    expect(targetActions(unreachable.marks[0], base)[0]).toEqual({ action: "retry", refusal: "not_detected" });
+  });
+
+  it("a disabled folder still holding a live copy counts as deployed and as disabled", () => {
+    const muted = { tool: "amp", status: "disabled" as const, synced_at: 3, disabled: true, deployed: true };
+    expect(deployAction({ disabled_at: null, targets: [muted] })).toEqual({ kind: "deployed" });
+    expect(SKILL_FILTERS.disabled({ ...base, targets: [muted] })).toBe(true);
   });
 });

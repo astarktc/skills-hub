@@ -26,6 +26,8 @@ type SkillInspectorProps = {
   stripTools: readonly { id: string; label: string; folder: string }[];
   labelOf: (tool: string) => string;
   isDetected: (tool: string) => boolean;
+  /** Whether a detected catalog harness is served by the folder (`useToolCatalog`). */
+  isFolderDetected: (folder: string) => boolean;
   actions: Pick<SkillActions, "run" | "repair">;
   /** Why every verb is disabled while an action runs (null = they may run). */
   blockedReason: string | null;
@@ -59,6 +61,7 @@ function SkillInspector({
   stripTools,
   labelOf,
   isDetected,
+  isFolderDetected,
   actions,
   blockedReason,
   projectPlacement,
@@ -75,8 +78,8 @@ function SkillInspector({
   const headingId = useId();
   const health = skillHealth(skill, { t });
   const strip = useMemo(
-    () => syncedStrip(skill, stripTools, { labelOf, isDetected }),
-    [isDetected, labelOf, skill, stripTools],
+    () => syncedStrip(skill, stripTools, { labelOf, isDetected, isFolderDetected }),
+    [isDetected, isFolderDetected, labelOf, skill, stripTools],
   );
   const busy = blockedReason !== null;
 

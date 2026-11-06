@@ -18,7 +18,7 @@ use std::path::Path;
 
 use crate::core::{
     manifest::{invocation_mode_for_dir, InvocationMode},
-    placement::{fold_folder_rows, ScopeKind},
+    placement::{fold_folder_rows, Folded, ScopeKind},
     project_ops::project_name_from_path,
     provenance::is_refreshable,
     skill_health::{all_skill_health, skill_health, SkillHealth},
@@ -41,7 +41,9 @@ pub struct SkillProject {
     pub deployments: Vec<SkillProjectDeployment>,
 }
 
-/// One project assignment row's Tool and lifecycle.
+/// One project Deployment folder of the skill: its folder key, displayed
+/// status and the row standing for it's `synced_at`, plus the folder's facts
+/// (`placement::FolderFacts`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillProjectDeployment {
     pub tool: String,
@@ -49,6 +51,10 @@ pub struct SkillProjectDeployment {
     /// Set once a sync of ours succeeded there (ownership): a never-synced
     /// `error` row owns nothing and is not a live deployment.
     pub synced_at: Option<i64>,
+    /// Some row of the folder is `disabled` (the Disabled rule holds).
+    pub disabled: bool,
+    /// Some row of the folder that is not `disabled` owns its artifact.
+    pub deployed: bool,
 }
 
 /// Group the flat deployment rows (one query) into each skill's projects,
@@ -57,12 +63,14 @@ fn projects_by_skill(
     rows: Vec<SkillProjectDeploymentRecord>,
 ) -> HashMap<String, Vec<SkillProject>> {
     let mut out: HashMap<String, Vec<SkillProject>> = HashMap::new();
-    for row in fold_folder_rows(ScopeKind::Project, rows) {
+    for Folded { row, facts } in fold_folder_rows(ScopeKind::Project, rows) {
         let projects = out.entry(row.skill_id).or_default();
         let deployment = SkillProjectDeployment {
             tool: row.tool,
-            status: row.status,
+            status: facts.status,
             synced_at: row.synced_at,
+            disabled: facts.disabled,
+            deployed: facts.deployed,
         };
         match projects.iter_mut().find(|p| p.project_id == row.project_id) {
             Some(project) => project.deployments.push(deployment),
@@ -95,8 +103,9 @@ pub struct ManagedSkillEntry {
     /// The skill's global Deployments, one per folder keyed by its folder key
     /// (`placement::fold_folder_rows`: rows written once per shared-dir
     /// sibling before 1.4.0 read as their folder), in store order —
-    /// `disabled` rows included: they are the operator's record.
-    pub targets: Vec<SkillTargetRecord>,
+    /// `disabled` rows included: they are the operator's record. Each carries
+    /// its folder's facts (`placement::FolderFacts`).
+    pub targets: Vec<Folded<SkillTargetRecord>>,
     /// When the skill was disabled at skill grain, `None` when it is not
     /// (`SkillStore::skill_disabled_at`; see **Disabled** in `CONTEXT.md`).
     pub disabled_at: Option<i64>,

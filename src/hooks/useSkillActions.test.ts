@@ -71,6 +71,8 @@ function skill(id: string, name: string, targets: string[] = []): ManagedSkill {
       status: "synced",
       target_path: `/tools/${tool}/${name}`,
       synced_at: 1,
+      disabled: false,
+      deployed: true,
     })),
     disabled_at: null,
     refreshable: true,
@@ -928,6 +930,7 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
   const exists = (path: string) => ({ code: "TARGET_EXISTS" as const, path, modifiedAt: 7, sameContent: false });
   const occupiedTarget = (tool: string, project?: string): PropagationOutcome => ({
     scope: project ? { scope: "project", project_id: project, tool } : { scope: "global", tool },
+    folder_key: tool,
     // Propagation's first sync of a row that owns nothing met a foreign folder.
     status: { status: "failed", error: exists(`/${project ?? "tools"}/${tool}/alpha`), first_deploy: true },
   });
@@ -1183,7 +1186,17 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     const before = () => ({
       ...skill("s1", "alpha", ["claude"]),
       disabled_at: 3,
-      targets: [{ tool: "claude", mode: "symlink" as const, status: "disabled" as const, target_path: "/tools/claude/alpha", synced_at: null }],
+      targets: [
+        {
+          tool: "claude",
+          mode: "symlink" as const,
+          status: "disabled" as const,
+          target_path: "/tools/claude/alpha",
+          synced_at: null,
+          disabled: true,
+          deployed: false,
+        },
+      ],
     });
     const after = () => ({ ...before(), disabled_at: null });
 
@@ -1301,6 +1314,26 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     });
     expect(calls("updateManagedSkill")).toEqual([]);
     expect(calls("syncSkillsToTools")[0]!.slice(1, 3)).toEqual([[{ skill_id: "s1", name: "alpha", source_path: "/hub/alpha" }], ["cursor"]]);
+  });
+
+  it("a partly disabled folder's repair finishes its pair Disable, never a re-sync the gate would skip (round 4)", async () => {
+    const held = { ...skill("s1", "alpha", ["claude", "cursor"]) };
+    held.targets = held.targets.map((target) =>
+      target.tool === "claude" ? { ...target, status: "error" as const, disabled: true, deployed: true } : target,
+    );
+    const skills = [held];
+    backend(skills, { disableSkillTargets: [EMPTY_REMOVAL] });
+    const rendered = renderReal();
+    await ready(rendered, skills);
+    const row = skillHealth(held, { t }).rows[0]!;
+    expect(row).toMatchObject({ kind: "targets_failed", tools: ["claude"], repairs: ["disable"] });
+    await act(async () => {
+      await rendered.result.current.actions.repair(held, row, "disable");
+    });
+    expect(calls("syncSkillsToTools")).toEqual([]);
+    expect(calls("disableSkillTargets").map((call) => call[1])).toEqual([
+      { kind: "skill_tool", skill_id: "s1", tool: "claude" },
+    ]);
   });
 });
 

@@ -201,7 +201,13 @@ describe("rich", () => {
     const prisma = await byName(handlers, "prisma-review");
     expect([prisma.targets.length, names(prisma)]).toEqual([0, ["quartermaster"]]);
     const plans = await byName(handlers, "writing-plans");
-    expect(plans.projects[0].deployments).toContainEqual({ tool: "agents_skills", status: "error", synced_at: null });
+    expect(plans.projects[0].deployments).toContainEqual({
+      tool: "agents_skills",
+      status: "error",
+      synced_at: null,
+      disabled: false,
+      deployed: false,
+    });
     expect((await byName(handlers, "pdf")).projects).toEqual([]);
 
     await handlers.toggleProjectSkillAssignment("prj-quartermaster", (await byName(handlers, "pdf")).id, "claude_code");
@@ -2035,5 +2041,79 @@ describe("one Deployment row per folder (round 20 ticket 09)", () => {
     const off = await handlers.toggleProjectSkillAssignment("prj-quartermaster", pdf.id, "trae_cn");
     expect(off.kind).toBe("unassigned");
     expect(off.view.assignments.some((a) => a.skill_id === pdf.id)).toBe(false);
+  });
+});
+
+// Round 20 t09 review round 4 (Sol 305, Astra 204): the fixture's project
+// count and total read the listing's own fold, and a folder's facts never let
+// a disabled sibling hide a failure or a live copy.
+describe("legacy two-row folders read through the one fold (round 4)", () => {
+  const fixture = (statuses: [string, string], owned: [boolean, boolean]) => {
+    const state = buildScenario("rich", NOW);
+    const { handlers } = createFixtureBackend(state, { latencyScale: 0, now: () => NOW });
+    const skill = state.skills[0];
+    const project: FixtureProject = {
+      id: "prj-trae",
+      name: "trae-app",
+      path: "/Users/alex/code/trae-app",
+      created_at: NOW,
+      updated_at: NOW,
+      path_exists: true,
+      tools: ["trae", "trae_cn"],
+      gitignore: { in_gitignore: false, in_exclude: false },
+      // A pre-1.4.0 project wrote one row per sibling of `.trae/skills`.
+      assignments: (["trae", "trae_cn"] as const).map((tool, i) => ({
+        id: `prj-trae-${tool}`,
+        project_id: "prj-trae",
+        skill_id: skill.dto.id,
+        skill_name: skill.dto.name,
+        tool,
+        mode: "symlink" as const,
+        status: statuses[i] as FixtureProject["assignments"][number]["status"],
+        last_error: null,
+        synced_at: owned[i] ? NOW : null,
+        content_hash: null,
+        created_at: NOW,
+      })),
+    };
+    state.projects.push(project);
+    const listed = async () => (await handlers.listProjects()).find((p) => p.id === "prj-trae")!;
+    return { handlers, skill, listed };
+  };
+
+  it("a live link beside a disabled row: one Deployment, matrix disabled, total still synced", async () => {
+    const { handlers, listed } = fixture(["synced", "disabled"], [true, true]);
+    const view = await handlers.getProjectView("prj-trae");
+    expect(view.assignments).toHaveLength(1);
+    expect(view.assignments[0]).toMatchObject({ tool: "trae", status: "disabled", disabled: true, deployed: true });
+    expect(await listed()).toMatchObject({ assignment_count: 1, sync_status: "synced" });
+  });
+
+  it("a failed removal beside a disabled row shows the error in the matrix and the total", async () => {
+    const { handlers, listed } = fixture(["error", "disabled"], [true, true]);
+    const view = await handlers.getProjectView("prj-trae");
+    expect(view.assignments[0]).toMatchObject({ status: "error", disabled: true, deployed: true });
+    expect(await listed()).toMatchObject({ assignment_count: 1, sync_status: "error" });
+  });
+
+  it("the library's project deployments carry the same facts", async () => {
+    const { handlers, skill } = fixture(["error", "disabled"], [true, true]);
+    const listedSkill = (await handlers.getManagedSkills()).find((s) => s.id === skill.dto.id)!;
+    const trae = listedSkill.projects.find((p) => p.project_id === "prj-trae")!;
+    expect(trae.deployments).toEqual([
+      { tool: "trae", status: "error", synced_at: NOW, disabled: true, deployed: true },
+    ]);
+  });
+
+  it("a global folder whose removal failed beside a disabled legacy row shows the failure", async () => {
+    const { handlers, skill } = fixture(["synced", "synced"], [true, true]);
+    skill.dto.targets = [
+      { tool: "amp", mode: "symlink", status: "error", target_path: "/a", synced_at: NOW },
+      { tool: "kimi_cli", mode: "symlink", status: "disabled", target_path: "/a", synced_at: NOW },
+    ];
+    const listedSkill = (await handlers.getManagedSkills()).find((s) => s.id === skill.dto.id)!;
+    expect(listedSkill.targets.filter((t) => t.tool === "amp" || t.tool === "kimi_cli")).toEqual([
+      expect.objectContaining({ tool: "amp", status: "error", disabled: true, deployed: true }),
+    ]);
   });
 });

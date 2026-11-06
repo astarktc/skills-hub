@@ -73,6 +73,8 @@ function assignmentRecord(
     synced_at: 1,
     content_hash: null,
     created_at: 1,
+    disabled: false,
+    deployed: true,
   };
 }
 

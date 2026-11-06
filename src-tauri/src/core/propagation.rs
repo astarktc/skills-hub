@@ -48,7 +48,7 @@ use super::skill_store::{
 };
 use super::sync_engine;
 use super::sync_status::{SyncMode, SyncStatus};
-use super::tool_adapters::{catalog_rows, installed_set_in, ToolAdapter};
+use super::tool_adapters::{installed_set_in, ToolAdapter};
 
 /// Which Sync target an outcome is about.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, specta::Type)]
@@ -97,10 +97,32 @@ pub enum PropagationStatus {
     },
 }
 
+/// One row's outcome. `scope` names the raw row (a pre-1.4.0 shared-dir
+/// sibling's row keeps its own key); `folder_key` is the Deployment folder
+/// that row describes (`placement::row_folder`) — the backend's answer to
+/// "which Deployment is this", so a report reader counts one Deployment per
+/// (scope, project, skill, folder) however many legacy rows describe it, and
+/// never derives a folder itself.
 #[derive(Debug, serde::Serialize, specta::Type)]
 pub struct PropagationOutcome {
     pub scope: PropagationScope,
+    pub folder_key: String,
     pub status: PropagationStatus,
+}
+
+impl PropagationOutcome {
+    /// The outcome of the row `scope` names, with the folder it describes.
+    pub fn new(scope: PropagationScope, status: PropagationStatus) -> Self {
+        let folder_key = match &scope {
+            PropagationScope::Global { tool } => row_folder(ScopeKind::Global, tool),
+            PropagationScope::Project { tool, .. } => row_folder(ScopeKind::Project, tool),
+        };
+        Self {
+            scope,
+            folder_key,
+            status,
+        }
+    }
 }
 
 /// Every Sync target of one Managed skill, with what happened to it.
@@ -144,15 +166,15 @@ pub(crate) fn propagate_unlocked(
                 .push(skipped_global(&row.tool, PropagationSkip::Disabled));
         }
         for assignment in store.list_project_skill_assignments_by_skill(skill_id)? {
-            report.targets.push(PropagationOutcome {
-                scope: PropagationScope::Project {
+            report.targets.push(PropagationOutcome::new(
+                PropagationScope::Project {
                     project_id: assignment.project_id,
                     tool: assignment.tool,
                 },
-                status: PropagationStatus::Skipped {
+                PropagationStatus::Skipped {
                     reason: PropagationSkip::Disabled,
                 },
-            });
+            ));
         }
         return Ok(report);
     }
@@ -188,10 +210,11 @@ fn missing_source(central_path: &Path) -> anyhow::Error {
 /// `~/.config/agents/skills`) are each their own row here until the redeploy
 /// collapses them; nothing is lent or settled between them.
 ///
-/// Two facts are the row's folder's (`placement::row_folder`) rather than its
-/// key's: the capability it is deployed with (`placement::capability_entry` —
-/// a group's capability stays its own fact) and whether any harness reading
-/// it is installed. And one disabled row of the folder keeps every row of it
+/// The capability a row is deployed with is its folder's
+/// (`placement::capability_entry` — a group's capability stays its own fact).
+/// Whether it is reachable is the row's own rule (`placement::row_reachable`):
+/// a folder row through any installed harness its folder serves, a legacy row
+/// through its own harness alone. And one disabled row of the folder keeps every row of it
 /// skipped, as on every Sync-target path: writing the shared artifact for one
 /// row would re-materialise it where the disabled harness reads. That rule
 /// only ever withholds a write; it never grants one.
@@ -231,12 +254,12 @@ fn propagate_global_rows(
             ));
             continue;
         };
-        // Reachable when any harness whose own folder it is, is installed:
-        // the row is that folder's, whatever key wrote it.
-        let reachable = catalog_rows()
-            .filter(|a| row_folder(ScopeKind::Global, a.key()) == folder)
-            .any(|a| installed.contains(a.key()));
-        if !reachable {
+        // Reachable by the row's own rule (`placement::row_reachable`): a
+        // folder row when any harness its folder serves is installed, a
+        // legacy row only when its own harness is — as before rows were per
+        // folder, so an old row of an uninstalled harness is never written
+        // because a sibling of its folder is installed.
+        if !placement::row_reachable(ScopeKind::Global, &row.tool, &installed) {
             report.targets.push(skipped_global(
                 &row.tool,
                 PropagationSkip::ToolNotInstalled {
@@ -301,23 +324,23 @@ fn propagate_global_rows(
                 }
             }
         };
-        report.targets.push(PropagationOutcome {
-            scope: PropagationScope::Global {
+        report.targets.push(PropagationOutcome::new(
+            PropagationScope::Global {
                 tool: row.tool.clone(),
             },
             status,
-        });
+        ));
     }
     Ok(())
 }
 
 fn skipped_global(tool: &str, reason: PropagationSkip) -> PropagationOutcome {
-    PropagationOutcome {
-        scope: PropagationScope::Global {
+    PropagationOutcome::new(
+        PropagationScope::Global {
             tool: tool.to_string(),
         },
-        status: PropagationStatus::Skipped { reason },
-    }
+        PropagationStatus::Skipped { reason },
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -337,7 +360,7 @@ fn propagate_project_rows(
             tool: assignment.tool.clone(),
         };
         let status = propagate_one_assignment(store, central_dir, skill, now, &assignment)?;
-        report.targets.push(PropagationOutcome { scope, status });
+        report.targets.push(PropagationOutcome::new(scope, status));
     }
     Ok(())
 }

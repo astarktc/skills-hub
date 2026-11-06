@@ -25,37 +25,39 @@ use crate::core::tool_adapters::{adapter_by_key, mark_installed_in, RegistryPath
 #[test]
 fn shared_edit_update_report_preserves_classified_failure_on_the_wire() {
     use crate::core::errors::{CommandError, SignalError};
-    let target = PropagationOutcome {
-        scope: PropagationScope::Global {
-            tool: "cursor".into(),
+    let target = PropagationOutcome::new(
+        PropagationScope::Global {
+            tool: "kimi_cli".into(),
         },
-        status: PropagationStatus::Failed {
+        PropagationStatus::Failed {
             error: CommandError::from_anyhow(anyhow::anyhow!(SignalError::CentralPathMissing {
                 path: "central".into(),
             })),
             first_deploy: false,
         },
-    };
+    );
     assert_eq!(
         serde_json::to_value(target).unwrap(),
         serde_json::json!({
-            "scope": { "scope": "global", "tool": "cursor" },
+            "scope": { "scope": "global", "tool": "kimi_cli" },
+            "folder_key": "amp",
             "status": { "status": "failed", "error": { "code": "CENTRAL_PATH_MISSING", "path": "central" }, "first_deploy": false }
         })
     );
-    let skipped = PropagationOutcome {
-        scope: PropagationScope::Project {
+    let skipped = PropagationOutcome::new(
+        PropagationScope::Project {
             project_id: "p1".into(),
-            tool: "pi".into(),
+            tool: "trae_cn".into(),
         },
-        status: PropagationStatus::Skipped {
+        PropagationStatus::Skipped {
             reason: PropagationSkip::LinkFollowsSource,
         },
-    };
+    );
     assert_eq!(
         serde_json::to_value(skipped).unwrap(),
         serde_json::json!({
-            "scope": { "scope": "project", "project_id": "p1", "tool": "pi" },
+            "scope": { "scope": "project", "project_id": "p1", "tool": "trae_cn" },
+            "folder_key": "trae",
             "status": { "status": "skipped", "reason": { "reason": "link_follows_source" } }
         })
     );
@@ -1389,5 +1391,69 @@ fn a_slot_reached_by_two_spellings_lends_nothing() {
         fs::read_to_string(canonical.join("SKILL.md")).unwrap(),
         "foreign",
         "the foreign occupant is not replaced"
+    );
+}
+
+/// Astra 203, the differential against `main`: an owned legacy Kimi Code copy
+/// on Amp's folder, with Amp installed and Kimi Code not. A legacy row is
+/// reached through its own harness alone (`placement::row_reachable`), so it
+/// is `ToolNotInstalled` and its bytes are left as they are — never written
+/// because a sibling harness of its folder is installed.
+#[test]
+fn a_legacy_row_of_an_uninstalled_harness_is_skipped_whatever_its_folder_serves() {
+    let f = fixture();
+    let (amp, _) = amp_and_kimi();
+    install_tool(&f, amp);
+    let target = shared_target(&f);
+    seed_stale_copy(&target);
+    seed_global_target(&f, "t-kimi", "kimi_cli", &target, SyncMode::Copy);
+
+    let outcomes = propagate(&f);
+
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &global("kimi_cli")),
+            PropagationStatus::Skipped {
+                reason: PropagationSkip::ToolNotInstalled { tool }
+            } if tool == "kimi_cli"
+        ),
+        "got {outcomes:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("a.txt")).expect("read target"),
+        "v1",
+        "the legacy copy's bytes are untouched"
+    );
+    let row = f
+        .store
+        .get_skill_target(&f.skill_id, "kimi_cli")
+        .expect("query")
+        .expect("row");
+    assert_eq!((row.status, row.synced_at), (SyncStatus::Synced, Some(1)));
+}
+
+/// The folder row of the same folder is reached through any harness the
+/// folder serves: Amp's row is refreshed with only Kimi Code installed.
+#[test]
+fn a_folder_row_is_reached_through_any_harness_its_folder_serves() {
+    let f = fixture();
+    let (_, kimi) = amp_and_kimi();
+    install_tool(&f, kimi);
+    let target = shared_target(&f);
+    seed_stale_copy(&target);
+    seed_global_target(&f, "t-amp", "amp", &target, SyncMode::Copy);
+
+    let outcomes = propagate(&f);
+
+    assert!(
+        matches!(
+            outcome_for(&outcomes, &global("amp")),
+            PropagationStatus::Synced { .. }
+        ),
+        "got {outcomes:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("a.txt")).expect("read target"),
+        "v2"
     );
 }

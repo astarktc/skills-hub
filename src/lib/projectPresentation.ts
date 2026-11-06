@@ -71,7 +71,12 @@ export type MatrixCellInput = {
   skill: {
     name: string;
     disabled_at: number | null;
-    targets: readonly { tool: string; status: ProjectSkillAssignmentDto["status"]; synced_at: number | null }[];
+    targets: readonly {
+      tool: string;
+      status: ProjectSkillAssignmentDto["status"];
+      synced_at: number | null;
+      deployed: boolean;
+    }[];
   };
   /** The project Tool: its key and the Tool catalog's label. */
   tool: { key: string; label: string };

@@ -52,7 +52,7 @@ fn list_reconciled(
     })
     .expect("list should succeed");
     assert!(listing.reconciled, "the reconcile pass ran");
-    listing.assignments
+    listing.assignments.into_iter().map(|f| f.row).collect()
 }
 
 fn register_project_and_skill(
@@ -2950,6 +2950,118 @@ fn dropping_one_of_two_harnesses_sharing_a_folder_keeps_its_deployments() {
     assert_eq!(tools, vec!["trae"]);
 }
 
+/// Astra 206, the reproduction: dropping a configured harness takes its
+/// legacy assignments with it, as on `main` — through the removal module —
+/// while the folder's own row stays because another configured harness still
+/// serves the folder. Trae CN's pre-1.4.0 row records `previous-name` (an
+/// artifact of ours under the old name); Trae's folder row records the
+/// current one.
+#[test]
+fn dropping_a_harness_removes_its_legacy_assignment_and_keeps_the_folders_row() {
+    let (_db, _tmp, store, project, skill) = trae_project();
+    add_tools(&store, &project, &["trae", "trae_cn"]);
+    assign_skill_to_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        3000,
+    )
+    .unwrap();
+    let folder_row = store
+        .list_project_skill_assignments(&project.id)
+        .unwrap()
+        .pop()
+        .expect("the folder's row");
+    assert_eq!(folder_row.tool, "trae");
+    let old = Path::new(&project.path).join(".trae/skills/previous-name");
+    fs::create_dir_all(&old).unwrap();
+    fs::write(old.join("SKILL.md"), "# previous").unwrap();
+    store
+        .add_project_skill_assignment(&crate::core::skill_store::ProjectSkillAssignmentRecord {
+            id: "legacy-trae-cn".to_string(),
+            tool: "trae_cn".to_string(),
+            skill_name: "previous-name".to_string(),
+            ..folder_row.clone()
+        })
+        .unwrap();
+
+    let removals = crate::core::project_ops::configure_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &["trae".to_string()],
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(removals.len(), 1);
+    assert!(removals[0].failures().is_empty(), "{}", removals[0]);
+    assert_eq!(removals[0].removed_rows(), 1, "{}", removals[0]);
+    assert!(!old.exists(), "the legacy assignment's artifact is removed");
+    let rows = store.list_project_skill_assignments(&project.id).unwrap();
+    assert_eq!(
+        rows.iter().map(|r| r.tool.as_str()).collect::<Vec<_>>(),
+        vec!["trae"],
+        "the folder's row stays"
+    );
+    assert!(Path::new(&project.path)
+        .join(".trae/skills/trae-skill")
+        .exists());
+    let tools: Vec<String> = store
+        .list_project_tools(&project.id)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.tool)
+        .collect();
+    assert_eq!(tools, vec!["trae"]);
+}
+
+/// The folder's rows go with the last harness serving the folder: dropping
+/// Trae CN when Trae is not configured removes the `trae`-keyed row too.
+#[test]
+fn dropping_the_last_harness_serving_a_folder_removes_the_folders_rows() {
+    let (_db, _tmp, store, project, skill) = trae_project();
+    add_tools(&store, &project, &["trae_cn"]);
+    assign_skill_to_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &skill.id,
+        3000,
+    )
+    .unwrap();
+    assert_eq!(
+        store
+            .list_project_skill_assignments(&project.id)
+            .unwrap()
+            .iter()
+            .map(|r| r.tool.clone())
+            .collect::<Vec<_>>(),
+        vec!["trae".to_string()]
+    );
+
+    let removals = crate::core::project_ops::configure_project_tools(
+        &store,
+        &central_repo_of(&store),
+        &project.id,
+        &[],
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(removals.len(), 1);
+    assert!(removals[0].failures().is_empty(), "{}", removals[0]);
+    assert!(store
+        .list_project_skill_assignments(&project.id)
+        .unwrap()
+        .is_empty());
+    assert!(!Path::new(&project.path)
+        .join(".trae/skills/trae-skill")
+        .exists());
+    assert!(store.list_project_tools(&project.id).unwrap().is_empty());
+}
+
 /// Rows a pre-1.4.0 project wrote once per sibling are each their own row to
 /// every mutation, and one folder to every reader: the re-sync syncs and
 /// settles each row by itself, the listing and the counts read one Deployment.
@@ -3598,5 +3710,52 @@ fn the_project_total_reads_the_same_fold_as_the_listing() {
     assert_eq!(
         store.project_aggregate(&project.id).unwrap().sync_status,
         shown
+    );
+}
+
+/// Astra 204: a disabled sibling never hides the folder's other rows from the
+/// listing or the total. A failed removal (`error`, still owning its link)
+/// beside a settled Disable shows the error in both, with the disabled intent
+/// carried; a `disabled` row beside a live link reads disabled in the matrix,
+/// yet the total counts the link still on disk instead of reading empty.
+#[test]
+fn a_disabled_sibling_hides_no_failure_and_no_live_link_from_listing_or_total() {
+    use crate::core::skill_store::AssignmentTransition;
+    use crate::core::sync_status::ProjectSyncStatus;
+    let (_db, _tmp, store, project, skill) = trae_project();
+    seed_trae_row(&store, &project, &skill, "trae", "trae-skill", true);
+    our_link(&skill, &trae_dir(&project).join("trae-skill"));
+    seed_trae_row(&store, &project, &skill, "trae_cn", "previous-name", true);
+    store
+        .transition_assignment("pa-trae_cn", AssignmentTransition::Disabled)
+        .unwrap();
+
+    let listing = project_sync::list_assignments_with_staleness(&store, &project.id).unwrap();
+    assert_eq!(listing.assignments.len(), 1);
+    let folder = &listing.assignments[0];
+    assert_eq!(folder.status, SyncStatus::Disabled);
+    assert!(folder.facts.disabled && folder.facts.deployed, "{folder:?}");
+    assert_eq!(
+        store.project_aggregate(&project.id).unwrap().sync_status,
+        ProjectSyncStatus::Synced,
+        "the live link still counts"
+    );
+
+    // The folder row's removal failed: the error shows ahead of the muted row.
+    store
+        .transition_assignment(
+            "pa-trae",
+            AssignmentTransition::SyncFailed {
+                error: "removal failed",
+            },
+        )
+        .unwrap();
+    let listing = project_sync::list_assignments_with_staleness(&store, &project.id).unwrap();
+    let folder = &listing.assignments[0];
+    assert_eq!(folder.status, SyncStatus::Error);
+    assert!(folder.facts.disabled && folder.facts.deployed, "{folder:?}");
+    assert_eq!(
+        store.project_aggregate(&project.id).unwrap().sync_status,
+        ProjectSyncStatus::Error
     );
 }

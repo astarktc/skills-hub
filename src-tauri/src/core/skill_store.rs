@@ -6,7 +6,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use tauri::Manager;
 
 use super::errors::SignalError;
-use super::placement::{fold_status, row_folder, ScopeKind};
+use super::placement::{fold_status, row_folder, RowState, ScopeKind};
 use super::sync_status::{aggregate, ProjectSyncStatus, SyncMode, SyncStatus};
 
 const DB_FILE_NAME: &str = "skills_hub.db";
@@ -388,15 +388,6 @@ pub enum TargetTransition<'a> {
         mode: SyncMode,
         target_path: &'a str,
     },
-    /// Enable admits a `disabled` row back for a first sync: a successful
-    /// Disable removed its artifact, so its ownership is cleared (`synced_at`
-    /// NULL) and it reads `pending` — row created or re-admitted, sync not yet
-    /// attempted — keeping its own key, mode and recorded path. Only a sync of
-    /// it that succeeds makes it an owner again; a collision leaves a
-    /// non-owner the overwrite ask can settle. A row that is not `disabled` is
-    /// left untouched. The global sibling of
-    /// [`AssignmentTransition::EnableAdmitted`].
-    EnableAdmitted,
 }
 
 /// A typed write to an assignment's lifecycle columns — the only way the
@@ -1655,21 +1646,6 @@ impl SkillStore {
                 });
             }
             TargetTransition::Disabled => (SyncStatus::Disabled, None, None, None, None),
-            TargetTransition::EnableAdmitted => {
-                return self.with_conn(|conn| {
-                    conn.execute(
-                        "UPDATE skill_targets
-                         SET status = ?1, last_error = NULL, synced_at = NULL
-                         WHERE id = ?2 AND status = ?3",
-                        params![
-                            SyncStatus::Pending.as_str(),
-                            target_id,
-                            SyncStatus::Disabled.as_str()
-                        ],
-                    )?;
-                    Ok(())
-                });
-            }
             TargetTransition::DisabledRecorded {
                 skill_id,
                 tool,
@@ -1816,7 +1792,6 @@ impl SkillStore {
         })
     }
 
-    #[cfg(test)]
     pub fn list_project_skill_assignments_for_project_tool(
         &self,
         project_id: &str,
@@ -1902,11 +1877,11 @@ impl SkillStore {
 
             let assignments_sql = match only {
                 Some(_) => {
-                    "SELECT project_id, skill_id, id, mode, status, last_error, tool \
+                    "SELECT project_id, skill_id, id, mode, status, last_error, tool, synced_at \
                      FROM project_skill_assignments WHERE project_id = ?1"
                 }
                 None => {
-                    "SELECT project_id, skill_id, id, mode, status, last_error, tool \
+                    "SELECT project_id, skill_id, id, mode, status, last_error, tool, synced_at \
                      FROM project_skill_assignments"
                 }
             };
@@ -1917,7 +1892,12 @@ impl SkillStore {
                 let id: String = row.get(2)?;
                 let (_, status, _) = read_lifecycle(&id, row.get(3)?, row.get(4)?, row.get(5)?);
                 let tool: String = row.get(6)?;
-                Ok((project_id, skill_id, status, tool))
+                let synced_at: Option<i64> = row.get(7)?;
+                let state = RowState {
+                    status,
+                    owns_artifact: owns_artifact(synced_at),
+                };
+                Ok((project_id, skill_id, state, tool))
             };
             let assignment_rows = match only {
                 Some(project_id) => stmt.query_map(params![project_id], read_assignment)?,
@@ -1927,13 +1907,12 @@ impl SkillStore {
             let mut skills: HashMap<String, HashSet<String>> = HashMap::new();
             // One Deployment per (project, skill, folder): its rows — several
             // when a pre-1.4.0 app wrote one per shared-dir sibling — count
-            // once, with the folder's folded status (`placement::fold_status`,
+            // once, with the folder's folded facts (`placement::fold_status`,
             // the fold the project listing shows), so the project total never
             // disagrees with its matrix.
-            let mut deployments: HashMap<(String, String, String), Vec<SyncStatus>> =
-                HashMap::new();
+            let mut deployments: HashMap<(String, String, String), Vec<RowState>> = HashMap::new();
             for row in assignment_rows {
-                let (project_id, skill_id, status, tool) = row?;
+                let (project_id, skill_id, state, tool) = row?;
                 let folder = row_folder(ScopeKind::Project, &tool);
                 skills
                     .entry(project_id.clone())
@@ -1942,7 +1921,7 @@ impl SkillStore {
                 deployments
                     .entry((project_id, skill_id, folder))
                     .or_default()
-                    .push(status);
+                    .push(state);
             }
             for (project_id, skill_ids) in skills {
                 aggregates.entry(project_id).or_default().skill_count = skill_ids.len();
@@ -1956,7 +1935,7 @@ impl SkillStore {
                 statuses
                     .entry(project_id)
                     .or_default()
-                    .extend(fold_status(rows));
+                    .extend(fold_status(rows).map(|facts| facts.total_status()));
             }
             for (project_id, statuses) in statuses {
                 aggregates.entry(project_id).or_default().sync_status = aggregate(statuses);

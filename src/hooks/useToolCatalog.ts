@@ -91,6 +91,18 @@ export function useToolCatalog({ t }: { t: TranslateFn }) {
   );
 
   /**
+   * Whether the global Deployment folder `folder` is reachable: some detected
+   * harness of the catalog is served by it (`ToolInfoDto.folder_key` — never
+   * a path). A folder row is written through any of them, so a mark standing
+   * for the folder reads detected when one is (Amp's folder with only Kimi
+   * Code installed).
+   */
+  const isFolderDetected = useCallback(
+    (folder: string) => installedTools.some((tool) => tool.folder === folder),
+    [installedTools],
+  );
+
+  /**
    * toolId → every toolId sharing its skills dir (groups of two or more).
    * The backend owns the grouping (`ToolInfoDto.shared_with`); never
    * re-derive it from `skills_dir`.
@@ -119,11 +131,13 @@ export function useToolCatalog({ t }: { t: TranslateFn }) {
       installedTools,
       sharedToolIdsByToolId,
       folderOf,
+      isFolderDetected,
       projectToolStatus,
       loadProjectToolStatus,
     }),
     [
       folderOf,
+      isFolderDetected,
       toolStatus,
       tools,
       toolLabelById,

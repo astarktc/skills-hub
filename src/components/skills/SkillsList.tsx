@@ -37,6 +37,8 @@ type SkillsListProps = {
   /** The Tool catalog's label for any key (a row outside the set). */
   labelOf: (tool: string) => string;
   isDetected: (tool: string) => boolean;
+  /** Whether a detected catalog harness is served by the folder (`useToolCatalog`). */
+  isFolderDetected: (folder: string) => boolean;
   /** The surface's selection (surface state, D4); the bulk rail acts on it. */
   selection: ReadonlySet<string>;
   /** The skill the inspector shows (surface state's `focused`), marked on its row. */
@@ -79,6 +81,7 @@ const SkillsList = ({
   stripTools,
   labelOf,
   isDetected,
+  isFolderDetected,
   selection,
   focusedId,
   onToggleSelect,
@@ -120,9 +123,9 @@ const SkillsList = ({
 
   const strips = useMemo(() => {
     const out = new Map<string, SyncedStrip>();
-    for (const skill of displayed) out.set(skill.id, syncedStrip(skill, stripTools, { labelOf, isDetected }));
+    for (const skill of displayed) out.set(skill.id, syncedStrip(skill, stripTools, { labelOf, isDetected, isFolderDetected }));
     return out;
-  }, [displayed, isDetected, labelOf, stripTools]);
+  }, [displayed, isDetected, isFolderDetected, labelOf, stripTools]);
 
   // The strip column fits the widest strip in view (the effective set, plus
   // any Tool a row still has outside it) — collapsed groups included, so a

@@ -167,7 +167,7 @@ function App() {
 
   // The Synced strip's Tools: the effective target set, in registry order,
   // labelled by the Tool catalog (never a raw key).
-  const { tools: catalogTools, toolLabelById, installedToolIds, toolStatus } = catalog;
+  const { tools: catalogTools, toolLabelById, installedToolIds, toolStatus, isFolderDetected } = catalog;
   const { effectiveSyncTargetIds: stripTargetIds } = sync;
   const stripTools = useMemo(() => {
     const wanted = new Set(stripTargetIds);
@@ -680,6 +680,7 @@ function App() {
                   stripTools={stripTools}
                   labelOf={labelOfTool}
                   isDetected={isToolDetected}
+                  isFolderDetected={isFolderDetected}
                   selection={surface.selection.skills}
                   focusedId={focusedSkillId}
                   onToggleSelect={selectFromRow}
@@ -704,6 +705,7 @@ function App() {
                   stripTools={stripTools}
                   labelOf={labelOfTool}
                   isDetected={isToolDetected}
+                  isFolderDetected={isFolderDetected}
                   actions={actions}
                   blockedReason={blockedReason}
                   projectPlacement={projects.placementOf(focusedSkill.id)}

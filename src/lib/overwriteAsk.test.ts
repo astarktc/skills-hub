@@ -151,11 +151,11 @@ describe("overwriteAsk", () => {
 describe("Propagation rows (ticket 09 B2)", () => {
   const exists = (path: string) => ({ code: "TARGET_EXISTS" as const, path, modifiedAt: 1, sameContent: false });
   const targets: PropagationOutcome[] = [
-    { scope: { scope: "global", tool: "claude" }, status: { status: "failed", error: exists("/g/claude/a"), first_deploy: true } },
-    { scope: { scope: "global", tool: "cursor" }, status: { status: "failed", error: exists("/g/cursor/a"), first_deploy: true } },
-    { scope: { scope: "project", project_id: "p1", tool: "claude" }, status: { status: "failed", error: exists("/p1/claude/a"), first_deploy: true } },
-    { scope: { scope: "global", tool: "codex" }, status: { status: "failed", error: { code: "OTHER", message: "io" }, first_deploy: false } },
-    { scope: { scope: "global", tool: "pi" }, status: { status: "synced", mode_used: "symlink" } },
+    { scope: { scope: "global", tool: "claude" }, folder_key: "claude", status: { status: "failed", error: exists("/g/claude/a"), first_deploy: true } },
+    { scope: { scope: "global", tool: "cursor" }, folder_key: "cursor", status: { status: "failed", error: exists("/g/cursor/a"), first_deploy: true } },
+    { scope: { scope: "project", project_id: "p1", tool: "claude" }, folder_key: "claude", status: { status: "failed", error: exists("/p1/claude/a"), first_deploy: true } },
+    { scope: { scope: "global", tool: "codex" }, folder_key: "codex", status: { status: "failed", error: { code: "OTHER", message: "io" }, first_deploy: false } },
+    { scope: { scope: "global", tool: "pi" }, folder_key: "pi", status: { status: "synced", mode_used: "symlink" } },
   ];
   const skill = { skillId: "a", skillName: "alpha" };
 
@@ -186,7 +186,7 @@ describe("Propagation rows (ticket 09 B2)", () => {
     expect(merged.declined).toEqual([{ skillName: "alpha", tool: "claude" }]);
     expect(merged.targets).toEqual([
       // The retry of a first deploy that failed is still a first deploy.
-      { scope: { scope: "global", tool: "cursor" }, status: { status: "failed", error: { code: "OTHER", message: "busy" }, first_deploy: true } },
+      { scope: { scope: "global", tool: "cursor" }, folder_key: "cursor", status: { status: "failed", error: { code: "OTHER", message: "busy" }, first_deploy: true } },
       targets[3],
       targets[4],
     ]);
@@ -201,6 +201,7 @@ describe("Propagation rows (ticket 09 B2)", () => {
     });
     expect(merged.targets[2]).toEqual({
       scope: { scope: "project", project_id: "p1", tool: "claude" },
+      folder_key: "claude",
       status: { status: "skipped", reason: { reason: "project_unavailable", project_id: "p1" } },
     });
   });

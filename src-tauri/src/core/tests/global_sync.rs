@@ -396,6 +396,9 @@ fn planned(adapter: &'static ToolAdapter, root: &Path, installed: bool) -> Plann
         folder_key: adapter.key().to_string(),
         root: root.to_path_buf(),
         installed,
+        detected: crate::core::placement::InstalledSet::from_keys(
+            installed.then_some(adapter.key()),
+        ),
     }
 }
 
@@ -1141,15 +1144,16 @@ fn a_detected_reader_makes_its_group_deployable_before_the_group_folder_exists()
     assert!(targets.iter().any(|t| t.tool == agents_key));
 }
 
-/// Sol's finding 101, global arm: each stored row of a folder is synced at its
-/// own recorded path and an answer applies to the row it names. Two
-/// pre-1.4.0 rows of Amp's folder record two paths, each holding a foreign
-/// folder; an Overwrite naming `kimi_cli` (the row whose collision was asked
-/// about) replaces Kimi's path only, while Amp's row asks again and its
-/// folder stays. A Keep naming `amp` records Amp's row `disabled` at its own
-/// path and leaves Kimi's alone.
+/// Sol's finding 101, global arm, under Astra's 201: every stored row of a
+/// folder is written where the registry places the skill now (the folder root
+/// plus its current name, as on `main`), never at a stale recorded path, and
+/// an answer applies to the row it names. Two pre-1.4.0 rows of Amp's folder
+/// record `my-skill` (a foreign folder) and `previous` (another foreign
+/// folder): an Overwrite naming `kimi_cli` replaces the destination for
+/// Kimi's row only — Amp's row, unanswered, asks — and `previous` is never
+/// touched. A Keep naming `amp` then records Amp's row `disabled` alone.
 #[test]
-fn an_answer_reaches_only_the_row_and_path_it_names() {
+fn every_row_writes_the_skills_place_and_an_answer_reaches_the_row_it_names() {
     use crate::core::skill_store::SkillTargetRecord;
     let dir = tempfile::tempdir().expect("tempdir");
     let store = make_store(dir.path());
@@ -1157,9 +1161,9 @@ fn an_answer_reaches_only_the_row_and_path_it_names() {
     let source = make_skill_dir(dir.path(), "central-skill", "# New");
     let amp = adapter_by_key("amp").expect("amp adapter");
     let root = dir.path().join("shared-root");
-    let amp_path = make_skill_dir(&root, "my-skill", "# Foreign A");
-    let kimi_path = make_skill_dir(&root, "previous", "# Foreign K");
-    for (tool, path) in [("amp", &amp_path), ("kimi_cli", &kimi_path)] {
+    let destination = make_skill_dir(&root, "my-skill", "# Foreign A");
+    let stale = make_skill_dir(&root, "previous", "# Foreign K");
+    for (tool, path) in [("amp", &destination), ("kimi_cli", &stale)] {
         store
             .upsert_skill_target(&SkillTargetRecord {
                 id: format!("t-{tool}"),
@@ -1189,12 +1193,17 @@ fn an_answer_reaches_only_the_row_and_path_it_names() {
             .expect("query")
             .expect("row")
     };
+    let both_detected = || {
+        let mut target = planned(amp, &root, true);
+        target.detected = crate::core::placement::InstalledSet::from_keys(["amp", "kimi_cli"]);
+        target
+    };
 
     let outcomes = sync_skills_to_planned_tools(
         &store,
         &central_repo_of(&store),
         &skills,
-        &[planned(amp, &root, true)],
+        &[both_detected()],
         &answer("kimi_cli", OverrideDecision::Overwrite),
         1000,
         |_| {},
@@ -1208,36 +1217,37 @@ fn an_answer_reaches_only_the_row_and_path_it_names() {
             .map(|o| format!("{:?}", o.status))
             .unwrap_or_default()
     };
-    assert!(
-        status_of(&outcomes, "kimi_cli").starts_with("Synced"),
-        "{outcomes:?}"
-    );
+    // Rows are visited in store order: Amp's, unanswered, meets the foreign
+    // folder at the destination and asks; Kimi's answer replaces it.
     assert!(
         status_of(&outcomes, "amp").contains("TargetExists"),
         "{outcomes:?}"
     );
+    assert!(
+        status_of(&outcomes, "kimi_cli").starts_with("Synced"),
+        "{outcomes:?}"
+    );
     assert_ne!(
-        fs::read_to_string(kimi_path.join("SKILL.md"))
+        fs::read_to_string(destination.join("SKILL.md"))
             .ok()
             .as_deref(),
-        Some("# Foreign K"),
-        "the asked path is replaced"
+        Some("# Foreign A"),
+        "the asked destination is replaced"
     );
     assert_eq!(
-        fs::read_to_string(amp_path.join("SKILL.md")).unwrap(),
-        "# Foreign A",
-        "a path the answer never named stays"
+        fs::read_to_string(stale.join("SKILL.md")).unwrap(),
+        "# Foreign K",
+        "nothing is ever written at a stale recorded path"
     );
-    assert_eq!(row("kimi_cli").target_path, kimi_path.to_string_lossy());
+    assert_eq!(row("kimi_cli").target_path, destination.to_string_lossy());
     assert!(row("kimi_cli").owns_artifact());
-    assert_eq!(row("amp").target_path, amp_path.to_string_lossy());
-    assert!(!row("amp").owns_artifact());
+    assert!(!row("amp").owns_artifact(), "Amp's own row was not settled");
 
     let outcomes = sync_skills_to_planned_tools(
         &store,
         &central_repo_of(&store),
         &skills,
-        &[planned(amp, &root, true)],
+        &[both_detected()],
         &answer("amp", OverrideDecision::Keep),
         1100,
         |_| {},
@@ -1247,10 +1257,135 @@ fn an_answer_reaches_only_the_row_and_path_it_names() {
         "{outcomes:?}"
     );
     assert_eq!(row("amp").status, SyncStatus::Disabled);
-    assert_eq!(row("amp").target_path, amp_path.to_string_lossy());
+    assert!(!row("amp").owns_artifact());
     assert_eq!(row("kimi_cli").status, SyncStatus::Synced);
     assert_eq!(
-        fs::read_to_string(amp_path.join("SKILL.md")).unwrap(),
-        "# Foreign A"
+        fs::read_to_string(stale.join("SKILL.md")).unwrap(),
+        "# Foreign K"
+    );
+}
+
+/// Astra 201, the differential against `main`: a row whose recorded path is
+/// stale — outside every harness folder, under an old name — is written where
+/// the registry places the skill now (`~/.claude/skills/<current name>`) and
+/// re-recorded there; nothing is created at the stale path.
+#[test]
+fn a_stale_recorded_path_is_never_a_destination() {
+    use crate::core::skill_store::SkillTargetRecord;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let home = dir.path().join("home");
+    install_tool(&home, "claude_code");
+    let store = make_store(dir.path());
+    seed_skill(&store, "skill-1");
+    let source = make_skill_dir(dir.path(), "central-a", "# A");
+    let stale = dir.path().join("elsewhere").join("old-name");
+    store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "t-claude".to_string(),
+            skill_id: "skill-1".to_string(),
+            tool: "claude_code".to_string(),
+            target_path: stale.to_string_lossy().into_owned(),
+            mode: SyncMode::Symlink,
+            status: SyncStatus::Synced,
+            last_error: None,
+            synced_at: Some(1),
+        })
+        .expect("seed row");
+
+    let outcomes = sync_skills_to_tools(
+        &HostRoots::under_home(&home),
+        &store,
+        &central_repo_of(&store),
+        &[batch_skill("skill-1", "current-name", &source)],
+        &["claude_code".to_string()],
+        &BatchPolicy {
+            overwrite: false,
+            overwrite_if_same_content: true,
+            overrides: vec![],
+        },
+        42,
+        |_| {},
+    );
+
+    assert!(
+        matches!(
+            outcomes.as_slice(),
+            [o] if matches!(o.status, BatchTargetStatus::Synced { .. })
+        ),
+        "{outcomes:?}"
+    );
+    let destination = home.join(".claude/skills/current-name");
+    assert!(
+        destination.symlink_metadata().is_ok(),
+        "written at the skill's place"
+    );
+    assert!(
+        stale.symlink_metadata().is_err(),
+        "nothing at the stale path"
+    );
+    assert!(!dir.path().join("elsewhere").exists());
+    let row = store
+        .get_skill_target("skill-1", "claude_code")
+        .expect("query")
+        .expect("row");
+    assert_eq!(row.target_path, destination.to_string_lossy());
+}
+
+/// A legacy row (Kimi Code's, on Amp's folder) is reached through its own
+/// harness, as before rows were per folder: with only Amp installed the batch
+/// leaves it untouched and records the folder's write under the folder key.
+#[test]
+fn a_legacy_row_of_an_uninstalled_harness_is_left_as_it_was() {
+    use crate::core::skill_store::SkillTargetRecord;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let home = dir.path().join("home");
+    install_tool(&home, "amp");
+    let store = make_store(dir.path());
+    seed_skill(&store, "skill-1");
+    let source = make_skill_dir(dir.path(), "central-a", "# A");
+    let legacy = SkillTargetRecord {
+        id: "t-kimi".to_string(),
+        skill_id: "skill-1".to_string(),
+        tool: "kimi_cli".to_string(),
+        target_path: home
+            .join(".config/agents/skills/previous")
+            .to_string_lossy()
+            .into_owned(),
+        mode: SyncMode::Copy,
+        status: SyncStatus::Error,
+        last_error: Some("an earlier sync failed".to_string()),
+        synced_at: None,
+    };
+    store.upsert_skill_target(&legacy).expect("seed row");
+
+    let outcomes = sync_skills_to_tools(
+        &HostRoots::under_home(&home),
+        &store,
+        &central_repo_of(&store),
+        &[batch_skill("skill-1", "skill-1", &source)],
+        &["amp".to_string()],
+        &BatchPolicy {
+            overwrite: false,
+            overwrite_if_same_content: true,
+            overrides: vec![],
+        },
+        42,
+        |_| {},
+    );
+
+    assert!(
+        matches!(
+            outcomes.as_slice(),
+            [o] if o.tool_key == "amp" && matches!(o.status, BatchTargetStatus::Synced { .. })
+        ),
+        "{outcomes:?}"
+    );
+    let kimi = store
+        .get_skill_target("skill-1", "kimi_cli")
+        .expect("query")
+        .expect("row");
+    assert_eq!(
+        (kimi.status, kimi.target_path.as_str(), kimi.synced_at),
+        (SyncStatus::Error, legacy.target_path.as_str(), None)
     );
 }

@@ -111,6 +111,7 @@ fn planned(adapter: &'static ToolAdapter, root: &Path) -> PlannedToolTarget {
         root: root.to_path_buf(),
         installed: true,
         folder_key: adapter.key().to_string(),
+        detected: crate::core::placement::InstalledSet::from_keys([adapter.key()]),
     }
 }
 

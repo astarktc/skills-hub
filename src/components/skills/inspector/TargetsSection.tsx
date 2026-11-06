@@ -36,6 +36,7 @@ const STATE_KEY: Record<StripMark["nameKey"], string> = {
   pending: "inspector.targets.state.pending",
   failed: "inspector.targets.state.failed",
   failed_first: "inspector.targets.state.failedFirst",
+  failed_disable: "inspector.targets.state.failedDisable",
   missing: "inspector.targets.state.missing",
   stale: "inspector.targets.state.stale",
   disabled: "inspector.targets.state.disabled",
@@ -72,7 +73,7 @@ export default function TargetsSection({ skill, strip, actions, blockedReason, t
   const targetOf = (tool: string) => byFolder.get(strip.marks.find((mark) => mark.tool === tool)?.folder ?? tool);
   // The undo line shows only while the pair is still disabled, for this skill.
   const undoTool =
-    removed && removed.skillId === skill.id && targetOf(removed.tool)?.status === "disabled" ? removed.tool : null;
+    removed && removed.skillId === skill.id && targetOf(removed.tool)?.disabled ? removed.tool : null;
 
   useEffect(() => {
     if (!removed) return;

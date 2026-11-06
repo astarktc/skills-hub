@@ -23,12 +23,17 @@
 //!   Harnesses pane.
 //!
 //! Stored rows are read through [`row_folder`] (a row describes the folder of
-//! the dir it was written to). For display and counting only, the rows of one
-//! folder are folded by [`fold_folder_rows`] / [`fold_status`], so rows written
-//! once per shared-dir sibling before 1.4.0 (Amp and Kimi on
-//! `~/.config/agents/skills`) read as one folder until the redeploy collapses
-//! them. Mutations never group rows: each acts on every stored row by itself,
-//! at its own recorded path, with its own ownership and settlement.
+//! the dir it was written to) and one rule, [`is_folder_row`]: a row keyed by
+//! its own folder key is a **folder row** (reachable through any installed
+//! harness its folder serves); a row with any other key is a **legacy row**
+//! and keeps 1.3.4's meaning in every mutation — its own harness's
+//! installedness, Enable's lifecycle, project-tool removal — until the
+//! redeploy converts it (ADR-0007). For display and counting only, the rows
+//! of one folder are folded by [`fold_folder_rows`] / [`fold_status`] into
+//! facts about the whole folder ([`FolderFacts`]), so rows written once per
+//! shared-dir sibling before 1.4.0 (Amp and Kimi on `~/.config/agents/skills`)
+//! read as one folder. Mutations never group rows: each acts on every stored
+//! row by itself, with its own ownership and settlement.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -408,8 +413,138 @@ fn reads_folder(
 }
 
 // ---------------------------------------------------------------------------
+// Folder rows and legacy rows — the one rule mutations read
+// ---------------------------------------------------------------------------
+
+/// Whether a stored row keyed `key` is a **folder row** at `scope`: its key is
+/// the folder key of the dir it was written to (`own_folder(scope, key) ==
+/// key`). Every row this app writes from 1.4.0 on is one, and so is every row
+/// of a harness whose skills dir no other entry shares.
+///
+/// A row with any other key — a pre-1.4.0 per-sharer row (Kimi Code's on
+/// Amp's `~/.config/agents/skills`, Trae CN's on `.trae/skills`) or a key the
+/// registry no longer knows — is a **legacy row**, and keeps its old meaning in
+/// every mutation until the redeploy converts it (ADR-0007 rule 2): its
+/// destination, its own harness's installedness, Enable's lifecycle and the
+/// project-tool removal all read as on 1.3.4. A folder row is reachable when
+/// any installed harness is served by its folder ([`folder_reachable`]); both
+/// kinds take their capability through placement.
+pub fn is_folder_row(scope: ScopeKind, key: &str) -> bool {
+    own_folder(scope, key) == Some(key)
+}
+
+/// Whether the global folder `folder` is reachable on this machine: any
+/// harness it serves is installed (`installed` is the caller's detected set).
+/// What a **folder row** is gated on; a legacy row is gated on its own
+/// harness ([`is_folder_row`]).
+pub fn folder_reachable(scope: ScopeKind, folder: &str, installed: &InstalledSet) -> bool {
+    scope_rows(scope)
+        .into_iter()
+        .filter(|adapter| {
+            serving_folder(scope, adapter.key(), &PlacementSettings::default()) == Some(folder)
+        })
+        .any(|adapter| installed.contains(adapter.key()))
+}
+
+/// Whether the stored row keyed `key` is reachable for a mutation at
+/// `scope`: a folder row through its folder ([`folder_reachable`]), a legacy
+/// row through its own harness — exactly as before rows were per folder.
+pub fn row_reachable(scope: ScopeKind, key: &str, installed: &InstalledSet) -> bool {
+    if is_folder_row(scope, key) {
+        folder_reachable(scope, key, installed)
+    } else {
+        installed.contains(key)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Reading stored rows as folders — presentation and counting only
 // ---------------------------------------------------------------------------
+
+/// What [`fold_status`] reads of one stored row: its status, and whether it
+/// owns the artifact at its path (`synced_at` set).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RowState {
+    pub status: SyncStatus,
+    pub owns_artifact: bool,
+}
+
+/// One Deployment folder's state, folded over **all** its stored rows — facts
+/// about the whole folder, never borrowed from one row for another.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FolderFacts {
+    /// What the folder shows, failure ahead of muted (the order `skillHealth`
+    /// ranks: failed › stale › muted): `error` › `missing` › `stale` ›
+    /// `disabled` › `pending` › `synced`. A row whose removal failed stays
+    /// visible beside a sibling Disable did settle.
+    pub status: SyncStatus,
+    /// The operator's Disable holds on the folder: some row is `disabled`.
+    /// Every Sync-target path withholds a write to such a folder (see
+    /// **Disabled** in `CONTEXT.md`), so its failure is repaired by finishing
+    /// the Disable or by Enable — never a re-sync the gate would skip.
+    pub disabled: bool,
+    /// Some row that is not `disabled` owns its artifact — what a Disable or
+    /// a Delete of the folder would remove. Presentation only: it counts an
+    /// artifact for a confirmation and is never any row's ownership.
+    pub deployed: bool,
+}
+
+impl FolderFacts {
+    /// What the folder contributes to a project total
+    /// (`sync_status::aggregate`): its displayed status, except that a
+    /// `disabled` folder with a live artifact still on disk counts as
+    /// deployed there — a total never reads empty over a link it can see.
+    pub fn total_status(&self) -> SyncStatus {
+        if self.status == SyncStatus::Disabled && self.deployed {
+            SyncStatus::Synced
+        } else {
+            self.status
+        }
+    }
+}
+
+/// The displayed rank of a row status (higher shows): failure › stale ›
+/// muted › in flight › healthy.
+fn display_rank(status: SyncStatus) -> u8 {
+    match status {
+        SyncStatus::Error => 6,
+        SyncStatus::Missing => 5,
+        SyncStatus::Stale => 4,
+        SyncStatus::Disabled => 3,
+        SyncStatus::Pending => 2,
+        SyncStatus::Synced => 1,
+    }
+}
+
+/// The one fold of a Deployment folder's rows ([`FolderFacts`]) — what the
+/// skill catalog, the project listing and the project total read, so no
+/// surface can disagree with another about a folder. Every row is reached by
+/// the per-row resync / Retry / Disable of its folder, so whatever this shows,
+/// one of those actions settles. `None` for no rows.
+pub fn fold_status(rows: impl IntoIterator<Item = RowState>) -> Option<FolderFacts> {
+    let mut facts: Option<FolderFacts> = None;
+    for row in rows {
+        let live_owner = row.status != SyncStatus::Disabled && row.owns_artifact;
+        let disabled = row.status == SyncStatus::Disabled;
+        facts = Some(match facts {
+            None => FolderFacts {
+                status: row.status,
+                disabled,
+                deployed: live_owner,
+            },
+            Some(current) => FolderFacts {
+                status: if display_rank(row.status) > display_rank(current.status) {
+                    row.status
+                } else {
+                    current.status
+                },
+                disabled: current.disabled || disabled,
+                deployed: current.deployed || live_owner,
+            },
+        });
+    }
+    facts
+}
 
 /// A stored Deployment row, as [`fold_folder_rows`] reads it.
 pub trait FolderRow {
@@ -417,45 +552,33 @@ pub trait FolderRow {
     /// the project and the skill (project rows).
     fn owner(&self) -> String;
     fn tool(&self) -> &str;
-    fn status(&self) -> SyncStatus;
+    fn state(&self) -> RowState;
     fn set_tool(&mut self, tool: String);
 }
 
-/// The displayed state of one Deployment folder, folded over the statuses of
-/// **all** its stored rows — the one fold the skill catalog, the project
-/// listing and the project total read, so no surface can disagree with
-/// another about a folder.
-///
-/// - Any `disabled` row makes the folder `disabled`: every Sync-target path
-///   withholds a write to a folder one of whose rows is disabled (see
-///   **Disabled** in `CONTEXT.md`), and Enable — the action a disabled folder
-///   offers — re-enables every disabled row of it.
-/// - Otherwise the row needing the most attention: `error` › `missing` ›
-///   `stale` › `pending` › `synced`. Every row is reached by the per-row
-///   resync / Retry of its folder, so whatever this shows, that action
-///   settles.
-///
-/// `None` for no rows.
-pub fn fold_status(statuses: impl IntoIterator<Item = SyncStatus>) -> Option<SyncStatus> {
-    fn rank(status: SyncStatus) -> u8 {
-        match status {
-            SyncStatus::Disabled => 6,
-            SyncStatus::Error => 5,
-            SyncStatus::Missing => 4,
-            SyncStatus::Stale => 3,
-            SyncStatus::Pending => 2,
-            SyncStatus::Synced => 1,
-        }
-    }
-    statuses.into_iter().max_by_key(|status| rank(*status))
+/// One folder of one owner, for display: a row of it standing for the
+/// folder's identity — its first row whose status is the folder's displayed
+/// status, re-keyed by the folder key, every other field its own (never a
+/// sibling's) — and the [`FolderFacts`] of all its rows. Reads as its row
+/// (`Deref`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Folded<R> {
+    pub row: R,
+    pub facts: FolderFacts,
 }
 
-/// One row per (owner, folder), for display and counting — never for a
-/// mutation, which always acts on every stored row by itself. Each group
-/// comes out as its first row whose status is the folder's folded status
-/// ([`fold_status`]), keyed by the folder key, in the order the group first
-/// appeared. A folder with a single row passes it through, re-keyed.
-pub fn fold_folder_rows<R: FolderRow>(scope: ScopeKind, rows: Vec<R>) -> Vec<R> {
+impl<R> std::ops::Deref for Folded<R> {
+    type Target = R;
+    fn deref(&self) -> &R {
+        &self.row
+    }
+}
+
+/// One entry per (owner, folder), for display and counting — never for a
+/// mutation, which always acts on every stored row by itself. In the order
+/// each group first appeared; a folder with a single row passes it through,
+/// re-keyed.
+pub fn fold_folder_rows<R: FolderRow>(scope: ScopeKind, rows: Vec<R>) -> Vec<Folded<R>> {
     let mut groups: Vec<(String, String, Vec<R>)> = Vec::new();
     for row in rows {
         let owner = row.owner();
@@ -471,10 +594,12 @@ pub fn fold_folder_rows<R: FolderRow>(scope: ScopeKind, rows: Vec<R>) -> Vec<R> 
     groups
         .into_iter()
         .filter_map(|(_, folder, members)| {
-            let status = fold_status(members.iter().map(FolderRow::status))?;
-            let mut row = members.into_iter().find(|row| row.status() == status)?;
+            let facts = fold_status(members.iter().map(FolderRow::state))?;
+            let mut row = members
+                .into_iter()
+                .find(|row| row.state().status == facts.status)?;
             row.set_tool(folder);
-            Some(row)
+            Some(Folded { row, facts })
         })
         .collect()
 }
@@ -486,8 +611,11 @@ impl FolderRow for SkillTargetRecord {
     fn tool(&self) -> &str {
         &self.tool
     }
-    fn status(&self) -> SyncStatus {
-        self.status
+    fn state(&self) -> RowState {
+        RowState {
+            status: self.status,
+            owns_artifact: self.owns_artifact(),
+        }
     }
     fn set_tool(&mut self, tool: String) {
         self.tool = tool;
@@ -501,8 +629,11 @@ impl FolderRow for ProjectSkillAssignmentRecord {
     fn tool(&self) -> &str {
         &self.tool
     }
-    fn status(&self) -> SyncStatus {
-        self.status
+    fn state(&self) -> RowState {
+        RowState {
+            status: self.status,
+            owns_artifact: self.owns_artifact(),
+        }
     }
     fn set_tool(&mut self, tool: String) {
         self.tool = tool;
@@ -516,8 +647,11 @@ impl FolderRow for SkillProjectDeploymentRecord {
     fn tool(&self) -> &str {
         &self.tool
     }
-    fn status(&self) -> SyncStatus {
-        self.status
+    fn state(&self) -> RowState {
+        RowState {
+            status: self.status,
+            owns_artifact: self.synced_at.is_some(),
+        }
     }
     fn set_tool(&mut self, tool: String) {
         self.tool = tool;

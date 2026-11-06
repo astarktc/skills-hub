@@ -557,16 +557,19 @@ pub(crate) fn assign_skill_to_tools(
         .into_iter()
         .next();
         let (assignment_id, status) = match existing {
-            // A skill disabled at skill grain answers Disabled for every
-            // existing row too: a failed Disable leaves it `error`, and
-            // that row is not "already assigned" — it is off until Enable.
-            Some(existing) if existing.status == SyncStatus::Disabled || skill_disabled => (
-                Some(existing.id),
+            // A folder the Disabled rule holds (a row of it is `disabled`),
+            // or a skill disabled at skill grain — whose failed Disable leaves
+            // rows `error`, not "already assigned": off until Enable.
+            Some(existing) if existing.facts.disabled || skill_disabled => (
+                Some(existing.row.id),
                 ProjectSyncOutcomeStatus::Skipped {
                     reason: ProjectSyncSkip::Disabled,
                 },
             ),
-            Some(existing) => (Some(existing.id), ProjectSyncOutcomeStatus::AlreadyAssigned),
+            Some(existing) => (
+                Some(existing.row.id),
+                ProjectSyncOutcomeStatus::AlreadyAssigned,
+            ),
             None if skill_disabled => match deploy_adapter(tool_key) {
                 Ok(_) => {
                     let record = ProjectSkillAssignmentRecord {
@@ -1238,7 +1241,9 @@ fn reconcile_assignment(
 /// consumer must not read it as "everything is fine".
 #[derive(Debug)]
 pub struct AssignmentListing {
-    pub assignments: Vec<ProjectSkillAssignmentRecord>,
+    /// One entry per (skill, folder): a row standing for the folder and the
+    /// folder's facts over all its rows (`placement::fold_folder_rows`).
+    pub assignments: Vec<placement::Folded<ProjectSkillAssignmentRecord>>,
     pub reconciled: bool,
     /// Whether the reconcile pass rewrote at least one row's stored status
     /// (a copy found missing or stale, or back in line). Every skill row's

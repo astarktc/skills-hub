@@ -13,6 +13,7 @@ import {
   syncCounts,
   updateCounts,
   type AssignmentsOf,
+  type SkillProjectRows,
 } from "./bulkCounts";
 
 const target = (tool: string, status: SkillTargetDto["status"] = "synced", synced = true): SkillTargetDto => ({
@@ -21,6 +22,17 @@ const target = (tool: string, status: SkillTargetDto["status"] = "synced", synce
   status,
   target_path: `/tools/${tool}/x`,
   synced_at: synced ? 1 : null,
+  // A folder of one row: its facts are that row's.
+  disabled: status === "disabled",
+  deployed: status !== "disabled" && synced,
+});
+
+/** A project folder of one row, as a placement view lists it. */
+const assigned = (tool: string, status: SkillTargetDto["status"]) => ({
+  tool,
+  status,
+  disabled: status === "disabled",
+  deployed: status !== "disabled",
 });
 
 function skill(id: string, targets: SkillTargetDto[], extra: Partial<ManagedSkill> = {}): ManagedSkill {
@@ -51,12 +63,12 @@ function skill(id: string, targets: SkillTargetDto[], extra: Partial<ManagedSkil
 
 const placements: Record<string, ReturnType<AssignmentsOf>> = {
   a: [
-    { projectId: "p1", projectName: "quartermaster", assignments: [{ tool: "claude", status: "synced" }, { tool: "pi", status: "disabled" }] },
+    { projectId: "p1", projectName: "quartermaster", assignments: [assigned("claude", "synced"), assigned("pi", "disabled")] },
     { projectId: "p2", projectName: "monorepo", assignments: [] },
   ],
   b: [
     { projectId: "p1", projectName: "quartermaster", assignments: [] },
-    { projectId: "p2", projectName: "monorepo", assignments: [{ tool: "codex", status: "error" }] },
+    { projectId: "p2", projectName: "monorepo", assignments: [assigned("codex", "error")] },
   ],
   c: [],
 };
@@ -275,5 +287,41 @@ describe("deleteScope / deleteTotals", () => {
     ];
     expect(deleteTotals(scopes)).toEqual({ skills: 2, tools: 2, targets: 3, projects: 2, edits: 0, onlyCopy: 1 });
     expect(deleteTotals([...scopes, deleteScope(skill("zz", []), assignmentsOf, labelOf)]).projects).toBeNull();
+  });
+});
+
+// Round 20 t09 review round 4 (Sol 302): the confirmations count what each
+// folder's facts say Disable / Enable would touch, never one stand-in row.
+describe("folder facts in the confirmations (round 4)", () => {
+  // Amp's folder: a legacy row disabled, the folder row's copy still there.
+  const mutedButDeployed: SkillTargetDto = { ...target("amp", "disabled"), synced_at: 1, deployed: true };
+  // A partial Disable: the folder row's removal failed (`error`, owning).
+  const partlyDisabled: SkillTargetDto = { ...target("amp", "error"), disabled: true, deployed: true };
+
+  it("Disable counts a deployed copy even when the folder shows disabled", () => {
+    const counts = disableCounts([skill("a", [mutedButDeployed]), skill("b", [partlyDisabled])], () => []);
+    expect([counts.targets, counts.tools]).toEqual([2, 1]);
+    expect(deleteScope(skill("a", [mutedButDeployed]), null, (tool) => tool).tools).toEqual(["amp"]);
+  });
+
+  it("Enable counts a folder a Disable holds on whatever it shows", () => {
+    expect(enableCounts([skill("b", [partlyDisabled])], () => []).targets).toBe(1);
+  });
+
+  it("a project folder showing a failure beside a disabled row is still turned off; one only disabled is not", () => {
+    const rows = (assignments: SkillProjectRows["assignments"]) => () => [
+      { projectId: "p1", projectName: "api", assignments },
+    ];
+    const failedRemoval = { tool: "trae", status: "error" as const, disabled: true, deployed: true };
+    const liveBesideDisabled = { tool: "trae", status: "disabled" as const, disabled: true, deployed: true };
+    const off = { tool: "trae", status: "disabled" as const, disabled: true, deployed: false };
+    expect(disableCounts([skill("a", [])], rows([failedRemoval])).assignments).toBe(1);
+    expect(disableCounts([skill("a", [])], rows([liveBesideDisabled])).assignments).toBe(1);
+    expect(disableCounts([skill("a", [])], rows([off])).assignments).toBe(0);
+    expect(enableCounts([skill("a", [])], rows([failedRemoval])).assignments).toBe(1);
+  });
+
+  it("Sync counts a folder a Disable holds on as gated", () => {
+    expect(syncCounts([skill("b", [partlyDisabled])], ["amp"])).toMatchObject({ disabled: 1, added: 0 });
   });
 });

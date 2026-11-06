@@ -1272,11 +1272,26 @@ export type ProjectSkillAssignmentDto = {
 	skill_name: string,
 	tool: string,
 	mode: SyncMode,
+	/**
+	 *  The folder's displayed status (`placement::FolderFacts::status`:
+	 *  failure ahead of muted).
+	 */
 	status: SyncStatus,
 	last_error: string | null,
 	synced_at: number | null,
 	content_hash: string | null,
 	created_at: number,
+	/**
+	 *  The Disabled rule holds on the folder: some row of it is `disabled`
+	 *  (`placement::FolderFacts::disabled`).
+	 */
+	disabled: boolean,
+	/**
+	 *  Some row of the folder that is not `disabled` owns its artifact — what
+	 *  a Disable or unassign would remove (`placement::FolderFacts::deployed`;
+	 *  presentation only).
+	 */
+	deployed: boolean,
 };
 
 /**  Why a project sync left a whole project alone. */
@@ -1414,8 +1429,17 @@ export type ProjectViewDto = {
 	rewrote_statuses: boolean,
 };
 
+/**
+ *  One row's outcome. `scope` names the raw row (a pre-1.4.0 shared-dir
+ *  sibling's row keeps its own key); `folder_key` is the Deployment folder
+ *  that row describes (`placement::row_folder`) — the backend's answer to
+ *  "which Deployment is this", so a report reader counts one Deployment per
+ *  (scope, project, skill, folder) however many legacy rows describe it, and
+ *  never derives a folder itself.
+ */
 export type PropagationOutcome = {
 	scope: PropagationScope,
+	folder_key: string,
 	status: PropagationStatus,
 };
 
@@ -1837,15 +1861,26 @@ export type SkillOutcomeKind =
  */
 "import_failed";
 
-/**  One project assignment row of the skill: its Tool key and lifecycle. */
+/**
+ *  One project Deployment folder of the skill: its folder key, the folder's
+ *  displayed status and facts (`core::placement::FolderFacts`).
+ */
 export type SkillProjectDeploymentDto = {
 	tool: string,
+	/**  The folder's displayed status: failure ahead of muted. */
 	status: SyncStatus,
 	/**
 	 *  Set once a sync of ours succeeded there; a never-synced `error` row
 	 *  owns nothing and is not a live deployment.
 	 */
 	synced_at: number | null,
+	/**  The Disabled rule holds on the folder: some row of it is `disabled`. */
+	disabled: boolean,
+	/**
+	 *  Some row of the folder that is not `disabled` owns its artifact — what
+	 *  a Disable would remove (presentation only).
+	 */
+	deployed: boolean,
 };
 
 /**  One project a Managed skill is assigned to (`core::skill_catalog::SkillProject`). */
@@ -1886,12 +1921,32 @@ export type SkillRefreshStatus =
  */
 { status: "cancelled" };
 
+/**
+ *  One global Deployment folder of the skill: the row standing for it (keyed
+ *  by the folder key; its mode, path and `synced_at` are that row's own) and
+ *  the folder's facts over all its rows (`core::placement::FolderFacts`).
+ */
 export type SkillTargetDto = {
 	tool: string,
 	mode: SyncMode,
+	/**
+	 *  The folder's displayed status: failure ahead of muted (`error` ›
+	 *  `missing` › `stale` › `disabled` › `pending` › `synced`).
+	 */
 	status: SyncStatus,
 	target_path: string,
 	synced_at: number | null,
+	/**
+	 *  The Disabled rule holds on the folder: some row of it is `disabled`,
+	 *  so a re-sync is skipped; its repair is finishing the Disable, or Enable.
+	 */
+	disabled: boolean,
+	/**
+	 *  Some row of the folder that is not `disabled` owns its artifact — what
+	 *  a Disable or Delete would remove (presentation only, never a row's
+	 *  ownership).
+	 */
+	deployed: boolean,
 };
 
 /**

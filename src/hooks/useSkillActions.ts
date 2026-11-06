@@ -841,9 +841,17 @@ export function useSkillActions({
       case "deploy":
         // The repair names its targets (the effective set): no pick.
         return run("syncToTargets", [skill], { confirmed: true });
-      case "disable":
-        // Finish the skill-grain Disable its failed targets interrupted.
-        return run("disable", [skill]);
+      case "disable": {
+        // Finish the Disable its failed targets interrupted: the skill-grain
+        // one, else the pair-grain Disable of each listed Tool a Disable
+        // holds on (the folder's `disabled` fact), one after another.
+        if (skill.disabled_at !== null) return run("disable", [skill]);
+        const held = row.tools.filter((tool) => skill.targets.some((target) => target.tool === tool && target.disabled));
+        return held.reduce<Promise<void>>(
+          (previous, tool) => previous.then(() => run("disable", [skill], { tool })),
+          Promise.resolve(),
+        );
+      }
     }
   };
 

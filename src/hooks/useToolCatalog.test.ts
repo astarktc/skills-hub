@@ -105,6 +105,10 @@ describe("useToolCatalog", () => {
     expect(result.current.folderOf("cursor")).toBe("cursor");
     // A key the catalog does not list (a row of an unknown Tool) stands for itself.
     expect(result.current.folderOf("gone_tool")).toBe("gone_tool");
+    // A folder is detected through any detected harness it serves (Sol 303).
+    expect(result.current.isFolderDetected("claude")).toBe(true);
+    expect(result.current.isFolderDetected("goose")).toBe(false);
+    expect(result.current.isFolderDetected("gone_tool")).toBe(false);
     expect(result.current.toolLabelById).toMatchObject({ cursor: "Cursor (i18n)", goose: "GOOSE" });
     expect(result.current.installedToolIds).toEqual(["claude", "pi", "cursor"]);
     expect(result.current.installedTools.map((tool) => tool.id)).toEqual(["claude", "pi", "cursor"]);

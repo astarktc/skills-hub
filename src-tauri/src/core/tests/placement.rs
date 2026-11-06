@@ -6,8 +6,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::{
-    capability_entry, fold_folder_rows, fold_status, folder_mode, own_folder, place, row_folder,
-    serving_folder, DeployMode, InstalledSet, PlacementScope, PlacementSettings, ScopeKind,
+    capability_entry, fold_folder_rows, fold_status, folder_mode, folder_reachable, is_folder_row,
+    own_folder, place, row_folder, row_reachable, serving_folder, DeployMode, FolderFacts,
+    InstalledSet, PlacementScope, PlacementSettings, RowState, ScopeKind,
 };
 use crate::core::environment::HostRoots;
 use crate::core::skill_store::SkillTargetRecord;
@@ -324,8 +325,11 @@ fn sibling_rows_read_as_one_folder() {
     );
 }
 
+/// A disabled sibling never hides the folder's other rows: a synced row
+/// beside it shows the folder muted (`disabled`), the intent is carried, and
+/// the synced row's artifact still counts as deployed.
 #[test]
-fn one_disabled_sibling_keeps_the_folder_disabled() {
+fn a_disabled_sibling_mutes_the_folder_and_keeps_its_live_artifact_counted() {
     let rows = vec![
         row("1", "alpha", "amp", SyncStatus::Synced),
         row("2", "alpha", "kimi_cli", SyncStatus::Disabled),
@@ -334,14 +338,51 @@ fn one_disabled_sibling_keeps_the_folder_disabled() {
     assert_eq!(folded.len(), 1);
     assert_eq!(folded[0].id, "2");
     assert_eq!(folded[0].tool, "amp");
-    assert_eq!(folded[0].status, SyncStatus::Disabled);
+    assert_eq!(
+        folded[0].facts,
+        FolderFacts {
+            status: SyncStatus::Disabled,
+            disabled: true,
+            deployed: true,
+        }
+    );
+    assert_eq!(folded[0].facts.total_status(), SyncStatus::Synced);
 }
 
-/// The one fold every surface reads a folder's state from: any `disabled` row
-/// makes the folder `disabled`, otherwise the row needing the most attention.
+/// Astra 204 / Sol 301: a partial Disable (one row's removal failed, the
+/// sibling's settled) shows the failure, failure ahead of muted, with the
+/// disabled intent kept apart — and the row standing for the folder is the
+/// failed one, with its own timestamp.
+#[test]
+fn a_failed_removal_shows_beside_a_disabled_sibling() {
+    let mut failed = row("1", "alpha", "amp", SyncStatus::Error);
+    failed.synced_at = Some(7);
+    let mut disabled = row("2", "alpha", "kimi_cli", SyncStatus::Disabled);
+    disabled.synced_at = Some(3);
+    let folded = fold_folder_rows(ScopeKind::Global, vec![disabled, failed]);
+    assert_eq!(folded.len(), 1);
+    assert_eq!((folded[0].id.as_str(), folded[0].synced_at), ("1", Some(7)));
+    assert_eq!(
+        folded[0].facts,
+        FolderFacts {
+            status: SyncStatus::Error,
+            disabled: true,
+            deployed: true,
+        }
+    );
+}
+
+/// The one fold every surface reads a folder's state from: failure ahead of
+/// muted (`error` › `missing` › `stale` › `disabled` › `pending` › `synced`),
+/// the disabled intent from any row, and "deployed" only from a live row that
+/// owns its artifact.
 #[test]
 fn a_folders_status_is_one_fold_over_all_its_rows() {
     use SyncStatus::*;
+    let owned = |status| RowState {
+        status,
+        owns_artifact: true,
+    };
     let cases: &[(&[SyncStatus], Option<SyncStatus>)] = &[
         (&[], None),
         (&[Synced], Some(Synced)),
@@ -349,16 +390,74 @@ fn a_folders_status_is_one_fold_over_all_its_rows() {
         (&[Pending, Stale], Some(Stale)),
         (&[Stale, Missing], Some(Missing)),
         (&[Missing, Error, Synced], Some(Error)),
-        (&[Error, Disabled], Some(Disabled)),
+        (&[Error, Disabled], Some(Error)),
+        (&[Missing, Disabled], Some(Missing)),
+        (&[Stale, Disabled], Some(Stale)),
         (&[Disabled, Synced], Some(Disabled)),
+        (&[Pending, Disabled], Some(Disabled)),
     ];
     for (statuses, folded) in cases {
         assert_eq!(
-            fold_status(statuses.iter().copied()),
+            fold_status(statuses.iter().copied().map(owned)).map(|f| f.status),
             *folded,
             "{statuses:?}"
         );
     }
+    let facts = |rows: &[(SyncStatus, bool)]| {
+        fold_status(rows.iter().map(|&(status, owns_artifact)| RowState {
+            status,
+            owns_artifact,
+        }))
+        .unwrap()
+    };
+    // Only a live owner counts as deployed: a disabled row that still
+    // records `synced_at`, or a never-synced error row, does not.
+    assert!(!facts(&[(Disabled, true)]).deployed);
+    assert!(!facts(&[(Error, false), (Disabled, true)]).deployed);
+    assert!(facts(&[(Error, true), (Disabled, true)]).deployed);
+    assert!(facts(&[(Error, false), (Disabled, false)]).disabled);
+    assert!(!facts(&[(Error, false), (Synced, true)]).disabled);
+    // A folder all of whose rows are disabled adds nothing to a total.
+    assert_eq!(facts(&[(Disabled, true)]).total_status(), Disabled);
+}
+
+/// The one rule mutations read (ADR-0007 rule 2): a row keyed by its own
+/// folder key is a folder row; any other key — a pre-1.4.0 sibling's, an
+/// unknown one — is a legacy row.
+#[test]
+fn a_row_keyed_by_its_folder_is_a_folder_row_and_any_other_is_legacy() {
+    for (scope, key, folder_row) in [
+        (ScopeKind::Global, "amp", true),
+        (ScopeKind::Global, "kimi_cli", false),
+        (ScopeKind::Global, "claude_code", true),
+        (ScopeKind::Global, "agents_skills", true),
+        (ScopeKind::Global, "cursor", true),
+        (ScopeKind::Global, "no_such_tool", false),
+        (ScopeKind::Project, "trae", true),
+        (ScopeKind::Project, "trae_cn", false),
+        (ScopeKind::Project, "agents_skills", true),
+        (ScopeKind::Project, "no_such_tool", false),
+    ] {
+        assert_eq!(is_folder_row(scope, key), folder_row, "{scope:?} {key}");
+    }
+}
+
+/// A folder row is reachable through any installed harness its folder
+/// serves; a legacy row only through its own harness (Astra 203).
+#[test]
+fn a_folder_row_is_reached_through_its_folder_and_a_legacy_row_through_its_harness() {
+    let amp_only = InstalledSet::from_keys(["amp"]);
+    let kimi_only = InstalledSet::from_keys(["kimi_cli"]);
+    assert!(folder_reachable(ScopeKind::Global, "amp", &kimi_only));
+    assert!(row_reachable(ScopeKind::Global, "amp", &kimi_only));
+    assert!(row_reachable(ScopeKind::Global, "amp", &amp_only));
+    assert!(!row_reachable(ScopeKind::Global, "kimi_cli", &amp_only));
+    assert!(row_reachable(ScopeKind::Global, "kimi_cli", &kimi_only));
+    assert!(!folder_reachable(
+        ScopeKind::Global,
+        "amp",
+        &InstalledSet::from_keys(["claude_code"])
+    ));
 }
 
 /// The fold reads every row of the folder, whatever path it records: a row

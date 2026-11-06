@@ -69,15 +69,15 @@ use crate::core::{
     environment::HostRoots,
     errors::{CommandError, SignalError},
     mutation_guard,
-    placement::{row_folder, ScopeKind},
+    placement::{self, row_folder, ScopeKind},
     project_sync::resolve_assignment_artifact,
     removal_fence::{Claim, Fence, ProtectedLibrary},
     skill_health::{self, SkillOutcomeKind},
     skill_store::{AssignmentTransition, ProjectRecord, SkillRecord, SkillStore, TargetTransition},
     sync_engine::{remove_central_copy, remove_path_any},
     tool_adapters::{
-        adapter_by_key, catalog_rows, ensure_path_within_tool_dirs, former_skills_dirs_in,
-        is_installed_in, ToolAdapter,
+        adapter_by_key, ensure_path_within_tool_dirs, former_skills_dirs_in, installed_set_in,
+        ToolAdapter,
     },
 };
 
@@ -108,8 +108,11 @@ pub enum RemovalScope {
     /// Every Sync target of one Project. Planned by
     /// `project_ops::remove_project_and_artifacts`.
     Project { project_id: String },
-    /// One Project × folder pair: every assignment row of the project
-    /// describing `tool_key`'s project folder. Planned by
+    /// One Project × Tool pair: the project's assignment rows keyed exactly
+    /// `tool_key` — a harness's legacy rows, or a folder's rows when
+    /// `tool_key` is its folder key. Which keys a dropped harness takes with
+    /// it is `project_ops::configure_project_tools`' decision
+    /// (`placement::is_folder_row`). Planned by
     /// `project_ops::remove_project_tool_and_artifacts`.
     ProjectTool {
         project_id: String,
@@ -410,12 +413,8 @@ pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPl
             project_id,
             tool_key,
         } => {
-            let folder = row_folder(ScopeKind::Project, tool_key);
-            let assignments = store
-                .list_project_skill_assignments(project_id)?
-                .into_iter()
-                .filter(|a| row_folder(ScopeKind::Project, &a.tool) == folder)
-                .collect();
+            let assignments =
+                store.list_project_skill_assignments_for_project_tool(project_id, tool_key)?;
             push_assignments(store, &mut builder, assignments)?;
         }
         RemovalScope::ProjectSkillTool {
@@ -489,9 +488,7 @@ fn folder_locatable(roots: &HostRoots, folder: &str) -> bool {
     if adapter_by_key(folder).is_none() {
         return true;
     }
-    catalog_rows()
-        .filter(|a| row_folder(ScopeKind::Global, a.key()) == folder)
-        .any(|a: &'static ToolAdapter| is_installed_in(roots, a))
+    placement::folder_reachable(ScopeKind::Global, folder, &installed_set_in(roots))
 }
 
 /// Resolve each assignment row's project-scope artifact path. A row whose
