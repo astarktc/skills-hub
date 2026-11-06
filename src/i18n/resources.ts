@@ -116,6 +116,8 @@ export const resources = {
         empty: "Nothing to report yet",
         emptyHint:
           "Outcomes of this session's actions — adds, deploys, failures — are listed here.",
+        emptyIssuesHint:
+          "This list covers this session only. Skills with problems from earlier stay marked in My Skills.",
         copyAll: "Copy all",
         clear: "Clear",
         kind: {

@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Notification } from "../hooks/useNotificationHistory";
-import { arrivalAnnouncement, groupRuns, historyText, rowActions, rowText, rowTitle, staleCollision } from "./notificationRuns";
+import {
+  arrivalAnnouncement,
+  emptyPanelPointer,
+  groupRuns,
+  historyText,
+  rowActions,
+  rowText,
+  rowTitle,
+  staleCollision,
+} from "./notificationRuns";
 
 let nextId = 100;
 const row = (over: Partial<Notification>): Notification => ({
@@ -228,5 +237,20 @@ describe("arrivalAnnouncement (ticket 14 audit N4: what the open panel announces
 
   it("announces the first arrival after the panel opened empty, or after Clear", () => {
     expect(arrivalAnnouncement(opened, null, inProject)?.text).toBe("3 synced");
+  });
+});
+
+// #74: the history is this session's only, so after a relaunch the panel is
+// empty — while stored health still knows which skills need attention.
+describe("emptyPanelPointer (#74: the empty panel points at stored health)", () => {
+  const note: Notification = { id: 1, kind: "error", title: "boom", at: 1 };
+  it("an empty panel points at the skills with issues when any exist", () => {
+    expect(emptyPanelPointer([], 3)).toEqual({ kind: "issues", count: 3 });
+  });
+  it("an empty panel with no skill in trouble is its plain empty state", () => {
+    expect(emptyPanelPointer([], 0)).toEqual({ kind: "empty" });
+  });
+  it("a panel with runs points at nothing", () => {
+    expect(emptyPanelPointer(groupRuns([note]), 3)).toBeNull();
   });
 });

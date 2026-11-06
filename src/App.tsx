@@ -540,6 +540,11 @@ function App() {
   const handleOpenExplore = useCallback(() => handleViewChange("explore"), [handleViewChange]);
   const { setFilter: setLensFilter } = lens;
   const handleViewIssues = useCallback(() => setLensFilter("issues"), [setLensFilter]);
+  // The empty Notifications panel's pointer (#74): My Skills, under the Issues lens.
+  const handleViewIssuesFromPanel = useCallback(() => {
+    handleViewChange("skills");
+    setLensFilter("issues");
+  }, [handleViewChange, setLensFilter]);
   const librarySize = library.managedSkills.length;
   // Reviewing discovered skills is the first task while the discovery
   // outweighs the library (first run); it then carries the one primary.
@@ -777,6 +782,8 @@ function App() {
         actions={actions}
         surface={surface}
         blockedReason={blockedReason}
+        skillsWithIssues={exceptions.skillsWithIssues}
+        onViewIssues={handleViewIssuesFromPanel}
         onRequestClose={handleCloseNotifications}
         onClear={clearNotifications}
         copyToClipboard={copyToClipboard}

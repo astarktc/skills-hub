@@ -229,6 +229,20 @@ export function arrivalAnnouncement(
   return { key: newest.key, text: rowTitle(newest.head, inProject) };
 }
 
+/**
+ * What an empty panel shows (#74). The history is this session's memory
+ * only, so after a relaunch the panel is empty even while stored skill
+ * health still records failures: then it points at "View N skills with
+ * issues" (the Issues lens), otherwise it is the plain empty state. A panel
+ * with runs points at nothing (null).
+ */
+export type EmptyPanelPointer = { kind: "issues"; count: number } | { kind: "empty" };
+
+export function emptyPanelPointer(groups: readonly RunGroup[], skillsWithIssues: number): EmptyPanelPointer | null {
+  if (groups.length > 0) return null;
+  return skillsWithIssues > 0 ? { kind: "issues", count: skillsWithIssues } : { kind: "empty" };
+}
+
 /** What "Copy" copies for one row: its (project-placed) title, then its message beneath it. */
 export function rowText(row: Notification, inProject: ProjectPrefix): string {
   const title = rowTitle(row, inProject);

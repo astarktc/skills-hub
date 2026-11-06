@@ -27,6 +27,7 @@ import type { CopyToClipboardFn, Notification, NotificationKind } from "../../ho
 import type { SurfaceState } from "../../hooks/useSurfaceState";
 import {
   arrivalAnnouncement,
+  emptyPanelPointer,
   groupRuns,
   historyText,
   rowActions,
@@ -56,6 +57,13 @@ type NotificationsModalProps = {
   surface: Pick<SurfaceState, "focus" | "openDialog">;
   /** Why a mutation cannot start now (D19), or null. */
   blockedReason: string | null;
+  /**
+   * Skills whose stored health needs attention: an empty panel (the history
+   * is this session's only — #74) points at them.
+   */
+  skillsWithIssues: number;
+  /** My Skills under the Issues lens (the summary's "View N skills with issues"). */
+  onViewIssues: () => void;
   onRequestClose: () => void;
   onClear: () => void;
   /**
@@ -124,6 +132,8 @@ const NotificationsModal = ({
   actions,
   surface,
   blockedReason,
+  skillsWithIssues,
+  onViewIssues,
   onRequestClose,
   onClear,
   copyToClipboard,
@@ -179,6 +189,8 @@ const NotificationsModal = ({
           actions={actions}
           surface={surface}
           blockedReason={blockedReason}
+          skillsWithIssues={skillsWithIssues}
+          onViewIssues={onViewIssues}
           leave={leave}
           onClear={onClear}
           copyToClipboard={copyToClipboard}
@@ -203,6 +215,8 @@ function ReportBody({
   actions,
   surface,
   blockedReason,
+  skillsWithIssues,
+  onViewIssues,
   leave,
   onClear,
   copyToClipboard,
@@ -308,6 +322,7 @@ function ReportBody({
   }, [arrivalKey, arrivalText]);
 
   const isEmpty = groups.length === 0;
+  const pointer = emptyPanelPointer(groups, skillsWithIssues);
   return (
     <>
       <p role="status" aria-atomic="true" data-run-arrival="" className="sr-only">
@@ -322,7 +337,20 @@ function ReportBody({
             <p data-run-initial="" tabIndex={-1} className={cn("m-0 rounded-sm text-sm font-semibold text-foreground", focusRing)}>
               {t("notifications.empty")}
             </p>
-            <p className="m-0 max-w-[36ch] text-xs text-muted-foreground">{t("notifications.emptyHint")}</p>
+            <p className="m-0 max-w-[36ch] text-xs text-muted-foreground">
+              {t(pointer?.kind === "issues" ? "notifications.emptyIssuesHint" : "notifications.emptyHint")}
+            </p>
+            {pointer?.kind === "issues" ? (
+              <Button
+                variant="ghost"
+                tone="accent"
+                size="sm"
+                className="mt-2"
+                onClick={() => leave("[data-skill-list] [data-skill-row]", onViewIssues)}
+              >
+                {t("library.summary.viewIssues", { count: pointer.count })}
+              </Button>
+            ) : null}
           </div>
         ) : (
           <ul aria-label={t("runReport.runs")} className="m-0 list-none p-0">
