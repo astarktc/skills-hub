@@ -16,6 +16,7 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 - **Import sources**: Local folder / Git URL (including multi-skill repo selection, `.claude/skills/` directory support); GitHub sources download through the GitHub API where possible (recording the real commit) and fall back to cloning
 - **Update / Update all**: Re-fetch from source and bring every deployed copy back into line; updating many skills fetches them in parallel and reports the outcome of each skill and each harness it touched
 - **New harness detection**: Detect newly installed harnesses and offer to deploy your skills to them
+- **Duplicate warning**: Settings → Harnesses warns when two selected harnesses would make one of them load a skill twice (several harnesses also read each other's folders)
 
 ### My Skills
 ![My Skills](docs/assets/my-skills.png)
@@ -194,7 +195,7 @@ cargo test
 
 ## FAQ / Notes
 
-- Where are skills stored? In the Library folder, `~/.skillshub` by default (configurable in Settings).
+- Where are skills stored? In the Library folder, `~/.skillshub` by default. Settings → General → Browse… moves it to another empty folder in one confirmed step: every skill is copied and checked, every harness and project link is re-pointed, and an old copy is removed only while it still matches its new one — anything that cannot be moved or removed safely stays where it is and is listed in the report.
 - Does Cursor get symlinks too? Yes, since Skills Hub 1.2.1 — Cursor 2.5+ (IDE) and the current Cursor CLI discover symlinked skill directories. Skills deployed to Cursor by an earlier Skills Hub version stay as copies until you deploy them again with overwrite. If you run an older Cursor, keep it updated or re-deploy after upgrading.
 - Why does deploying sometimes fall back to copy? Skills Hub prefers symlink/junction, but on some systems (especially Windows) symlinks may be restricted; in that case it falls back to directory copy.
 - Why does a skill still show up in a harness after I disable or remove it? If Skills Hub could not remove the folder (permissions, a locked file), it keeps the deployment and marks it Failed instead of forgetting it, so the path stays visible and the same action can be retried. The same holds for removing a skill from a project and for removing a project or one of its harnesses.
