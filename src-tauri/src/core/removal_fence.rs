@@ -865,6 +865,71 @@ impl Place {
     }
 }
 
+/// An entry's physical identity as it can be recorded and compared later —
+/// across a crash, by Move Library folder's journal: on Unix the device and
+/// inode, on Windows the volume serial number and file index. Read without
+/// following a link at the leaf (a link is identified as itself), so a
+/// folder or link put at the same path later has another identity, whatever
+/// its spelling or content.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub(crate) struct EntryId {
+    pub(crate) volume: u64,
+    pub(crate) index: u64,
+}
+
+impl EntryId {
+    /// The identity of the entry at `path`; `None` when nothing is there.
+    pub(crate) fn of(path: &Path) -> std::io::Result<Option<Self>> {
+        match entry_identity(path) {
+            Ok((id, _)) => Ok(Some(id)),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// The identity of the entry at `path` and its hard-link count (the
+    /// names the file has on its volume), read without following a link.
+    pub(crate) fn with_links(path: &Path) -> std::io::Result<(Self, u64)> {
+        entry_identity(path)
+    }
+}
+
+#[cfg(unix)]
+fn entry_identity(path: &Path) -> std::io::Result<(EntryId, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::symlink_metadata(path)?;
+    Ok((
+        EntryId {
+            volume: meta.dev(),
+            index: meta.ino(),
+        },
+        meta.nlink(),
+    ))
+}
+
+/// Windows: `GetFileInformationByHandle` on a handle opened for attributes
+/// only, with backup semantics (a folder opens too) and on the reparse point
+/// itself (a link or junction is never followed).
+#[cfg(windows)]
+fn entry_identity(path: &Path) -> std::io::Result<(EntryId, u64)> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_READ_ATTRIBUTES: u32 = 0x0080;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    let handle = std::fs::OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)?;
+    let info = winapi_util::file::information(&handle)?;
+    Ok((
+        EntryId {
+            volume: info.volume_serial_number(),
+            index: info.file_index(),
+        },
+        info.number_of_links(),
+    ))
+}
+
 #[cfg(test)]
 #[path = "tests/removal_fence.rs"]
 mod tests;

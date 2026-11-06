@@ -147,8 +147,17 @@ pub fn run() {
             // switch (its journal is in the database): re-point every link the
             // journal's old copies still hold and clean them, before any other
             // action can run. Serialised like every Sync-target mutation; no
-            // journal, no work.
-            match core::library_move::resume_library_move(&store, core::clock::now_ms()) {
+            // journal, no work. The journal is honoured only while the
+            // configured Library is the one it switched to.
+            match commands::resolve_central_repo_path_for_app(app.handle(), &store).and_then(
+                |central| {
+                    core::library_move::resume_library_move(
+                        &store,
+                        &central,
+                        core::clock::now_ms(),
+                    )
+                },
+            ) {
                 Ok(None) => {}
                 Ok(Some(_)) => log::info!("finished an interrupted Library move"),
                 Err(err) => log::warn!(

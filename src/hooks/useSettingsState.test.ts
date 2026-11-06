@@ -570,6 +570,7 @@ const PREVIEW: LibraryMovePreview = {
   destination: "/home/op/Library2",
   skills: 3,
   missing: 1,
+  kept: 0,
   cloud_sync: null,
 };
 

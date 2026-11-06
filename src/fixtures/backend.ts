@@ -1910,6 +1910,7 @@ export function createFixtureBackend(
         destination: dest,
         skills: moving,
         missing: state.skills.length - moving,
+        kept: 0,
         cloud_sync: cloudSyncOf(dest),
       };
     },

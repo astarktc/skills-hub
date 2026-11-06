@@ -802,7 +802,10 @@ pub(crate) fn remove_superseded_artifact_unlocked(
 /// Move Library folder's Clean step (`core::library_move`): remove a moved
 /// skill's **former** central copy at `former_copy`, after the switch
 /// recorded its new copy — so the store no longer records this path, and
-/// `central_dir` is the *new* configured central repo.
+/// `central_dir` is the *new* configured central repo. The clean calls it
+/// only on a copy it has renamed aside inside the old Library folder
+/// (`<former_root>/.skills-hub-clean-<uuid>/<name>`) and just proved
+/// identical to the new copy; the claim is that set-aside folder.
 ///
 /// Admitted physically like every removal: never the (new) library, never a
 /// copy the store still records or the folder holding one (a skill left

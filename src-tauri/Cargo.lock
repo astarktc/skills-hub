@@ -103,6 +103,7 @@ dependencies = [
  "hex",
  "junction",
  "keyring",
+ "libc",
  "log",
  "mockito",
  "reqwest 0.12.28",
@@ -123,6 +124,8 @@ dependencies = [
  "urlencoding",
  "uuid",
  "walkdir",
+ "winapi-util",
+ "xattr",
 ]
 
 [[package]]

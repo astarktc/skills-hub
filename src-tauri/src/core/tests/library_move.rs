@@ -604,7 +604,8 @@ fn the_clean_removes_a_linked_old_copy_as_itself_only() {
 }
 
 /// A record that names the Library folder itself as a copy (a corrupt
-/// layout) moves its bytes, but the old root is never removed.
+/// layout) moves its bytes, but the old root is never removed: it is no
+/// folder directly inside the old Library folder.
 #[test]
 fn the_old_root_is_never_removed_even_when_a_record_names_it() {
     let mut f = fixture(&[]);
@@ -623,7 +624,7 @@ fn the_old_root_is_never_removed_even_when_a_record_names_it() {
     );
     assert!(root.join("alpha/SKILL.md").is_file());
     assert_eq!(
-        left_behind(&report, LeftBehindReason::RemovalFailed),
+        left_behind(&report, LeftBehindReason::OutsideLibraryFolder),
         vec![root.clone()]
     );
 }
@@ -881,7 +882,6 @@ fn the_move_keeps_internal_links_as_links() {
 }
 
 /// What a skill the move kept in place says about it.
-#[cfg(unix)]
 fn kept_reason(report: &LibraryMoveReport, id: &str) -> crate::core::library_move::SkillKept {
     match &report
         .skills
@@ -1164,7 +1164,7 @@ fn a_crash_after_the_switch_is_finished_by_the_resume_at_every_boundary() {
             assert!(f.central(id).starts_with(f.dest()), "{boundary}: switched");
         }
 
-        let report = resume_library_move(&f.store, NOW + 2)
+        let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
             .expect("resume")
             .unwrap_or_else(|| panic!("{boundary}: a move is pending"));
 
@@ -1188,7 +1188,9 @@ fn a_crash_after_the_switch_is_finished_by_the_resume_at_every_boundary() {
             &f.central(&skills[0].0)
         ));
         assert!(
-            resume_library_move(&f.store, NOW + 3).unwrap().is_none(),
+            resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 3)
+                .unwrap()
+                .is_none(),
             "{boundary}: the journal was dropped"
         );
     }
@@ -1203,7 +1205,11 @@ fn a_crash_before_the_switch_leaves_the_library_as_it_was() {
     let setting = resolve_central_repo_path(&f.store, f.home()).unwrap();
     assert!(crash_move(&f, &f.dest(), LibraryMovePhase::Copying, 1));
 
-    assert!(resume_library_move(&f.store, NOW + 2).unwrap().is_none());
+    assert!(
+        resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
+            .unwrap()
+            .is_none()
+    );
     for (id, old, link) in &skills {
         assert_eq!(&f.central(id), old);
         assert!(resolves_to(link, old));
@@ -1264,4 +1270,549 @@ fn a_refused_admission_keeps_folders_that_were_there() {
         "the operator's folder stays"
     );
     assert!(!f.home().join(".claude/skills").exists());
+}
+
+// ---------------------------------------------------------------------------
+// Round-3 regressions: the round-2 review's probes
+// (`.scratch/reviews/round20-t03-move-library-review.md` § Round 2). One
+// principle: Clean deletes only what is provably duplicated, at the moment
+// of deletion, and only inside the old Library folder.
+// ---------------------------------------------------------------------------
+
+/// The pending journal as JSON, to edit as a corrupted database would.
+fn journal_json(f: &Fixture) -> serde_json::Value {
+    let raw = crate::core::settings::pending_library_move(&f.store)
+        .unwrap()
+        .expect("a move is pending");
+    serde_json::from_str(&raw).unwrap()
+}
+
+fn write_journal(f: &Fixture, journal: &serde_json::Value) {
+    crate::core::settings::overwrite_library_move_journal(&f.store, &journal.to_string()).unwrap();
+}
+
+/// Round-2 #1 (`review_probe_resume_missing_destination_preserves_last_copy`):
+/// a crash after the switch, then the new copy is deleted. The resume must
+/// not remove the old copy — it is the last one.
+#[test]
+fn resume_missing_destination_preserves_last_copy() {
+    use crate::core::library_move::{resume_library_move, LibraryMovePhase};
+    let (f, skills, _) = crash_fixture();
+    assert!(crash_move(&f, &f.dest(), LibraryMovePhase::Cleaning, 0));
+    let (alpha, alpha_old, _) = &skills[0];
+    fs::remove_dir_all(f.central(alpha)).unwrap();
+
+    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
+        .expect("resume")
+        .expect("a move is pending");
+
+    assert!(
+        alpha_old.join("SKILL.md").is_file(),
+        "the only remaining copy survives"
+    );
+    assert_eq!(
+        left_behind(&report, LeftBehindReason::DestinationMissing),
+        vec![alpha_old.clone()]
+    );
+    assert!(!skills[1].1.exists(), "beta, still duplicated, was cleaned");
+}
+
+/// Round-2 #1 (`review_probe_edit_after_verify_survives_clean`): an edit to
+/// the old copy after the copy was verified is never deleted.
+#[test]
+fn edit_after_verify_survives_clean() {
+    let mut f = fixture(&[]);
+    let alpha = f.install("alpha");
+    let old = f.central(&alpha);
+    let edited = old.join("SKILL.md");
+
+    let report = move_library(&f.store, &f.paths, &f.dest(), NOW + 1, |step| {
+        if step.phase == crate::core::library_move::LibraryMovePhase::Cleaning {
+            fs::write(&edited, "edited after the copy").unwrap();
+        }
+    })
+    .expect("move");
+
+    assert_eq!(
+        fs::read_to_string(&edited).unwrap(),
+        "edited after the copy",
+        "the edit survives"
+    );
+    assert_eq!(
+        left_behind(&report, LeftBehindReason::ChangedSinceCopy),
+        vec![old.clone()],
+        "kept at its own path, renamed back"
+    );
+    assert_no_set_aside_left(&f.paths.central_dir);
+}
+
+/// No `.skills-hub-clean-*` folder is left in the old Library folder.
+fn assert_no_set_aside_left(root: &Path) {
+    let left: Vec<_> = fs::read_dir(root)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(".skills-hub-clean-")
+        })
+        .map(|e| e.path())
+        .collect();
+    assert!(left.is_empty(), "set-aside folders left: {left:?}");
+}
+
+/// Round-2 #2 (`review_probe_stale_journal_does_not_remove_replacement_directory`):
+/// after a crash the old copy was moved away and a different folder took
+/// its path. The journal's path string never authorises removing it.
+#[test]
+fn stale_journal_does_not_remove_replacement_directory() {
+    use crate::core::library_move::{resume_library_move, LibraryMovePhase};
+    let (f, skills, _) = crash_fixture();
+    assert!(crash_move(&f, &f.dest(), LibraryMovePhase::Cleaning, 0));
+    let (_, alpha_old, _) = &skills[0];
+    fs::rename(alpha_old, f.dir.path().join("moved-away")).unwrap();
+    fs::create_dir_all(alpha_old).unwrap();
+    fs::write(alpha_old.join("mine.txt"), "the operator's").unwrap();
+
+    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
+        .expect("resume")
+        .expect("a move is pending");
+
+    assert_eq!(
+        fs::read_to_string(alpha_old.join("mine.txt")).unwrap(),
+        "the operator's",
+        "the replacement survives"
+    );
+    assert_eq!(
+        left_behind(&report, LeftBehindReason::Replaced),
+        vec![alpha_old.clone()]
+    );
+    assert!(
+        report.deployments.iter().all(|d| d.skill_id != skills[0].0),
+        "a replaced entry is not settled as if it were the copy"
+    );
+}
+
+/// Round-2 #2 (`review_probe_journal_cannot_authorize_unrelated_removal`): a
+/// journal whose `old` names a folder outside the Library removes nothing.
+#[test]
+fn journal_cannot_authorize_unrelated_removal() {
+    use crate::core::library_move::{resume_library_move, LibraryMovePhase};
+    let (f, _, _) = crash_fixture();
+    assert!(crash_move(&f, &f.dest(), LibraryMovePhase::Cleaning, 0));
+    let precious = f.dir.path().join("operator/precious");
+    fs::create_dir_all(&precious).unwrap();
+    fs::write(precious.join("taxes.pdf"), "mine").unwrap();
+    let mut journal = journal_json(&f);
+    journal["moves"][0]["old"] = precious.to_string_lossy().into_owned().into();
+    write_journal(&f, &journal);
+
+    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
+        .expect("resume")
+        .expect("a move is pending");
+
+    assert_eq!(
+        fs::read_to_string(precious.join("taxes.pdf")).unwrap(),
+        "mine"
+    );
+    assert_eq!(
+        left_behind(&report, LeftBehindReason::Replaced),
+        vec![precious]
+    );
+}
+
+/// Round-2 #2: a journal whose `to` is not the configured Library is stale
+/// as a whole — nothing is removed.
+#[test]
+fn a_journal_for_another_library_removes_nothing() {
+    use crate::core::library_move::{resume_library_move, LibraryMovePhase};
+    let (f, skills, _) = crash_fixture();
+    assert!(crash_move(&f, &f.dest(), LibraryMovePhase::Cleaning, 0));
+    let mut journal = journal_json(&f);
+    journal["to"] = f
+        .dir
+        .path()
+        .join("some-other-library")
+        .to_string_lossy()
+        .into_owned()
+        .into();
+    write_journal(&f, &journal);
+
+    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
+        .expect("resume")
+        .expect("a move was pending");
+
+    for (_, old, _) in &skills {
+        assert!(old.join("SKILL.md").is_file(), "{old:?} survives");
+    }
+    let mut stale = left_behind(&report, LeftBehindReason::StaleJournal);
+    stale.sort();
+    assert_eq!(stale, vec![skills[0].1.clone(), skills[1].1.clone()]);
+    assert!(report.deployments.is_empty(), "nothing re-pointed");
+    assert!(
+        crate::core::settings::pending_library_move(&f.store)
+            .unwrap()
+            .is_none(),
+        "the stale journal is dropped"
+    );
+}
+
+/// A record changed since the switch makes that skill's journal entry
+/// stale: it is neither re-pointed nor cleaned.
+#[test]
+fn a_record_changed_since_the_switch_is_not_cleaned() {
+    use crate::core::library_move::{resume_library_move, LibraryMovePhase};
+    let (f, skills, _) = crash_fixture();
+    assert!(crash_move(&f, &f.dest(), LibraryMovePhase::Cleaning, 0));
+    let (alpha, alpha_old, _) = &skills[0];
+    let mut record = f.store.get_skill_by_id(alpha).unwrap().unwrap();
+    record.central_path = alpha_old.to_string_lossy().into_owned();
+    f.store.upsert_skill(&record).unwrap();
+
+    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
+        .expect("resume")
+        .expect("a move is pending");
+
+    assert!(
+        alpha_old.join("SKILL.md").is_file(),
+        "alpha's recorded copy stays"
+    );
+    assert_eq!(
+        left_behind(&report, LeftBehindReason::StaleJournal),
+        vec![alpha_old.clone()]
+    );
+    assert!(report.deployments.iter().all(|d| &d.skill_id != alpha));
+    assert!(!skills[1].1.exists(), "beta was cleaned");
+}
+
+/// A crash between the clean's rename aside and its removal: the resume
+/// puts the old copy back, proves it a duplicate again and removes it.
+#[test]
+fn a_crash_after_an_old_copy_was_set_aside_is_settled_by_the_resume() {
+    use crate::core::library_move::{resume_library_move, test_seams};
+    let (f, skills, _) = crash_fixture();
+    test_seams::crash_after_set_aside();
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f.run())).is_err());
+    let set_aside: Vec<_> = fs::read_dir(&f.paths.central_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(".skills-hub-clean-")
+        })
+        .collect();
+    assert_eq!(set_aside.len(), 1, "the crash left one copy set aside");
+
+    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
+        .expect("resume")
+        .expect("a move is pending");
+
+    for (id, old, link) in &skills {
+        assert!(!old.exists(), "{old:?} cleaned");
+        assert!(resolves_to(link, &f.central(id)));
+        assert!(f.central(id).join("SKILL.md").is_file());
+    }
+    assert_no_set_aside_left(&f.paths.central_dir);
+    assert!(
+        left_behind(&report, LeftBehindReason::RemovalFailed).is_empty(),
+        "{:?}",
+        report.left_behind
+    );
+}
+
+/// The new copy removed while the move runs: the old copy is the last one
+/// and is kept.
+#[test]
+fn a_new_copy_removed_during_the_move_keeps_the_old_one() {
+    let mut f = fixture(&[]);
+    let alpha = f.install("alpha");
+    let old = f.central(&alpha);
+    let dest = f.dest();
+
+    let report = move_library(&f.store, &f.paths, &dest, NOW + 1, |step| {
+        if step.phase == crate::core::library_move::LibraryMovePhase::Cleaning {
+            fs::remove_dir_all(dest.join("alpha")).unwrap();
+        }
+    })
+    .expect("move");
+
+    assert!(old.join("SKILL.md").is_file());
+    assert_eq!(
+        left_behind(&report, LeftBehindReason::DestinationMissing),
+        vec![old]
+    );
+}
+
+/// Rule 1: Clean removes only folders directly inside the old Library
+/// folder. A split Library's copy elsewhere is copied and switched, then
+/// left where it is and reported.
+#[test]
+fn a_split_library_copy_is_moved_but_left_in_place() {
+    let mut f = fixture(&["claude_code"]);
+    let alpha = f.install("alpha");
+    let beta = f.install("beta");
+    let split = f.dir.path().join("elsewhere");
+    fs::create_dir_all(&split).unwrap();
+    let beta_old = split.join("beta");
+    fs::rename(f.central(&beta), &beta_old).unwrap();
+    let mut record = f.store.get_skill_by_id(&beta).unwrap().unwrap();
+    record.central_path = beta_old.to_string_lossy().into_owned();
+    f.store.upsert_skill(&record).unwrap();
+    f.sync(&beta, &["claude_code"]);
+    let alpha_old = f.central(&alpha);
+
+    let report = f.run();
+
+    assert!(f.central(&beta).starts_with(f.dest()), "beta switched");
+    assert!(resolves_to(
+        &f.home().join(".claude/skills/beta"),
+        &f.central(&beta)
+    ));
+    assert!(beta_old.join("SKILL.md").is_file(), "its old copy stays");
+    assert_eq!(
+        left_behind(&report, LeftBehindReason::OutsideLibraryFolder),
+        vec![beta_old]
+    );
+    assert!(
+        !alpha_old.exists(),
+        "alpha, inside the Library folder, is cleaned"
+    );
+}
+
+/// A journal that cannot be read is dropped and logged; nothing is removed
+/// and startup is not failed by it.
+#[test]
+fn a_malformed_journal_is_cleared_and_removes_nothing() {
+    use crate::core::library_move::{resume_library_move, LibraryMovePhase};
+    let (f, skills, _) = crash_fixture();
+    assert!(crash_move(&f, &f.dest(), LibraryMovePhase::Cleaning, 0));
+    crate::core::settings::overwrite_library_move_journal(&f.store, "{not json").unwrap();
+
+    let resumed = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2);
+
+    assert!(
+        resumed.is_ok(),
+        "a malformed journal is no error: {resumed:?}"
+    );
+    assert!(crate::core::settings::pending_library_move(&f.store)
+        .unwrap()
+        .is_none());
+    for (_, old, _) in &skills {
+        assert!(old.join("SKILL.md").is_file(), "{old:?} survives");
+    }
+}
+
+/// Round-2 #3 (`review_probe_kept_skill_link_dependency_survives`): a skill
+/// kept in place holds an absolute link into another skill's old copy. That
+/// copy stays, so the kept skill's link never dangles.
+#[cfg(unix)]
+#[test]
+fn kept_skill_link_dependency_survives() {
+    let mut f = fixture(&[]);
+    let alpha = f.install("alpha");
+    let beta = f.install("beta");
+    let beta_old = f.central(&beta);
+    let link = f.central(&alpha).join("beta-refs");
+    std::os::unix::fs::symlink(beta_old.join("refs"), &link).unwrap();
+
+    let report = f.run();
+
+    assert!(f.central(&beta).starts_with(f.dest()), "beta moved");
+    assert!(
+        link.join("notes.md").is_file(),
+        "alpha's link never dangles"
+    );
+    assert!(report
+        .left_behind
+        .iter()
+        .any(|item| item.reason == LeftBehindReason::StillLinked
+            && item.skill_id.as_deref() == Some(beta.as_str())));
+}
+
+/// Round-2 #4 (`review_probe_copy_deployment_containing_old_copy_is_untouched`):
+/// a skill recorded inside another skill's copy-mode Deployment (a split
+/// Library) — the Deployment is never modified by the clean.
+#[test]
+fn copy_deployment_containing_old_copy_is_untouched() {
+    let mut f = fixture(&["claude_code"]);
+    let alpha = f.install("alpha");
+    let gamma = f.install("gamma");
+    f.sync(&gamma, &["claude_code"]);
+    let deployment = f.home().join(".claude/skills/gamma");
+    remove_link(&deployment);
+    crate::core::sync_engine::copy_dir_recursive(&f.central(&gamma), &deployment).unwrap();
+    let inside = deployment.join("alpha");
+    fs::rename(f.central(&alpha), &inside).unwrap();
+    let mut record = f.store.get_skill_by_id(&alpha).unwrap().unwrap();
+    record.central_path = inside.to_string_lossy().into_owned();
+    f.store.upsert_skill(&record).unwrap();
+
+    f.run();
+
+    assert!(f.central(&alpha).starts_with(f.dest()), "alpha moved");
+    assert!(
+        inside.join("SKILL.md").is_file(),
+        "the Deployment keeps its content"
+    );
+    assert!(deployment.join("SKILL.md").is_file());
+}
+
+/// Round-2 #4, the other direction: a copy-mode Deployment recorded at the
+/// old Library folder itself holds every old copy — none is removed.
+#[test]
+fn an_old_copy_inside_a_copy_deployment_is_kept() {
+    let mut f = fixture(&["claude_code"]);
+    let alpha = f.install("alpha");
+    let gamma = f.install("gamma");
+    f.sync(&gamma, &["claude_code"]);
+    let mut row = f
+        .store
+        .get_skill_target(&gamma, "claude_code")
+        .unwrap()
+        .unwrap();
+    row.target_path = f.paths.central_dir.to_string_lossy().into_owned();
+    f.store.upsert_skill_target(&row).unwrap();
+    let alpha_old = f.central(&alpha);
+
+    let report = f.run();
+
+    assert!(f.central(&alpha).starts_with(f.dest()), "alpha moved");
+    assert!(
+        alpha_old.join("SKILL.md").is_file(),
+        "the Deployment keeps alpha"
+    );
+    assert!(left_behind(&report, LeftBehindReason::StillLinked).contains(&alpha_old));
+}
+
+/// Set the extended attribute `name` on `path`; `false` when the volume
+/// does not support it (a test then has nothing to prove).
+#[cfg(unix)]
+fn set_xattr(path: &Path, name: &str, value: &[u8]) -> bool {
+    xattr::set(path, name, value).is_ok()
+}
+
+/// Round-2 #5: the copy keeps directory modes and extended attributes on
+/// folders and files (macOS `com.apple.*` names included).
+#[cfg(unix)]
+#[test]
+fn the_move_keeps_directory_modes_and_extended_attributes() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut f = fixture(&[]);
+    let alpha = f.install("alpha");
+    let old = f.central(&alpha);
+    fs::create_dir_all(old.join("private")).unwrap();
+    fs::write(old.join("private/key.txt"), "k").unwrap();
+    fs::set_permissions(old.join("private"), fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(&old, fs::Permissions::from_mode(0o750)).unwrap();
+    let mut attrs = vec![
+        ("user.skillshub.test", old.join("refs")),
+        ("user.skillshub.test", old.join("SKILL.md")),
+    ];
+    if cfg!(target_os = "macos") {
+        attrs.push(("com.apple.metadata:kMDItemWhereFroms", old.join("refs")));
+        attrs.push(("com.apple.FinderInfo", old.join("private")));
+    }
+    let value = |name: &str| -> Vec<u8> {
+        if name == "com.apple.FinderInfo" {
+            let mut info = vec![0u8; 32];
+            info[0..4].copy_from_slice(b"TEXT");
+            info
+        } else {
+            b"kept".to_vec()
+        }
+    };
+    let supported = attrs
+        .iter()
+        .all(|(name, path)| set_xattr(path, name, &value(name)));
+
+    f.run();
+
+    let new = f.central(&alpha);
+    let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o7777;
+    assert_eq!(
+        mode(&new.join("private")),
+        0o700,
+        "a private folder stays private"
+    );
+    assert_eq!(mode(&new), 0o750);
+    if supported {
+        for (name, path) in &attrs {
+            let moved = new.join(path.strip_prefix(&old).unwrap());
+            assert_eq!(
+                xattr::get(&moved, name).unwrap(),
+                Some(value(name)),
+                "{name} on {moved:?}"
+            );
+        }
+    }
+    assert!(!old.exists());
+}
+
+/// Round-2 #6: two names of one file inside a skill stay one file.
+#[test]
+fn the_move_keeps_hardlinks_inside_a_skill() {
+    use crate::core::removal_fence::EntryId;
+    let mut f = fixture(&[]);
+    let alpha = f.install("alpha");
+    let old = f.central(&alpha);
+    fs::hard_link(old.join("refs/notes.md"), old.join("notes-again.md")).unwrap();
+
+    f.run();
+
+    let new = f.central(&alpha);
+    let (a, a_links) = EntryId::with_links(&new.join("refs/notes.md")).unwrap();
+    let (b, _) = EntryId::with_links(&new.join("notes-again.md")).unwrap();
+    assert_eq!(a, b, "one file, two names");
+    assert_eq!(a_links, 2);
+    assert!(
+        !old.exists(),
+        "the old copy, a proven duplicate, is cleaned"
+    );
+}
+
+/// Round-2 #6: a file whose other name lies outside the skill cannot be
+/// relocated as one file — the skill stays where it is.
+#[test]
+fn a_hardlink_reaching_outside_the_skill_keeps_it_in_place() {
+    let mut f = fixture(&[]);
+    let alpha = f.install("alpha");
+    let old = f.central(&alpha);
+    let outside = f.dir.path().join("outside-notes.md");
+    fs::hard_link(old.join("refs/notes.md"), &outside).unwrap();
+
+    let report = f.run();
+
+    assert_eq!(f.central(&alpha), old, "alpha stays where it is");
+    assert!(old.join("refs/notes.md").is_file());
+    match kept_reason(&report, &alpha) {
+        crate::core::library_move::SkillKept::Unrelocatable { entry, cause } => {
+            assert_eq!(
+                cause,
+                crate::core::library_move::UnrelocatableCause::HardlinkOutside
+            );
+            assert_eq!(PathBuf::from(entry), old.join("refs/notes.md"));
+        }
+        other => panic!("expected unrelocatable, got {other:?}"),
+    }
+}
+
+/// Round-2 #7: the preview's "Move N skills" counts only the skills that
+/// move — a skill kept in place (a special file, a shared copy) is not one.
+#[cfg(unix)]
+#[test]
+fn preview_does_not_count_kept_skills_as_moving() {
+    let mut f = fixture(&[]);
+    f.install("alpha");
+    let special = f.install("special");
+    let made = std::process::Command::new("mkfifo")
+        .arg(f.central(&special).join("pipe"))
+        .status()
+        .expect("mkfifo");
+    assert!(made.success());
+
+    let preview = preview_library_move(&f.store, &f.paths, &f.dest()).expect("preview");
+
+    assert_eq!(preview.skills, 1, "only alpha moves");
+    assert_eq!(preview.kept, 1);
 }

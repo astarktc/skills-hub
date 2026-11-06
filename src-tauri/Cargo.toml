@@ -44,6 +44,17 @@ specta = "=2.0.0-rc.25"
 specta-typescript = "=0.0.12"
 tauri-specta = { version = "=2.0.0-rc.25", features = ["typescript"] }
 
+# Move Library folder's relocation fidelity (core/library_move.rs): extended
+# attributes on Unix (`libc` for the ENOTSUP of a volume without them), and a
+# file's physical identity (volume serial + file index, link count) on
+# Windows. All three were already in the lock file.
+[target.'cfg(unix)'.dependencies]
+xattr = "1.6"
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+winapi-util = "0.1.11"
+
 [dev-dependencies]
 tempfile = "3"
 mockito = "1"

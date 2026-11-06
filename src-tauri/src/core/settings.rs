@@ -518,6 +518,13 @@ pub(crate) fn finish_library_move(store: &SkillStore) -> Result<()> {
     store.delete_setting(keys::LIBRARY_MOVE_JOURNAL)
 }
 
+/// Test seam: overwrite a pending Library move's journal with `raw`, as an
+/// edited or corrupted database would hold it.
+#[cfg(test)]
+pub(crate) fn overwrite_library_move_journal(store: &SkillStore, raw: &str) -> Result<()> {
+    store.set_setting(keys::LIBRARY_MOVE_JOURNAL, raw)
+}
+
 // ---------------------------------------------------------------------------
 // Internal persisted state that is not a user setting (still keyed here so
 // key naming lives in one place).

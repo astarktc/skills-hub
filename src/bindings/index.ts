@@ -826,8 +826,8 @@ export type LeftBehind = {
 	path: string,
 	reason: LeftBehindReason,
 	/**
-	 *  The skill whose old copy this is (`still_linked`, `still_recorded`,
-	 *  `removal_failed`).
+	 *  The skill whose old copy this is (every reason but `old_library` and
+	 *  `unrecorded`).
 	 */
 	skill_id: string | null,
 	/**  Why its removal failed (`removal_failed`). */
@@ -850,7 +850,33 @@ export type LeftBehindReason =
  */
 "still_recorded" |
 /**  A moved skill's old copy whose removal failed or was refused. */
-"removal_failed";
+"removal_failed" |
+/**
+ *  A moved skill's old copy that is not a folder directly inside the old
+ *  Library folder (a split Library): copied and switched, never removed.
+ */
+"outside_library_folder" |
+/**
+ *  A moved skill's old copy that no longer matches its new copy (edited
+ *  after the copy): kept, never removed.
+ */
+"changed_since_copy" |
+/**
+ *  A moved skill's old copy whose new copy is gone, or is not the folder
+ *  the move made: kept — it may be the only copy.
+ */
+"destination_missing" |
+/**
+ *  What is at a moved skill's old path is not the folder the move copied
+ *  (replaced since): never removed.
+ */
+"replaced" |
+/**
+ *  An interrupted move's journal no longer describes the Library (the
+ *  Library folder or the skill's record changed since): nothing of it
+ *  is touched.
+ */
+"stale_journal";
 
 /**
  *  Why Move Library folder refused a destination (the backend classifies;
@@ -885,6 +911,12 @@ export type LibraryMovePreview = {
 	skills: number,
 	/**  Unlocatable skills (central copy gone): skipped, never block the move. */
 	missing: number,
+	/**
+	 *  Locatable skills the move keeps where they are (a copy that cannot be
+	 *  relocated faithfully, or one another record shares) — not counted in
+	 *  `skills`.
+	 */
+	kept: number,
 	/**  Set when the destination is under a known cloud-sync root. */
 	cloud_sync: CloudSync | null,
 };
@@ -1876,7 +1908,12 @@ export type UnrelocatableCause =
  *  Not a file, folder or link (a FIFO, socket or device): it cannot be
  *  copied.
  */
-"special_file";
+"special_file" |
+/**
+ *  A file with another name (a hard link) outside the skill's folder:
+ *  the copy would split one file in two.
+ */
+"hardlink_outside";
 
 export type UpdateSkip = "skill_gone" | "stale_acquisition";
 
