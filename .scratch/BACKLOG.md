@@ -34,7 +34,6 @@ the #83 preference and its UI → #109. #89 — the lexical launch relocation pa
 Absorbed: #79 → round 19 ticket 29, #71 → 33, #78 → 30, #80 #81 #82 → 31 — all shipped; #67 #45 #83 and #40's detection
 half → ticket 34, superseded 2026-11-04 → #88 (relocation, the preference) and #92 (registry facts, rows, warning).)
 
-
 (Absorbed earlier: #39 #46 #47 #49 #52 and the §E borrows were absorbed by `archive/round19/spec.md` on 2026-09-27: #52 → tickets 01 + 13, #49 → 11, #39 → 11, #47 → 16, #46 → 05 + 21. Earlier: #43 #44 → `archive/round18/issues/01`, `02`.)
 
 (Earlier dispositions: #43 #44 → `archive/round18/issues/01`, `02`. #37 opened as the round 18 → 19 UI effort (`archive/round18/spec.md`, `archive/round19/spec.md`). every pre-round-16 `Later`/`Parked` line was absorbed by `archive/round16/spec.md` § Dispositions — items #12 #15 #22
@@ -42,7 +41,6 @@ half → ticket 34, superseded 2026-11-04 → #88 (relocation, the preference) a
 to Future efforts. #42 (overwrite ask on `TARGET_EXISTS`) was absorbed by `archive/round17/spec.md` D3 / `archive/round17/issues/03`. Items #43–#60
 were seeded 2026-09-24 from the upstream/field survey in `docs/design-inputs/` — each carries its § pointer; re-verify against the
 code before scheduling.)
-
 
 ## Later — real, not urgent
 
