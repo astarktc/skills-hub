@@ -1,6 +1,6 @@
 # 04: Clean Now under the lifecycle
 
-Status: ready-for-agent
+Status: done — 6a8c235
 
 **Blocked by:** 03 (same files: `useSettingsState`, `commands/mod.rs`; run in the same lane after it).
 
@@ -29,3 +29,7 @@ a cache entry an acquisition is using, and the age-out at startup follows the sa
 - [ ] `npm run version:check && npm run check` passes.
 
 ## Comments
+- 2026-11-06 (orchestrator): merged as `6a8c235` (PR #19) with CI green. An entry's folder name is its cache key. A per-key
+  reader lease (`CachedCheckout`) covers readers after the fetch returns, and `with_idle_entry` is the cleanup's only
+  way in. The final release review checks it. Residual: BACKLOG #117.
+

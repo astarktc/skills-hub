@@ -384,3 +384,4 @@ The operator keeps one skill Library and deploys it to many harnesses. Three thi
   reviews were fix-then-ship).
 - 06 merged as `01e4ec3` (PR #16). Posit's `.positai` detect dir was dropped (Q7). All 33 new harness rows are on `main`; the combined row review is dispatched.
 - 03 merged as `26ce2b6` (PR #12) after five review rounds. 04 dispatched.
+- 04 merged as `6a8c235` (PR #19). All of Wave A is on `main`. Final release review dispatched.

@@ -5,7 +5,7 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#117**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#118**.
 
 Round 19 closed 2026-11-05 (`archive/round19/spec.md` § Closure — 2026-11-05); every line it carried was re-derived from
 the code that day (`archive/round19/closure/extract-{A..G}.md`).
@@ -130,6 +130,10 @@ code before scheduling.)
   reader itself to be selected (`catalog::pairs_of`). The round-20 rows review fixed only the reader-only case (fx,
   `among` pairs). Generalising it belongs to #109's "a Deployment is a folder; harnesses are its readers" model. Decide
   how loud it may be: Firebender, Warp and Kimchi read many folders. Source: `reviews/round20-rows-review.md` § Disposition 3.
+- **#117 A failed cache refetch can delete an entry another thread is copying from.** `fetch_through_cache`'s retry
+  after a failed refetch (`remove_entry`) does not check the reader leases that round 20 ticket 04 added
+  (`CachedCheckout`). Clean Now and the age-out do check them. Route the retry through the same idle check, or make it
+  wait for readers. This predates ticket 04. Source: round 20 t04 report.
 - **#111 Registry drift check.** A scheduled workflow (like `update-featured-skills.yml`) diffs `vercel-labs/skills`'
   `src/agents.ts`, the ACP registry (`agentclientprotocol/registry`) and the upstream fork's registry against
   `TOOL_ADAPTERS`, and opens an issue on a new or changed row — replacing manual audits like this session's. Operator
