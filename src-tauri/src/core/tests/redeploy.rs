@@ -1751,8 +1751,9 @@ fn an_overwrite_with_no_old_copy_and_no_exchange_never_touches_the_only_copy() {
 }
 
 /// Finding 7, the one interruption point a refusal leaves (after staging,
-/// before the exchange is tried): the only copy stays in place, and the
-/// launch check drops what was staged.
+/// before the exchange is tried): the only copy stays in place. The old
+/// place is gone, so aborting would leave nothing serving the skill: the
+/// launch check keeps what was staged and its entry unfinished (finding 14).
 #[test]
 fn an_overwrite_with_no_old_copy_interrupted_before_the_swap_keeps_the_only_copy() {
     let f = fixture(&["mux"]);
@@ -1783,8 +1784,102 @@ fn an_overwrite_with_no_old_copy_interrupted_before_the_swap_keeps_the_only_copy
 
     assert_eq!(EntryId::of(&dest).unwrap(), before, "the same folder");
     assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "v0 edited");
-    assert_eq!(xum_entries(&f), 1, "nothing staged stays");
+    assert_staged_kept_unfinished(&f);
+}
+
+/// What the launch check keeps of a replacement cut before the swap when
+/// the old place no longer serves the skill: the staged copy beside the
+/// occupant, and its `replacing` entry, unfinished and counted.
+fn assert_staged_kept_unfinished(f: &Fixture) -> PathBuf {
+    let journal = f.store.list_redeploy_journal().unwrap();
+    assert_eq!(journal.len(), 1, "the entry stays: {journal:#?}");
+    let staged = PathBuf::from(&journal[0].new_path);
+    assert!(staged.starts_with(f.at(".xum/skills")), "{staged:?}");
+    assert!(serves_at(&staged), "the staged copy is kept");
+    assert_eq!(xum_entries(f), 2, "the occupant and the staged copy");
+    assert_eq!(f.preview().journal, 1, "counted, retried");
+    staged
+}
+
+/// Round 5 (Astra), finding 14: the recorded Mux copy is gone before the
+/// redeploy, the new place holds an unrelated folder, the operator answers
+/// Overwrite, and the run is cut before the swap. Nothing serves the skill
+/// at the old place, so the launch check keeps the staged copy and its entry
+/// `Unfinished` instead of discarding the only usable copy. The answer
+/// belongs to the ask of that one run: a later run asks again, and the
+/// answered run completes the replacement through the exchange; the stale
+/// entry is then finished (the new place serves) and its staged copy goes.
+#[cfg(unix)]
+#[test]
+fn r5_pre_swap_missing_old_unusable_destination_keeps_recovery() {
+    let f = fixture(&["mux"]);
+    let old = f.copy_row("mux", ".mux/skills/alpha");
+    fs::remove_dir_all(&old).unwrap();
+    let dest = foreign_at(&f, ".xum/skills/alpha");
+    let answer = xum_overwrite(&dest);
+    test_seams::crash_before_swap();
+    let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        redeploy_unlocked(
+            &f.store,
+            &f.roots,
+            &f.central_dir(),
+            &PlacementSettings::default(),
+            std::slice::from_ref(&answer),
+            NOW,
+            |_| {},
+        )
+    }))
+    .is_err();
+    assert!(crashed, "interrupted");
+
+    let finished = finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
+        .unwrap()
+        .expect("reported");
+    assert_eq!(finished.journal.len(), 1);
+    assert_eq!(finished.journal[0].status, JournalStatus::Unfinished);
+    assert!(finished.left_behind.is_empty(), "{finished:#?}");
+    let staged = assert_staged_kept_unfinished(&f);
+    assert_eq!(
+        fs::read_to_string(dest.join("SKILL.md")).unwrap(),
+        "someone else's",
+        "the occupant is untouched"
+    );
+
+    // A new run is a new operator action: the folder in the way is asked
+    // about again, and the kept entry stays unfinished.
+    let asked = f.run(&[]);
+    assert!(
+        matches!(
+            &only_move(&asked).status,
+            RedeployStatus::Failed { error: CommandError::TargetExists { path, .. } }
+                if Path::new(path) == dest
+        ),
+        "{asked:#?}"
+    );
+    assert_eq!(asked.journal[0].status, JournalStatus::Unfinished);
+    assert!(serves_at(&staged));
+
+    // The answered run replaces the folder through the exchange.
+    let report = f.run(&[answer]);
+    assert!(
+        matches!(only_move(&report).status, RedeployStatus::Moved),
+        "{report:#?}"
+    );
+    assert!(report.refused_answers.is_empty(), "{report:#?}");
+    assert!(serves_at(&dest), "the skill is in its new place");
+    let row = f.row("mux").unwrap();
+    assert_eq!(Path::new(&row.target_path), dest);
+    assert_eq!(row.status, SyncStatus::Synced);
+
+    // The new place serves now: the stale entry's staged copy goes.
+    let finished = finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
+        .unwrap()
+        .expect("settled");
+    assert_eq!(finished.journal[0].status, JournalStatus::Finished);
+    assert!(!present(&staged));
+    assert_eq!(xum_entries(&f), 1);
     assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+    assert_eq!(f.preview(), RedeployPreview::default());
 }
 
 // ---------------------------------------------------------------------------

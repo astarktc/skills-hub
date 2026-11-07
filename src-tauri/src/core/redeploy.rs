@@ -1777,9 +1777,15 @@ fn remove_old(
 /// (where the occupant was), `new_path` the staged sibling:
 ///
 /// - the occupant still in place (cut before the swap): the replacement
-///   never happened and the old Deployment was never touched; the staged
-///   artifact — the app's own, checked by identity — is removed, and the
-///   entry goes once nothing staged is left;
+///   never happened. Aborting it is safe only when a working Deployment
+///   stays: the moved row — never switched — still records its old place,
+///   and that place serves the skill by the row's own evidence ([`serves`]).
+///   Then the staged artifact — the app's own, checked by identity — is
+///   removed, and the entry goes once nothing staged is left. Otherwise (the
+///   old place gone or not the skill's, the row gone) the staged artifact
+///   may be all that is left to serve the skill: it and the entry stay
+///   ([`Settled::Unfinished`]) until a later run serves the new place (round
+///   20 t10 review, finding 14);
 /// - the new place verifiably serving the skill ([`serves`] — the swap
 ///   happened): the occupant, now at the staged name, is removed under the
 ///   replacement's authority (ours by evidence, or the operator's
@@ -1818,8 +1824,16 @@ fn settle_replacing(
         )
     };
     if in_place == Some(occupant) {
+        // The moved row was never switched: it records the old place.
+        let old_serves = || -> Result<bool> {
+            Ok(ctx
+                .store
+                .get_skill_target_by_id(&entry.row_id)?
+                .is_some_and(|row| serves(ctx, skill, Path::new(&row.target_path), Some(&row))))
+        };
         return Ok(match at_stage {
             None => Settled::Finished,
+            Some(now) if now == staged && !old_serves()? => Settled::Unfinished,
             Some(now) if now == staged => match discard_staged() {
                 Ok(_) => Settled::Finished,
                 Err(err) => {
