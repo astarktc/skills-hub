@@ -1484,12 +1484,9 @@ fn an_overwrite_interrupted_after_the_swap_is_finished_under_the_answer() {
     assert!(!present(&old));
 }
 
-/// Every platform (Windows has no atomic exchange, so its swap is always the
-/// two renames): an Overwrite cut between the two renames leaves the skill
-/// staged beside an empty place; the launch check moves it in and removes
-/// the folder answered Overwrite for, and the next run records it.
-#[test]
-fn an_overwrite_cut_between_two_renames_is_finished_at_launch() {
+/// Xum's copy moving onto a folder in the way, answered Overwrite, with the
+/// staged replacement interrupted where `arm` says (every platform: copies).
+fn xum_overwrite_interrupted(arm: fn()) -> (Fixture, PathBuf, PathBuf, RedeployAnswer) {
     let f = fixture(&["mux"]);
     let old = f.copy_row("mux", ".mux/skills/alpha");
     let dest = foreign_at(&f, ".xum/skills/alpha");
@@ -1500,8 +1497,7 @@ fn an_overwrite_cut_between_two_renames_is_finished_at_launch() {
         path: dest.to_string_lossy().into_owned(),
         decision: OverrideDecision::Overwrite,
     };
-    test_seams::force_two_step_swap();
-    test_seams::crash_between_swap_renames();
+    arm();
     let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         redeploy_unlocked(
             &f.store,
@@ -1514,9 +1510,80 @@ fn an_overwrite_cut_between_two_renames_is_finished_at_launch() {
         )
     }))
     .is_err();
-    assert!(crashed);
-    assert!(!present(&dest), "cut between the renames");
+    assert!(crashed, "interrupted");
     assert!(old.join("a.txt").is_file(), "the old copy still serves");
+    (f, old, dest, answer)
+}
+
+fn xum_entries(f: &Fixture) -> usize {
+    fs::read_dir(f.at(".xum/skills")).unwrap().count()
+}
+
+/// Interrupted before the occupant moves: the folder in the way is still
+/// there; the launch check drops what was staged, and the answered run
+/// completes the move.
+#[test]
+fn an_overwrite_interrupted_before_the_swap_is_undone_at_launch() {
+    let (f, old, dest, answer) = xum_overwrite_interrupted(test_seams::crash_before_set_aside);
+    assert_eq!(
+        fs::read_to_string(dest.join("SKILL.md")).unwrap(),
+        "someone else's"
+    );
+
+    finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
+        .unwrap()
+        .expect("settled");
+
+    assert_eq!(xum_entries(&f), 1, "nothing staged is left");
+    assert_eq!(
+        fs::read_to_string(dest.join("SKILL.md")).unwrap(),
+        "someone else's"
+    );
+    let report = f.run(&[answer]);
+    assert!(matches!(only_move(&report).status, RedeployStatus::Moved));
+    assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "v1");
+    assert_eq!(xum_entries(&f), 1);
+    assert!(!present(&old));
+}
+
+/// Interrupted right after the swap (an atomic exchange where the OS offers
+/// it, else the second of two renames): the skill is in its new place; the
+/// launch check removes the folder answered Overwrite for, and the next run
+/// records the skill as it is.
+#[test]
+fn an_overwrite_interrupted_after_the_swap_is_finished_at_launch() {
+    let (f, old, dest, _) = xum_overwrite_interrupted(test_seams::crash_after_swap);
+    assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "v1");
+
+    finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
+        .unwrap()
+        .expect("settled");
+
+    assert_eq!(
+        xum_entries(&f),
+        1,
+        "the folder answered Overwrite for is gone"
+    );
+    let report = f.run(&[]);
+    assert!(
+        matches!(only_move(&report).status, RedeployStatus::Adopted),
+        "{report:#?}"
+    );
+    assert!(!present(&old));
+    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+}
+
+/// Cut between two renames (no atomic exchange: Windows always, some file
+/// systems): nothing is at the new place for that instant and the skill is
+/// staged beside it; the launch check moves it in and removes the folder
+/// answered Overwrite for, and the next run records it.
+#[test]
+fn an_overwrite_cut_between_two_renames_is_finished_at_launch() {
+    let (f, old, dest, _) = xum_overwrite_interrupted(|| {
+        test_seams::force_two_step_swap();
+        test_seams::crash_between_swap_renames();
+    });
+    assert!(!present(&dest), "cut between the renames");
 
     finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
         .unwrap()
@@ -1524,7 +1591,7 @@ fn an_overwrite_cut_between_two_renames_is_finished_at_launch() {
 
     assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "v1");
     assert_eq!(
-        fs::read_dir(f.at(".xum/skills")).unwrap().count(),
+        xum_entries(&f),
         1,
         "the folder answered Overwrite for is gone, nothing staged is left"
     );
