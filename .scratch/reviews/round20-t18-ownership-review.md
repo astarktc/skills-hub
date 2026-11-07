@@ -99,3 +99,80 @@ All six findings go to one fix pass:
 - **102:** take the link shortcut only after the occupant check.
 - **Astra 2:** apply the managed-directory claim at removal and at stored-path replacement.
 - **103 and 104** as their reviewers suggest.
+
+---
+
+# Round 2: review of fix pass 1 (`7690b61`, delta from `ac0626a`)
+
+- **Reviewers:** GPT-6 Astra (high) and GPT-6.1 Sol (high), working independently, 2026-11-06.
+- **Convergence bar:** blocking means a P0 or P1, or any removal or replacement that breaks the principle.
+- **Verdicts:** Sol **SHIP**; Astra **FIX-THEN-SHIP** (two P2 findings that are blocking under the bar).
+- **Round 1:** every finding is resolved for its intended route: 101, 102 = Astra 1, 103, 104, and Astra 2 at the
+  reviewed seams.
+- **CI:** all three jobs green.
+
+## Blocking (Astra)
+
+### 11. P2: a derived destination is not a managed-folder boundary
+
+Project paths are built from the stored assignment name, which is never checked to be one safe path component. The
+replacement then runs with no managed-dir claim, and the guard on creating parent folders runs only after the
+occupant has already been removed (`project_sync.rs:33`, `:133–154`; `sync_engine.rs:340–350`, `:370–376`). The global
+batch joins an unchecked skill name onto its registry root (`global_sync.rs:139–153`). The project Library-move relink
+is unfenced too (`library_move.rs:2211–2218`).
+
+Reproduced in both scopes:
+- **Project:** an assignment name of `../../Documents/alpha` gets `<project>/Documents/alpha` deleted by resync, which
+  then fails.
+- **Global:** a batch name of `../../../Documents/alpha` replaces `<home>/Documents/alpha`.
+
+**Fix:**
+- Fence every replacement, derived destinations included, against its managed skills dir before anything is removed:
+  - project sync, Propagation, Enable and the collision retry: the project's skills dir;
+  - the project relink: the same;
+  - the global batch: its planned registry dir.
+- Reject absolute and multi-component skill and assignment names before touching disk.
+
+The implementer's gap (b) is therefore not acceptable.
+
+### 12. P2: project and Enable answers aren't bound to the asked path
+
+- **Project:** `AssignmentDecision` carries only project, skill, tool and decision, and resolves the path again when
+  the answer is applied (`project_sync.rs:1006–1011`, `:1047–1118`).
+- **Enable:** a retry rebuilds the destination from the current skill (`skill_disable.rs:356–375`, `:517–539`).
+- **Frontend:** only the global Propagation route keeps the asked path (`useSyncOrchestration.ts:469–485`, `:523–563`).
+
+Reproduced with a change made at the store between ask and answer:
+- The project root changes after the ask: B's folder, which was never asked about, is overwritten.
+- The skill name changes during Enable: `beta`, which was never asked about, is overwritten.
+
+**Fix:** carry the asked path through every answer route. Resolve the current destination under the guard, and refuse
+a mismatch without touching either path. Test Keep and Overwrite after the project root, the assignment name or the
+skill name changes.
+
+## Non-blocking
+
+- **Astra A → ticket 10:** a first write at an out-of-bounds stored path isn't refused (`Replace::within` fences
+  replacement only). Placement admission should cover first writes too.
+- **Astra B = Sol N1 → ticket 16:** a dismissed Propagation collision becomes a plain batch Retry in Notifications
+  (`reportOutcome.ts:739–742`, `NotificationsModal.tsx:279–287`; `useSkillActions.ts:448–477`). It's safe because a
+  fresh ask names the new folder, but it reads like a continuation and can leave the original collision unresolved.
+  Keep the row and path provenance, and use the row route.
+- **Sol N2 → ticket 10:** the out-of-bounds refusal's copy ("probably a link") is misleading, and Retry can't clear
+  it. It needs a recovery route: forget the record, redeploy to the canonical folder, or move the stray folder aside.
+- **Sol N3 → ticket 16:** a stale answer shows "Item not found: target:…". It should say the Deployment changed
+  since the question, so the answer wasn't applied.
+- **Gate flake (Astra):** the i18n unused-leaf test once hit its 5 s timeout; it passed on retry.
+
+## Verified (Astra)
+
+- **Row-route answers:** the global Propagation answer route is row- and path-bound and fenced.
+- **Link shortcut:** `link_follows_source` requires a real link and `check == Ours`.
+- **Legacy link rows:** the change for `trae`/`trae_cn` is correct under ADR-0007.
+- **Roots:** they're resolved at the command seam.
+- **Wire:** `RemovalReport.scope` is `serde`- and `specta`-skipped, so the wire is unchanged, with no binding drift.
+- **The `home/Documents/alpha` removal probe** is refused, and the row is kept as `error`.
+
+## Disposition (orchestrator, 2026-11-06)
+
+Fix pass 2 takes findings 11 and 12. The non-blocking items go to tickets 10 and 16, and are added to them now.

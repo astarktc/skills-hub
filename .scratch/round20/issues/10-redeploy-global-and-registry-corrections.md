@@ -96,3 +96,10 @@ duplicate of ours.
   - **Requirement:** the project leg (ticket 11) must convert such pairs without this gap, and pin the sequence as a
     permanent test.
   - **ADR-0007 applies:** convert legacy rows explicitly and check ownership against the current occupant.
+- 2026-11-06 (orchestrator): carried over from the ticket 18 review, round 2.
+  - **Astra A, first writes:** placement admission must cover first writes as well as replacements. Today a first
+    write to an out-of-bounds stored path where nothing exists isn't refused.
+  - **Sol N2, recovery from an out-of-bounds refusal** (`REMOVAL_REFUSED` / `ResolvesElsewhere`):
+    - give it a recovery route: forget the record, or redeploy to the canonical folder, or tell the operator to move
+      the stray folder aside;
+    - replace the misleading "probably a link" copy.

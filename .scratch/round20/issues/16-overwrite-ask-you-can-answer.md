@@ -37,3 +37,13 @@ treatment as a second row kind in the same ask.
       `admit_reveal_path` fence, i18n coverage.
 - BACKLOG #70 left the queue when this ticket opened.
 - [ ] `npm run version:check && npm run check` is green.
+
+## Comments
+
+- 2026-11-06 (orchestrator): carried over from the ticket 18 review, round 2.
+  - **Astra B / Sol N1:** a dismissed Propagation collision must keep its row and path provenance in Notifications
+    and repair through the row-bound route (`resolve_target_collisions`), not a batch Retry against the current
+    destination. If it does start a fresh deploy instead, the copy must say so, including what remains at the old
+    path.
+  - **Sol N3:** a stale answer (`NOT_FOUND`) reads "the Deployment changed since you were asked, so your answer
+    wasn't applied", never `target:<path>`.
