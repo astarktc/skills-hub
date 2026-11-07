@@ -11,6 +11,10 @@
 //! outside the central repo. Installedness is faked through
 //! `mark_installed_in`. Nothing touches the operator's home.
 
+// Most link cases are Unix-only (`std::os::unix::fs::symlink`); what they
+// import is unused on Windows, where the copy cases run.
+#![cfg_attr(not(unix), allow(unused_imports, dead_code))]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -843,11 +847,10 @@ fn crash(f: &Fixture, arm: fn()) {
 
 /// Crash after the deploy, before the switch: the new link exists, nothing
 /// is recorded. The next run adopts it (ours) and finishes the move.
-#[cfg(unix)]
 #[test]
 fn a_crash_before_the_switch_is_finished_by_the_next_run() {
     let f = agents_fixture(&["codex"]);
-    let old = f.link_row("codex", ".codex/skills/alpha");
+    let old = f.copy_row("codex", ".codex/skills/alpha");
     crash(&f, test_seams::crash_before_switch);
     assert!(present(&old) && present(&f.at(".agents/skills/alpha")));
     assert!(f.row("codex").is_some(), "nothing switched");
@@ -861,11 +864,10 @@ fn a_crash_before_the_switch_is_finished_by_the_next_run() {
 
 /// Crash after the switch: the journal owes the removal. The launch check's
 /// journal finish removes it and records a report taken once.
-#[cfg(unix)]
 #[test]
 fn a_crash_after_the_switch_is_finished_by_the_launch_check() {
     let f = agents_fixture(&["codex"]);
-    let old = f.link_row("codex", ".codex/skills/alpha");
+    let old = f.copy_row("codex", ".codex/skills/alpha");
     crash(&f, test_seams::crash_after_switch);
 
     let report = finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
@@ -889,13 +891,12 @@ fn a_crash_after_the_switch_is_finished_by_the_launch_check() {
 
 /// Crash after the removal, before the entry was dropped: the old artifact
 /// is gone, so the entry finishes with nothing to do.
-#[cfg(unix)]
 #[test]
 fn a_crash_after_the_removal_finishes_with_nothing_to_remove() {
     let f = agents_fixture(&["codex"]);
-    let old = f.link_row("codex", ".codex/skills/alpha");
+    let old = f.copy_row("codex", ".codex/skills/alpha");
     crash(&f, test_seams::crash_after_switch);
-    fs::remove_file(&old).unwrap();
+    fs::remove_dir_all(&old).unwrap();
 
     let report = f.run(&[]);
 

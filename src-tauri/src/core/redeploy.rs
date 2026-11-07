@@ -852,8 +852,8 @@ fn execute(
     };
 
     // 2. Switch the rows and journal the old artifacts, in one transaction.
-    let new_entry = match EntryId::of(&planned.dest)? {
-        Some(id) => id,
+    let new_entry = match JournaledEntry::of(&planned.dest)? {
+        Some(entry) => entry,
         None => anyhow::bail!(
             "redeploy: {:?} is gone right after its deploy",
             planned.dest
@@ -875,8 +875,8 @@ fn execute(
         if old == planned.dest {
             continue;
         }
-        match EntryId::of(old)? {
-            Some(id) if id != new_entry => journal.push(RedeployJournalRecord {
+        match JournaledEntry::of(old)? {
+            Some(id) if id.id != new_entry.id => journal.push(RedeployJournalRecord {
                 id: Uuid::new_v4().to_string(),
                 row_id: survivor.id.clone(),
                 skill_id: skill.id.clone(),
@@ -979,6 +979,32 @@ fn modified_at(path: &Path) -> Option<i64> {
         .map(|since| since.as_millis() as i64)
 }
 
+/// An artifact as the journal records it: its physical identity and whether
+/// it is a link. Identity is a necessary condition, never a sufficient one —
+/// a volume may reuse an index once an entry is gone — so the kind is
+/// compared too, and the occupant check still decides ownership at the moment
+/// of removal (an unproven folder is asked about, never removed blind).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct JournaledEntry {
+    #[serde(flatten)]
+    id: EntryId,
+    link: bool,
+}
+
+impl JournaledEntry {
+    fn of(path: &Path) -> std::io::Result<Option<Self>> {
+        let Some(id) = EntryId::of(path)? else {
+            return Ok(None);
+        };
+        let link = match std::fs::symlink_metadata(path) {
+            Ok(meta) => meta.file_type().is_symlink(),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err),
+        };
+        Ok(Some(Self { id, link }))
+    }
+}
+
 /// Whether `a` and `b` name one present entry (an aliased folder on the way).
 fn same_entry(a: &Path, b: &Path) -> bool {
     matches!((EntryId::of(a), EntryId::of(b)), (Ok(Some(x)), Ok(Some(y))) if x == y)
@@ -1018,8 +1044,8 @@ fn settle_entry(
         error: None,
     };
     let (Ok(old_id), Ok(new_id)) = (
-        serde_json::from_str::<EntryId>(&entry.old_entry),
-        serde_json::from_str::<EntryId>(&entry.new_entry),
+        serde_json::from_str::<JournaledEntry>(&entry.old_entry),
+        serde_json::from_str::<JournaledEntry>(&entry.new_entry),
     ) else {
         log::warn!(
             "[redeploy] unreadable journal entry {}; nothing was removed",
@@ -1035,13 +1061,13 @@ fn settle_entry(
         Some(row) if Path::new(&row.target_path) == new && row.owns_artifact() => {}
         _ => return Ok(left(RedeployLeftReason::Stale)),
     }
-    if EntryId::of(new)? != Some(new_id) {
+    if JournaledEntry::of(new)? != Some(new_id) {
         return Ok(left(RedeployLeftReason::Stale));
     }
-    match EntryId::of(old)? {
+    match JournaledEntry::of(old)? {
         None => return Ok(Settled::Finished),
-        Some(id) if id == new_id => return Ok(Settled::Finished),
-        Some(id) if id != old_id => return Ok(left(RedeployLeftReason::Replaced)),
+        Some(now) if now.id == new_id.id => return Ok(Settled::Finished),
+        Some(now) if now != old_id => return Ok(left(RedeployLeftReason::Replaced)),
         Some(_) => {}
     }
     // Another live row (any skill, either scope) records it: its Deployment.
@@ -1049,7 +1075,7 @@ fn settle_entry(
     // removed blind).
     for path in recorded_target_paths(store, ctx.roots)? {
         match EntryId::of(&path) {
-            Ok(Some(id)) if id == old_id => return Ok(Settled::Retained),
+            Ok(Some(id)) if id == old_id.id => return Ok(Settled::Retained),
             Ok(_) => {}
             Err(_) => return Ok(Settled::Retained),
         }
