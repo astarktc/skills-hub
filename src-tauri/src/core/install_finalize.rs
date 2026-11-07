@@ -21,6 +21,11 @@
 //! is. The destination is then admitted physically ([`admit_library_entry`]):
 //! nothing at its leaf, not even a link, and its parent the central repo
 //! itself by physical identity (the removal fence's claim), not by spelling.
+//! Admission reserves nothing: publication ([`StagingDir::publish`]) is
+//! exclusive — the bytes become the new entry in one no-replace rename
+//! within the held parent directory (`core::no_replace`), and anything that
+//! appeared at the name since admission is the same `SkillExists` refusal,
+//! never replaced, never written through.
 
 use std::path::{Path, PathBuf};
 
@@ -31,6 +36,7 @@ use super::clock::now_ms;
 use super::content_identity;
 use super::errors::SignalError;
 use super::manifest::{find_skill_md, parse_skill_md};
+use super::no_replace::{HeldDir, RenameError};
 use super::placement::is_folder_name;
 use super::provenance::Provenance;
 use super::removal_fence::Place;
@@ -151,36 +157,76 @@ impl StagingDir {
         &self.path
     }
 
-    /// Move the staged content to `dest` (copy + delete on cross-device rename
-    /// failure). The guard is consumed; nothing is left at the staging path.
+    /// Publish the staged content as `dest`, a new entry: exclusively, never
+    /// replacing or writing through anything at `dest` (`core::no_replace`).
+    /// Something at `dest` — a folder, a file, a link, dangling or not — is
+    /// the typed `SkillExists`, whenever it appeared. The guard is consumed;
+    /// nothing is left at the staging path.
     ///
-    /// A failed fallback copy removes the partial `dest` before propagating:
-    /// `Drop` only cleans the staging path, so without this a half-written
-    /// skill directory would be left inside the central repo under the skill's
-    /// final name — where the next install reads it as a name collision.
-    fn move_into(self, dest: &Path) -> Result<()> {
-        if let Err(err) = std::fs::rename(&self.path, dest) {
-            if let Err(copy_err) = copy_dir_recursive(&self.path, dest) {
-                if let Err(cleanup_err) = std::fs::remove_dir_all(dest) {
-                    if cleanup_err.kind() != std::io::ErrorKind::NotFound {
-                        log::warn!(
-                            "[install] failed to remove partial {:?} after copy failure: {}",
-                            dest,
-                            cleanup_err
-                        );
-                    }
-                }
-                return Err(copy_err)
-                    .with_context(|| format!("fallback copy {:?} -> {:?}", self.path, dest));
-            }
-            log::warn!(
-                "[install] rename {:?} -> {:?} failed, copied instead: {}",
-                self.path,
-                dest,
-                err
+    /// `dest`'s parent is held for the whole publication, and the staging
+    /// folder, a sibling, is renamed within it. When the staging folder is
+    /// not a sibling or that rename fails for another reason (another
+    /// device, a transient lock), the bytes are copied into a private staging
+    /// folder created inside `dest`'s parent — so on its file system — and
+    /// that is published by the same exclusive rename. A failed copy removes
+    /// only that private folder; `dest` is never written until the rename
+    /// makes it.
+    fn publish(self, dest: &Path) -> Result<()> {
+        let (Some(parent), Some(leaf)) = (dest.parent(), dest.file_name()) else {
+            anyhow::bail!(
+                "refusing to publish at {:?}: not an entry in a folder",
+                dest
             );
+        };
+        let occupied = || {
+            anyhow::anyhow!(SignalError::SkillExists {
+                name: leaf.to_string_lossy().into_owned(),
+            })
+        };
+        let dir = HeldDir::open(parent).with_context(|| format!("open {:?}", parent))?;
+        if let Some(staged_leaf) = self
+            .path
+            .file_name()
+            .filter(|_| self.path.parent() == Some(parent))
+        {
+            match dir.rename_no_replace(staged_leaf, leaf) {
+                Ok(()) => return Ok(()),
+                Err(RenameError::Occupied) => return Err(occupied()),
+                Err(RenameError::Failed(_)) if entry_exists(dest)? => return Err(occupied()),
+                Err(RenameError::Failed(err)) => log::warn!(
+                    "[install] rename {:?} -> {:?} failed, copying instead: {}",
+                    self.path,
+                    dest,
+                    err
+                ),
+            }
         }
-        Ok(())
+        let private = StagingDir::new_in(parent);
+        std::fs::create_dir(private.path())
+            .with_context(|| format!("create private staging {:?}", private.path()))?;
+        copy_dir_recursive(&self.path, private.path())
+            .with_context(|| format!("fallback copy {:?} -> {:?}", self.path, private.path()))?;
+        let private_leaf = private
+            .path()
+            .file_name()
+            .context("private staging has no name")?;
+        match dir.rename_no_replace(private_leaf, leaf) {
+            Ok(()) => Ok(()),
+            Err(RenameError::Occupied) => Err(occupied()),
+            Err(RenameError::Failed(_)) if entry_exists(dest)? => Err(occupied()),
+            Err(RenameError::Failed(err)) => {
+                Err(err).with_context(|| format!("publish {:?} as {:?}", private.path(), dest))
+            }
+        }
+    }
+}
+
+/// Whether anything is at `path` (a link itself, never followed).
+fn entry_exists(path: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err).with_context(|| format!("inspect {:?}", path)),
     }
 }
 
@@ -230,7 +276,8 @@ pub fn ensure_name_available(central_dir: &Path, name: &str) -> Result<PathBuf> 
 /// fence's claim compares), so the copy lands physically inside the Library
 /// whatever the path's spelling. The second check cannot fail for a path
 /// [`library_path`] built; it is the authority that does not rest on the
-/// spelling.
+/// spelling. Admission reserves nothing; [`StagingDir::publish`] makes
+/// the entry exclusively in the held parent, refusing what appeared since.
 fn admit_library_entry(central_dir: &Path, central_path: &Path, name: &str) -> Result<()> {
     match std::fs::symlink_metadata(central_path) {
         Ok(_) => anyhow::bail!(SignalError::SkillExists {
@@ -281,7 +328,7 @@ pub fn finalize_install(
         _ => (name.requested().to_string(), requested_path),
     };
 
-    staged.move_into(&central_path)?;
+    staged.publish(&central_path)?;
 
     let now = now_ms();
     let mut record = SkillRecord {
@@ -363,8 +410,14 @@ pub fn finalize_update<T>(
         .context("skill missing before finalize")?;
     let central_path = PathBuf::from(&record.central_path);
     let backup = move_old_central_aside(&central_path)?;
-    if let Err(err) = staged.move_into(&central_path) {
-        return Err(rollback_update(&central_path, backup.as_deref(), err));
+    if let Err(err) = staged.publish(&central_path) {
+        // Nothing was published: whatever is at the path now is not ours.
+        return Err(rollback_update(
+            &central_path,
+            backup.as_deref(),
+            Published::No,
+            err,
+        ));
     }
 
     let now = now_ms();
@@ -379,12 +432,17 @@ pub fn finalize_update<T>(
         ..record.clone()
     };
     if let Err(err) = content_identity::record(store, &mut updated) {
-        return Err(rollback_update(&central_path, backup.as_deref(), err));
+        return Err(rollback_update(
+            &central_path,
+            backup.as_deref(),
+            Published::Yes,
+            err,
+        ));
     }
     let settled = match settle(&mut updated) {
         Ok(settled) => settled,
         Err(err) => {
-            let err = rollback_update(&central_path, backup.as_deref(), err);
+            let err = rollback_update(&central_path, backup.as_deref(), Published::Yes, err);
             return Err(match store.upsert_skill(&previous) {
                 Ok(()) => err,
                 Err(restore_err) => err.context(format!(
@@ -526,13 +584,23 @@ fn sweep_old_central_backups(central: &Path) {
     }
 }
 
+/// Whether an update's replacement bytes were published at the central path,
+/// so rollback removes them. When they were not, whatever is there is not
+/// this operation's and is left alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Published {
+    Yes,
+    No,
+}
+
 /// Preserve the original failure as the error's source, even if recovery fails.
 fn rollback_update(
     central: &Path,
     backup: Option<&Path>,
+    published: Published,
     original: anyhow::Error,
 ) -> anyhow::Error {
-    match restore_central_bytes(central, backup) {
+    match restore_central_bytes(central, backup, published) {
         Ok(()) => original,
         Err(err) => original.context(format!("rollback: {err:#}")).context(
             SignalError::FinalizeRollbackFailed {
@@ -543,19 +611,47 @@ fn rollback_update(
     }
 }
 
-/// Remove partial replacement bytes and restore the previous central copy.
-fn restore_central_bytes(central: &Path, backup: Option<&Path>) -> Result<()> {
-    // move_into normally removes a failed partial copy, but cleanup can fail.
-    // Retry before restoring so old bytes never merge with partial new bytes.
-    match std::fs::remove_dir_all(central) {
-        Ok(()) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => return Err(err).context("remove replacement central dir"),
+/// Remove the published replacement bytes and restore the previous central
+/// copy — by the same no-replace rename, so an entry that is not this
+/// operation's is never replaced: the restore then fails and the backup is
+/// kept and named.
+fn restore_central_bytes(
+    central: &Path,
+    backup: Option<&Path>,
+    published: Published,
+) -> Result<()> {
+    if published == Published::Yes {
+        match std::fs::remove_dir_all(central) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err).context("remove replacement central dir"),
+        }
     }
-    if let Some(backup) = backup {
-        std::fs::rename(backup, central).context("restore old central dir")?;
-    }
-    Ok(())
+    let Some(backup) = backup else {
+        return Ok(());
+    };
+    let restore = || -> Result<()> {
+        let (Some(parent), Some(leaf), Some(backup_leaf)) =
+            (central.parent(), central.file_name(), backup.file_name())
+        else {
+            anyhow::bail!("{:?} is not an entry in a folder", central);
+        };
+        if backup.parent() != Some(parent) {
+            anyhow::bail!("backup {:?} is not beside {:?}", backup, central);
+        }
+        let dir = HeldDir::open(parent).with_context(|| format!("open {:?}", parent))?;
+        match dir.rename_no_replace(backup_leaf, leaf) {
+            Ok(()) => Ok(()),
+            Err(RenameError::Occupied) => {
+                anyhow::bail!(
+                    "{:?} is occupied by an entry this update did not publish",
+                    central
+                )
+            }
+            Err(RenameError::Failed(err)) => Err(err.into()),
+        }
+    };
+    restore().context("restore old central dir")
 }
 
 /// `(name, description)` from the directory's SKILL.md frontmatter, if any.

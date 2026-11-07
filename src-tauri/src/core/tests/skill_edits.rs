@@ -394,6 +394,113 @@ fn failed_manifest_write_keeps_base_and_replay_heals_bytes() {
     assert_eq!(f.text(), UPSTREAM);
 }
 
+/// A record written before ticket 19 whose name is not one folder name
+/// (`../escaped`), its copy outside the Library: Edit is quarantined like
+/// every other byte writer.
+fn escaped_record(f: &Fixture) -> (PathBuf, String) {
+    let outside = f.dir.path().join("escaped");
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("SKILL.md"), UPSTREAM).unwrap();
+    let mut record = f.store.get_skill_by_id(&f.id).unwrap().unwrap();
+    record.name = "../escaped".into();
+    record.central_path = f
+        .paths
+        .central_dir
+        .join("../escaped")
+        .to_string_lossy()
+        .into_owned();
+    f.store.upsert_skill(&record).unwrap();
+    (outside, record.name)
+}
+
+fn edit_row(f: &Fixture) -> Option<String> {
+    f.store
+        .get_skill_edit(&f.id, SkillEditKind::InvocationMode)
+        .unwrap()
+        .map(|edit| format!("{edit:?}"))
+}
+
+fn assert_name_invalid(err: &anyhow::Error, name: &str) {
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::SkillNameInvalid { name: name.into() }),
+        "{err:#}"
+    );
+}
+
+#[test]
+fn edit_refuses_a_record_whose_name_is_not_one_folder_name() {
+    let f = Fixture::new();
+    let (outside, name) = escaped_record(&f);
+
+    // Set, with no Edit row yet: refused before one is persisted.
+    let err = f.set(Some(InvocationMode::UserOnly)).unwrap_err();
+    assert_name_invalid(&err, &name);
+    assert_eq!(
+        fs::read_to_string(outside.join("SKILL.md")).unwrap(),
+        UPSTREAM
+    );
+    assert_eq!(edit_row(&f), None);
+
+    // Set again and clear, over an Edit row recorded before ticket 19: the
+    // row and the bytes stay as they are.
+    let row = SkillEditRecord {
+        skill_id: f.id.clone(),
+        kind: SkillEditKind::InvocationMode,
+        value: "neither".into(),
+        base_value: serde_json::to_string(&manifest::read_invocation_lines(UPSTREAM)).unwrap(),
+        conflict: false,
+        applied_at: 1,
+    };
+    f.store.upsert_skill_edit(&row).unwrap();
+    let before = edit_row(&f);
+    for mode in [Some(InvocationMode::UserOnly), None] {
+        let err = f.set(mode).unwrap_err();
+        assert_name_invalid(&err, &name);
+        assert_eq!(
+            fs::read_to_string(outside.join("SKILL.md")).unwrap(),
+            UPSTREAM
+        );
+        assert_eq!(edit_row(&f), before, "{mode:?}");
+    }
+}
+
+/// The same rule holds at the shared Update apply boundary, so Edit in place
+/// cannot reach the bytes another way.
+#[test]
+fn update_apply_refuses_edit_in_place_for_a_record_whose_name_is_not_one_folder_name() {
+    let f = Fixture::new();
+    let (outside, name) = escaped_record(&f);
+    let row = SkillEditRecord {
+        skill_id: f.id.clone(),
+        kind: SkillEditKind::InvocationMode,
+        value: "neither".into(),
+        base_value: serde_json::to_string(&manifest::read_invocation_lines(UPSTREAM)).unwrap(),
+        conflict: false,
+        applied_at: 1,
+    };
+    f.store.upsert_skill_edit(&row).unwrap();
+    let before = edit_row(&f);
+    let record = f.store.get_skill_by_id(&f.id).unwrap().unwrap();
+    for clear in [false, true] {
+        let err = mutation_guard::serialized(|| {
+            skill_update::apply_unlocked(
+                &f.paths,
+                &f.store,
+                UpdateRequest::edit(record.clone(), clear),
+            )
+        })
+        .err()
+        .unwrap_or_else(|| panic!("clear {clear}: apply must refuse"));
+        assert_name_invalid(&err, &name);
+        assert_eq!(
+            fs::read_to_string(outside.join("SKILL.md")).unwrap(),
+            UPSTREAM
+        );
+        assert_eq!(edit_row(&f), before, "clear {clear}");
+    }
+}
+
 #[test]
 fn failed_edit_upserts_leave_set_and_replay_bytes_untouched() {
     let f = Fixture::new();

@@ -665,7 +665,12 @@ fn rollback_cleanup_failure_retains_backup_and_original_error() {
     // A non-directory replacement cannot be cleaned by remove_dir_all.
     fs::write(path, b"obstruction").unwrap();
 
-    let err = super::rollback_update(path, Some(&backup), anyhow::anyhow!("original failure"));
+    let err = super::rollback_update(
+        path,
+        Some(&backup),
+        super::Published::Yes,
+        anyhow::anyhow!("original failure"),
+    );
 
     assert_eq!(err.root_cause().to_string(), "original failure");
     // The diagnostic names the backup in its Debug form (escaped on Windows).
@@ -732,7 +737,12 @@ fn rollback_rename_failure_names_and_preserves_backup() {
     );
     fs::set_permissions(central.path(), fs::Permissions::from_mode(0o555)).unwrap();
 
-    let err = super::rollback_update(path, Some(&backup), anyhow::anyhow!("move failed"));
+    let err = super::rollback_update(
+        path,
+        Some(&backup),
+        super::Published::Yes,
+        anyhow::anyhow!("move failed"),
+    );
 
     assert_eq!(err.root_cause().to_string(), "move failed");
     assert_eq!(
@@ -762,45 +772,258 @@ fn rollback_rename_failure_names_and_preserves_backup() {
     assert!(detail.contains("restore old central dir"));
 }
 
-/// A failed fallback copy must not leave a partial directory at the skill's
-/// final name inside the central repo: `Drop` only cleans the staging path, so
-/// `move_into` removes `dest` itself before propagating. A leftover would read
-/// as a name collision on the operator's next install attempt.
+/// The copy fallback writes only a private staging folder of its own inside
+/// the destination's folder: when the copy fails part-way, that folder is
+/// removed and nothing is ever written at the skill's final name — a leftover
+/// there would read as a name collision on the operator's next install.
 #[cfg(unix)]
 #[test]
-fn move_into_removes_partial_dest_when_the_fallback_copy_fails() {
+fn a_failed_fallback_copy_leaves_nothing_in_the_library() {
     use std::os::unix::fs::PermissionsExt;
 
     let central = tempfile::tempdir().unwrap();
-    let staged = StagingDir::new_in(central.path());
+    // Staged outside the destination's folder, so publication copies.
+    let elsewhere = tempfile::tempdir().unwrap();
+    let staged = StagingDir::new_in(elsewhere.path());
     let staged_path = staged.path().to_path_buf();
     fs::create_dir_all(&staged_path).unwrap();
     fs::write(staged_path.join("SKILL.md"), "---\nname: s\n---\n").unwrap();
-    // An unreadable subdirectory makes the recursive copy fail part-way, after
-    // it has already created `dest` and copied at least one entry.
+    // An unreadable subdirectory makes the recursive copy fail part-way,
+    // after it has already copied at least one entry.
     let blocked = staged_path.join("blocked");
     fs::create_dir_all(blocked.join("inner")).unwrap();
     fs::set_permissions(&blocked, fs::Permissions::from_mode(0o000)).unwrap();
+    let _permissions = RestorePermissions(blocked.clone(), fs::Permissions::from_mode(0o755));
 
-    // Force the rename to fail so the copy fallback runs: renaming onto a
-    // non-empty directory is ENOTEMPTY.
     let dest = central.path().join("s");
-    fs::create_dir_all(dest.join("occupied")).unwrap();
-
-    let err = staged.move_into(&dest).expect_err("copy must fail");
+    let err = staged.publish(&dest).expect_err("copy must fail");
     assert!(
         format!("{:#}", err).contains("fallback copy"),
         "unexpected error: {:#}",
         err
     );
-    assert!(
-        !dest.exists(),
-        "partial dest must be removed, found {:?}",
-        fs::read_dir(&dest).map(|rd| rd.count())
-    );
+    assert!(!dest.exists(), "nothing written at the final name");
+    assert!(central_entries(central.path()).is_empty());
+}
 
-    // Restore permissions so the tempdir can be cleaned up.
-    fs::set_permissions(&blocked, fs::Permissions::from_mode(0o755)).unwrap();
+// ── Exclusive publication (round 20 t19 review, finding 1) ──────────────
+// Admission reserves nothing; publication itself refuses whatever appeared
+// at the name since — never replacing it, never writing through it.
+
+/// Every entry under `dir`, relative, with each file's bytes: a snapshot
+/// that changes if anything is added, removed or rewritten.
+fn tree(dir: &Path) -> Vec<(String, Option<Vec<u8>>)> {
+    let mut out: Vec<_> = walkdir::WalkDir::new(dir)
+        .follow_links(false)
+        .into_iter()
+        .map(|entry| {
+            let entry = entry.unwrap();
+            let relative = entry
+                .path()
+                .strip_prefix(dir)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            let bytes = entry
+                .file_type()
+                .is_file()
+                .then(|| fs::read(entry.path()).unwrap());
+            (relative, bytes)
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+fn occupy_with_a_folder(dest: &Path) {
+    fs::create_dir_all(dest.join("sub")).unwrap();
+    fs::write(dest.join("SKILL.md"), "---\nname: theirs\n---\n").unwrap();
+    fs::write(dest.join("sub/notes.txt"), b"keep me").unwrap();
+}
+
+fn assert_skill_exists(err: &anyhow::Error, name: &str) {
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::SkillExists {
+            name: name.to_string()
+        }),
+        "{err:#}"
+    );
+}
+
+/// A non-empty folder appearing at the destination after admission is the
+/// typed refusal at publication; its files are untouched and the staged
+/// bytes are discarded.
+#[test]
+fn an_occupant_appearing_after_admission_is_refused_and_unchanged() {
+    let central = tempfile::tempdir().unwrap();
+    let dest = ensure_name_available(central.path(), "alpha").unwrap();
+    let staged = stage_skill(central.path(), "---\nname: alpha\n---\nours\n");
+    occupy_with_a_folder(&dest);
+    let before = tree(&dest);
+
+    let err = staged.publish(&dest).unwrap_err();
+
+    assert_skill_exists(&err, "alpha");
+    assert_eq!(tree(&dest), before, "the occupant is unchanged");
+    assert_eq!(central_entries(central.path()), vec!["alpha".to_string()]);
+}
+
+/// The same through the copy fallback: the private copy is published by the
+/// same exclusive rename, refused, and removed.
+#[test]
+fn an_occupant_is_refused_through_the_copy_fallback_too() {
+    let central = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let dest = ensure_name_available(central.path(), "alpha").unwrap();
+    let staged = stage_skill(elsewhere.path(), "---\nname: alpha\n---\nours\n");
+    occupy_with_a_folder(&dest);
+    let before = tree(&dest);
+
+    let err = staged.publish(&dest).unwrap_err();
+
+    assert_skill_exists(&err, "alpha");
+    assert_eq!(tree(&dest), before, "the occupant is unchanged");
+    assert_eq!(central_entries(central.path()), vec!["alpha".to_string()]);
+    assert!(central_entries(elsewhere.path()).is_empty());
+}
+
+/// An empty folder appearing there is an occupant too: a plain `rename`
+/// would replace it.
+#[test]
+fn an_empty_folder_appearing_after_admission_is_refused_and_kept() {
+    let central = tempfile::tempdir().unwrap();
+    let dest = ensure_name_available(central.path(), "alpha").unwrap();
+    let staged = stage_skill(central.path(), "---\nname: alpha\n---\n");
+    fs::create_dir(&dest).unwrap();
+
+    let err = staged.publish(&dest).unwrap_err();
+
+    assert_skill_exists(&err, "alpha");
+    assert!(dest.is_dir());
+    assert_eq!(fs::read_dir(&dest).unwrap().count(), 0);
+    assert_eq!(central_entries(central.path()), vec!["alpha".to_string()]);
+}
+
+/// A link to an outside folder appearing at the destination after admission
+/// is refused: nothing is written outside, the link stays, and the staged
+/// bytes are discarded — directly and through the copy fallback.
+#[cfg(unix)]
+#[test]
+fn a_link_appearing_after_admission_is_refused_and_nothing_is_written_outside() {
+    for fallback in [false, true] {
+        let (root, central) = library_in_root();
+        let outside = root.path().join("outside");
+        occupy_with_a_folder(&outside);
+        let before = tree(&outside);
+        let elsewhere = tempfile::tempdir().unwrap();
+        let dest = ensure_name_available(&central, "alpha").unwrap();
+        let staging_root = if fallback { elsewhere.path() } else { &central };
+        let staged = stage_skill(staging_root, "---\nname: alpha\n---\nours\n");
+        std::os::unix::fs::symlink(&outside, &dest).unwrap();
+
+        let err = staged.publish(&dest).unwrap_err();
+
+        assert_skill_exists(&err, "alpha");
+        assert_eq!(
+            tree(&outside),
+            before,
+            "fallback {fallback}: outside untouched"
+        );
+        assert_eq!(fs::read_link(&dest).unwrap(), outside);
+        assert_eq!(central_entries(&central), vec!["alpha".to_string()]);
+        assert!(central_entries(elsewhere.path()).is_empty());
+    }
+}
+
+/// On Windows the outside folder is reached through a junction.
+#[cfg(windows)]
+#[test]
+fn a_junction_appearing_after_admission_is_refused_and_nothing_is_written_outside() {
+    for fallback in [false, true] {
+        let (root, central) = library_in_root();
+        let outside = root.path().join("outside");
+        occupy_with_a_folder(&outside);
+        let before = tree(&outside);
+        let elsewhere = tempfile::tempdir().unwrap();
+        let dest = ensure_name_available(&central, "alpha").unwrap();
+        let staging_root = if fallback { elsewhere.path() } else { &central };
+        let staged = stage_skill(staging_root, "---\nname: alpha\n---\nours\n");
+        junction::create(&outside, &dest).unwrap();
+
+        let err = staged.publish(&dest).unwrap_err();
+
+        assert_skill_exists(&err, "alpha");
+        assert_eq!(
+            tree(&outside),
+            before,
+            "fallback {fallback}: outside untouched"
+        );
+        assert!(junction::exists(&dest).unwrap());
+        assert_eq!(central_entries(&central), vec!["alpha".to_string()]);
+        assert!(central_entries(elsewhere.path()).is_empty());
+    }
+}
+
+/// The normal path: a sibling staging folder becomes the skill by rename,
+/// and nothing else is left in the Library.
+#[test]
+fn publication_renames_a_sibling_staging_folder_into_place() {
+    let central = tempfile::tempdir().unwrap();
+    let dest = ensure_name_available(central.path(), "alpha").unwrap();
+    let staged = stage_skill(central.path(), "---\nname: alpha\n---\n");
+
+    staged.publish(&dest).unwrap();
+
+    assert_eq!(fs::read(dest.join("a.txt")).unwrap(), b"data");
+    assert_eq!(central_entries(central.path()), vec!["alpha".to_string()]);
+}
+
+/// The copy fallback (staging that cannot be renamed into place — here it
+/// lives in another folder, as across devices): the bytes are copied into a
+/// private folder beside the destination and published from there; no
+/// private folder and no staging folder is left.
+#[test]
+fn publication_copies_a_foreign_staging_folder_through_a_private_sibling() {
+    let central = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let dest = ensure_name_available(central.path(), "alpha").unwrap();
+    let staged = stage_skill(elsewhere.path(), "---\nname: alpha\n---\n");
+
+    staged.publish(&dest).unwrap();
+
+    assert_eq!(fs::read(dest.join("a.txt")).unwrap(), b"data");
+    assert_eq!(central_entries(central.path()), vec!["alpha".to_string()]);
+    assert!(central_entries(elsewhere.path()).is_empty());
+}
+
+/// Update publishes the same way. An occupant appearing at the recorded path
+/// after the old copy was moved aside is refused; rollback leaves it alone
+/// (it is not this update's) and keeps and names the backup.
+#[test]
+fn finalize_update_refuses_an_occupant_and_keeps_the_backup() {
+    let (_db, store) = make_store();
+    let central = tempfile::tempdir().unwrap();
+    let before = install_before_update(central.path(), &store);
+    let path = Path::new(&before.central_path).to_path_buf();
+    let backup = super::move_old_central_aside(&path).unwrap().unwrap();
+    occupy_with_a_folder(&path);
+    let occupant = tree(&path);
+    let staged = stage_skill(central.path(), "---\nname: s\n---\nnew\n");
+
+    let err = staged.publish(&path).unwrap_err();
+    assert_skill_exists(&err, "s");
+    let err = super::rollback_update(&path, Some(&backup), super::Published::No, err);
+
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::FinalizeRollbackFailed {
+            central: path.to_string_lossy().into_owned(),
+            backup: Some(backup.to_string_lossy().into_owned()),
+        })
+    );
+    assert_eq!(tree(&path), occupant, "the occupant is unchanged");
+    assert_eq!(fs::read(backup.join("a.txt")).unwrap(), b"data");
 }
 
 /// A Library under a root the test owns, so "outside the Library" is

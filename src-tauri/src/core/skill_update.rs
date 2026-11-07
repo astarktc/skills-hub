@@ -159,6 +159,9 @@ pub(crate) fn apply_unlocked(
             reason: UpdateSkip::SkillGone,
         });
     };
+    // The one boundary every byte adapter crosses, Edit in place included: a
+    // record whose name is not one folder name has no bytes written for it.
+    ensure_folder_name(&current.name)?;
     if !request.repoint
         && (current.source_ref != request.expected.source_ref
             || current.source_subpath != request.expected.source_subpath
