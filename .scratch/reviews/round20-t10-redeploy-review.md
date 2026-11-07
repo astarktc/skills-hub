@@ -210,3 +210,62 @@ it is one of these:
 
 Anything else (a relative link, any `..` component, an intermediate link) is not a witness, and the move is refused.
 Finding 10 goes to ticket 12.
+
+---
+
+# Round 4 (Astra): fix pass 3 (`3acc5a76`, delta from `d65f9962`)
+
+- **Verdict:** **BLOCK** (findings 11 and 12).
+- **Round 3's reproductions are fixed:**
+  - a link that passes through the destination via `..` is refused;
+  - a relative link is refused;
+  - an app-written link still completes;
+  - `Unfinished` keeps the journal entry, and a later run finishes it.
+
+## Findings
+
+### 11. P1: an accepted witness can still depend on the destination through an ancestor symlink
+
+`redeploy.rs:1595–1656` checks only the leaf and its final canonical location. Reproduced two ways:
+- **A copy witness:** its parent `~/.mux/skills` is a link to `~/.xum/skills/alpha/../../../.mux-backing/skills`.
+- **An exact-text link witness:** its Library alias is a link that passes through the destination.
+
+Either way the witness stops serving once the destination is moved aside.
+
+### 12. P1: "unrecognisable leftovers" can come from the app's own rename, and startup drops the only journal entry
+
+`redeploy.rs:1994–2025`, `:2089–2095`, `:2148–2149`. Reproduced with harness dirs aliased through
+`H/actual/alpha/..`:
+1. The first rename makes both aliases dangle.
+2. The staged copy and the set-aside occupant become unreachable through their journaled paths.
+3. Startup reports `LeftBehind / Stale` and deletes the journal entry.
+
+The result: `old_serves=false, dest_serves=false, journal_entries=0`.
+
+### 13. P2 → ticket 12: the recovery copy is too strong
+
+- **The headline:** "Finished an interrupted move: 1 move unfinished" contradicts itself.
+- **The detail:** "Nothing else serves the skill meanwhile" claims more than the backend checks.
+
+**Gate:** passed (1,470 frontend tests; 1,204 Rust tests, 1 ignored). CI is green. Three probes fail.
+
+## Disposition (orchestrator, 2026-11-07)
+
+Rounds 2–4 each found a deeper way to defeat the proof that "an independent old Deployment keeps serving across a
+non-atomic swap". It is the ticket 09 pattern: patching an inference that keeps meeting new counterexamples. Fix pass
+4 removes the inference instead.
+
+1. **Redeploy drops the two-rename fallback.** An occupied destination is replaced only by an atomic exchange
+   (`HeldDir::exchange`). Where the exchange isn't available, the move is refused with `DESTINATION_REFUSED
+   { cannotReplaceSafely }` and stays pending: move the folder aside, then Move again.
+   - **What it removes:** `IntactOld` and the witness rules.
+   - **Who notices:** Windows users, and SMB or exFAT volumes, when they ask to overwrite a different folder at the
+     new place. That combination is rare.
+2. **A journal entry is dropped only on positive evidence:**
+   - the new place verifiably serves the skill (`ownership::check` returns `Ours` against the moved row's evidence);
+     or
+   - the skill record is gone.
+
+   Anything else is kept as `Unfinished` and retried. An absent or unreachable path never authorises forgetting an
+   entry.
+3. **Finding 13** goes to ticket 12.

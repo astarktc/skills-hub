@@ -93,3 +93,8 @@ previews "would move N" and runs as one redeploy action with a report.
   startup (`cannotReplaceSafely` from the journal finish) gets its own copy. It names the staged replacement and the
   set-aside occupant, and says that completing the move failed. It must not tell the operator to move an absent
   destination aside.
+- 2026-11-07 (orchestrator): carried over from the ticket 10 review, round 4, finding 13.
+  - **Headline:** use an attempted-recovery headline whenever entries remain unfinished, not "Finished an interrupted
+    move: 1 move unfinished".
+  - **Detail:** describe the uncertainty truthfully (the app couldn't verify another working Deployment, so it kept the
+    move for retry), not "Nothing else serves the skill".
