@@ -23,7 +23,7 @@ export type RedeployDeps = {
   t: TranslateFn;
   reporter: Pick<
     StatusReporter,
-    "runAction" | "reportProgress" | "applyOutcome" | "notifyError" | "setActionMessage"
+    "runAction" | "reportProgress" | "applyOutcome" | "notifyError" | "setActionMessage" | "whenIdle"
   >;
   /** The launch offer (`offerDialog`), its dismissal and the one overwrite ask. */
   surface: Pick<SurfaceState, "ask" | "offerDialog" | "dismissDialog">;
@@ -70,7 +70,8 @@ function choicesOf(answer: AskAnswer | RowChoices, rowCount: number): readonly O
  *   as a background run) and the preview. When the preview has work the
  *   operator has not already declined, the offer is raised once through
  *   `offerDialog` (it waits for the stack to empty).
- * - **Accept** runs the mutation under `runAction` (header progress, no
+ * - **Accept** waits for the startup reads to settle (`whenIdle`), then
+ *   runs the mutation under `runAction` (header progress, no
  *   Cancel). Its report's folders in a move's way and edited copies are asked
  *   in **one** overwrite ask, answered per row; the answers go back in a
  *   second run (`redeployAnswers`) whose report is merged into the first
@@ -81,7 +82,7 @@ function choicesOf(answer: AskAnswer | RowChoices, rowCount: number): readonly O
  *   the line keeps it reachable: `pendingCount` is backed by the preview.
  */
 export function useRedeploy({ t, reporter, surface, library, toolLabelById }: RedeployDeps) {
-  const { runAction, reportProgress, applyOutcome, notifyError, setActionMessage } = reporter;
+  const { runAction, reportProgress, applyOutcome, notifyError, setActionMessage, whenIdle } = reporter;
   const { ask, offerDialog, dismissDialog } = surface;
   const { replaceCatalog, loadManagedSkills } = library;
   const [preview, setPreview] = useState<RedeployPreview | null>(null);
@@ -159,11 +160,16 @@ export function useRedeploy({ t, reporter, surface, library, toolLabelById }: Re
     toolLabelById,
   ]);
 
-  /** The offer's Move now: close it, then run. */
+  /**
+   * The offer's Move now: close it, then run — once the startup reads (the
+   * harness scan, the import plan) have settled, so the answer is never
+   * refused by a read the operator did not start.
+   */
   const acceptOffer = useCallback(async () => {
     dismissDialog("redeployOffer");
+    if (!(await whenIdle())) return;
     await run();
-  }, [dismissDialog, run]);
+  }, [dismissDialog, run, whenIdle]);
 
   /** The offer's Not now: remember the declined work; the line keeps it. */
   const declineOffer = useCallback(() => {

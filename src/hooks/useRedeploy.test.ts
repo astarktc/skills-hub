@@ -349,3 +349,30 @@ describe("redeployPendingCount", () => {
     expect(redeployPendingCount({ ...PREVIEW, journal: 2 })).toBe(5);
   });
 });
+
+describe("useRedeploy offer while the startup scan runs", () => {
+  it("Move now waits for the running read instead of being refused", async () => {
+    stubBackend({ check: { finished: null, preview: PREVIEW }, runs: [{ report: EMPTY_REPORT, skills: [], preview: NONE }] });
+    const { result } = render();
+    await waitFor(() => expect(result.current.redeploy.pendingCount).toBe(3));
+    let finishRead: () => void = () => {};
+    let read: Promise<unknown> = Promise.resolve();
+    act(() => {
+      read = result.current.reporter.runAction({ read: true, label: "scan" }, () => new Promise<void>((r) => (finishRead = r)));
+    });
+    let accepted: Promise<void> = Promise.resolve();
+    act(() => {
+      accepted = result.current.redeploy.acceptOffer();
+    });
+    await Promise.resolve();
+    expect(calls("redeployDeployments")).toHaveLength(0);
+
+    await act(async () => {
+      finishRead();
+      await read;
+      await accepted;
+    });
+    expect(calls("redeployDeployments")).toHaveLength(1);
+    expect(result.current.redeploy.pendingCount).toBe(0);
+  });
+});
