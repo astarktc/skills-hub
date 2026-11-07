@@ -610,6 +610,7 @@ fn batch_override_applies_to_the_folder_its_key_names() {
             skill_id: "skill-1".to_string(),
             tool_key: "amp".to_string(),
             decision: OverrideDecision::Overwrite,
+            path: None,
         }],
     };
     let skills = vec![batch_skill("skill-1", "my-skill", &source)];
@@ -648,6 +649,7 @@ fn batch_override_applies_to_the_folder_its_key_names() {
                 skill_id: "skill-1".to_string(),
                 tool_key: kimi.key().to_string(),
                 decision: OverrideDecision::Overwrite,
+                path: None,
             }],
         };
         let outcomes = sync_skills_to_planned_tools(
@@ -687,6 +689,7 @@ fn batch_direct_override_forces_overwrite_for_that_skill_only() {
             skill_id: "skill-1".to_string(),
             tool_key: "claude_code".to_string(),
             decision: OverrideDecision::Overwrite,
+            path: None,
         }],
     };
     let skills = vec![
@@ -1199,6 +1202,7 @@ fn every_row_writes_the_skills_place_and_an_answer_reaches_the_row_it_names() {
             skill_id: "skill-1".to_string(),
             tool_key: tool.to_string(),
             decision,
+            path: None,
         }],
     };
     let row = |tool: &str| {

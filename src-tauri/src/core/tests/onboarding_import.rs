@@ -1144,6 +1144,7 @@ fn replace_over_a_divergent_copy_produces_an_askable_target_exists_row() {
                 skill_id: skill_id.clone(),
                 tool_key: "cursor".to_string(),
                 decision: OverrideDecision::Overwrite,
+                path: None,
             }],
         },
         6000,

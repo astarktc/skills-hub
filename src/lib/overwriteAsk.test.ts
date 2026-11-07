@@ -70,7 +70,7 @@ describe("overwriteAsk", () => {
     const rows = [...globalCollisionRows([collided("a", "claude")], {}), ...projectCollisionRows(project, {})];
     expect(new Set(rows.map(overwriteRowKey)).size).toBe(2);
     expect(globalOverrides(rows, ["keep", "overwrite"])).toEqual([
-      { skill_id: "a", tool: "claude", decision: "keep" },
+      { skill_id: "a", tool: "claude", path: "/claude/a", decision: "keep" },
     ]);
   });
 

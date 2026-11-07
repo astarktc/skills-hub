@@ -619,9 +619,15 @@ fn propagate_one_assignment(
     // other occupant takes the occupant decision, and a row that never
     // materialised gets a first sync (see the global arm).
     let deployed = Deployed::of_assignment(assignment, Some(skill));
-    let artifact = resolve_assignment_artifact(&project_path, adapter, assignment, || {
+    // A stored name that is not one folder name locates no link of ours: the
+    // sync below refuses it (`INVALID_PATH`), as this row's report data.
+    let artifact = match resolve_assignment_artifact(&project_path, adapter, assignment, || {
         Ok(Some(skill.name.clone()))
-    })?;
+    }) {
+        Ok(artifact) => artifact,
+        Err(err) if super::placement::refused_place(&err).is_some() => None,
+        Err(err) => return Err(err),
+    };
     if artifact
         .as_deref()
         .is_some_and(|path| link_follows_source(assignment.mode, adapter, path, &deployed))

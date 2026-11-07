@@ -381,7 +381,11 @@ than re-tagging.
     `resolve_target_collisions` (each answer names the row **and the path the ask showed**, checked against the row's
     recorded path before anything is touched and applied there only — never the batch's rebuilt destination, which
     may be another folder), project assignments through
-    `resolve_project_collisions` (`Keep` → the row `disabled`, owning nothing, reported `declined`). A dismissed
+    `resolve_project_collisions` (`Keep` → the row `disabled`, owning nothing, reported `declined`). **Every answer
+    names the path its ask showed** (`BatchSyncOverrideDto.path`, `AssignmentDecision.path`, `TargetDecision.path`):
+    the core resolves the row's destination now, under the guard, and a mismatch (the skill renamed, the project moved,
+    the stored name changed) is a stale answer — `NOT_FOUND` `target`, neither path touched; Enable restores a taken
+    row it recorded nothing for, under the id it had. A dismissed
     ask sends nothing. An operator action that settles several reports (a group's Deploy all, Retry over several
     Tools, a multi-skill project assignment) or a report of another shape (Refresh / Update / Restore / Re-point —
     Propagation — and Edit's Propagation) **collects every report first** (`collectSync`,
@@ -510,8 +514,13 @@ than re-tagging.
   (`ProtectedLibrary::new(store, central_dir)`: the **configured central repo's whole subtree** plus every recorded
   copy), an overwrite's source (`sparing`) and the caller's `Claim` — `artifact_removal` claims each row's managed
   skills folders (a global row's current and former registry dirs, `placement::managed_global_dirs`; an assignment's
-  project skills dir), and a write at a **stored** path (Propagation's global rows, its ask's answer, Library move's
-  relink) claims them through `Replace::within`, so a malformed record outside them is refused, never removed —
+  project skills dir), and **every replacement** claims its destination's skills dir through `Replace::within` — a
+  stored path (Propagation's global rows, its ask's answer, Library move's relink) its managed dirs, a derived one
+  (the global batch, project sync / Propagation / Enable / collision retry, the project relink, Target relocation)
+  the dir it was derived in — so a malformed record outside them is refused, never removed. A name becomes a path
+  only through `placement::deployment_path`: a skill or stored assignment name that is not exactly one normal path
+  component is the typed `INVALID_PATH` `not_a_folder_name`, refused before the disk is touched (report data in a
+  fan-out) —
   a directory refused when it is itself a mount point
   (`MountPoint`) or its subtree — walked, links unfollowed — would cross one (`ContainsMount`; on Linux an unreadable
   mount table fails closed, `MountTableUnreadable`), then removed at that physical location; a refusal

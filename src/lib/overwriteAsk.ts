@@ -112,14 +112,18 @@ export const installTargets = (report: InstallBatchReport): BatchTargetOutcome[]
     candidate.status.status === "installed" ? candidate.status.targets : [],
   );
 
-/** The per-pair overrides for the asked global rows. */
+/**
+ * The per-pair overrides for the asked global rows, each naming the path the
+ * ask showed: the backend applies an answer only while the row's destination
+ * is still that path.
+ */
 export function globalOverrides(
   rows: readonly OverwriteRow[],
   choices: readonly OverwriteChoice[],
 ): BatchSyncOverrideDto[] {
   return rows.flatMap((row, index) =>
     row.scope.kind === "global"
-      ? [{ skill_id: row.skillId, tool: row.toolKey, decision: choices[index] }]
+      ? [{ skill_id: row.skillId, tool: row.toolKey, path: row.path, decision: choices[index] }]
       : [],
   );
 }

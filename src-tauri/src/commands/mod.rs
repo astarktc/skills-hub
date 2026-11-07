@@ -633,12 +633,14 @@ pub struct BatchSyncSkillDto {
 }
 
 /// The operator's answer to one pair's `TARGET_EXISTS` ask — overwrite the
-/// folder, or keep it (the pair is recorded `disabled`); applies to any
-/// target tool sharing the named tool's skills dir.
+/// folder, or keep it (the pair is recorded `disabled`) — for the row keyed
+/// `tool`, at the `path` the ask showed: the answer applies only while that
+/// row's destination is still that path (`global_sync::BatchOverride`).
 #[derive(Debug, Clone, Deserialize, Type)]
 pub struct BatchSyncOverrideDto {
     pub skill_id: String,
     pub tool: String,
+    pub path: String,
     pub decision: OverrideDecision,
 }
 
@@ -648,6 +650,7 @@ impl From<BatchSyncOverrideDto> for BatchOverride {
             skill_id: o.skill_id,
             tool_key: o.tool,
             decision: o.decision,
+            path: Some(std::path::PathBuf::from(o.path)),
         }
     }
 }

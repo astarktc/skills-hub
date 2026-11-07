@@ -813,6 +813,59 @@ fn a_relink_never_replaces_a_link_recorded_outside_the_managed_folders() {
     assert_eq!(row.status, SyncStatus::Error);
 }
 
+/// Round 20 t18 review round 2, Astra 11: a project row's path is derived
+/// from its stored name, and the relink never follows a name out of the
+/// project skills dir. An assignment named `../../Documents/alpha` whose link
+/// there still reaches the old copy is refused before anything at that path is
+/// read or written (`INVALID_PATH` `not_a_folder_name`): the link and the old
+/// copy it reaches are kept, and the row is kept `error`.
+#[test]
+fn a_relink_never_follows_a_project_name_out_of_the_project_skills_dir() {
+    use crate::core::errors::CommandError;
+    let mut f = fixture(&["claude_code"]);
+    let alpha = f.install("alpha");
+    let project = f.project("p1", "claude_code");
+    f.assign("p1", &alpha);
+    let old = f.central(&alpha);
+    let deployed = project.join(".claude/skills/alpha");
+    let stray = project.join("Documents/alpha");
+    fs::create_dir_all(stray.parent().unwrap()).unwrap();
+    fs::rename(&deployed, &stray).unwrap();
+    let conn = rusqlite::Connection::open(f.store.db_path()).unwrap();
+    conn.execute(
+        "UPDATE project_skill_assignments SET skill_name = '../../Documents/alpha'",
+        [],
+    )
+    .unwrap();
+
+    let report = f.run();
+
+    assert!(
+        matches!(
+            &report.deployments[..],
+            [deployment] if matches!(
+                &deployment.status,
+                RelinkStatus::Failed { error: CommandError::InvalidPath { reason, .. } }
+                    if reason == "not_a_folder_name"
+            )
+        ),
+        "{:?}",
+        report.deployments
+    );
+    assert!(is_link(&stray), "the link stays");
+    assert!(resolves_to(&stray, &old), "still reaching the old copy");
+    assert!(
+        old.join("SKILL.md").is_file(),
+        "the old copy it reaches stays"
+    );
+    let row = f
+        .store
+        .get_project_skill_assignment("p1", &alpha, "claude_code")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.status, SyncStatus::Error);
+}
+
 /// The move is one Sync-target mutation: it waits for one in flight.
 #[test]
 fn the_move_is_serialized_with_other_mutations() {

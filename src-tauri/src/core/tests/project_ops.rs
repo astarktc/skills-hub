@@ -587,6 +587,7 @@ fn setup_pi_assignment(
     .expect("assign");
 
     let target = project_sync::resolve_project_sync_target(&project_dir, pi_adapter(), name)
+        .unwrap()
         .expect("project dir");
     assert!(
         target.symlink_metadata().is_ok(),

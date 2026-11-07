@@ -939,6 +939,7 @@ fn a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_prop
                 skill_id: f.skill_id.clone(),
                 tool_key: "amp".to_string(),
                 decision: OverrideDecision::Overwrite,
+                path: None,
             }],
         },
         2000,

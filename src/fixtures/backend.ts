@@ -497,10 +497,19 @@ export function createFixtureBackend(
     return { status: "synced", outcome: { mode_used: mode, target_path: row.path, replaced } };
   };
 
+  /**
+   * A batch policy as the core holds it (Rust `BatchPolicy`): an answer from
+   * the wire names the path its ask showed; the Add flow's pre-install
+   * decisions name none (`path: None`).
+   */
+  type FixtureBatchPolicy = Omit<BatchSyncPolicyDto, "overrides"> & {
+    overrides?: (Omit<BatchSyncOverrideDto, "path"> & { path: string | null })[];
+  };
+
   const syncBatch = async (
     skills: BatchSyncSkillDto[],
     tools: string[],
-    policy: BatchSyncPolicyDto,
+    policy: FixtureBatchPolicy,
     onProgress: ProgressSink<SyncProgressDto> | null,
     plan: FirstSyncPlan | null = null,
   ): Promise<BatchTargetOutcome[]> => {
@@ -574,9 +583,17 @@ export function createFixtureBackend(
           // Rust `global_sync::answer_for`: the answer naming this row's own
           // key; another key of the folder only when the folder has one row.
           const forSkill = (policy.overrides ?? []).filter((o) => o.skill_id === s.skill_id);
-          const answer =
-            forSkill.find((o) => o.tool === row.key)?.decision ??
-            (rows.length === 1 ? forSkill.find((o) => globalFolderOf(o.tool) === key)?.decision : undefined);
+          const answered =
+            forSkill.find((o) => o.tool === row.key) ??
+            (rows.length === 1 ? forSkill.find((o) => globalFolderOf(o.tool) === key) : undefined);
+          // Rust `sync_row`: an answer applies to the path its ask showed; a
+          // destination that moved since (the skill renamed) makes it stale —
+          // nothing touched, nothing recorded.
+          if (answered?.path != null && answered.path !== row.path) {
+            outcomes.push(outcome({ status: "failed", error: { code: "NOT_FOUND", kind: "target", id: answered.path } }));
+            continue;
+          }
+          const answer = answered?.decision;
           if (answer === "keep") {
             outcomes.push(outcome(recordKept(skill, row)));
             continue;
@@ -1122,6 +1139,7 @@ export function createFixtureBackend(
     folders: string[],
     overrides: BatchSyncOverrideDto[],
     plan: FirstSyncPlan | null,
+    taken: readonly StoredTarget[] = [],
   ) => {
     const outcomes = await syncBatch(
       [{ skill_id: skill.dto.id, name: skill.dto.name, source_path: skill.dto.central_path }],
@@ -1135,9 +1153,15 @@ export function createFixtureBackend(
       plan,
     );
     for (const o of outcomes) {
-      if (o.status.status === "failed" && o.status.error.code === "TARGET_EXISTS") {
+      if (o.status.status !== "failed") continue;
+      if (o.status.error.code === "TARGET_EXISTS") {
         recordKept(skill, { key: o.tool_key, path: o.status.error.path });
+        continue;
       }
+      // A taken row the batch recorded nothing for (a stale answer) is
+      // restored exactly as it was taken: still `disabled`.
+      const row = taken.find((t) => t.tool === o.tool_key);
+      if (row && !skill.dto.targets.some((t) => t.tool === row.tool)) skill.dto.targets.push(row);
     }
     return outcomes;
   };
@@ -1148,10 +1172,13 @@ export function createFixtureBackend(
    * batch records it afresh, as Enable always did), and the in-memory plan
    * carries each one's key to the batch — no other row is touched.
    */
-  const takeDisabled = (skill: FixtureSkill, wanted: (folder: string) => boolean): FirstSyncRow[] => {
+  const takeDisabled = (
+    skill: FixtureSkill,
+    wanted: (folder: string) => boolean,
+  ): { plan: FirstSyncRow[]; taken: StoredTarget[] } => {
     const taken = skill.dto.targets.filter((t) => t.status === "disabled" && wanted(globalFolderOf(t.tool)));
     skill.dto.targets = skill.dto.targets.filter((t) => !taken.includes(t));
-    return taken.map((t) => ({ skillId: skill.dto.id, key: t.tool }));
+    return { plan: taken.map((t) => ({ skillId: skill.dto.id, key: t.tool })), taken };
   };
 
   /** Only a skill-grain Enable lifts a skill-grain Disable. */
@@ -1167,9 +1194,9 @@ export function createFixtureBackend(
         projects: { skipped_projects: [], items: [] },
       };
     }
-    const plan = takeDisabled(skill, (f) => f === folder);
+    const { plan, taken } = takeDisabled(skill, (f) => f === folder);
     return {
-      global: await firstSync(skill, [folder], overrides, plan.length > 0 ? { rows: plan, grain: "pair" } : null),
+      global: await firstSync(skill, [folder], overrides, plan.length > 0 ? { rows: plan, grain: "pair" } : null, taken),
       projects: { skipped_projects: [], items: [] },
     };
   };
@@ -1183,7 +1210,7 @@ export function createFixtureBackend(
    */
   const enableSkill = async (skill: FixtureSkill, overrides: BatchSyncOverrideDto[]): Promise<EnableReport> => {
     skill.dto.disabled_at = null;
-    const plan = takeDisabled(skill, () => true);
+    const { plan, taken } = takeDisabled(skill, () => true);
     const folders = [...new Set(plan.map((r) => globalFolderOf(r.key)))];
     const projects: ProjectSyncReport = { items: [], skipped_projects: [] };
     for (const project of state.projects) {
@@ -1201,7 +1228,7 @@ export function createFixtureBackend(
       }
     }
     return {
-      global: plan.length ? await firstSync(skill, folders, overrides, { rows: plan, grain: "skill" }) : [],
+      global: plan.length ? await firstSync(skill, folders, overrides, { rows: plan, grain: "skill" }, taken) : [],
       projects,
     };
   };
@@ -2193,7 +2220,7 @@ export function createFixtureBackend(
                   overwrite_if_same_content: request.overwrite_if_same_content,
                   overrides: request.overrides
                     .filter((o) => o.skill_name === skill.dto.name)
-                    .map((o) => ({ skill_id: skill.dto.id, tool: o.tool, decision: o.decision })),
+                    .map((o) => ({ skill_id: skill.dto.id, tool: o.tool, path: null, decision: o.decision })),
                 },
                 null,
               )
@@ -2229,6 +2256,11 @@ export function createFixtureBackend(
         status: { status: "failed", error: { code: "NOT_FOUND", kind: "assignment", id: `${decision.project_id}/${decision.skill_id}/${decision.tool}` } },
       };
     }
+    // Rust `resolve_collisions_unlocked`: the answer applies to the path its
+    // ask showed — a row that resolves elsewhere now (the project moved, the
+    // stored name changed) is a stale answer, nothing touched.
+    if (assignmentPath(project, a) !== decision.path)
+      return outcomeOf(project, a, { status: "failed", error: { code: "NOT_FOUND", kind: "target", id: decision.path } });
     if (isDisabledAssignment(a)) return outcomeOf(project, a, skippedDisabled);
     // Only a row whose path holds its own artifact again has nothing left to
     // answer; a claiming row another folder took the path of is answered.

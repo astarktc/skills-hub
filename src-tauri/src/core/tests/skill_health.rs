@@ -610,6 +610,7 @@ fn a_target_exists_with_no_decision_records_no_row_and_a_kept_one_records_disabl
         skill_id: f.id.clone(),
         tool_key: "claude_code".into(),
         decision: OverrideDecision::Keep,
+        path: None,
     }];
     let outcomes = sync_skills_to_planned_tools(
         &f.store,
@@ -669,6 +670,7 @@ fn an_overwrite_decision_still_replaces_the_folder() {
         skill_id: f.id.clone(),
         tool_key: "claude_code".into(),
         decision: OverrideDecision::Overwrite,
+        path: None,
     }];
     let outcomes = sync_skills_to_planned_tools(
         &f.store,
@@ -781,6 +783,7 @@ fn a_project_first_sync_collision_is_typed_target_exists() {
         .unwrap();
     let target =
         crate::core::project_sync::resolve_project_sync_target(&project_dir, claude(), "alpha")
+            .unwrap()
             .expect("project dir");
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("SKILL.md"), "foreign").unwrap();
@@ -818,6 +821,7 @@ fn onboarding_discovery_sees_past_a_row_that_owns_nothing() {
         skill_id: f.id.clone(),
         tool_key: "claude_code".into(),
         decision: OverrideDecision::Keep,
+        path: None,
     }];
     sync_skills_to_planned_tools(
         &f.store,

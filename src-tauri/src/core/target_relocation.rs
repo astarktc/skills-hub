@@ -227,17 +227,21 @@ fn materialise(
         return None;
     }
     let name = old.file_name()?;
-    let target = skills_dir_in(roots, adapter).join(name);
+    let skills_dir = skills_dir_in(roots, adapter);
+    let target = skills_dir.join(name);
     let identity = Source::Managed {
         store,
         skill_id: &skill.id,
     };
+    // An identical occupant is replaced only physically inside the Tool's
+    // current skills dir, where the destination was derived.
+    let managed = [skills_dir];
     match sync_engine::sync_dir_for_tool_with_overwrite(
         adapter,
         central,
         identity,
         &target,
-        Replace::never().or_same_content(true),
+        Replace::never().or_same_content(true).within(&managed),
         &ProtectedLibrary::new(store, central_dir),
     ) {
         Ok(outcome) => Some(outcome),

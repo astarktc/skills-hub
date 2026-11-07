@@ -831,8 +831,8 @@ describe("syncSkillsToTools overwrite ask", () => {
     const calls = syncCalls();
     expect(calls).toHaveLength(3);
     expect(calls.slice(1).map(([, retrySkills, retryTools, retryPolicy]) => [retrySkills, retryTools, retryPolicy])).toEqual([
-      [[skills[0]], ["cursor"], { overwrite: false, overwrite_if_same_content: true, overrides: [{ skill_id: "s1", tool: "cursor", decision: "overwrite" }] }],
-      [[skills[1]], ["claude"], { overwrite: false, overwrite_if_same_content: true, overrides: [{ skill_id: "s2", tool: "claude", decision: "overwrite" }] }],
+      [[skills[0]], ["cursor"], { overwrite: false, overwrite_if_same_content: true, overrides: [{ skill_id: "s1", tool: "cursor", path: "/t/cursor/s1", decision: "overwrite" }] }],
+      [[skills[1]], ["claude"], { overwrite: false, overwrite_if_same_content: true, overrides: [{ skill_id: "s2", tool: "claude", path: "/t/claude/s2", decision: "overwrite" }] }],
     ]);
     // Asked rows replaced in place; the others are the first batch's rows.
     expect(report).toEqual([
@@ -914,7 +914,7 @@ describe("syncSkillsToTools overwrite ask", () => {
     expect(retryPolicy).toEqual({
       overwrite: false,
       overwrite_if_same_content: false,
-      overrides: [{ skill_id: "s2", tool: "claude", decision: "overwrite" }],
+      overrides: [{ skill_id: "s2", tool: "claude", path: "/t/claude/s2", decision: "overwrite" }],
     });
   });
 
@@ -980,7 +980,7 @@ describe("syncSkillsToTools overwrite ask", () => {
     expect(retryPolicy).toEqual({
       overwrite: false,
       overwrite_if_same_content: false,
-      overrides: [{ skill_id: "s1", tool: "cursor", decision: "keep" }],
+      overrides: [{ skill_id: "s1", tool: "cursor", path: "/t/cursor/s1", decision: "keep" }],
     });
     expect(result.current.overwritePending).toBeNull();
   });
@@ -1080,8 +1080,8 @@ describe("the one overwrite ask across producers (ticket 04)", () => {
       overwrite: false,
       overwrite_if_same_content: true,
       overrides: [
-        { skill_id: "s1", tool: "claude", decision: "overwrite" },
-        { skill_id: "s2", tool: "claude", decision: "keep" },
+        { skill_id: "s1", tool: "claude", path: "/g/claude/s1", decision: "overwrite" },
+        { skill_id: "s2", tool: "claude", path: "/g/claude/s2", decision: "keep" },
       ],
     });
     expect(report.map((row) => row.status.status)).toEqual(["synced", "declined"]);
@@ -1113,7 +1113,7 @@ describe("the one overwrite ask across producers (ticket 04)", () => {
       settled = await done;
     });
     expect(calls("resolveProjectCollisions")).toEqual([
-      ["resolveProjectCollisions", [{ project_id: "p1", skill_id: "s1", tool: "claude", decision: "keep" }]],
+      ["resolveProjectCollisions", [{ project_id: "p1", skill_id: "s1", tool: "claude", path: "/p1/.claude/skills/s1", decision: "keep" }]],
     ]);
     expect(settled).toEqual({ report: { skipped_projects: [], items: [projectItem({ status: "declined" })] }, resolved: true });
   });
@@ -1159,10 +1159,10 @@ describe("the one overwrite ask across producers (ticket 04)", () => {
     });
     expect(calls("enableSkillTargets")).toEqual([
       ["enableSkillTargets", scope, []],
-      ["enableSkillTargets", scope, [{ skill_id: "s1", tool: "claude", decision: "overwrite" }]],
+      ["enableSkillTargets", scope, [{ skill_id: "s1", tool: "claude", path: "/g/claude/s1", decision: "overwrite" }]],
     ]);
     expect(calls("resolveProjectCollisions")[0]![1]).toEqual([
-      { project_id: "p1", skill_id: "s1", tool: "claude", decision: "overwrite" },
+      { project_id: "p1", skill_id: "s1", tool: "claude", path: "/p1/.claude/skills/s1", decision: "overwrite" },
     ]);
     expect(report.global.map((row) => [row.tool_key, row.status.status])).toEqual([
       ["claude", "synced"],

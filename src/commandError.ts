@@ -110,6 +110,7 @@ const LIBRARY_DESTINATION_KEYS: Record<LibraryDestinationRefusal, string> = {
 const INVALID_PATH_KEYS: Record<string, string> = {
   missing: "errors.invalidPathMissing",
   not_a_directory: "errors.invalidPathNotADirectory",
+  not_a_folder_name: "errors.invalidPathNotAFolderName",
 };
 
 /** A localized sentence followed by a structured detail (a path, a subpath,

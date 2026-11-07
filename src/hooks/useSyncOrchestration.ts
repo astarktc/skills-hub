@@ -465,7 +465,11 @@ export function useSyncOrchestration({
     [],
   );
 
-  /** Project assignments: the asked rows' decisions, resolved in one call. */
+  /**
+   * Project assignments: the asked rows' decisions, resolved in one call —
+   * each naming the path the ask showed, which the backend checks against the
+   * assignment's destination now (a stale answer touches nothing).
+   */
   const resolveAssignments = useCallback(
     async (
       rows: readonly OverwriteRow[],
@@ -477,6 +481,7 @@ export function useSyncOrchestration({
               project_id: row.scope.projectId,
               skill_id: row.skillId,
               tool: row.toolKey,
+              path: row.path,
               decision: choices[index],
             }]
           : [],
@@ -525,7 +530,9 @@ export function useSyncOrchestration({
       unique.forEach((claim, index) => {
         const { row, route } = claim;
         if (row.scope.kind !== "global" || !route) return;
-        const override = { skill_id: row.skillId, tool: row.toolKey, decision: answer[index] };
+        // Every answer names the path its ask showed (D12): applied there or
+        // nowhere — a row whose destination moved since is a stale answer.
+        const override = { skill_id: row.skillId, tool: row.toolKey, path: row.path, decision: answer[index] };
         if (route.via === "row") {
           atRows.push({ skill_id: row.skillId, tool: row.toolKey, path: row.path, decision: answer[index] });
         } else if (route.via === "sync") {

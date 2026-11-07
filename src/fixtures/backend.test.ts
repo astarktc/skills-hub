@@ -228,7 +228,7 @@ describe("rich", () => {
     const retry = await handlers.syncSkillsToTools(
       batch,
       ["cursor"],
-      { overrides: [{ skill_id: zod.id, tool: "cursor", decision: "overwrite" }] },
+      { overrides: [{ skill_id: zod.id, tool: "cursor", path: "/Users/alex/.cursor/skills/zod-schema-first", decision: "overwrite" }] },
       sink().channel
     );
     expect(retry[0].status).toMatchObject({ status: "synced", outcome: { replaced: true } });
@@ -840,7 +840,7 @@ describe("one folder, one row: a shared skills dir records no sibling on any wri
     await handlers.syncSkillsToTools(
       [{ skill_id: skill.dto.id, name: skill.dto.name, source_path: skill.dto.central_path }],
       ["amp"],
-      { overwrite_if_same_content: true, overrides: [{ skill_id: skill.dto.id, tool: "amp", decision: "overwrite" }] },
+      { overwrite_if_same_content: true, overrides: [{ skill_id: skill.dto.id, tool: "amp", path: `${globalRoot("amp")}/${skill.dto.name}`, decision: "overwrite" }] },
       sink<SyncProgressDto>().channel,
     );
     expect(await tools()).toEqual(["amp"]);
@@ -1496,7 +1496,7 @@ describe("D9: Skill health and the failed / declined first sync (ticket 02)", ()
     const kept = await handlers.syncSkillsToTools(
       batch,
       ["cursor"],
-      { overwrite_if_same_content: true, overrides: [{ skill_id: zod.dto.id, tool: "cursor", decision: "keep" }] },
+      { overwrite_if_same_content: true, overrides: [{ skill_id: zod.dto.id, tool: "cursor", path: `${globalRoot("cursor")}/${zod.dto.name}`, decision: "keep" }] },
       sink().channel,
     );
     expect(kept[0].status).toEqual({ status: "declined" });
@@ -1664,8 +1664,8 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
         overwrite: false,
         overwrite_if_same_content: true,
         overrides: [
-          { skill_id: lint.id, tool: "claude_code", decision: "overwrite" },
-          { skill_id: changelog.id, tool: "claude_code", decision: "keep" },
+          { skill_id: lint.id, tool: "claude_code", path: `${globalRoot("claude_code")}/${lint.name}`, decision: "overwrite" },
+          { skill_id: changelog.id, tool: "claude_code", path: `${globalRoot("claude_code")}/${changelog.name}`, decision: "keep" },
         ],
       },
       sink().channel,
@@ -1731,10 +1731,58 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
     expect(statusOf(await byName(handlers, "zod-schema-first"), "cursor")).toBe("disabled");
 
     const retried = await handlers.enableSkillTargets(scope, [
-      { skill_id: zod.id, tool: "cursor", decision: "overwrite" },
+      { skill_id: zod.id, tool: "cursor", path: `${globalRoot("cursor")}/${zod.name}`, decision: "overwrite" },
     ]);
     expect(retried.global.map((o) => o.status.status)).toEqual(["synced"]);
     expect(state.foreign.some((f) => f.tool === "cursor" && f.name === "zod-schema-first")).toBe(false);
+  });
+
+  it("an Enable answer applies only at the path its ask showed: the skill renamed since, it touches nothing", async () => {
+    for (const decision of ["overwrite", "keep"] as const) {
+      const { handlers, state } = backendFor("rich");
+      const zod = state.skills.find((s) => s.dto.name === "zod-schema-first")!;
+      const scope = { kind: "skill_tool" as const, skill_id: zod.dto.id, tool: "cursor" };
+      await handlers.disableSkillTargets(scope);
+      const first = await handlers.enableSkillTargets(scope, []);
+      const asked = `${globalRoot("cursor")}/zod-schema-first`;
+      expect(first.global[0].status).toMatchObject({ status: "failed", error: { code: "TARGET_EXISTS", path: asked } });
+
+      zod.dto.name = "zod-renamed";
+      const retried = await handlers.enableSkillTargets(scope, [
+        { skill_id: zod.dto.id, tool: "cursor", path: asked, decision },
+      ]);
+
+      expect(retried.global[0].status).toEqual({ status: "failed", error: { code: "NOT_FOUND", kind: "target", id: asked } });
+      // The taken row is restored as it was: still disabled at the asked path.
+      expect(zod.dto.targets.filter((t) => t.tool === "cursor")).toEqual([
+        expect.objectContaining({ status: "disabled", target_path: asked, synced_at: null }),
+      ]);
+      expect(state.foreign.some((f) => f.tool === "cursor" && f.name === "zod-schema-first")).toBe(true);
+    }
+  });
+
+  it("a project answer applies only at the path its ask showed: the project moved since, it touches nothing", async () => {
+    for (const decision of ["overwrite", "keep"] as const) {
+      const { handlers, state } = backendFor("failures");
+      const project = state.projects.find((p) => p.id === "prj-quartermaster")!;
+      const prisma = await byName(handlers, "prisma-review");
+      const path = `${project.path}/.claude/skills/prisma-review`;
+      state.projectOccupants.push(path);
+      const toggled = await handlers.toggleProjectSkillAssignment(project.id, prisma.id, "claude_code");
+      if (toggled.kind !== "assigned") throw new Error(toggled.kind);
+      expect(toggled.report.items[0].status).toMatchObject({ status: "failed", error: { code: "TARGET_EXISTS", path } });
+      const row = project.assignments.find((a) => a.skill_id === prisma.id && a.tool === "claude_code")!;
+      const before = { ...row };
+
+      project.path = `${project.path}-moved`;
+      const resolved = await handlers.resolveProjectCollisions([
+        { project_id: project.id, skill_id: prisma.id, tool: "claude_code", path, decision },
+      ]);
+
+      expect(resolved.items[0].status).toEqual({ status: "failed", error: { code: "NOT_FOUND", kind: "target", id: path } });
+      expect(row).toEqual(before);
+      expect(state.projectOccupants).toContain(path);
+    }
   });
 
   it("a project collision resolves: Overwrite syncs, Keep records the row disabled (declined)", async () => {
@@ -1752,7 +1800,7 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
       });
 
       const resolved = await handlers.resolveProjectCollisions([
-        { project_id: project.id, skill_id: prisma.id, tool: "claude_code", decision },
+        { project_id: project.id, skill_id: prisma.id, tool: "claude_code", path, decision },
       ]);
       const row = project.assignments.find((a) => a.skill_id === prisma.id && a.tool === "claude_code")!;
       if (decision === "overwrite") {
@@ -1789,7 +1837,7 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
       expect(row().synced_at).toBeNull();
 
       const resolved = await handlers.resolveProjectCollisions([
-        { project_id: project.id, skill_id: zod.id, tool: "claude_code", decision },
+        { project_id: project.id, skill_id: zod.id, tool: "claude_code", path, decision },
       ]);
       if (decision === "overwrite") {
         expect(resolved.items[0].status).toEqual({ status: "synced" });
@@ -2025,7 +2073,7 @@ describe("ticket 17: Projects — a missing folder, Sync this, the kept row, a s
     const asked = JSON.stringify(archived.assignments);
     for (const decision of ["overwrite", "keep"] as const) {
       const resolved = await handlers.resolveProjectCollisions([
-        { project_id: "prj-archived-app", skill_id: row.skill_id, tool: "claude_code", decision },
+        { project_id: "prj-archived-app", skill_id: row.skill_id, tool: "claude_code", path: `${archived.path}/.claude/skills/pr-review`, decision },
       ]);
       expect(resolved).toEqual({ items: [], skipped_projects: skip });
       expect(JSON.stringify(archived.assignments)).toBe(asked);
@@ -2169,7 +2217,7 @@ describe("fixture parity with Rust (#90)", () => {
   it("resolveProjectCollisions answers a missing project as a per-decision NOT_FOUND row, never a throw", async () => {
     const { handlers } = backendFor("rich");
     const report = await handlers.resolveProjectCollisions([
-      { project_id: "prj-gone", skill_id: "s-any", tool: "claude_code", decision: "overwrite" },
+      { project_id: "prj-gone", skill_id: "s-any", tool: "claude_code", path: "/gone/.claude/skills/s-any", decision: "overwrite" },
     ]);
     expect(report).toEqual({
       skipped_projects: [],

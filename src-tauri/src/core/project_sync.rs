@@ -25,12 +25,18 @@ use crate::core::{
 /// (`ToolAdapter::project_skills_dir`) is chosen here and callers cannot reach for
 /// the global `skills_dir` by mistake — that mix-up has shipped more
 /// than once (see `gitignore.rs` and the Artifact removal callers in `project_ops.rs`).
+/// The name is joined through `placement::deployment_path`: a name that is not
+/// one folder name is the typed refusal (`INVALID_PATH` `not_a_folder_name`),
+/// so a derived project path never leaves the project skills dir. `Ok(None)`
+/// when the Tool reads no project skills dir.
 pub(crate) fn resolve_project_sync_target(
     project_path: &Path,
     adapter: &ToolAdapter,
     skill_name: &str,
-) -> Option<PathBuf> {
-    tool_adapters::project_skills_dir_in(project_path, adapter).map(|dir| dir.join(skill_name))
+) -> Result<Option<PathBuf>> {
+    tool_adapters::project_skills_dir_in(project_path, adapter)
+        .map(|dir| placement::deployment_path(&dir, skill_name))
+        .transpose()
 }
 
 /// Which name locates a Project assignment's artifact on disk.
@@ -65,15 +71,20 @@ pub(crate) fn assignment_artifact_name(
 /// The path of a Project assignment's artifact: the project's Tool skills
 /// dir joined with [`assignment_artifact_name`] (`live_name` is its
 /// fallback supplier). `None` when the name cannot be resolved, or the Tool
-/// reads no project skills dir.
+/// reads no project skills dir. A stored name that is not one folder name
+/// (`../../Documents/alpha`) is the typed refusal ([`resolve_project_sync_target`];
+/// `placement::refused_place` reads where it pointed): nothing may be read,
+/// written or removed for it.
 pub(crate) fn resolve_assignment_artifact(
     project_path: &Path,
     adapter: &ToolAdapter,
     assignment: &ProjectSkillAssignmentRecord,
     live_name: impl FnOnce() -> Result<Option<String>>,
 ) -> Result<Option<PathBuf>> {
-    Ok(assignment_artifact_name(assignment, live_name)?
-        .and_then(|name| resolve_project_sync_target(project_path, adapter, &name)))
+    match assignment_artifact_name(assignment, live_name)? {
+        Some(name) => resolve_project_sync_target(project_path, adapter, &name),
+        None => Ok(None),
+    }
 }
 
 /// What one Project assignment's sync needs and its caller has already
@@ -144,12 +155,18 @@ pub(crate) fn sync_assignment_target(
         store: ctx.store,
         skill_id: &ctx.skill.id,
     };
+    // The occupant is replaced only physically inside the project's skills
+    // dir for this folder (`Replace::within`), whatever the rule admitted:
+    // the target is derived, and a derivation is checked where it is used.
+    let managed: Vec<PathBuf> = tool_adapters::project_skills_dir_in(ctx.project_path, ctx.adapter)
+        .into_iter()
+        .collect();
     let outcome = sync_engine::sync_dir_for_tool_within_root(
         ctx.adapter,
         source,
         identity,
         &target,
-        ctx.replace,
+        ctx.replace.within(&managed),
         ctx.project_path,
         &ProtectedLibrary::new(ctx.store, ctx.central_dir),
     )?;
@@ -275,6 +292,13 @@ fn assign_and_settle(
         Ok(adapter) => adapter,
         Err(refusal) => return Ok(AssignAttempt::Refused(refusal)),
     };
+    // So is a skill whose name is not one folder name: its project path would
+    // leave the project skills dir.
+    if let Err(refusal) =
+        resolve_project_sync_target(Path::new(&project.path), adapter, &skill.name)
+    {
+        return Ok(AssignAttempt::Refused(refusal));
+    }
 
     let record = ProjectSkillAssignmentRecord {
         id: uuid::Uuid::new_v4().to_string(),
@@ -1002,11 +1026,14 @@ pub(crate) fn first_sync_assignments_unlocked(
 /// The operator's answer to the overwrite ask for one project assignment
 /// whose sync met a folder in the way (a `TARGET_EXISTS` report row of
 /// assign / resync / Enable / Propagation). Crosses the wire as itself.
+/// `path` is the path the ask showed (the `TARGET_EXISTS` row's): the answer
+/// applies to the assignment only while it still resolves there.
 #[derive(Clone, Debug, serde::Deserialize, specta::Type)]
 pub struct AssignmentDecision {
     pub project_id: String,
     pub skill_id: String,
     pub tool: String,
+    pub path: String,
     pub decision: crate::core::global_sync::OverrideDecision,
 }
 
@@ -1016,7 +1043,14 @@ pub struct AssignmentDecision {
 /// `synced`, or `error` with its chain); `Keep` leaves the folder and keeps
 /// the row `disabled` — giving its path up, so no removal touches the folder
 /// and no pass re-materialises it until the skill is enabled — reported
-/// `Declined`. A row that is gone, disabled, of a disabled skill, or whose
+/// `Declined`. Each answer is bound to the path the ask showed: the
+/// assignment's destination is resolved now, under the guard (its project's
+/// root, its folder's project skills dir, its stored name), and an answer for
+/// another path — the project moved, the stored name changed since the ask —
+/// is stale: `Failed` `NotFound` (`target`, the asked path), nothing touched
+/// at either path, the row unchanged (a name that is not one folder name is
+/// its `INVALID_PATH` refusal instead). A row that is gone, disabled, of a
+/// disabled skill, or whose
 /// path holds its own artifact again (verified now, `core::ownership`) is not
 /// a collision any more and answers as the assignment listing would (`Failed
 /// NotFound`, `Skipped`, `AlreadyAssigned`). A row that still claims its path
@@ -1077,6 +1111,23 @@ fn resolve_collisions_unlocked(
         };
         let name = reported_skill_name(store, &assignment);
         let id = Some(assignment.id.clone());
+        let stale = match assignment_destination(store, &assignment) {
+            Ok(Some(current)) if current == Path::new(&decision.path) => None,
+            Ok(_) => Some(CommandError::from(SignalError::NotFound {
+                kind: "target".to_string(),
+                id: decision.path.clone(),
+            })),
+            Err(err) if placement::refused_place(&err).is_some() => {
+                Some(CommandError::from_anyhow(err))
+            }
+            Err(err) => return Err(err),
+        };
+        if let Some(error) = stale {
+            report
+                .items
+                .push(item(id, name, ProjectSyncOutcomeStatus::Failed { error }));
+            continue;
+        }
         let skill_disabled = store.skill_disabled_at(&assignment.skill_id)?.is_some();
         let status = if assignment.status == SyncStatus::Disabled || skill_disabled {
             ProjectSyncOutcomeStatus::Skipped {
@@ -1156,10 +1207,11 @@ fn occupied_by_own_artifact(
     let Ok(adapter) = deploy_adapter(&assignment.tool) else {
         return Ok(false);
     };
-    let Some(path) =
+    // A stored name that is not one folder name locates nothing of ours.
+    let Ok(Some(path)) =
         resolve_assignment_artifact(Path::new(&project.path), adapter, assignment, || {
             Ok(Some(skill.name.clone()))
-        })?
+        })
     else {
         return Ok(false);
     };
@@ -1168,6 +1220,29 @@ fn occupied_by_own_artifact(
         ownership::check(&path, &deployed),
         Ok(Occupancy::Ours)
     ))
+}
+
+/// Where `assignment`'s artifact belongs now: its project's root, the project
+/// skills dir of the folder it describes ([`deploy_adapter`]) and its stored
+/// name ([`resolve_assignment_artifact`]) — the destination a sync of it
+/// writes. `None` when its project, its folder or its name is gone; the typed
+/// refusal for a name that is not one folder name; a store failure is an `Err`
+/// too.
+fn assignment_destination(
+    store: &SkillStore,
+    assignment: &ProjectSkillAssignmentRecord,
+) -> Result<Option<PathBuf>> {
+    let Some(project) = store.get_project_by_id(&assignment.project_id)? else {
+        return Ok(None);
+    };
+    let Ok(adapter) = deploy_adapter(&assignment.tool) else {
+        return Ok(None);
+    };
+    resolve_assignment_artifact(Path::new(&project.path), adapter, assignment, || {
+        Ok(store
+            .get_skill_by_id(&assignment.skill_id)?
+            .map(|skill| skill.name))
+    })
 }
 
 /// The name a report shows for an assignment: the stored name the artifact

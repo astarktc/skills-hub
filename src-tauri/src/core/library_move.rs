@@ -2141,10 +2141,18 @@ fn deployments_of(store: &SkillStore, skill: &SkillRecord) -> Result<Vec<(PathBu
             continue;
         };
         let root = PathBuf::from(&project.path);
-        let Some(path) =
-            resolve_assignment_artifact(&root, adapter, &row, || Ok(Some(skill.name.clone())))?
-        else {
-            continue;
+        // A stored name that is not one folder name is listed at the place it
+        // names, for its report row only: the relink refuses it before
+        // anything there is read (`relink_one`).
+        let path = match resolve_assignment_artifact(&root, adapter, &row, || {
+            Ok(Some(skill.name.clone()))
+        }) {
+            Ok(Some(path)) => path,
+            Ok(None) => continue,
+            Err(err) => match placement::refused_place(&err) {
+                Some(place) => place,
+                None => return Err(err),
+            },
         };
         match out.iter_mut().find(|(p, rows)| {
             p == &path
@@ -2176,6 +2184,18 @@ fn relink_one(
     now: i64,
 ) -> Result<RelinkStatus> {
     let attempt = (|| -> Result<Option<SyncOutcome>> {
+        // A project row's path is derived from its stored name: a name that is
+        // not one folder name is refused (`INVALID_PATH`) before anything at
+        // the path it names is read or written.
+        if let Rows::Assignment { project_root, rows } = rows {
+            if let Some(adapter) = adapter_by_key(tool) {
+                for row in rows {
+                    resolve_assignment_artifact(project_root, adapter, row, || {
+                        Ok(Some(m.skill.name.clone()))
+                    })?;
+                }
+            }
+        }
         match occupant(path, &m.old_place, &Place::of(&m.new)?)? {
             Occupant::Copy => return Ok(None),
             Occupant::NotOurs => anyhow::bail!(NotOurs),
@@ -2191,11 +2211,11 @@ fn relink_one(
             skill_id: &new_record.id,
         };
         // The occupant was verified ours just above (a link to the old or
-        // new copy), so its replacement is the relink's own decision — but a
-        // global row's path is a stored one, so it is replaced only inside the
-        // skills folders its harness and folder are managed in
-        // (`placement::managed_global_dirs`; a project row's path is derived
-        // under its root).
+        // new copy), so its replacement is the relink's own decision — but
+        // only physically inside a skills folder the row is managed in: a
+        // global row's stored path inside its harness's and folder's
+        // (`placement::managed_global_dirs`), a project row's derived path
+        // inside its project's skills dir for that folder.
         let outcome = match rows {
             Rows::Global(_) => {
                 let managed = placement::managed_global_dirs(roots, tool);
@@ -2208,15 +2228,20 @@ fn relink_one(
                     library,
                 )?
             }
-            Rows::Assignment { project_root, .. } => sync_dir_for_tool_within_root(
-                adapter,
-                &m.new,
-                identity,
-                path,
-                Replace::confirmed(),
-                project_root,
-                library,
-            )?,
+            Rows::Assignment { project_root, .. } => {
+                let managed: Vec<PathBuf> = project_skills_dir_in(project_root, adapter)
+                    .into_iter()
+                    .collect();
+                sync_dir_for_tool_within_root(
+                    adapter,
+                    &m.new,
+                    identity,
+                    path,
+                    Replace::confirmed().within(&managed),
+                    project_root,
+                    library,
+                )?
+            }
         };
         Ok(Some(outcome))
     })();
@@ -2745,12 +2770,17 @@ fn deployment_places(store: &SkillStore) -> Result<Vec<Place>> {
                 continue;
             };
             let name = skill.name.clone();
-            if let Some(path) =
-                resolve_assignment_artifact(Path::new(&project.path), adapter, &row, || {
-                    Ok(Some(name))
-                })?
-            {
-                paths.push(path);
+            // A stored name that is not one folder name still names a place a
+            // link may reach from: kept in the set, the cautious side.
+            match resolve_assignment_artifact(Path::new(&project.path), adapter, &row, || {
+                Ok(Some(name))
+            }) {
+                Ok(Some(path)) => paths.push(path),
+                Ok(None) => {}
+                Err(err) => match placement::refused_place(&err) {
+                    Some(place) => paths.push(place),
+                    None => return Err(err),
+                },
             }
         }
     }

@@ -286,22 +286,27 @@ export type AppSettings = {
  *  The operator's answer to the overwrite ask for one project assignment
  *  whose sync met a folder in the way (a `TARGET_EXISTS` report row of
  *  assign / resync / Enable / Propagation). Crosses the wire as itself.
+ *  `path` is the path the ask showed (the `TARGET_EXISTS` row's): the answer
+ *  applies to the assignment only while it still resolves there.
  */
 export type AssignmentDecision = {
 	project_id: string,
 	skill_id: string,
 	tool: string,
+	path: string,
 	decision: OverrideDecision,
 };
 
 /**
  *  The operator's answer to one pair's `TARGET_EXISTS` ask — overwrite the
- *  folder, or keep it (the pair is recorded `disabled`); applies to any
- *  target tool sharing the named tool's skills dir.
+ *  folder, or keep it (the pair is recorded `disabled`) — for the row keyed
+ *  `tool`, at the `path` the ask showed: the answer applies only while that
+ *  row's destination is still that path (`global_sync::BatchOverride`).
  */
 export type BatchSyncOverrideDto = {
 	skill_id: string,
 	tool: string,
+	path: string,
 	decision: OverrideDecision,
 };
 

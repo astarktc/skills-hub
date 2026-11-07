@@ -171,8 +171,8 @@ mod seams {
     use crate::core::environment::HostRoots;
     use crate::core::errors::{CommandError, RemovalRefusal};
     use crate::core::global_sync::{
-        sync_skills_to_tools, BatchPolicy, BatchSkill, BatchTargetOutcome, BatchTargetStatus,
-        OverrideDecision,
+        sync_skills_to_tools, BatchOverride, BatchPolicy, BatchSkill, BatchTargetOutcome,
+        BatchTargetStatus, OverrideDecision,
     };
     use crate::core::installer::{install_local_skill, InstallerPaths};
     use crate::core::project_sync::{
@@ -184,6 +184,9 @@ mod seams {
         TargetDecision,
     };
     use crate::core::removal_fence::central_repo_of;
+    use crate::core::skill_disable::{
+        disable_targets, enable_targets_with, DisableScope, EnableReport,
+    };
     use crate::core::skill_store::{
         ProjectRecord, ProjectToolRecord, SkillStore, SkillTargetRecord,
     };
@@ -350,7 +353,14 @@ mod seams {
             )
             .unwrap()
         }
-        fn answer_project(&self, tool: &str, decision: OverrideDecision) -> ProjectSyncReport {
+        /// Answer the project ask for the assignment keyed `tool`, naming
+        /// the path the ask showed.
+        fn answer_project_at(
+            &self,
+            tool: &str,
+            path: &Path,
+            decision: OverrideDecision,
+        ) -> ProjectSyncReport {
             resolve_collisions(
                 &self.store,
                 &central_repo_of(&self.store),
@@ -358,6 +368,7 @@ mod seams {
                     project_id: "p1".into(),
                     skill_id: self.skill_id.clone(),
                     tool: tool.into(),
+                    path: path.to_string_lossy().into_owned(),
                     decision,
                 }],
                 NOW,
@@ -529,18 +540,7 @@ mod seams {
             replace_with_foreign_folder(&assigned);
             assert!(asked(&f.resync().items[0].status));
 
-            let answer = resolve_collisions(
-                &f.store,
-                &central_repo_of(&f.store),
-                &[AssignmentDecision {
-                    project_id: "p1".into(),
-                    skill_id: f.skill_id.clone(),
-                    tool: "claude_code".into(),
-                    decision,
-                }],
-                NOW,
-            )
-            .unwrap();
+            let answer = f.answer_project_at("claude_code", &assigned, decision);
 
             let row = f.assignment("claude_code");
             match decision {
@@ -645,7 +645,7 @@ mod seams {
                 .all(|(_, s)| matches!(s, PropagationStatus::Failed { .. })));
 
             let global_answer = f.answer_global("claude_code", &global, decision);
-            let project_answer = f.answer_project("claude_code", decision);
+            let project_answer = f.answer_project_at("claude_code", &assigned, decision);
 
             match decision {
                 OverrideDecision::Keep => {
@@ -1146,6 +1146,432 @@ mod seams {
         let row = f.assignment("claude_code");
         assert_eq!(row.status, SyncStatus::Disabled);
         assert!(!row.owns_artifact());
+    }
+
+    // -- Round 20 t18 review round 2, Astra 11: a derived destination never
+    //    leaves the skills folder it was derived in
+
+    fn not_a_folder_name(error: &CommandError) -> bool {
+        matches!(
+            error,
+            CommandError::InvalidPath { reason, .. } if reason == "not_a_folder_name"
+        )
+    }
+
+    fn holds_v1(path: &Path) -> bool {
+        fs::read_to_string(path.join("SKILL.md")).is_ok_and(|text| text.contains("v1"))
+    }
+
+    fn set_assignment_name(f: &Fixture, name: &str) {
+        let conn = rusqlite::Connection::open(f.store.db_path()).unwrap();
+        conn.execute(
+            "UPDATE project_skill_assignments SET skill_name = ?1",
+            [name],
+        )
+        .unwrap();
+    }
+
+    fn rename_skill(f: &Fixture, name: &str) {
+        let mut skill = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+        skill.name = name.into();
+        f.store.upsert_skill(&skill).unwrap();
+    }
+
+    /// Astra's project probe: a copy row (it still holds what it deployed)
+    /// whose stored assignment name is `../../Documents/alpha`, its copy at
+    /// `<project>/Documents/alpha`. Resync, Propagation, an Overwrite answer
+    /// and Delete all refuse the name before touching the disk
+    /// (`INVALID_PATH` `not_a_folder_name`): the bytes there are the old ones,
+    /// the row is kept `error`, the skill is kept.
+    #[test]
+    fn a_project_assignment_name_leaving_the_skills_dir_is_refused_everywhere() {
+        let f = fixture("deep_agents_code");
+        f.assign();
+        let deployed = f.assigned(".deepagents/skills");
+        let stray = Path::new(&f.project.path).join("Documents/alpha");
+        fs::create_dir_all(stray.parent().unwrap()).unwrap();
+        fs::rename(&deployed, &stray).unwrap();
+        set_assignment_name(&f, "../../Documents/alpha");
+        f.update_library();
+
+        let resync = f.resync();
+        assert!(
+            matches!(
+                resync.items.as_slice(),
+                [item] if matches!(&item.status, ProjectSyncOutcomeStatus::Failed { error } if not_a_folder_name(error))
+            ),
+            "{resync:?}"
+        );
+        assert!(holds_v1(&stray), "resync never reaches it");
+
+        let outcomes = f.propagate();
+        assert!(
+            matches!(
+                outcomes.as_slice(),
+                [(_, PropagationStatus::Failed { error, .. })] if not_a_folder_name(error)
+            ),
+            "{outcomes:?}"
+        );
+        assert!(holds_v1(&stray), "Propagation never reaches it");
+
+        let named = deployed.parent().unwrap().join("../../Documents/alpha");
+        for decision in [OverrideDecision::Overwrite, OverrideDecision::Keep] {
+            let answer = f.answer_project_at("deep_agents_code", &named, decision);
+            assert!(
+                matches!(
+                    answer.items.as_slice(),
+                    [item] if matches!(&item.status, ProjectSyncOutcomeStatus::Failed { error } if not_a_folder_name(error))
+                ),
+                "{answer:?}"
+            );
+            assert!(holds_v1(&stray), "an answer never reaches it");
+        }
+        assert_eq!(f.assignment("deep_agents_code").status, SyncStatus::Error);
+
+        let deleted = f.delete();
+        assert!(!deleted.record_deleted, "{deleted}");
+        assert!(
+            matches!(
+                deleted.targets.as_slice(),
+                [target] if matches!(&target.status, RemovalTargetStatus::Failed { error } if not_a_folder_name(error))
+            ),
+            "{deleted}"
+        );
+        assert!(holds_v1(&stray), "Delete never reaches it");
+        let row = f.assignment("deep_agents_code");
+        assert_eq!(row.status, SyncStatus::Error);
+        assert!(row.owns_artifact(), "the refused row keeps its claim");
+    }
+
+    /// Astra's global probe: a batch for a skill named
+    /// `../../../Documents/alpha` on a harness whose skills dir is three
+    /// levels below home would reach `<home>/Documents/alpha`. Overwrite,
+    /// an Overwrite answer and a Keep answer are all refused before anything
+    /// is touched or recorded; so is a project assignment of that name.
+    #[test]
+    fn a_skill_name_leaving_the_skills_dir_is_refused_by_the_batch_and_by_assign() {
+        let f = fixture("deep_agents_code");
+        let stray = f.paths.roots.home.join("Documents/alpha");
+        replace_with_foreign_folder(&stray);
+        let named = f
+            .global(".deepagents/agent/skills")
+            .with_file_name("../../../Documents/alpha");
+        let answer = |decision| BatchOverride {
+            skill_id: f.skill_id.clone(),
+            tool_key: "deep_agents_code".into(),
+            decision,
+            path: Some(named.clone()),
+        };
+        let policies = [
+            BatchPolicy {
+                overwrite: true,
+                overwrite_if_same_content: true,
+                overrides: Vec::new(),
+            },
+            BatchPolicy {
+                overwrite: false,
+                overwrite_if_same_content: true,
+                overrides: vec![answer(OverrideDecision::Overwrite)],
+            },
+            BatchPolicy {
+                overwrite: false,
+                overwrite_if_same_content: true,
+                overrides: vec![answer(OverrideDecision::Keep)],
+            },
+        ];
+        for policy in &policies {
+            let outcomes = sync_skills_to_tools(
+                &f.paths.roots,
+                &f.store,
+                &central_repo_of(&f.store),
+                &[BatchSkill {
+                    skill_id: f.skill_id.clone(),
+                    skill_name: "../../../Documents/alpha".into(),
+                    source_path: f.central(),
+                }],
+                &["deep_agents_code".to_string()],
+                policy,
+                NOW,
+                |_| {},
+            );
+            assert!(
+                matches!(
+                    outcomes.as_slice(),
+                    [o] if matches!(&o.status, BatchTargetStatus::Failed { error } if not_a_folder_name(error))
+                ),
+                "{outcomes:?}"
+            );
+            assert!(is_foreign(&stray), "the folder there survives");
+            assert_eq!(
+                f.global_status("deep_agents_code"),
+                None,
+                "nothing recorded"
+            );
+        }
+
+        // The project half: a new assignment of that name is refused before
+        // its row exists.
+        rename_skill(&f, "../../Documents/alpha");
+        let project_stray = Path::new(&f.project.path).join("Documents/alpha");
+        replace_with_foreign_folder(&project_stray);
+        let assigned = f.assign();
+        assert!(
+            matches!(
+                assigned.items.as_slice(),
+                [item] if item.assignment_id.is_none()
+                    && matches!(&item.status, ProjectSyncOutcomeStatus::Failed { error } if not_a_folder_name(error))
+            ),
+            "{assigned:?}"
+        );
+        assert!(is_foreign(&project_stray));
+        assert!(f
+            .store
+            .get_project_skill_assignment("p1", &f.skill_id, "deep_agents_code")
+            .unwrap()
+            .is_none());
+    }
+
+    // -- Round 20 t18 review round 2, Astra 12: a project or Enable answer
+    //    applies to the path its ask showed, and only there
+
+    fn stale_answer(error: &CommandError, asked: &Path) -> bool {
+        matches!(
+            error,
+            CommandError::NotFound { kind, id } if kind == "target" && Path::new(id) == asked
+        )
+    }
+
+    /// What changed between the ask and the answer, and the folder the
+    /// assignment resolves to after it.
+    fn project_drift(f: &Fixture, change: &str) -> PathBuf {
+        match change {
+            "project root" => {
+                let moved = f._dir.path().join("proj-moved");
+                fs::create_dir_all(&moved).unwrap();
+                f.store
+                    .update_project_path("p1", &moved.to_string_lossy(), NOW)
+                    .unwrap();
+                moved.join(".claude/skills/alpha")
+            }
+            "assignment name" => {
+                set_assignment_name(f, "alpha2");
+                f.assigned(".claude/skills").with_file_name("alpha2")
+            }
+            other => unreachable!("{other}"),
+        }
+    }
+
+    /// Keep and Overwrite after the project root or the stored assignment
+    /// name changed since the ask: the answer names the asked path, the row
+    /// now resolves elsewhere, so it is stale — `NOT_FOUND`, the folder that
+    /// was never asked about survives, the asked one too, the row unchanged.
+    /// An answer naming the path the row resolves to now still works.
+    #[test]
+    fn a_project_answer_applies_only_at_the_path_its_ask_showed() {
+        for change in ["project root", "assignment name"] {
+            for decision in [OverrideDecision::Keep, OverrideDecision::Overwrite] {
+                let f = fixture("claude_code");
+                f.assign();
+                let asked_path = f.assigned(".claude/skills");
+                replace_with_foreign_folder(&asked_path);
+                let ask = f.resync();
+                let [item] = ask.items.as_slice() else {
+                    panic!("{ask:?}")
+                };
+                let ProjectSyncOutcomeStatus::Failed {
+                    error: CommandError::TargetExists { path, .. },
+                } = &item.status
+                else {
+                    panic!("an ask: {ask:?}")
+                };
+                assert_eq!(Path::new(path), asked_path);
+                let unasked = project_drift(&f, change);
+                replace_with_foreign_folder(&unasked);
+                let before = f.assignment("claude_code");
+
+                let stale = f.answer_project_at("claude_code", &asked_path, decision);
+
+                assert!(
+                    matches!(
+                        stale.items.as_slice(),
+                        [item] if matches!(&item.status, ProjectSyncOutcomeStatus::Failed { error } if stale_answer(error, &asked_path))
+                    ),
+                    "{change}, {decision:?}: {stale:?}"
+                );
+                assert!(
+                    is_foreign(&unasked),
+                    "{change}: the unasked folder survives"
+                );
+                assert!(is_foreign(&asked_path), "{change}: the asked folder too");
+                let after = f.assignment("claude_code");
+                assert_eq!(
+                    (after.status, after.synced_at, after.last_error),
+                    (before.status, before.synced_at, before.last_error),
+                    "{change}: the row is unchanged"
+                );
+
+                // The same answer for the path the row resolves to now.
+                let current = f.answer_project_at("claude_code", &unasked, decision);
+                match decision {
+                    OverrideDecision::Keep => {
+                        assert!(
+                            matches!(current.items[0].status, ProjectSyncOutcomeStatus::Declined),
+                            "{change}: {current:?}"
+                        );
+                        assert!(is_foreign(&unasked));
+                        assert_eq!(f.assignment("claude_code").status, SyncStatus::Disabled);
+                    }
+                    OverrideDecision::Overwrite => {
+                        assert!(
+                            matches!(current.items[0].status, ProjectSyncOutcomeStatus::Synced),
+                            "{change}: {current:?}"
+                        );
+                        assert!(!is_foreign(&unasked), "{change}: replaced where named");
+                        assert_eq!(f.assignment("claude_code").status, SyncStatus::Synced);
+                    }
+                }
+                assert!(is_foreign(&asked_path), "{change}: never touched");
+            }
+        }
+    }
+
+    fn disable_pair(f: &Fixture) {
+        disable_targets(
+            &f.store,
+            &central_repo_of(&f.store),
+            &f.paths.roots,
+            &DisableScope::SkillTool {
+                skill_id: f.skill_id.clone(),
+                tool: "claude_code".into(),
+            },
+            NOW,
+        )
+        .unwrap();
+    }
+
+    fn enable_pair(f: &Fixture, overrides: &[BatchOverride]) -> EnableReport {
+        enable_targets_with(
+            &f.store,
+            &central_repo_of(&f.store),
+            &f.paths.roots,
+            &DisableScope::SkillTool {
+                skill_id: f.skill_id.clone(),
+                tool: "claude_code".into(),
+            },
+            overrides,
+            NOW,
+        )
+        .unwrap()
+    }
+
+    /// An Enable that met a folder: the ask shows it, and the row is kept
+    /// `disabled` under the id it had. Answers the asked path and row id.
+    fn enable_into_a_folder(f: &Fixture) -> (PathBuf, String) {
+        f.sync("claude_code");
+        disable_pair(f);
+        let row_id = f.target("claude_code").id;
+        let asked_path = f.global(".claude/skills");
+        replace_with_foreign_folder(&asked_path);
+        let first = enable_pair(f, &[]);
+        let [outcome] = first.global.as_slice() else {
+            panic!("{first:?}")
+        };
+        let BatchTargetStatus::Failed {
+            error: CommandError::TargetExists { path, .. },
+        } = &outcome.status
+        else {
+            panic!("an ask: {first:?}")
+        };
+        assert_eq!(Path::new(path), asked_path);
+        let row = f.target("claude_code");
+        assert_eq!(row.status, SyncStatus::Disabled);
+        assert_eq!(
+            row.id, row_id,
+            "Enable's re-record keeps the row's identity"
+        );
+        (asked_path, row_id)
+    }
+
+    fn enable_answer(f: &Fixture, path: &Path, decision: OverrideDecision) -> BatchOverride {
+        BatchOverride {
+            skill_id: f.skill_id.clone(),
+            tool_key: "claude_code".into(),
+            decision,
+            path: Some(path.to_path_buf()),
+        }
+    }
+
+    /// The skill is renamed between Enable's ask and its answer: Keep and
+    /// Overwrite name the asked path, the batch would now write `beta`, so
+    /// the answer is stale — `NOT_FOUND`, nothing at either path touched, and
+    /// the row is restored exactly as it was: `disabled`, same id, same path,
+    /// owning nothing.
+    #[test]
+    fn an_enable_answer_after_the_skill_was_renamed_touches_nothing() {
+        for decision in [OverrideDecision::Keep, OverrideDecision::Overwrite] {
+            let f = fixture("claude_code");
+            let (asked_path, row_id) = enable_into_a_folder(&f);
+            rename_skill(&f, "beta");
+            let unasked = asked_path.with_file_name("beta");
+            replace_with_foreign_folder(&unasked);
+
+            let retry = enable_pair(&f, &[enable_answer(&f, &asked_path, decision)]);
+
+            assert!(
+                matches!(
+                    retry.global.as_slice(),
+                    [o] if matches!(&o.status, BatchTargetStatus::Failed { error } if stale_answer(error, &asked_path))
+                ),
+                "{decision:?}: {retry:?}"
+            );
+            assert!(
+                is_foreign(&unasked),
+                "{decision:?}: the unasked folder survives"
+            );
+            assert!(is_foreign(&asked_path), "{decision:?}: the asked one too");
+            let row = f.target("claude_code");
+            assert_eq!(
+                (row.id.as_str(), row.status, Path::new(&row.target_path)),
+                (row_id.as_str(), SyncStatus::Disabled, asked_path.as_path()),
+                "{decision:?}: the row as it was"
+            );
+            assert!(!row.owns_artifact());
+            assert_eq!(f.store.list_skill_targets(&f.skill_id).unwrap().len(), 1);
+        }
+    }
+
+    /// The same answers while the asked path is still where Enable writes:
+    /// Keep records the row `disabled` (declined), Overwrite replaces the
+    /// asked folder — both under the row's own id.
+    #[test]
+    fn an_enable_answer_at_its_asked_path_still_settles() {
+        for decision in [OverrideDecision::Keep, OverrideDecision::Overwrite] {
+            let f = fixture("claude_code");
+            let (asked_path, row_id) = enable_into_a_folder(&f);
+
+            let retry = enable_pair(&f, &[enable_answer(&f, &asked_path, decision)]);
+
+            let [outcome] = retry.global.as_slice() else {
+                panic!("{retry:?}")
+            };
+            let row = f.target("claude_code");
+            assert_eq!(row.id, row_id, "{decision:?}: the row keeps its identity");
+            match decision {
+                OverrideDecision::Keep => {
+                    assert!(matches!(outcome.status, BatchTargetStatus::Declined));
+                    assert!(is_foreign(&asked_path));
+                    assert_eq!(row.status, SyncStatus::Disabled);
+                }
+                OverrideDecision::Overwrite => {
+                    assert!(
+                        matches!(outcome.status, BatchTargetStatus::Synced { .. }),
+                        "{retry:?}"
+                    );
+                    assert!(!is_foreign(&asked_path), "replaced at the asked path");
+                    assert_eq!(row.status, SyncStatus::Synced);
+                }
+            }
+        }
     }
 
     /// A link row still resolving to the Library copy follows the source

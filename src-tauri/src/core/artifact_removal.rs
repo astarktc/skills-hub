@@ -228,6 +228,11 @@ pub struct RemovalTarget {
     /// managed skills folders the row's path may lie in. Kept aligned through
     /// [`RemovalTarget::retain_rows`].
     evidence: Vec<RowEvidence>,
+    /// Refused at planning, before anything at `path` is read: an assignment
+    /// whose stored name is not one folder name (`placement::deployment_path`)
+    /// has no artifact inside its project skills dir, so `path` is only where
+    /// the name pointed (for the report). Its rows fail and are kept `error`.
+    refused: Option<SignalError>,
 }
 
 /// One row's own authority over its path: what it deployed, and where.
@@ -588,6 +593,8 @@ pub(crate) fn recorded_target_paths(store: &SkillStore, roots: &HostRoots) -> Re
             plan(store, &scope)?
                 .targets
                 .into_iter()
+                // A refused row names no artifact of ours.
+                .filter(|target| target.refused.is_none())
                 .map(|target| target.path),
         );
     }
@@ -662,8 +669,23 @@ impl<'a> TargetBuilder<'a> {
                 path,
                 rows: vec![row],
                 evidence: vec![own],
+                refused: None,
             }),
         }
+    }
+
+    /// A row refused at planning (`refusal`, a typed condition): its own
+    /// target, failed at execution with nothing touched.
+    fn push_refused(&mut self, path: PathBuf, row: RowRef, refusal: SignalError) {
+        self.targets.push(RemovalTarget {
+            path,
+            rows: vec![row],
+            evidence: vec![RowEvidence {
+                deployed: Deployed::none(),
+                managed: Vec::new(),
+            }],
+            refused: Some(refusal),
+        });
     }
 
     /// A global row by its stored path, claimed inside the skills folders
@@ -718,14 +740,29 @@ impl<'a> TargetBuilder<'a> {
             let skill = self.skill(&assignment.skill_id)?;
             // One naming rule for project artifacts: the stored assignment name
             // (`project_sync::assignment_artifact_name`); the live skill row is
-            // its fallback supplier, read only for an un-backfilled row.
-            let Some(path) = resolve_assignment_artifact(
-                Path::new(&project.path),
-                adapter,
-                &assignment,
-                || Ok(skill.as_ref().map(|skill| skill.name.clone())),
-            )?
-            else {
+            // its fallback supplier, read only for an un-backfilled row. A name
+            // that is not one folder name is refused here, nothing read.
+            let resolved =
+                resolve_assignment_artifact(Path::new(&project.path), adapter, &assignment, || {
+                    Ok(skill.as_ref().map(|skill| skill.name.clone()))
+                });
+            let resolved = match resolved {
+                Ok(resolved) => resolved,
+                Err(err) => {
+                    match (
+                        placement::refused_place(&err),
+                        err.downcast_ref::<SignalError>(),
+                    ) {
+                        (Some(place), Some(refusal)) => {
+                            let refusal = refusal.clone();
+                            self.push_refused(place, row_ref, refusal);
+                            continue;
+                        }
+                        _ => return Err(err),
+                    }
+                }
+            };
+            let Some(path) = resolved else {
                 log::warn!(
                     "artifact removal: assignment {} has no skill name to locate its artifact",
                     assignment.id
@@ -807,18 +844,21 @@ pub(crate) fn execute_settling_unlocked(
         // that row is managed in (a malformed stored path elsewhere is
         // refused, `ResolvesElsewhere`, and its rows kept `error`); a foreign
         // occupant stays.
-        let result = match target.occupant() {
-            Ok(TargetOccupant::Absent) => Ok(RemovalTargetStatus::Removed),
-            Ok(TargetOccupant::Ours { within }) => remove_path_any(
-                &target.path,
-                &Fence::new(&library).claiming(Claim::Within(within)),
-            )
-            .map(|()| RemovalTargetStatus::Removed),
-            Ok(TargetOccupant::Foreign) => Ok(RemovalTargetStatus::LeftInPlace),
-            // Not knowing the occupant is never "foreign" (the row would
-            // settle as if its artifact were gone) nor "ours": it fails like a
-            // removal that could not run, and the row is kept (ADR-0002).
-            Err(err) => Err(typed_removal_failure(&target.path, err)),
+        let result = match target.refused.clone() {
+            Some(refusal) => Err(anyhow::anyhow!(refusal)),
+            None => match target.occupant() {
+                Ok(TargetOccupant::Absent) => Ok(RemovalTargetStatus::Removed),
+                Ok(TargetOccupant::Ours { within }) => remove_path_any(
+                    &target.path,
+                    &Fence::new(&library).claiming(Claim::Within(within)),
+                )
+                .map(|()| RemovalTargetStatus::Removed),
+                Ok(TargetOccupant::Foreign) => Ok(RemovalTargetStatus::LeftInPlace),
+                // Not knowing the occupant is never "foreign" (the row would
+                // settle as if its artifact were gone) nor "ours": it fails like a
+                // removal that could not run, and the row is kept (ADR-0002).
+                Err(err) => Err(typed_removal_failure(&target.path, err)),
+            },
         };
 
         let status = match result {

@@ -1909,6 +1909,7 @@ fn overwrite_or_keep(
         skill_id: f.skill_id.clone(),
         tool_key: tool.to_string(),
         decision,
+        path: None,
     }]
 }
 
@@ -2126,6 +2127,7 @@ fn a_project_collision_resolves_with_overwrite_or_keep() {
                     project_id: item.project_id.clone(),
                     skill_id: item.skill_id.clone(),
                     tool: item.tool.clone(),
+                    path: path.to_string_lossy().into_owned(),
                     decision,
                 }],
                 NOW + 5,

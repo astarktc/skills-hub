@@ -324,6 +324,8 @@ export const resources = {
         unknownTool: "Unknown harness: {{tool}}",
         invalidPathMissing: "Path not found: {{path}}",
         invalidPathNotADirectory: "Path is not a directory: {{path}}",
+        invalidPathNotAFolderName:
+          "The skill's name isn't a single folder name, so it would land outside its skills folder. Nothing was written or removed there: {{path}}",
         invalidPath: "Path cannot be used ({{reason}}): {{path}}",
         importKeptDivergentTitle: "Kept a different copy: {{name}} -> {{tool}}",
         importKeptDivergentMessage:
