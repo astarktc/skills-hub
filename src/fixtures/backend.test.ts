@@ -2423,3 +2423,53 @@ describe("fixture redeploy", () => {
     expect(second.preview).toEqual({ global: { correction: 1, migration: 0 }, journal: 1, harnesses: ["kilo_code"] });
   });
 });
+
+describe("release 1.3.5: a removal never takes an artifact another live row records", () => {
+  it("a pair Disable keeps the folder another harness's live row records, and settles its own row", async () => {
+    const { handlers, state } = backendFor("rich");
+    const zod = await byName(handlers, "zod-schema-first");
+    const skill = state.skills.find((s) => s.dto.id === zod.id)!;
+    const claude = skill.dto.targets.find((t) => t.tool === "claude_code")!;
+    expect(claude.synced_at).not.toBeNull();
+    // A pre-1.3.5 row of another harness (one with no row of its own here)
+    // recording the same folder.
+    const other = TOOL_REGISTRY.map((tool) => tool.key).find(
+      (key) => key !== "claude_code" && !skill.dto.targets.some((t) => t.tool === key),
+    )!;
+    skill.dto.targets.push({ ...claude, tool: other });
+
+    const off = await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: zod.id, tool: "claude_code" });
+
+    expect(off.targets.map((t) => [t.path, t.status])).toEqual([
+      [claude.target_path, { status: "kept_in_use", by: [other] }],
+    ]);
+    const after = state.skills.find((s) => s.dto.id === zod.id)!.dto.targets;
+    expect(after.find((t) => t.tool === "claude_code")).toMatchObject({ status: "disabled", synced_at: null });
+    expect(after.find((t) => t.tool === other)).toMatchObject({ status: "synced", target_path: claude.target_path });
+    expect(after.find((t) => t.tool === other)!.synced_at).not.toBeNull();
+
+    // With no live row left on it, the folder goes.
+    const last = await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: zod.id, tool: other });
+    expect(last.targets.map((t) => t.status.status)).toEqual(["removed"]);
+  });
+
+  it("an unassignment keeps a project folder another live assignment records", async () => {
+    const { handlers, state } = backendFor("rich");
+    const zod = await byName(handlers, "zod-schema-first");
+    const { project } = await handlers.registerProject("/Users/alex/Projects/in-use-probe");
+    await handlers.configureProjectTools(project.id, ["claude_code"], null);
+    await handlers.bulkAssignSkill(project.id, zod.id);
+    const stored = state.projects.find((p) => p.id === project.id)!;
+    const own = stored.assignments.find((a) => a.skill_id === zod.id)!;
+    // Another live row recording the same folder.
+    stored.assignments.push({ ...own, id: "other-row", skill_id: "other-skill" });
+
+    const { report } = await handlers.bulkUnassignSkill(project.id, zod.id);
+
+    const path = `${project.path}/.claude/skills/${zod.name}`;
+    expect(report.targets.map((t) => [t.path, t.status])).toEqual([
+      [path, { status: "kept_in_use", by: ["claude_code"] }],
+    ]);
+    expect(stored.assignments.map((a) => a.id)).toEqual(["other-row"]);
+  });
+});

@@ -444,7 +444,12 @@ than re-tagging.
   succeeds Delete clears the row alone (`RemovalReport.cleared_markers`) and Disable flips it `disabled`. A successful
   Disable (and a Keep answer) gives the claim up (`TargetTransition::Disabled` / `AssignmentTransition::Disabled`
   clear `synced_at` + `content_hash`); a failed removal keeps it. Every success writer records the deployed
-  `content_hash` for a copy. Callers (`project_ops`, `project_sync`, `skill_disable`, the delete command) build a scope
+  `content_hash` for a copy. **A removal never takes an artifact another live row outside its scope records** (any
+  skill, either table; live = not `disabled` and holding its claim; same recorded path or same physical entry,
+  `EntryId`, read when acting): the artifact stays, the in-scope rows settle exactly as on success, and the target is
+  `KeptInUse { by }` with the other rows' Tool keys (`outcome.keptInUseLine`) — those rows lend nothing and are left
+  untouched (the pre-1.3.5 `kimi_cli` row on Amp's folder; skill-wide Delete has all its rows in scope). The
+  fixture backend mirrors it. Callers (`project_ops`, `project_sync`, `skill_disable`, the delete command) build a scope
   and read the report; they never delete a path themselves (project reconcile may probe one with `symlink_metadata`).
 - **Git bytes have two single entry points.** `git_cache::fetch_through_cache` is the only way into the
   clone cache (per-key locks, TTL as an `i64` value from `settings::git_cache_ttl_ms`, no DB handle in

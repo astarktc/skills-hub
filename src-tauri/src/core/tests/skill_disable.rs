@@ -2723,3 +2723,230 @@ fn a_pair_enable_of_a_reachable_folder_deploys_it_when_only_a_gone_harnesss_row_
     assert_eq!(f.status("kimi_cli"), None);
     assert!(exists_any(&f.global_path(".config/agents/skills")));
 }
+
+// ---------------------------------------------------------------------------
+// The in-use rule: a removal never takes an artifact another live row records
+// (release 1.3.5 review, Astra finding 1)
+// ---------------------------------------------------------------------------
+
+/// The 1.3.4 shape on the corrected registry: Amp's row and a legacy
+/// `kimi_cli` row both live, both recording the one link at
+/// `~/.config/agents/skills/alpha`, while Kimi Code's own folder is now
+/// `~/.kimi-code/skills` — so the two rows describe different folders.
+fn legacy_amp_kimi_pair() -> (Fixture, PathBuf) {
+    let f = fixture(&["amp", "kimi_cli"]);
+    f.sync(&["amp"]);
+    seed_legacy_sibling(&f);
+    let shared = f.global_path(".config/agents/skills");
+    assert!(exists_any(&shared), "Amp's Deployment is on disk");
+    for tool in ["amp", "kimi_cli"] {
+        let row = f
+            .store
+            .get_skill_target(&f.skill_id, tool)
+            .unwrap()
+            .unwrap();
+        assert_eq!(Path::new(&row.target_path), shared.as_path(), "{tool}");
+        assert!(row.owns_artifact(), "{tool}");
+    }
+    (f, shared)
+}
+
+/// The one target of a pair Disable, kept because `by` still records it.
+fn assert_kept_in_use(report: &crate::core::artifact_removal::RemovalReport, by: &[&str]) {
+    use crate::core::artifact_removal::RemovalTargetStatus;
+    assert_eq!(report.targets.len(), 1, "{report}");
+    match &report.targets[0].status {
+        RemovalTargetStatus::KeptInUse { by: kept_by } => {
+            assert_eq!(
+                kept_by,
+                &by.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+            )
+        }
+        other => panic!("expected kept in use, got {other:?}"),
+    }
+    assert_eq!((report.kept_in_use_rows(), report.failed_rows()), (1, 0));
+}
+
+/// Disabling Kimi Code before the redeploy keeps the link Amp's live row
+/// still records: Kimi's row settles `disabled` with its claim given up,
+/// Amp's row is untouched and still served.
+#[test]
+fn a_pair_disable_of_kimi_keeps_the_link_amps_live_row_records() {
+    let (f, shared) = legacy_amp_kimi_pair();
+    let amp_before = f
+        .store
+        .get_skill_target(&f.skill_id, "amp")
+        .unwrap()
+        .unwrap();
+
+    let report = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &HostRoots::under_home(f.home()),
+        &f.pair("kimi_cli"),
+        NOW,
+    )
+    .unwrap();
+
+    assert_kept_in_use(&report, &["amp"]);
+    assert!(
+        shared.join("SKILL.md").is_file(),
+        "Amp's Deployment still serves the skill"
+    );
+    let kimi = f
+        .store
+        .get_skill_target(&f.skill_id, "kimi_cli")
+        .unwrap()
+        .unwrap();
+    assert_eq!(kimi.status, SyncStatus::Disabled);
+    assert!(!kimi.owns_artifact(), "Disable gives Kimi's claim up");
+    let amp = f
+        .store
+        .get_skill_target(&f.skill_id, "amp")
+        .unwrap()
+        .unwrap();
+    assert_eq!(amp.status, SyncStatus::Synced);
+    assert_eq!(
+        (amp.id, amp.target_path, amp.synced_at, amp.content_hash),
+        (
+            amp_before.id,
+            amp_before.target_path,
+            amp_before.synced_at,
+            amp_before.content_hash
+        ),
+        "Amp's row lends nothing and is left as it was"
+    );
+}
+
+/// The symmetric case: disabling Amp keeps the link Kimi's legacy row still
+/// records (legacy `kimi-cli` reads it there until the redeploy moves it).
+#[test]
+fn a_pair_disable_of_amp_keeps_the_link_kimis_live_row_records() {
+    let (f, shared) = legacy_amp_kimi_pair();
+
+    let report = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &HostRoots::under_home(f.home()),
+        &f.pair("amp"),
+        NOW,
+    )
+    .unwrap();
+
+    assert_kept_in_use(&report, &["kimi_cli"]);
+    assert!(shared.join("SKILL.md").is_file());
+    let amp = f
+        .store
+        .get_skill_target(&f.skill_id, "amp")
+        .unwrap()
+        .unwrap();
+    assert_eq!(amp.status, SyncStatus::Disabled);
+    assert!(!amp.owns_artifact());
+    let kimi = f
+        .store
+        .get_skill_target(&f.skill_id, "kimi_cli")
+        .unwrap()
+        .unwrap();
+    assert_eq!(kimi.status, SyncStatus::Synced);
+    assert!(kimi.owns_artifact());
+
+    // Disabling Kimi as well: no live row records the link any more, so it
+    // goes.
+    let report = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &HostRoots::under_home(f.home()),
+        &f.pair("kimi_cli"),
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(
+        (report.removed_rows(), report.failed_rows()),
+        (1, 0),
+        "{report}"
+    );
+    assert!(!exists_any(&shared));
+}
+
+/// After the redeploy moves Kimi's row to `~/.kimi-code/skills`, each
+/// harness has its own artifact: disabling either removes its own and leaves
+/// the other's.
+#[test]
+fn after_the_redeploy_each_pair_disable_removes_its_own_artifact() {
+    let (f, shared) = legacy_amp_kimi_pair();
+    let roots = HostRoots::under_home(f.home());
+    crate::core::redeploy::redeploy(
+        &f.store,
+        &roots,
+        &central_repo_of(&f.store),
+        &[],
+        NOW,
+        |_| {},
+    )
+    .expect("redeploy");
+    let kimi_place = f.global_path(".kimi-code/skills");
+    let kimi = f
+        .store
+        .get_skill_target(&f.skill_id, "kimi_cli")
+        .unwrap()
+        .unwrap();
+    assert_eq!(Path::new(&kimi.target_path), kimi_place.as_path());
+    assert!(exists_any(&kimi_place) && exists_any(&shared));
+
+    let report = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &roots,
+        &f.pair("kimi_cli"),
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(
+        (report.removed_rows(), report.kept_in_use_rows()),
+        (1, 0),
+        "{report}"
+    );
+    assert!(!exists_any(&kimi_place));
+    assert!(shared.join("SKILL.md").is_file(), "Amp's artifact stays");
+    assert_eq!(f.status("amp"), Some(SyncStatus::Synced));
+
+    let report = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &roots,
+        &f.pair("amp"),
+        NOW,
+    )
+    .unwrap();
+    assert_eq!(
+        (report.removed_rows(), report.kept_in_use_rows()),
+        (1, 0),
+        "{report}"
+    );
+    assert!(!exists_any(&shared));
+    assert_eq!(f.status("amp"), Some(SyncStatus::Disabled));
+    assert_eq!(f.status("kimi_cli"), Some(SyncStatus::Disabled));
+}
+
+/// Skill-wide Delete puts every row of the skill in scope, so the shared
+/// artifact of the legacy pair goes with both rows.
+#[test]
+fn a_skill_delete_still_removes_the_shared_artifact_of_the_legacy_pair() {
+    let (f, shared) = legacy_amp_kimi_pair();
+
+    let report = remove_skill(
+        &f.store,
+        &central_repo_of(&f.store),
+        &HostRoots::under_home(f.home()),
+        &f.skill_id,
+    )
+    .unwrap();
+
+    assert_eq!(
+        (report.removed_rows(), report.kept_in_use_rows()),
+        (2, 0),
+        "{report}"
+    );
+    assert!(report.record_deleted);
+    assert!(!exists_any(&shared));
+}

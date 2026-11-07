@@ -726,6 +726,42 @@ describe("removalOutcome", () => {
       "Left /x in place: it isn't what Skills Hub put there",
     );
   });
+  // Release 1.3.5 review, Astra 1: a pair Disable of Kimi Code keeps the link
+  // Amp's live row still records. The Deployment settled; the line names the
+  // harness still using the folder.
+  it("an artifact kept because another live row still uses it settles its Deployment and is named with that harness", async () => {
+    const report: RemovalReport = {
+      targets: [
+        {
+          rows: [{ scope: "global_target", id: "t2", skill_id: "s1", tool: "kimi_cli", folder_key: "kimi_cli" }],
+          path: "/home/.config/agents/skills/alpha",
+          status: { status: "kept_in_use", by: ["claude", "amp", "claude"] },
+        },
+      ],
+      central_removed: false,
+      record_deleted: false, cleared_markers: [], disabled_markers: [],
+    };
+    const line = t("outcome.keptInUseLine", {
+      path: "/home/.config/agents/skills/alpha",
+      harnesses: ["CLAUDE", "amp"].join(t("common.listSeparator")),
+    });
+    const toggle = removalOutcome(report, { ...ctx, action: "toggle" });
+    expect(toggle.errors).toEqual([]);
+    expect(toggle.notes).toEqual([line]);
+    expect(toggle.toast).toEqual({ kind: "success", tone: "success", message: "status.syncDisabled", detail: line });
+    expect(toggle.completion).toEqual({ reload: true, closeModal: true, conflict: false });
+    const all = removalOutcome(report, { ...ctx, action: "all" });
+    expect(all.toast?.message).toBe(t("outcome.done.disabled", { count: 1 }));
+    const unassigned = removalOutcome(report, { ...ctx, action: "bulkUnassign" });
+    expect(unassigned.toast?.message).toBe(t("projectsSurface.done.unassigned", { count: 1 }));
+    const configured = projectRemovalOutcome(report, { ...ctx, action: "configureTools" });
+    expect(configured.errors).toEqual([]);
+    expect(configured.notes).toEqual([line]);
+    const i18n = i18next.createInstance();
+    await i18n.init({ resources, lng: "en", interpolation: { escapeValue: false } });
+    const en = i18n.t.bind(i18n) as unknown as typeof t;
+    expect(en("outcome.keptInUseLine", { path: "/x", harnesses: "Amp" })).toBe("Kept /x: still used by Amp");
+  });
   // Round 20 t18 review, Sol 103: a bulk Remove's report shows the folders a
   // *deleted* skill left in place too; Retry stays for the kept skills.
   it("the Delete report view details a deleted skill's left-in-place folders and retries only kept skills", () => {
