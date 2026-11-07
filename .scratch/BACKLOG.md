@@ -5,7 +5,7 @@ commit that closes it (or that opens the effort/ticket which absorbs it — say 
 source pointer; re-verify it against the code before scheduling. Procedure and status vocabulary:
 `docs/agents/issue-tracker.md` § Lifecycle.
 
-Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#119**.
+Numbers are stable: never renumber; retire by deleting the line (history keeps it). Next free number: **#120**.
 
 Round 19 closed 2026-11-05 (`archive/round19/spec.md` § Closure — 2026-11-05); every line it carried was re-derived from
 the code that day (`archive/round19/closure/extract-{A..G}.md`).
@@ -69,6 +69,18 @@ code before scheduling.)
   keep `name` / `updated` / `added` / `issues` values). Source: 1.3.3 L4 review.
 - **#115 The bulk Enable confirmation shows a stale project count for a moment** after a Disable, until project
   placements reload (pre-existing; seen in 1.3.3 L4's fixture checks). Source: 1.3.3 L4 report.
+- **#119 Library writes hardened against a concurrent same-user process.** Today's scope (CONTEXT.md, Artifact
+  removal) treats another process swapping entries inside the Library while the app acts as out of scope. Ticket 19's
+  review round 2 (`reviews/round20-t19-names-review.md`, findings 3–6) listed what hardening would take:
+  - populate private staging through held directory handles, with no-follow, exclusive creates;
+  - carry the published entry's identity into rollback (`install_finalize.rs:623–629`), and refuse to delete a
+    different occupant;
+  - make `no_replace`'s fallback fail closed, or replace it, on filesystems without an exclusive rename;
+  - bind Windows's held directory against a replaceable reparse point;
+  - give `move_old_central_aside` the no-replace primitive, with #50.
+
+  Decide first whether the scope should change at all. A same-user process can already rewrite every file the user
+  owns. Source: this review; `core/no_replace.rs` module doc.
 - **#117 A failed cache refetch can delete an entry another thread is copying from.** `fetch_through_cache`'s retry
   after a failed refetch (`remove_entry`) does not check the reader leases that round 20 ticket 04 added
   (`CachedCheckout`). Clean Now and the age-out do check them. Route the retry through the same idle check, or make it

@@ -52,3 +52,49 @@ apply boundary.
 ## Disposition (orchestrator, 2026-11-06)
 
 Fix pass 1 takes both findings: finding 2 is small and part of the same quarantine.
+
+---
+
+# Round 2 (Astra): fix pass 1 (`e737e928`, delta from `cd3722c8`)
+
+- **Verdict as written:** **FIX-THEN-SHIP**, with three blocking findings under the bar the orchestrator wrote.
+- **Round 1 status:** finding 1 is fixed for every collision the app itself can cause, and finding 2 (Edit
+  quarantine) is resolved.
+- **Gate:** passed, 1,435 frontend tests and 1,150 Rust tests. CI is green on Linux, Windows and web. There is no macOS
+  CI job; macOS was verified locally.
+
+## Findings
+
+All three need another process to swap an entry inside the Library while the app is acting.
+
+- **3. P2: the fallback can replace an empty folder swapped in** for the reservation between `mkdirat` and `renameat`
+  (`no_replace.rs:139–143`). This is the limit the module already documents.
+- **4. P1: a private staging folder replaced by a link** while it is being populated sends the copy through the link,
+  and the link itself gets published (`install_finalize.rs:204–221`). Private-dir creation, copy and `drop` go by
+  path, not through the held directory.
+- **5. P1: rollback with `Published::Yes`** deletes a foreign folder substituted after publication, then restores the
+  backup and reports success (`install_finalize.rs:623–629`).
+- **6. P3: `move_old_central_aside`** checks a name, then renames onto it. Its home is BACKLOG #50.
+
+Two lesser points: the module doc listed only `ENOTSUP` for macOS (the code also accepts `EOPNOTSUPP` and `EINVAL`), and
+on Windows the held handle doesn't pin a path reached through a replaceable reparse point.
+
+## Disposition (orchestrator, 2026-11-06): ship
+
+- **These findings are outside the project's stated scope.** `CONTEXT.md`, in the Artifact removal entry (since 1.3.3,
+  #107), says: "Admission is a check before the removal, not atomic with it: a process swapping a folder for a link,
+  or mounting one inside the entry, in between is out of scope."
+- **The bar didn't restate that scope, and that is the orchestrator's error.** Findings 3–5 apply a stricter scope:
+  another same-user process racing the app inside its Library. A process like that can already rewrite every file the
+  user owns.
+- **What this PR has to guarantee is met.** Nothing the app itself does, and no input it receives (a SKILL.md name, a
+  typed name, a rename), places bytes outside the Library or replaces an existing entry.
+- **Applied at merge:** the macOS error list in the module doc, and a scope note pointing to BACKLOG #119
+  (`eec57f08`).
+- **The hardening itself is BACKLOG #119:**
+  - owned-directory staging through held handles;
+  - rollback that carries the published identity;
+  - a fallback that fails closed;
+  - the Windows reparse-point binding;
+  - finding 6 together with #50.
+- **From now on, every review brief states this scope.** Ticket 10 is the first.
