@@ -176,3 +176,32 @@ skill name changes.
 ## Disposition (orchestrator, 2026-11-06)
 
 Fix pass 2 takes findings 11 and 12. The non-blocking items go to tickets 10 and 16, and are added to them now.
+
+---
+
+# Round 3 (Astra): fix pass 2 (`d67ae59`, delta from `7690b61`)
+
+- **Verdict:** **SHIP**. No blocking findings.
+- **Finding 11 resolved.**
+  - `placement::deployment_path` rejects any name that isn't one normal component, with a typed `INVALID_PATH
+    { not_a_folder_name }`. It runs before:
+    - the global batch;
+    - `sync_assignment_target` (resync, Propagation, Enable and the overwrite retry);
+    - a new assignment;
+    - the Library-move relink;
+    - removal planning, with Reveal admission excluded.
+  - Every production replacement carries a managed-dir claim that reaches `replace_occupant` before anything is
+    removed.
+  - The round-2 probes are refused and their bytes survive.
+- **Finding 12 resolved.**
+  - **The asked path is required everywhere.** It's on the wire for `AssignmentDecision.path` and
+    `BatchSyncOverrideDto.path`. A `None` path appears only in the Add flow's pre-install decision, and the frontend
+    sends the asked path on every route.
+  - **Stale answers are refused.** Project and Enable answers are compared under the guard, and a stale answer gets
+    `NOT_FOUND` with neither folder touched.
+  - **Enable keeps the row's identity.** It restores the disabled row's id, mode and path.
+  - **Tests:** changes to the project root, the assignment name and the skill name are all refused. An answer whose
+    path still matches settles normally.
+- **No new follow-ups.** The round-2 items stay in tickets 10, 16 and 19.
+- **Gate:** `npm run check` and `cargo test --all` passed (1,432 frontend tests; 1,126 Rust tests, 1 ignored). CI is
+  green, Windows included.
