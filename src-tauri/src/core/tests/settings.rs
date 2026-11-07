@@ -291,12 +291,12 @@ fn effective_global_tool_targets_prefers_the_recorded_selection_over_detection()
     let (dir, store) = make_store();
     let home = dir.path().join("home");
     install_tool(&home, "claude_code");
-    install_tool(&home, "pi");
+    install_tool(&home, "codex");
 
     // Never configured: detection is the fallback.
     assert_eq!(
         effective_global_tool_targets(&store, &HostRoots::under_home(&home)).unwrap(),
-        vec!["claude_code".to_string(), "pi".to_string()]
+        vec!["claude_code".to_string(), "codex".to_string()]
     );
 
     // A selection is taken verbatim, even when it names an installed Tool the
@@ -317,17 +317,17 @@ fn effective_global_tool_targets_prefers_the_recorded_selection_over_detection()
 
     // A selected-but-uninstalled key survives: the set is never intersected
     // with detection, so downstream can report it as a stale-selection skip.
-    raw(&store, "global_selected_tools_v1", r#"["cursor","pi"]"#);
+    raw(&store, "global_selected_tools_v1", r#"["cursor","codex"]"#);
     assert_eq!(
         effective_global_tool_targets(&store, &HostRoots::under_home(&home)).unwrap(),
-        vec!["cursor".to_string(), "pi".to_string()]
+        vec!["cursor".to_string(), "codex".to_string()]
     );
 
     // A blank row is "never configured", hence detection again.
     raw(&store, "global_selected_tools_v1", "  ");
     assert_eq!(
         effective_global_tool_targets(&store, &HostRoots::under_home(&home)).unwrap(),
-        vec!["claude_code".to_string(), "pi".to_string()]
+        vec!["claude_code".to_string(), "codex".to_string()]
     );
 }
 
@@ -1596,15 +1596,12 @@ fn apply_global_tool_config_refuses_a_reader_only_harness() {
     assert_eq!(store.get_setting("global_selected_tools_v1").unwrap(), None);
 }
 
-/// Round 20 relabels (Xum, Devin, QwenPaw) keep every stored key: a
+/// Round 20 relabels (Xum, Devin, QwenPaw, Zenflow) keep every stored key: a
 /// selection saved under the old keys still saves and reads back unchanged.
 #[test]
 fn a_selection_of_relabelled_harnesses_round_trips_under_their_stored_keys() {
     let (dir, store) = make_store();
-    // Zencoder is served by the `.agents` folder since #108, so its
-    // selection is that folder's and reads back as every harness it serves;
-    // the other relabelled rows keep a folder of their own.
-    let keys: Vec<String> = ["mux", "windsurf", "copaw"]
+    let keys: Vec<String> = ["mux", "windsurf", "copaw", "zencoder"]
         .iter()
         .map(|k| k.to_string())
         .collect();

@@ -214,7 +214,7 @@ pub struct ToolAdapter {
     pub skills_dir: RegistryPath,
     /// Global skill directories this tool was registered with before
     /// `skills_dir` was corrected (Augment: `.augment/rules`, its rules dir;
-    /// Codex: `.codex/skills`, round 20 #108). Only two rules read it: the
+    /// Kilo: `.kilocode/skills`, round 20 #108). Only two rules read it: the
     /// deletion rule (`ensure_path_within_tool_dirs`, and the managed folders
     /// a row's old artifact is removed in, `placement::managed_global_dirs`),
     /// so a Deployment the redeploy (`core::redeploy`) moves out of it can be
@@ -442,10 +442,8 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
     ToolAdapter {
         id: ToolId::Codex,
         display_name: "Codex",
-        // Brief § 5 / Q12 (round 20 #108): `~/.agents/skills` is Codex's
-        // canonical user dir; its own `~/.codex/skills` is deprecated.
-        skills_dir: home(".agents/skills"),
-        former_skills_dirs: &[home(".codex/skills")],
+        skills_dir: home(".codex/skills"),
+        former_skills_dirs: &[],
         detect_dirs: &[home(".codex")],
         project_skills_dir: Some(".agents/skills"),
         group: Some(VirtualGroup::AgentsStandard),
@@ -464,10 +462,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
             },
             precedence: Precedence::Both,
             duplicates: DuplicateBehaviour::ShowsAll,
-            also_reads: &[AlsoRead {
-                dir: home(".codex/skills"),
-                mode: ReadMode::Default,
-            }],
+            also_reads: &[],
         },
     },
     ToolAdapter {
@@ -586,7 +581,8 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         display_name: "Kimi Code CLI",
         // Q12 (round 20 #108): `~/.kimi-code/skills`, under the tool's config
         // root. The add-skill path `~/.config/agents/skills` (shared with Amp)
-        // is read only by legacy `kimi-cli`: a former dir. The tool's config root is ~/.kimi-code (kimi.com/code docs) or
+        // is read only by legacy `kimi-cli`: a former dir.
+        // The tool's config root is ~/.kimi-code (kimi.com/code docs) or
         // ~/.kimi on earlier releases (kimi-cli.com docs); either counts.
         // `KIMI_CODE_HOME` relocates the root; env-var homes are not honoured
         // (a Finder-launched app does not see shell env).
@@ -1033,10 +1029,9 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
     ToolAdapter {
         id: ToolId::OpenHands,
         display_name: "OpenHands",
-        // Q12 (round 20 #108): `~/.agents/skills` is the recommended user dir;
-        // the add-skill path `~/.openhands/skills` is legacy (still read).
-        skills_dir: home(".agents/skills"),
-        former_skills_dirs: &[home(".openhands/skills")],
+        // add-skill global path: ~/.openhands/skills/
+        skills_dir: home(".openhands/skills"),
+        former_skills_dirs: &[],
         detect_dirs: &[home(".openhands")],
         project_skills_dir: Some(".openhands/skills"),
         group: None,
@@ -1054,10 +1049,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
             },
             precedence: Precedence::Shared,
             duplicates: DuplicateBehaviour::Shadows,
-            also_reads: &[AlsoRead {
-                dir: home(".openhands/skills"),
-                mode: ReadMode::Default,
-            }],
+            also_reads: &[],
         },
     },
     ToolAdapter {
@@ -1223,10 +1215,9 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         // Zenflow is Zencoder's desktop orchestrator and shares its skills
         // (an alias, not a row).
         display_name: "Zencoder / Zenflow",
-        // Q12 (round 20 #108): `~/.agents/skills` is its user dir; the
-        // add-skill path `~/.zencoder/skills` is deprecated (still read).
-        skills_dir: home(".agents/skills"),
-        former_skills_dirs: &[home(".zencoder/skills")],
+        // add-skill global path: ~/.zencoder/skills/
+        skills_dir: home(".zencoder/skills"),
+        former_skills_dirs: &[],
         detect_dirs: &[home(".zencoder")],
         project_skills_dir: Some(".zencoder/skills"),
         group: None,
@@ -1244,10 +1235,7 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
             },
             precedence: Precedence::Unknown,
             duplicates: DuplicateBehaviour::Unknown,
-            also_reads: &[AlsoRead {
-                dir: home(".zencoder/skills"),
-                mode: ReadMode::Default,
-            }],
+            also_reads: &[],
         },
     },
     ToolAdapter {
@@ -1383,11 +1371,9 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
     ToolAdapter {
         id: ToolId::Goose,
         display_name: "Goose",
-        // Q12 (round 20 #108): `~/.agents/skills` is recommended; the add-skill
-        // path `~/.config/goose/skills` (its platform config dir) is read for
-        // compatibility.
-        skills_dir: home(".agents/skills"),
-        former_skills_dirs: &[home(".config/goose/skills")],
+        // add-skill global path: ~/.config/goose/skills/
+        skills_dir: home(".config/goose/skills"),
+        former_skills_dirs: &[],
         detect_dirs: &[home(".config/goose")],
         project_skills_dir: Some(".goose/skills"),
         group: None,
@@ -1405,16 +1391,10 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
             },
             precedence: Precedence::Unknown,
             duplicates: DuplicateBehaviour::Unknown,
-            also_reads: &[
-                AlsoRead {
-                    dir: home(".agents/plugins"),
-                    mode: ReadMode::Default,
-                },
-                AlsoRead {
-                    dir: home(".config/goose/skills"),
-                    mode: ReadMode::Default,
-                },
-            ],
+            also_reads: &[AlsoRead {
+                dir: home(".agents/plugins"),
+                mode: ReadMode::Default,
+            }],
         },
     },
     ToolAdapter {

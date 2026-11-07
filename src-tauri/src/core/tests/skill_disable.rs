@@ -224,8 +224,8 @@ fn item_for<'a>(
 
 #[test]
 fn disabling_a_pair_removes_the_artifact_and_keeps_the_row_disabled() {
-    let f = fixture(&["claude_code", "pi"]);
-    f.sync(&["claude_code", "pi"]);
+    let f = fixture(&["claude_code", "codex"]);
+    f.sync(&["claude_code", "codex"]);
     let target = f.global_path(".claude/skills");
     assert!(exists_any(&target));
 
@@ -242,7 +242,7 @@ fn disabling_a_pair_removes_the_artifact_and_keeps_the_row_disabled() {
     assert!(!exists_any(&target), "artifact gone");
     assert_eq!(f.status("claude_code"), Some(SyncStatus::Disabled));
     assert_eq!(
-        f.status("pi"),
+        f.status("codex"),
         Some(SyncStatus::Synced),
         "other Tools untouched"
     );

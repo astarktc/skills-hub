@@ -59,13 +59,10 @@ fn every_shared_dir_has_its_folder_key() {
         .chain(constituents_of(VirtualGroup::AgentsStandard).map(ToolAdapter::key))
         .collect();
     let expected: Vec<(ScopeKind, &str, &str)> = vec![
-        // Codex, OpenHands, Zencoder and Goose deploy to `~/.agents/skills`
-        // since #108: the AGENTS group's own folder.
-        (
-            ScopeKind::Global,
-            "/home/op/.agents/skills",
-            "agents_skills",
-        ),
+        // No two global rows share a skills dir since #108 moved Kimi Code
+        // off Amp's `~/.config/agents/skills` (round 20 ticket 10); the plain
+        // shared-folder rule is pinned on that pre-#108 shape in
+        // `amp_and_kimi_are_served_by_one_folder`.
         // The AGENTS group owns `<project>/.agents/skills`.
         (ScopeKind::Project, ".agents/skills", "agents_skills"),
         (ScopeKind::Project, ".qoder/skills", "qoder"),
@@ -159,17 +156,15 @@ fn unknown_keys_and_project_less_harnesses_have_no_folder() {
     assert_eq!(row_folder(ScopeKind::Project, "trae_cn"), "trae");
 }
 
-/// The operator's machine (Claude Code, Codex and Pi installed): Claude Code
-/// and Pi in their own folders, Codex served by the `.agents` folder it
-/// deploys to since #108 (its own `~/.codex/skills` is a former dir); Pi
-/// reads the `.agents` folder too.
+/// The operator's machine (Claude Code, Codex and Pi installed): every
+/// harness its own folder; the `.agents` folder is read by Codex and Pi.
 #[test]
-fn the_operators_machine_places_three_folders() {
+fn the_operators_machine_places_three_own_folders() {
     let roots = roots();
     let installed = InstalledSet::from_keys(["claude_code", "codex", "pi"]);
     let layout = place(PlacementScope::Global(&roots), &installed, &settings());
 
-    for key in ["claude_code", "pi"] {
+    for key in ["claude_code", "codex", "pi"] {
         let folder = layout.folder_of(key).expect("placed");
         assert_eq!(folder.key, key);
         assert_eq!(folder.served, vec![key]);
@@ -179,13 +174,10 @@ fn the_operators_machine_places_three_folders() {
             adapter_by_key(key).unwrap().skills_dir.resolve(&roots)
         );
     }
-    let agents = layout.folder_of("codex").expect("codex is placed");
-    assert_eq!(agents.key, "agents_skills");
-    assert_eq!(agents.served, vec!["codex"]);
-    assert_eq!(agents.mode, DeployMode::Link);
-    assert_eq!(agents.path, roots.home.join(".agents/skills"));
+    let agents = layout.folder("agents_skills").expect("agents folder");
+    assert!(agents.served.is_empty(), "nothing detects `~/.agents`");
     assert_eq!(agents.undetected, {
-        let mut undetected = vec!["agents_skills", "openhands", "zencoder", "goose"];
+        let mut undetected = vec!["agents_skills"];
         undetected.extend(
             crate::core::tool_adapters::reader_only_harnesses()
                 .iter()
@@ -193,7 +185,7 @@ fn the_operators_machine_places_three_folders() {
         );
         undetected
     });
-    assert_eq!(agents.readers, vec!["pi"]);
+    assert_eq!(agents.readers, vec!["codex", "pi"]);
     let claude = layout.folder("claude_code").unwrap();
     assert!(
         claude.readers.is_empty(),

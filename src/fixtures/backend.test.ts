@@ -2355,12 +2355,12 @@ describe("legacy two-row folders read through the one fold (round 4)", () => {
 // ---------------------------------------------------------------------------
 
 describe("fixture redeploy", () => {
-  it("the launch check previews every Codex Deployment still in its old folder", async () => {
+  it("the launch check previews every Kilo Deployment still in its old folder", async () => {
     const { handlers } = backendFor("redeploy");
     const check = await handlers.getRedeployLaunchCheck();
     expect(check.finished).toBeNull();
     expect(check.preview.global.correction).toBeGreaterThan(2);
-    expect(check.preview.harnesses).toEqual(["codex"]);
+    expect(check.preview.harnesses).toEqual(["kilo_code"]);
     const { preview: none } = await backendFor("rich").handlers.getRedeployLaunchCheck();
     expect(none.global.correction).toBe(0);
   });
@@ -2372,10 +2372,10 @@ describe("fixture redeploy", () => {
     const occupied = first.report.moves.find((m) => m.status.status === "failed")!;
     expect(occupied.skill_name).toBe("zod-schema-first");
     expect(first.report.edited_copies.map((c) => c.skill_name)).toEqual(["handoff"]);
-    expect(first.preview).toEqual({ global: { correction: 1, migration: 0 }, journal: 1, harnesses: ["codex"] });
+    expect(first.preview).toEqual({ global: { correction: 1, migration: 0 }, journal: 1, harnesses: ["kilo_code"] });
     expect(first.report.moves.filter((m) => m.status.status === "moved")).toHaveLength(before - 2);
     const handoff = first.skills.find((s) => s.name === "handoff")!;
-    expect(handoff.targets.some((t) => t.tool === "agents_skills" && t.target_path.endsWith("/.agents/skills/handoff"))).toBe(true);
+    expect(handoff.targets.some((t) => t.tool === "kilo_code" && t.target_path.endsWith("/.kilo/skills/handoff"))).toBe(true);
 
     const copy = first.report.edited_copies[0];
     const second = await handlers.redeployDeployments(

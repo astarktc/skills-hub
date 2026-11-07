@@ -126,24 +126,23 @@ fn global_group_installedness_is_its_own_detect_dir() {
 
 #[test]
 fn global_catalog_groups_shared_skills_dirs_and_resolves_paths_under_home() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let home = tempfile::tempdir().unwrap();
     let entries = global_tool_entries(&HostRoots::under_home(home.path()));
 
-    // Round 20 #108: Codex, OpenHands, Zencoder and Goose deploy to
-    // `~/.agents/skills`, the AGENTS folder itself — one shared dir.
-    let agents = entry(&entries, ToolId::AgentsStandard.as_key());
-    assert_eq!(
-        agents.shared_with,
-        vec!["agents_skills", "codex", "openhands", "zencoder", "goose"]
-    );
-    assert_eq!(entry(&entries, "codex").shared_with, agents.shared_with);
-    // Kimi Code left Amp's `~/.config/agents/skills`: each its own.
-    assert_eq!(entry(&entries, "amp").shared_with, vec!["amp"]);
-    assert_eq!(entry(&entries, "kimi_cli").shared_with, vec!["kimi_cli"]);
+    let amp = entry(&entries, "amp");
+    let kimi = entry(&entries, "kimi_cli");
+    assert_eq!(amp.shared_with, vec!["amp", "kimi_cli"]);
+    assert_eq!(kimi.shared_with, amp.shared_with);
 
     let claude = entry(&entries, "claude_code");
     assert_eq!(claude.shared_with, vec!["claude_code"]);
     assert!(entries.iter().all(|e| e.shared_with.contains(&e.key)));
+
+    // Honest grouping: the group's global dir (`~/.agents/skills`) is its own,
+    // not the union of what its project-scope constituents read.
+    let agents = entry(&entries, ToolId::AgentsStandard.as_key());
+    assert_eq!(agents.shared_with, vec![agents.key]);
     assert_eq!(entry(&entries, "cursor").shared_with, vec!["cursor"]);
 
     // Grouping is `shared_with`, never the displayed `placement` dir (see
@@ -151,16 +150,19 @@ fn global_catalog_groups_shared_skills_dirs_and_resolves_paths_under_home() {
     assert_eq!(
         skills_dir_in(
             &HostRoots::under_home(home.path()),
-            adapter_by_key("codex").unwrap()
+            adapter_by_key("amp").unwrap()
         ),
-        home.path().join(".agents/skills")
+        home.path().join(".config/agents/skills")
     );
     assert_eq!(
         skills_dir_in(
             &HostRoots::under_home(home.path()),
-            adapter_by_key("amp").unwrap()
+            adapter_by_key("kimi_cli").unwrap()
         ),
-        home.path().join(".config/agents/skills")
+        skills_dir_in(
+            &HostRoots::under_home(home.path()),
+            adapter_by_key("amp").unwrap()
+        )
     );
     assert_eq!(
         skills_dir_in(
@@ -426,10 +428,10 @@ fn cursor_with_claude_code_and_codex_installed_sees_both() {
 }
 
 /// Kimi Code's `~/.claude` / `~/.codex` / `~/.config/agents` reads are
-/// legacy `kimi-cli`'s only: no pair. Since #108 it deploys to its own
-/// `~/.kimi-code/skills` and reads `~/.agents/skills` by default, so the
-/// AGENTS folder (and Codex, which deploys there) pairs with it. Codex now
-/// deploys into the AGENTS folder itself: one folder, no pair.
+/// legacy `kimi-cli`'s only: no pair with Claude Code or Codex. Since #108
+/// it deploys to its own `~/.kimi-code/skills` and reads `~/.agents/skills`
+/// by default, so the AGENTS folder pairs with it. Codex, which reads
+/// `~/.agents/skills` and its own folder by default, pairs with it too.
 #[test]
 fn kimis_legacy_only_reads_make_no_pair() {
     let home = tempfile::tempdir().unwrap();
@@ -441,11 +443,17 @@ fn kimis_legacy_only_reads_make_no_pair() {
     assert_eq!(
         duplicate_readers_of(&roots, "kimi_cli"),
         Some(DuplicateReads {
-            keys: vec!["agents_skills", "codex"],
+            keys: vec!["agents_skills"],
             behaviour: DuplicateBehaviour::Unknown,
         })
     );
-    assert_eq!(duplicate_readers_of(&roots, "codex"), None);
+    assert_eq!(
+        duplicate_readers_of(&roots, "codex"),
+        Some(DuplicateReads {
+            keys: vec!["agents_skills"],
+            behaviour: DuplicateBehaviour::ShowsAll,
+        })
+    );
 }
 
 /// A harness that is not installed deploys nothing: no pair names it.
@@ -473,25 +481,25 @@ fn an_uninstalled_reader_carries_no_pair() {
     assert_eq!(duplicate_readers_of(&roots, "cursor"), None);
 }
 
-/// Codex and Goose deploy to `~/.agents/skills` (#108): they share one
-/// folder, deployed to once (the shared-dir dedupe), so it is not a pair.
-/// Crush reads Amp's `~/.config/agents/skills` and the AGENTS folder beside
-/// its own: a pair with each harness deploying there.
+/// Amp reads `~/.config/agents/skills`, which is also Kimi's deploy dir:
+/// they share one folder, deployed to once (the shared-dir dedupe), so it is
+/// not a pair. Crush reads the same folder beside its own: a pair with both.
 #[test]
 fn shared_dir_siblings_are_not_a_pair() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let home = tempfile::tempdir().unwrap();
     let roots = HostRoots::under_home(home.path());
-    for key in ["codex", "goose", "amp"] {
+    for key in ["amp", "kimi_cli"] {
         install(home.path(), key);
     }
-    assert_eq!(duplicate_readers_of(&roots, "codex"), None);
-    assert_eq!(duplicate_readers_of(&roots, "goose"), None);
+    assert_eq!(duplicate_readers_of(&roots, "amp"), None);
+    assert_eq!(duplicate_readers_of(&roots, "kimi_cli"), None);
 
     install(home.path(), "crush");
     assert_eq!(
         duplicate_readers_of(&roots, "crush"),
         Some(DuplicateReads {
-            keys: vec!["codex", "amp", "goose"],
+            keys: vec!["amp", "kimi_cli"],
             behaviour: DuplicateBehaviour::Unknown,
         })
     );
@@ -553,9 +561,7 @@ fn fx_reads_the_claude_codex_and_opencode_folders_beside_the_agents_folder() {
     assert_eq!(
         reader_entry_of(&roots, "fx").duplicate_readers,
         Some(DuplicateReads {
-            // Codex deploys into fx's own `.agents/skills` since #108, so
-            // fx's `~/.codex/skills` read meets no Deployment of it.
-            keys: vec!["claude_code", "opencode"],
+            keys: vec!["claude_code", "codex", "opencode"],
             behaviour: DuplicateBehaviour::LoadsNone,
         })
     );
@@ -592,7 +598,7 @@ fn warp_shows_every_copy_of_the_folders_it_also_reads() {
     assert_eq!(
         reader_entry_of(&roots, "warp").duplicate_readers,
         Some(DuplicateReads {
-            keys: vec!["cursor", "claude_code", "droid"],
+            keys: vec!["cursor", "claude_code", "codex", "droid"],
             behaviour: DuplicateBehaviour::ShowsAll,
         })
     );
@@ -643,22 +649,11 @@ fn the_ticket_06_rows_resolve_their_cross_read_pairs() {
     for adapter in default_tool_adapters() {
         mark_installed_in(&roots, adapter);
     }
-    // Since #108 Codex, OpenHands, Zencoder and Goose deploy into the AGENTS
-    // folder itself: a reader of `~/.agents/skills` pairs with each of them,
-    // in registry order (the frontend intersects the keys with the selection).
-    let order = |key: &str| {
-        default_tool_adapters()
-            .iter()
-            .position(|a| a.key() == key)
-            .unwrap()
-    };
     let pair = |keys: &[&'static str], behaviour| {
-        let mut keys = keys.to_vec();
-        if keys.contains(&"agents_skills") {
-            keys.extend(["codex", "openhands", "zencoder", "goose"]);
-        }
-        keys.sort_by_key(|key| order(key));
-        Some(DuplicateReads { keys, behaviour })
+        Some(DuplicateReads {
+            keys: keys.to_vec(),
+            behaviour,
+        })
     };
     use DuplicateBehaviour::{FlagsConflict, Shadows, ShowsAll, Unknown};
     let expected = [
@@ -677,17 +672,20 @@ fn the_ticket_06_rows_resolve_their_cross_read_pairs() {
         ("forgecode", pair(&["agents_skills"], Shadows)),
         (
             "firebender",
-            pair(&["agents_skills", "cursor", "claude_code"], ShowsAll),
+            pair(
+                &["agents_skills", "cursor", "claude_code", "codex"],
+                ShowsAll,
+            ),
         ),
         (
             "minimax_code",
-            pair(&["agents_skills", "claude_code"], Shadows),
+            pair(&["agents_skills", "claude_code", "codex"], Shadows),
         ),
         ("posit_assistant", pair(&["agents_skills"], Shadows)),
         ("aider_desk", None),
         (
             "autohand_code",
-            pair(&["agents_skills", "claude_code"], Shadows),
+            pair(&["agents_skills", "claude_code", "codex"], Shadows),
         ),
     ];
     for (key, pairs) in expected {
@@ -704,8 +702,8 @@ fn every_catalog_entry_carries_its_folder_key() {
     let roots = HostRoots::under_home(home.path());
 
     let global = global_tool_entries(&roots);
+    // Kimi Code left Amp's folder (#108): each is its own folder.
     assert_eq!(entry(&global, "kimi_cli").folder_key, "kimi_cli");
-    assert_eq!(entry(&global, "codex").folder_key, "agents_skills");
     assert_eq!(entry(&global, "amp").folder_key, "amp");
     assert_eq!(entry(&global, "cursor").folder_key, "cursor");
     assert_eq!(entry(&global, "agents_skills").folder_key, "agents_skills");

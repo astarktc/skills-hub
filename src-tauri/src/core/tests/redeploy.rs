@@ -1,6 +1,10 @@
 //! Tests for `core::redeploy` — moving global Deployments to where placement
 //! says they belong (round 20 ticket 10), ported from the former
-//! `target_relocation` tests where they still apply.
+//! `target_relocation` tests where they still apply. The registry corrections
+//! 1.3.5 ships (Antigravity, Kimi Code, Kilo, Xum, Devin) are exercised
+//! directly; the `.agents` moves held for 1.4.0 (Codex, Goose) run on a
+//! registry shadow ([`agents_shape`]) because they are what collapses several
+//! harnesses' rows into one folder.
 //!
 //! Every case runs against a temp home, a temp database and a central repo
 //! beside it (`removal_fence::central_repo_of`), with every harness dir
@@ -153,6 +157,45 @@ fn fixture(installed: &[&str]) -> Fixture {
     f
 }
 
+/// The `.agents` moves held for 1.4.0 (release split; ticket 12): Codex and
+/// Goose deploy to `~/.agents/skills`, their old dirs former dirs, Codex still
+/// reading its deprecated folder. 1.3.5 ships without them, but it is the
+/// shape that collapses several harnesses' rows into one folder (Q24) — the
+/// redeploy must handle it the day ticket 12 lands — so these tests run on
+/// it as a registry shadow.
+fn agents_shape() {
+    use crate::core::tool_adapters::reads::{AlsoRead, ReadMode};
+    use crate::core::tool_adapters::{test_overrides, RegistryPath, ToolAdapter};
+    const CODEX_FORMER: &[RegistryPath] = &[RegistryPath::home(".codex/skills")];
+    const CODEX_ALSO: &[AlsoRead] = &[AlsoRead {
+        dir: RegistryPath::home(".codex/skills"),
+        mode: ReadMode::Default,
+    }];
+    const GOOSE_FORMER: &[RegistryPath] = &[RegistryPath::home(".config/goose/skills")];
+    let codex = adapter_by_key("codex").expect("codex").clone();
+    test_overrides::shadow(ToolAdapter {
+        skills_dir: RegistryPath::home(".agents/skills"),
+        former_skills_dirs: CODEX_FORMER,
+        reads: crate::core::tool_adapters::reads::ReadFacts {
+            also_reads: CODEX_ALSO,
+            ..codex.reads
+        },
+        ..codex
+    });
+    let goose = adapter_by_key("goose").expect("goose").clone();
+    test_overrides::shadow(ToolAdapter {
+        skills_dir: RegistryPath::home(".agents/skills"),
+        former_skills_dirs: GOOSE_FORMER,
+        ..goose
+    });
+}
+
+/// [`fixture`] on the [`agents_shape`].
+fn agents_fixture(installed: &[&str]) -> Fixture {
+    agents_shape();
+    fixture(installed)
+}
+
 #[cfg(unix)]
 fn link(source: &Path, target: &Path) {
     fs::create_dir_all(target.parent().unwrap()).expect("link parent");
@@ -180,13 +223,14 @@ fn only_move(report: &RedeployReport) -> &crate::core::redeploy::RedeployMove {
 // The move: deploy first, switch, remove what is provably ours
 // ---------------------------------------------------------------------------
 
-/// Codex's correction (Q12): its link in `~/.codex/skills` moves to
-/// `~/.agents/skills`, the folder that serves it now; the row becomes that
-/// folder's row and the old link — ours — is removed.
+/// Codex's correction (Q12, held for 1.4.0 — [`agents_shape`]): its link in
+/// `~/.codex/skills` moves to `~/.agents/skills`, the folder that serves it
+/// then; the row becomes that folder's row and the old link — ours — is
+/// removed.
 #[cfg(unix)]
 #[test]
 fn a_corrected_link_moves_to_its_folder_and_the_old_link_is_removed() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
 
     let report = f.run(&[]);
@@ -217,7 +261,7 @@ fn a_corrected_link_moves_to_its_folder_and_the_old_link_is_removed() {
 #[cfg(unix)]
 #[test]
 fn the_old_artifact_is_present_until_the_new_one_is_recorded() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
 
     test_seams::crash_after_switch();
@@ -269,7 +313,7 @@ fn an_unrecorded_old_copy_identical_to_the_library_is_removed() {
 #[cfg(unix)]
 #[test]
 fn identical_content_at_the_new_place_is_adopted() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
     copy_of(&f.central, &f.at(".agents/skills/alpha"));
 
@@ -306,7 +350,7 @@ fn a_deployment_already_in_place_is_no_move() {
 #[cfg(unix)]
 #[test]
 fn a_second_run_is_a_no_op() {
-    let f = fixture(&["codex", "kilo_code"]);
+    let f = agents_fixture(&["codex", "kilo_code"]);
     f.link_row("codex", ".codex/skills/alpha");
     f.link_row("kilo_code", ".kilocode/skills/alpha");
     assert_eq!(f.preview().global.correction, 2);
@@ -326,7 +370,7 @@ fn a_second_run_is_a_no_op() {
 #[cfg(unix)]
 #[test]
 fn a_harness_that_is_not_installed_is_left_as_recorded() {
-    let f = fixture(&[]);
+    let f = agents_fixture(&[]);
     let old = f.link_row("codex", ".codex/skills/alpha");
 
     assert_eq!(f.preview(), RedeployPreview::default());
@@ -350,7 +394,7 @@ fn foreign_at(f: &Fixture, rel: &str) -> PathBuf {
 #[cfg(unix)]
 #[test]
 fn a_different_folder_at_the_new_place_is_asked_about() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
     let foreign = foreign_at(&f, ".agents/skills/alpha");
 
@@ -388,7 +432,7 @@ fn occupied(f: &Fixture, decision: OverrideDecision) -> RedeployAnswer {
 #[cfg(unix)]
 #[test]
 fn keep_leaves_the_move_undone_and_pending() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
     let foreign = foreign_at(&f, ".agents/skills/alpha");
 
@@ -411,7 +455,7 @@ fn keep_leaves_the_move_undone_and_pending() {
 #[cfg(unix)]
 #[test]
 fn overwrite_replaces_the_folder_in_the_way() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
     foreign_at(&f, ".agents/skills/alpha");
 
@@ -429,7 +473,7 @@ fn overwrite_replaces_the_folder_in_the_way() {
 #[cfg(unix)]
 #[test]
 fn an_answer_naming_another_path_is_stale_and_touches_nothing() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
     let foreign = foreign_at(&f, ".agents/skills/alpha");
 
@@ -464,7 +508,7 @@ fn edited_copy(f: &Fixture) -> PathBuf {
 
 #[test]
 fn an_edited_old_copy_is_asked_about_and_kept_until_answered() {
-    let f = fixture(&["codex", "cursor"]);
+    let f = agents_fixture(&["codex", "cursor"]);
     let old = edited_copy(&f);
 
     let report = f.run(&[]);
@@ -497,7 +541,7 @@ fn edited_answer(f: &Fixture, decision: EditedCopyDecision) -> RedeployAnswer {
 
 #[test]
 fn delete_removes_the_edited_copy() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = edited_copy(&f);
     f.run(&[]);
 
@@ -512,7 +556,7 @@ fn delete_removes_the_edited_copy() {
 
 #[test]
 fn leave_disowns_the_edited_copy_and_names_its_readers() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = edited_copy(&f);
     f.run(&[]);
 
@@ -531,7 +575,7 @@ fn leave_disowns_the_edited_copy_and_names_its_readers() {
 /// after an answer was given is asked again, never deleted on a stale yes.
 #[test]
 fn an_edited_copy_answer_naming_another_path_deletes_nothing() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = edited_copy(&f);
     f.run(&[]);
 
@@ -554,7 +598,7 @@ fn an_edited_copy_answer_naming_another_path_deletes_nothing() {
 /// Enable deploys it there.
 #[test]
 fn a_disabled_row_is_re_recorded_with_nothing_written() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.at(".codex/skills/alpha");
     f.seed(
         "codex",
@@ -613,7 +657,7 @@ fn a_never_deployed_row_is_re_recorded_with_nothing_written() {
 #[cfg(unix)]
 #[test]
 fn rows_collapsing_into_one_folder_keep_the_skill_live_and_report_lost_disables() {
-    let f = fixture(&["codex", "goose"]);
+    let f = agents_fixture(&["codex", "goose"]);
     let codex = f.link_row("codex", ".codex/skills/alpha");
     f.seed(
         "goose",
@@ -642,7 +686,7 @@ fn rows_collapsing_into_one_folder_keep_the_skill_live_and_report_lost_disables(
 /// records it disabled — and no disable is lost.
 #[test]
 fn rows_all_disabled_collapse_into_a_disabled_folder_row() {
-    let f = fixture(&["codex", "goose"]);
+    let f = agents_fixture(&["codex", "goose"]);
     for (tool, rel) in [
         ("codex", ".codex/skills/alpha"),
         ("goose", ".config/goose/skills/alpha"),
@@ -669,7 +713,7 @@ fn rows_all_disabled_collapse_into_a_disabled_folder_row() {
 #[cfg(unix)]
 #[test]
 fn a_legacy_row_merges_into_the_folders_row_already_in_place() {
-    let f = fixture(&["codex", "agents_skills"]);
+    let f = agents_fixture(&["codex", "agents_skills"]);
     let codex = f.link_row("codex", ".codex/skills/alpha");
     f.link_row("agents_skills", ".agents/skills/alpha");
 
@@ -686,7 +730,7 @@ fn a_legacy_row_merges_into_the_folders_row_already_in_place() {
 #[cfg(unix)]
 #[test]
 fn a_disabled_skill_with_an_artifact_left_is_not_touched() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
     let mut row = f.row("codex").unwrap();
     row.status = SyncStatus::Error;
@@ -802,7 +846,7 @@ fn crash(f: &Fixture, arm: fn()) {
 #[cfg(unix)]
 #[test]
 fn a_crash_before_the_switch_is_finished_by_the_next_run() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
     crash(&f, test_seams::crash_before_switch);
     assert!(present(&old) && present(&f.at(".agents/skills/alpha")));
@@ -820,7 +864,7 @@ fn a_crash_before_the_switch_is_finished_by_the_next_run() {
 #[cfg(unix)]
 #[test]
 fn a_crash_after_the_switch_is_finished_by_the_launch_check() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
     crash(&f, test_seams::crash_after_switch);
 
@@ -848,7 +892,7 @@ fn a_crash_after_the_switch_is_finished_by_the_launch_check() {
 #[cfg(unix)]
 #[test]
 fn a_crash_after_the_removal_finishes_with_nothing_to_remove() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
     crash(&f, test_seams::crash_after_switch);
     fs::remove_file(&old).unwrap();
@@ -865,7 +909,7 @@ fn a_crash_after_the_removal_finishes_with_nothing_to_remove() {
 #[cfg(unix)]
 #[test]
 fn a_journal_entry_that_no_longer_matches_is_reported_and_touches_nothing() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
     crash(&f, test_seams::crash_after_switch);
     // Someone replaced the old link with a folder of their own.
@@ -884,7 +928,7 @@ fn a_journal_entry_that_no_longer_matches_is_reported_and_touches_nothing() {
 #[cfg(unix)]
 #[test]
 fn a_journal_entry_whose_new_artifact_is_gone_keeps_the_old_one() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
     crash(&f, test_seams::crash_after_switch);
     fs::remove_file(f.at(".agents/skills/alpha")).unwrap();
@@ -907,7 +951,7 @@ fn a_journal_entry_whose_new_artifact_is_gone_keeps_the_old_one() {
 #[cfg(unix)]
 #[test]
 fn f14_aliased_old_and_new_roots_are_one_entry_and_nothing_is_removed() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
     link(&f.at(".codex/skills"), &f.at(".agents/skills"));
 
@@ -932,7 +976,7 @@ fn f14_aliased_old_and_new_roots_are_one_entry_and_nothing_is_removed() {
 #[cfg(unix)]
 #[test]
 fn f14_a_missing_old_artifact_with_a_foreign_destination_is_not_reported_synced() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
     fs::remove_file(&old).unwrap();
     let foreign = foreign_at(&f, ".agents/skills/alpha");
@@ -960,7 +1004,7 @@ fn f14_a_missing_old_artifact_with_a_foreign_destination_is_not_reported_synced(
 #[cfg(unix)]
 #[test]
 fn f15_a_destination_aliased_onto_the_central_repo_is_refused() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
     fs::create_dir_all(f.at(".agents")).unwrap();
     link(&f.central_dir(), &f.at(".agents/skills"));
@@ -993,7 +1037,7 @@ fn f15_a_destination_aliased_onto_the_central_repo_is_refused() {
 #[cfg(unix)]
 #[test]
 fn f15_an_old_root_aliased_onto_the_central_repo_never_loses_central_bytes() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     fs::create_dir_all(f.at(".codex")).unwrap();
     link(&f.central_dir(), &f.at(".codex/skills"));
     let old = f.at(".codex/skills/alpha");
@@ -1022,7 +1066,7 @@ fn f15_an_old_root_aliased_onto_the_central_repo_never_loses_central_bytes() {
 /// its row unchanged.
 #[test]
 fn f16_keep_over_a_copy_with_local_only_edits_keeps_the_edits() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = edited_copy(&f);
     foreign_at(&f, ".agents/skills/alpha");
 
@@ -1050,7 +1094,7 @@ fn f16_keep_over_a_copy_with_local_only_edits_keeps_the_edits() {
 #[cfg(unix)]
 #[test]
 fn the_report_crosses_the_wire_with_its_tags() {
-    let f = fixture(&["codex", "goose"]);
+    let f = agents_fixture(&["codex", "goose"]);
     f.link_row("codex", ".codex/skills/alpha");
     f.seed(
         "goose",
@@ -1071,7 +1115,7 @@ fn the_report_crosses_the_wire_with_its_tags() {
 #[cfg(unix)]
 #[test]
 fn the_preview_counts_moves_and_names_their_harnesses() {
-    let f = fixture(&["codex", "kilo_code", "claude_code"]);
+    let f = agents_fixture(&["codex", "kilo_code", "claude_code"]);
     f.link_row("codex", ".codex/skills/alpha");
     f.link_row("kilo_code", ".kilocode/skills/alpha");
     f.link_row("claude_code", ".claude/skills/alpha");
@@ -1089,7 +1133,7 @@ fn the_preview_counts_moves_and_names_their_harnesses() {
 #[cfg(unix)]
 #[test]
 fn a_skill_name_that_is_not_a_folder_name_is_refused() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
     let mut skill = f.store.get_skill_by_id("alpha").unwrap().unwrap();
     skill.name = "../escape".into();
@@ -1116,7 +1160,7 @@ fn the_global_batch_leaves_a_pending_move_to_the_redeploy() {
     use crate::core::global_sync::{
         sync_skills_to_tools, BatchPolicy, BatchSkill, BatchTargetStatus,
     };
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
 
     let outcomes = sync_skills_to_tools(
@@ -1158,7 +1202,7 @@ fn the_global_batch_leaves_a_pending_move_to_the_redeploy() {
 /// reported as a launch-check run of its own on every launch.
 #[test]
 fn the_launch_check_records_nothing_for_an_edited_copy_still_awaiting() {
-    let f = fixture(&["codex"]);
+    let f = agents_fixture(&["codex"]);
     edited_copy(&f);
     f.run(&[]);
 
@@ -1171,4 +1215,92 @@ fn the_launch_check_records_nothing_for_an_edited_copy_still_awaiting() {
         1,
         "still owed"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The corrections 1.3.5 ships (Q12 minus the `.agents` moves)
+// ---------------------------------------------------------------------------
+
+/// Kilo's correction: its link in `~/.kilocode/skills` moves to
+/// `~/.kilo/skills`, keyed by its own folder, and the old link is removed.
+#[cfg(unix)]
+#[test]
+fn kilos_link_moves_to_kilo_skills() {
+    let f = fixture(&["kilo_code"]);
+    let old = f.link_row("kilo_code", ".kilocode/skills/alpha");
+
+    let report = f.run(&[]);
+
+    assert!(matches!(only_move(&report).status, RedeployStatus::Moved));
+    assert_eq!(only_move(&report).folder_key, "kilo_code");
+    let new = f.at(".kilo/skills/alpha");
+    assert_eq!(fs::read_link(&new).unwrap(), f.central);
+    assert!(!present(&old));
+    let row = f.row("kilo_code").unwrap();
+    assert_eq!(row.id, "row-kilo_code");
+    assert_eq!(Path::new(&row.target_path), new);
+}
+
+/// Xum's and Antigravity's corrections, with copies (every platform): a copy
+/// recording the Library's identity is a provable duplicate and is removed.
+#[test]
+fn xum_and_antigravity_copies_move_to_their_current_folders() {
+    let f = fixture(&["mux", "antigravity"]);
+    let xum = f.copy_row("mux", ".mux/skills/alpha");
+    let antigravity = f.copy_row("antigravity", ".gemini/antigravity/global_skills/alpha");
+
+    let report = f.run(&[]);
+
+    assert_eq!(report.moves.len(), 2, "{report:#?}");
+    assert!(report
+        .moves
+        .iter()
+        .all(|m| matches!(m.status, RedeployStatus::Moved)));
+    assert!(!present(&xum) && !present(&antigravity));
+    assert_eq!(
+        Path::new(&f.row("mux").unwrap().target_path),
+        f.at(".xum/skills/alpha")
+    );
+    assert_eq!(
+        Path::new(&f.row("antigravity").unwrap().target_path),
+        f.at(".gemini/config/skills/alpha")
+    );
+    assert!(f.at(".mux/skills").is_dir(), "the old folder itself stays");
+}
+
+/// Devin's correction lands where the registry resolves its folder on this
+/// OS: `~/.config/devin/skills`, or `%APPDATA%\devin\skills` on Windows
+/// (the roaming override; proven by the Windows CI leg).
+#[test]
+fn devins_copy_moves_to_its_folder_on_this_os() {
+    let f = fixture(&["windsurf"]);
+    let old = f.copy_row("windsurf", ".codeium/windsurf/skills/alpha");
+
+    let report = f.run(&[]);
+
+    assert!(matches!(only_move(&report).status, RedeployStatus::Moved));
+    let devin = adapter_by_key("windsurf").unwrap();
+    let expected = devin.skills_dir.resolve(&f.roots).join("alpha");
+    if cfg!(windows) {
+        assert!(expected.starts_with(&f.roots.roaming), "{expected:?}");
+    } else {
+        assert_eq!(expected, f.at(".config/devin/skills/alpha"));
+    }
+    assert_eq!(Path::new(&f.row("windsurf").unwrap().target_path), expected);
+    assert!(expected.join("SKILL.md").is_file());
+    assert!(!present(&old));
+}
+
+/// The operator's machine on 1.3.5 (Claude Code, Codex, Pi and `.agents`,
+/// every row in its own folder): nothing to move, so no launch offer.
+#[test]
+fn the_operators_machine_has_nothing_to_move() {
+    let f = fixture(&["claude_code", "codex", "pi", "agents_skills"]);
+    f.copy_row("claude_code", ".claude/skills/alpha");
+    f.copy_row("codex", ".codex/skills/alpha");
+    f.copy_row("pi", ".pi/agent/skills/alpha");
+    f.copy_row("agents_skills", ".agents/skills/alpha");
+
+    assert_eq!(f.preview(), RedeployPreview::default());
+    assert!(f.run(&[]).moves.is_empty());
 }

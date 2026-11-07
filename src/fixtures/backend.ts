@@ -2087,9 +2087,12 @@ export function createFixtureBackend(
     };
   };
 
-  /** The harnesses showing an old copy left in `move.from`'s folder. */
+  /**
+   * The harnesses showing an old copy left in `move.from`'s folder: Kimi
+   * Code's old folder is Amp's own (Rust `placement::readers_of_global_dir`).
+   */
   const oldCopyReaders = (move: FixtureRedeployMove) =>
-    [move.tool, "cursor"].filter((key) => isInstalled(key));
+    (move.tool === "kimi_cli" ? ["amp"] : [move.tool]).filter((key) => isInstalled(key));
 
   /**
    * Rust `redeploy::redeploy`: finish the journal (edited copies awaiting an

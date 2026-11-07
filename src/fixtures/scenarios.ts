@@ -458,28 +458,41 @@ function registry(now: number): FixtureState {
 // ---------------------------------------------------------------------------
 
 /**
- * The rich library on the first launch after the registry corrections: every
- * Codex Deployment still sits in `~/.codex/skills`, which Codex now reads only
- * as a deprecated folder — the `.agents/skills` folder serves it. The launch
- * offers to move them. One move meets a different folder at the new place
- * (the overwrite ask), and one old copy was edited in place (the edited-copy
- * question, a row of the same ask).
+ * The rich library on the first launch after the registry corrections, with
+ * Kilo Code installed and selected: every Kilo Deployment still sits in
+ * `~/.kilocode/skills`, Kilo's legacy folder — its folder is `~/.kilo/skills`
+ * now. The launch offers to move them. One move meets a different folder at
+ * the new place (the overwrite ask), and one old copy was edited in place (the
+ * edited-copy question, a row of the same ask).
  */
 function redeploy(now: number): FixtureState {
   const state: FixtureState = { ...rich(now), scenario: "redeploy" };
+  state.installedTools = [...state.installedTools, "kilo_code"];
+  state.seenTools = [...state.installedTools];
+  state.settings = defaultSettings([...ALL, "kilo_code"]);
   const moves: FixtureRedeployMove[] = [];
   for (const skill of state.skills) {
-    const codex = skill.dto.targets.find((target) => target.tool === "codex" && target.synced_at !== null);
-    if (!codex) continue;
+    const claude = skill.dto.targets.find((target) => target.tool === "claude_code" && target.status === "synced");
+    if (!claude) continue;
     const name = skill.dto.name;
+    const edited = name === "handoff";
+    const from = `${HOME}/.kilocode/skills/${name}`;
+    skill.dto.targets.push({
+      tool: "kilo_code",
+      mode: edited ? "copy" : "symlink",
+      status: "synced",
+      target_path: from,
+      synced_at: claude.synced_at,
+      deployed_hash: edited ? skill.contentHash : null,
+    });
     moves.push({
       skillId: skill.dto.id,
-      tool: "codex",
-      from: codex.target_path,
-      folderKey: "agents_skills",
-      to: `${HOME}/.agents/skills/${name}`,
+      tool: "kilo_code",
+      from,
+      folderKey: "kilo_code",
+      to: `${HOME}/.kilo/skills/${name}`,
       ...(name === "zod-schema-first" ? { occupied: true } : {}),
-      ...(name === "handoff" ? { edited: true } : {}),
+      ...(edited ? { edited: true } : {}),
     });
   }
   state.redeploy = { moves, awaiting: [] };

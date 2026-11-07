@@ -901,10 +901,10 @@ fn auto_sync_off_without_remove_originals_leaves_and_reports_every_original() {
     let f = fixture();
     install_tool(&f, "claude_code");
     install_tool(&f, "cursor");
-    install_tool(&f, "pi");
+    install_tool(&f, "codex");
     let chosen = seed_skill_dir(&f, "claude_code", "alpha", "same");
     let sibling = seed_skill_dir(&f, "cursor", "alpha", "same");
-    let divergent = seed_skill_dir(&f, "pi", "alpha", "different");
+    let divergent = seed_skill_dir(&f, "codex", "alpha", "different");
 
     let report = run(&f, &[selection("alpha", &chosen)], policy_off(false));
 
@@ -926,7 +926,7 @@ fn auto_sync_off_without_remove_originals_leaves_and_reports_every_original() {
                 matches!(status, OriginalStatus::LeftInPlace),
                 "{tool}: {status:?}"
             ),
-            "pi" => assert!(
+            "codex" => assert!(
                 matches!(status, OriginalStatus::KeptDivergent),
                 "{tool}: {status:?}"
             ),
@@ -1385,11 +1385,11 @@ fn remove_divergent_retains_a_copy_whose_identity_is_unknown() {
     let f = fixture();
     install_tool(&f, "claude_code");
     install_tool(&f, "cursor");
-    install_tool(&f, "pi");
+    install_tool(&f, "codex");
     let chosen = seed_skill_dir(&f, "claude_code", "alpha", "same-body");
     fs::write(chosen.join("notes.txt"), "notes").unwrap();
     let divergent = seed_skill_dir(&f, "cursor", "alpha", "different-body");
-    let unknown = seed_skill_dir(&f, "pi", "alpha", "same-body");
+    let unknown = seed_skill_dir(&f, "codex", "alpha", "same-body");
     fs::write(unknown.join("notes.txt"), "notes").unwrap();
     if !make_unreadable(&unknown.join("notes.txt")) {
         eprintln!("skipped: this user can read a 000 file");
@@ -1411,7 +1411,7 @@ fn remove_divergent_retains_a_copy_whose_identity_is_unknown() {
     );
     assert!(divergent.symlink_metadata().is_err(), "B is gone");
     assert!(
-        is_identity_unknown(original_at(originals, &unknown, "pi"), &unknown),
+        is_identity_unknown(original_at(originals, &unknown, "codex"), &unknown),
         "C is retained and reported as an unknown comparison: {originals:?}"
     );
     assert_eq!(

@@ -15,7 +15,7 @@ fn path_resolution_joins_adapter_dirs_onto_home() {
     let home = tempfile::tempdir().unwrap();
     let cases: [(&str, &str, &[&str]); 6] = [
         ("claude_code", ".claude/skills", &[".claude"]),
-        ("codex", ".agents/skills", &[".codex"]),
+        ("codex", ".codex/skills", &[".codex"]),
         ("cursor", ".cursor/skills", &[".cursor"]),
         // Amp keeps the skills convention dir Kimi left (round 20 #108); each
         // is detected by its own config root (Kimi's moved across releases).
@@ -74,7 +74,7 @@ fn every_existing_row_resolves_to_the_paths_it_always_has() {
         ("agents_skills", ".agents/skills", &[], &[".agents"]),
         ("cursor", ".cursor/skills", &[], &[".cursor"]),
         ("claude_code", ".claude/skills", &[], &[".claude"]),
-        ("codex", ".agents/skills", &[".codex/skills"], &[".codex"]),
+        ("codex", ".codex/skills", &[], &[".codex"]),
         (
             "opencode",
             ".config/opencode/skills",
@@ -120,24 +120,14 @@ fn every_existing_row_resolves_to_the_paths_it_always_has() {
         ("mistral_vibe", ".vibe/skills", &[], &[".vibe"]),
         ("mux", ".xum/skills", &[".mux/skills"], &[".mux", ".xum"]),
         ("openclaude", ".openclaude/skills", &[], &[".openclaude"]),
-        (
-            "openhands",
-            ".agents/skills",
-            &[".openhands/skills"],
-            &[".openhands"],
-        ),
+        ("openhands", ".openhands/skills", &[], &[".openhands"]),
         ("pi", ".pi/agent/skills", &[], &[".pi"]),
         ("qoder", ".qoder/skills", &[], &[".qoder"]),
         ("qoderwork", ".qoderwork/skills", &[], &[".qoderwork"]),
         ("qwen_code", ".qwen/skills", &[], &[".qwen"]),
         ("trae", ".trae/skills", &[], &[".trae"]),
         ("trae_cn", ".trae-cn/skills", &[], &[".trae-cn"]),
-        (
-            "zencoder",
-            ".agents/skills",
-            &[".zencoder/skills"],
-            &[".zencoder"],
-        ),
+        ("zencoder", ".zencoder/skills", &[], &[".zencoder"]),
         ("neovate", ".neovate/skills", &[], &[".neovate"]),
         ("pochi", ".pochi/skills", &[], &[".pochi"]),
         ("adal", ".adal/skills", &[], &[".adal"]),
@@ -148,12 +138,7 @@ fn every_existing_row_resolves_to_the_paths_it_always_has() {
             &[".kilocode", ".kilo"],
         ),
         ("roo_code", ".roo/skills", &[], &[".roo"]),
-        (
-            "goose",
-            ".agents/skills",
-            &[".config/goose/skills"],
-            &[".config/goose"],
-        ),
+        ("goose", ".config/goose/skills", &[], &[".config/goose"]),
         ("gemini_cli", ".gemini/skills", &[], &[".gemini"]),
         ("github_copilot", ".copilot/skills", &[], &[".copilot"]),
         ("clawdbot", ".clawdbot/skills", &[], &[".clawdbot"]),
@@ -1261,12 +1246,7 @@ fn relabelled_harnesses_keep_their_stored_keys_and_folders() {
             Some(".codeium/windsurf/skills"),
         ),
         ("copaw", "QwenPaw", ".copaw/skill_pool", None),
-        (
-            "zencoder",
-            "Zencoder / Zenflow",
-            ".agents/skills",
-            Some(".zencoder/skills"),
-        ),
+        ("zencoder", "Zencoder / Zenflow", ".zencoder/skills", None),
     ];
     let under = |rel: &str| {
         let mut path = home.path().to_path_buf();
@@ -1470,8 +1450,7 @@ fn every_row_restates_its_brief_read_facts() {
             [Yes, No],
             P::Both,
             D::ShowsAll,
-            // Its own deprecated folder, still read (round 20 #108 moved the row).
-            &[(".codex/skills", M::Default)],
+            &[],
         ),
         (
             "opencode",
@@ -1678,7 +1657,7 @@ fn every_row_restates_its_brief_read_facts() {
             [Yes, No],
             P::Shared,
             D::Shadows,
-            &[(".openhands/skills", M::Default)],
+            &[],
         ),
         (
             "pi",
@@ -1746,7 +1725,7 @@ fn every_row_restates_its_brief_read_facts() {
             [Yes, Yes],
             P::Unknown,
             D::Unknown,
-            &[(".zencoder/skills", M::Default)],
+            &[],
         ),
         (
             "neovate",
@@ -1803,10 +1782,7 @@ fn every_row_restates_its_brief_read_facts() {
             [Yes, Yes],
             P::Unknown,
             D::Unknown,
-            &[
-                (".agents/plugins", M::Default),
-                (".config/goose/skills", M::Default),
-            ],
+            &[(".agents/plugins", M::Default)],
         ),
         (
             "gemini_cli",
