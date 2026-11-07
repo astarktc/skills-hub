@@ -36,11 +36,10 @@
 //!    `TARGET_EXISTS` row for the one overwrite ask. A Keep answer leaves the
 //!    move undone (`kept`, still pending). A genuine replacement — Overwrite,
 //!    or ours in the wrong mode — is **staged** ([`staged_replace`]): deployed
-//!    beside the occupant, journaled, then swapped in — atomically, or by two
-//!    renames only while a working old Deployment stays in place (a copy, or
-//!    a link written as the Library copy's absolute path — [`IntactOld`]);
-//!    otherwise the occupant is not touched and the move is refused, still pending
-//!    (`DESTINATION_REFUSED`, `cannotReplaceSafely`). A Disabled row and a
+//!    beside the occupant, journaled, then swapped in by one atomic exchange.
+//!    Where the OS or file system offers none, the occupant is not touched and
+//!    the move is refused, still pending (`DESTINATION_REFUSED`,
+//!    `cannotReplaceSafely`). A Disabled row and a
 //!    row that never deployed (no claim) are re-recorded at the new place with
 //!    nothing written.
 //! 2. **Switch** in one transaction: the folder's row takes the new key, path
@@ -59,12 +58,18 @@
 //!    and the report names its readers. A link elsewhere is never
 //!    ours and is reported left behind. Each settled entry is dropped.
 //!
-//! **The journal.** Every run and the launch check finish the journal first:
-//! an entry is acted on only while the row still records the journaled new
-//! place and both artifacts still have their journaled identities (Library
-//! move's resume rule); otherwise it is reported left behind and dropped. An
-//! edited copy awaiting an answer stays in the journal (`edited`) and is
-//! asked again by the next run. An answer names exactly its question — an
+//! **The journal.** Every run and the launch check finish the journal first.
+//! An entry is dropped only on positive evidence: the new place verifiably
+//! serves the skill (the occupant check returns ours for the moved row's
+//! evidence, and it is reachable as a folder), or the skill record is gone.
+//! Anything else — the new place absent, unreachable or not ours, a leftover
+//! the entry cannot recognise, a removal that failed — keeps it journaled
+//! (`unfinished`), counted by the preview and retried by every run and
+//! launch; a path that cannot be resolved never authorises forgetting it.
+//! Once the new place serves, the old artifact is removed only under the
+//! rules of step 3, and what stays is reported left behind. An edited copy
+//! awaiting an answer stays in the journal (`edited`) and is asked again by
+//! the next run. An answer names exactly its question — an
 //! occupied move's rows and place, an edited copy's journal entry and path —
 //! and a stale one is refused with nothing touched. A crash at any step
 //! leaves at most a duplicate, never a missing skill: the old artifact goes
@@ -74,8 +79,7 @@
 //! Core never resolves roots: callers pass the host roots and the configured
 //! central repo (`commands::installer_paths`).
 
-use std::ffi::OsStr;
-use std::path::{Component, Path, PathBuf, Prefix};
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -90,7 +94,7 @@ use super::environment::HostRoots;
 use super::errors::{CommandError, DestinationRefusal, SignalError};
 use super::global_sync::OverrideDecision;
 use super::mutation_guard;
-use super::no_replace::{ExchangeError, HeldDir, StrictRenameError};
+use super::no_replace::{ExchangeError, HeldDir};
 use super::ownership::{self, Deployed, Occupancy};
 use super::placement::{
     self, capability_entry, managed_global_dirs, readers_of_global_dir, row_reachable, DeployMode,
@@ -280,9 +284,10 @@ pub enum JournalStatus {
     /// An edited copy still awaiting the operator's answer (see
     /// `edited_copies`); still journaled.
     AwaitingAnswer,
-    /// A replacement cut short that could not be finished, with nothing
-    /// else provably serving the skill: still journaled, finished by a later
-    /// run or launch.
+    /// Not finished: the new place does not verifiably serve the skill
+    /// (absent, unreachable, not ours), or what the entry journaled could not
+    /// be recognised or settled. Still journaled; every run and launch
+    /// retries it.
     Unfinished,
 }
 
@@ -310,8 +315,8 @@ pub enum RedeployLeftReason {
     NotOurs,
     /// Something else occupies the old path since it was journaled.
     Replaced,
-    /// The row no longer records the journaled new place, or the new artifact
-    /// is no longer the one deployed: the old one may be the only copy.
+    /// Its skill is gone, or its journal entry could not be read: nothing
+    /// was touched.
     Stale,
     /// Its removal failed or was refused.
     RemovalFailed,
@@ -1260,15 +1265,6 @@ struct Staged {
 
 const STAGE_PREFIX: &str = ".skills-hub-redeploy-";
 const STAGE_NEW: &str = ".new";
-const STAGE_OLD: &str = ".old";
-
-/// The set-aside sibling of a staged artifact's path.
-fn aside_of(stage: &Path) -> Option<PathBuf> {
-    let name = stage.file_name()?.to_str()?;
-    let base = name.strip_suffix(STAGE_NEW)?;
-    base.starts_with(STAGE_PREFIX)
-        .then(|| stage.with_file_name(format!("{base}{STAGE_OLD}")))
-}
 
 /// Replace the occupant at the new place so that an interruption at any
 /// step is finished from the journal, never leaving the skill missing:
@@ -1279,30 +1275,23 @@ fn aside_of(stage: &Path) -> Option<PathBuf> {
 ///    (`.skills-hub-redeploy-<id>.new`);
 /// 3. journal the replacement (`replacing`): the occupant and the staged
 ///    artifact, by path and physical identity;
-/// 4. swap them — the occupant checked to still be the one judged right
-///    before: one atomic exchange where the OS offers it
-///    (`no_replace::HeldDir::exchange`; the occupant lands at the staged
-///    name), else — only while a working old Deployment of this move stays
-///    in place elsewhere ([`IntactOld`], re-verified right before) — the
-///    occupant set aside (`….old`) and the staged artifact moved in, each a
-///    strict exclusive rename (`HeldDir::rename_no_replace_strict`, never the
-///    reservation fallback);
+/// 4. swap them in one atomic exchange (`no_replace::HeldDir::exchange`),
+///    the occupant checked to still be the one judged right before: the new
+///    place is never empty, and the occupant lands at the staged name;
 /// 5. the switch (the caller) drops the `replacing` entry and journals the
-///    set-aside occupant as an old artifact, removed like any other.
+///    occupant, now at the staged name, as an old artifact, removed like any
+///    other.
 ///
-/// With neither an exchange nor an intact old Deployment, or without an
-/// exclusive rename on the file system, the occupant is never touched: what
-/// was staged is undone and the move fails with `DESTINATION_REFUSED`
-/// (`cannotReplaceSafely`), still pending — the folder at the new place may
-/// be the only working one, and two renames leave the new place empty
-/// between them (round 20 t10 review, findings 7 and 8).
+/// Where the OS or file system offers no exchange (Windows always; SMB,
+/// exFAT, …) the occupant is never touched: what was staged is undone, its
+/// journal entry dropped, and the move fails with `DESTINATION_REFUSED`
+/// (`cannotReplaceSafely`), still pending until the operator moves the
+/// folder aside. Two renames would leave the new place empty between them,
+/// and no proof that another Deployment keeps serving meanwhile has held
+/// (round 20 t10 review, findings 7–12 and the round 4 disposition).
 ///
-/// A failure before the occupant moves undoes what was staged; a failure
-/// between the two renames puts the occupant back. What an interruption
-/// leaves, the journal finish completes ([`settle_replacing`]): with the
-/// exchange the new place is never empty; with two renames it is empty only
-/// between them, the old Deployment still serving, and the finish moves the
-/// staged artifact in.
+/// A failure before the swap undoes what was staged; what an interruption
+/// leaves, the journal finish completes ([`settle_replacing`]).
 #[allow(clippy::too_many_arguments)]
 fn staged_replace(
     ctx: &Ctx<'_>,
@@ -1323,12 +1312,7 @@ fn staged_replace(
     };
     let id = Uuid::new_v4().to_string();
     let stage_name = format!("{STAGE_PREFIX}{id}{STAGE_NEW}");
-    let aside_name = format!("{STAGE_PREFIX}{id}{STAGE_OLD}");
     let stage = folder.join(&stage_name);
-    let aside = folder.join(&aside_name);
-    // The working old Deployment that would serve while two renames leave the
-    // new place empty, judged before anything is staged.
-    let intact_old = IntactOld::find(planned, occupant);
 
     // 1. The occupant could be removed at all.
     removal_fence::admit(
@@ -1398,8 +1382,8 @@ fn staged_replace(
         Err(err)
     };
     #[cfg(test)]
-    test_seams::before_set_aside();
-    // 4. The occupant is still the one judged; set it aside, move the new in.
+    test_seams::before_swap();
+    // 4. The occupant is still the one judged; swap the new one in.
     if JournaledEntry::of(dest)? != Some(occupant) {
         return undo(anyhow::anyhow!(TargetExistsError {
             target: dest.clone(),
@@ -1416,52 +1400,22 @@ fn staged_replace(
         Ok(held) => held,
         Err(err) => return undo(err.into()),
     };
-    // One atomic exchange where the OS offers it: the new place is never
-    // empty, and the occupant lands at the staged name.
     #[cfg(test)]
-    let exchanged = if test_seams::two_step_swap() {
+    let exchanged = if test_seams::no_exchange() {
         Err(ExchangeError::Unsupported)
     } else {
         held.exchange(name, stage_name.as_ref())
     };
     #[cfg(not(test))]
     let exchanged = held.exchange(name, stage_name.as_ref());
-    let set_aside_at = match exchanged {
-        Ok(()) => stage.clone(),
+    match exchanged {
+        Ok(()) => {}
         Err(ExchangeError::Failed(err)) => {
             return undo(anyhow::Error::new(err).context(format!("redeploy: swap at {:?}", dest)))
         }
-        // Elsewhere two strict exclusive renames — set the occupant aside,
-        // then move the staged artifact in; the journal finishes a cut
-        // between them — but only while a working old Deployment of this move
-        // stays in place, re-verified now: the new place is empty between
-        // the renames. Otherwise the occupant is not touched.
-        Err(ExchangeError::Unsupported) => {
-            if !intact_old.as_ref().is_some_and(|old| old.holds(dest)) {
-                return undo(cannot_replace_safely(dest));
-            }
-            if let Err(err) = strict_rename(&held, name, aside_name.as_ref()) {
-                return undo(rename_error(err, dest));
-            }
-            #[cfg(test)]
-            test_seams::between_swap_renames();
-            if let Err(err) = strict_rename(&held, stage_name.as_ref(), name) {
-                let err = rename_error(err, dest);
-                return match strict_rename(&held, aside_name.as_ref(), name) {
-                    Ok(()) => undo(err),
-                    // Neither in place (the old Deployment still serves): the
-                    // journal entry stays for the finish. Flattened, so no
-                    // typed refusal in the chain claims nothing was touched.
-                    Err(back) => Err(anyhow::anyhow!(
-                        "{err:#}; and the folder set aside at {:?} could not be put back: {:#}",
-                        aside,
-                        rename_error(back, dest)
-                    )),
-                };
-            }
-            aside
-        }
-    };
+        // No exchange: the occupant is not touched.
+        Err(ExchangeError::Unsupported) => return undo(cannot_replace_safely(dest)),
+    }
     #[cfg(test)]
     test_seams::after_swap();
     Ok(Staged {
@@ -1472,7 +1426,7 @@ fn staged_replace(
             row_id: survivor.to_string(),
             skill_id: skill.id.clone(),
             tool: planned.folder_key.to_string(),
-            old_path: set_aside_at.to_string_lossy().into_owned(),
+            old_path: stage.to_string_lossy().into_owned(),
             old_entry: serde_json::to_string(&occupant)?,
             old_content_hash: authority.evidence_hash,
             new_path: dest.to_string_lossy().into_owned(),
@@ -1488,30 +1442,6 @@ fn staged_replace(
     })
 }
 
-/// Every rename of the redeploy: exclusive, and never the reservation
-/// fallback (`no_replace` module docs) — an interruption between that
-/// fallback's `mkdirat` and its rename would leave an empty folder the
-/// journal finish could not tell from anything else.
-fn strict_rename(held: &HeldDir, from: &OsStr, to: &OsStr) -> Result<(), StrictRenameError> {
-    #[cfg(test)]
-    if test_seams::no_exclusive_rename() {
-        return Err(StrictRenameError::Unsupported);
-    }
-    held.rename_no_replace_strict(from, to)
-}
-
-fn rename_error(err: StrictRenameError, at: &Path) -> anyhow::Error {
-    match err {
-        StrictRenameError::Occupied => {
-            anyhow::anyhow!("redeploy: something took {:?} meanwhile", at)
-        }
-        StrictRenameError::Unsupported => cannot_replace_safely(at),
-        StrictRenameError::Failed(err) => {
-            anyhow::Error::new(err).context(format!("redeploy: rename at {:?}", at))
-        }
-    }
-}
-
 /// The refusal to replace the occupant at `dest` (`cannotReplaceSafely`):
 /// nothing touched, the move pending until the operator moves it aside.
 fn cannot_replace_safely(dest: &Path) -> anyhow::Error {
@@ -1521,165 +1451,6 @@ fn cannot_replace_safely(dest: &Path) -> anyhow::Error {
         path,
         reason: DestinationRefusal::CannotReplaceSafely,
     })
-}
-
-/// A working old Deployment of a move, away from its new place: what keeps
-/// the skill served while two renames leave the new place empty (round 20
-/// t10 review, finding 7) — the two-rename fallback's witness. Judged
-/// independently of the occupant — its own row's evidence (a link resolving
-/// to the Library copy, or a copy whose Content identity is the one
-/// recorded) — and re-verified right before the first rename.
-///
-/// Only what the app writes witnesses (finding 9): a real folder (a copy),
-/// or a link whose text is exactly the skill's recorded Library copy path —
-/// absolute, with no `..`, a real folder not reached through the new place.
-/// A relative link, a `..` in its text, a link to a link or any other text
-/// does not, even when it resolves to the Library now: its resolution may
-/// pass through the new place and dangle once the occupant is set aside.
-struct IntactOld {
-    path: PathBuf,
-    entry: JournaledEntry,
-    deployed: Deployed,
-    /// The skill's recorded Library copy: the one text a witnessing link has.
-    library: PathBuf,
-}
-
-impl IntactOld {
-    /// The first live row of `planned` whose artifact is not the new place
-    /// (by path or physical identity), is not the occupant, and holds now.
-    fn find(planned: &Planned, occupant: JournaledEntry) -> Option<Self> {
-        Self::among(&planned.skill, &planned.rows, &planned.dest, occupant)
-    }
-
-    /// The first live row of `rows` (of `skill`) whose artifact is not `dest`
-    /// (by path or physical identity), is not the occupant, and holds now.
-    fn among(
-        skill: &SkillRecord,
-        rows: &[SkillTargetRecord],
-        dest: &Path,
-        occupant: JournaledEntry,
-    ) -> Option<Self> {
-        for row in rows
-            .iter()
-            .filter(|row| row.owns_artifact() && row.status != SyncStatus::Disabled)
-        {
-            let path = PathBuf::from(&row.target_path);
-            if path == dest || same_entry(&path, dest) {
-                continue;
-            }
-            // Absent or unreadable: not a working Deployment.
-            let Ok(Some(entry)) = JournaledEntry::of(&path) else {
-                continue;
-            };
-            if entry.id == occupant.id {
-                continue;
-            }
-            let old = Self {
-                path,
-                entry,
-                deployed: Deployed::of_target(row, Some(skill)),
-                library: PathBuf::from(&skill.central_path),
-            };
-            if old.holds(dest) {
-                return Some(old);
-            }
-        }
-        None
-    }
-
-    /// Whether it is still the entry judged, still a witness as the app
-    /// writes one (a real folder, or a link written as the Library copy's
-    /// path), still provably the skill, and untouched by renames at `dest`:
-    /// neither reached through the folder at `dest` nor holding it. Anything
-    /// unreadable does not hold.
-    fn holds(&self, dest: &Path) -> bool {
-        if !matches!(JournaledEntry::of(&self.path), Ok(Some(now)) if now == self.entry) {
-            return false;
-        }
-        let Ok(meta) = std::fs::symlink_metadata(&self.path) else {
-            return false;
-        };
-        let written = if meta.file_type().is_symlink() {
-            self.links_as_written(dest)
-        } else {
-            meta.is_dir()
-        };
-        if !written {
-            return false;
-        }
-        if !matches!(
-            ownership::check(&self.path, &self.deployed),
-            Ok(Occupancy::Ours)
-        ) {
-            return false;
-        }
-        let (Some(parent), Some(folder)) = (self.path.parent(), dest.parent()) else {
-            return false;
-        };
-        let apart = (|| -> Result<bool> {
-            if real_dir(dest) && Place::of(parent)?.within(&Place::of(dest)?) {
-                return Ok(false);
-            }
-            if real_dir(&self.path) && Place::of(folder)?.within(&Place::of(&self.path)?) {
-                return Ok(false);
-            }
-            Ok(true)
-        })();
-        apart.unwrap_or(false)
-    }
-
-    /// Whether the link is one the app wrote: its text, compared as a path
-    /// (never resolved), exactly the recorded Library copy path — itself
-    /// absolute, free of `..`, a real folder (not a link) and not reached
-    /// through `dest`, by spelling or physically.
-    fn links_as_written(&self, dest: &Path) -> bool {
-        let library = &self.library;
-        if !library.is_absolute()
-            || library
-                .components()
-                .any(|part| matches!(part, Component::ParentDir))
-        {
-            return false;
-        }
-        let Ok(text) = std::fs::read_link(&self.path) else {
-            return false;
-        };
-        if as_written(&text) != as_written(library) {
-            return false;
-        }
-        if !real_dir(library) || library.starts_with(dest) {
-            return false;
-        }
-        match (Place::of(library), Place::of(dest)) {
-            (Ok(library), Ok(dest)) => !library.within(&dest),
-            _ => false,
-        }
-    }
-}
-
-/// `path` as written, a Windows verbatim prefix (`\\?\C:\…`,
-/// `\\?\UNC\server\share\…` — how a link's text reads back) spelled
-/// plainly (`C:\…`, `\\server\share\…`); nothing else changes and nothing is
-/// resolved. Elsewhere a path has no prefix and is returned as it is.
-fn as_written(path: &Path) -> PathBuf {
-    let mut parts = path.components();
-    let plain = match parts.next() {
-        Some(Component::Prefix(prefix)) => match prefix.kind() {
-            Prefix::VerbatimDisk(disk) => format!("{}:", disk as char).into(),
-            Prefix::VerbatimUNC(server, share) => {
-                let mut plain = std::ffi::OsString::from(r"\\");
-                plain.push(server);
-                plain.push(r"\");
-                plain.push(share);
-                plain
-            }
-            _ => return path.to_path_buf(),
-        },
-        _ => return path.to_path_buf(),
-    };
-    let mut out = PathBuf::from(plain);
-    out.extend(parts);
-    out
 }
 
 /// Q24: every Disabled row that collapsed into a folder row where another
@@ -1764,7 +1535,8 @@ enum Settled {
     Finished,
     /// Another live row records it.
     Retained,
-    /// Left on disk, no longer journaled.
+    /// Left on disk, no longer journaled (the new place serves the skill,
+    /// or the skill is gone).
     Left {
         reason: RedeployLeftReason,
         error: Option<CommandError>,
@@ -1774,9 +1546,8 @@ enum Settled {
     },
     /// An edited copy awaiting the answer; stays journaled.
     Awaiting,
-    /// A staged replacement that could not be finished while nothing
-    /// provably serves the skill in its stead; stays journaled, pending, for
-    /// a later run to finish.
+    /// No positive evidence to let it go (the module's journal rule); stays
+    /// journaled, retried by every run and launch.
     Unfinished,
 }
 
@@ -1796,27 +1567,37 @@ fn left_at(reason: RedeployLeftReason, at: &Path) -> Settled {
     }
 }
 
-/// Settle `entry` now (the module's journal rule): act only while its row
-/// still records the journaled new place and both artifacts keep their
-/// journaled identities; remove the old artifact only when no live
-/// Deployment is it or lies inside it, and it is provably ours, or the
-/// operator answered Delete (or Overwrite, for a folder set aside).
+/// Settle `entry` now (the module's journal rule). The entry goes only on
+/// positive evidence: its skill is gone, or the new place verifiably serves
+/// the skill ([`serves`]). Then the old artifact is removed when no live
+/// Deployment is it or lies inside it, and it is provably ours or the
+/// operator answered Delete (or Overwrite, for a folder set aside); what
+/// stays is reported left behind. Anything else keeps the entry
+/// ([`Settled::Unfinished`]).
 fn settle_entry(
     ctx: &Ctx<'_>,
     entry: &RedeployJournalRecord,
     answer: Option<EditedCopyDecision>,
 ) -> Result<Settled> {
+    let store = ctx.store;
+    let Some(skill) = store.get_skill_by_id(&entry.skill_id)? else {
+        return Ok(skill_gone(entry));
+    };
     if matches!(
         entry.state.as_str(),
         STATE_REPLACING | STATE_REPLACING_ANSWERED
     ) {
-        return settle_replacing(ctx, entry);
+        return settle_replacing(ctx, entry, &skill);
     }
-    let store = ctx.store;
-    let (Ok(old_id), Ok(new_id)) = (
-        serde_json::from_str::<JournaledEntry>(&entry.old_entry),
-        serde_json::from_str::<JournaledEntry>(&entry.new_entry),
-    ) else {
+    let new = Path::new(&entry.new_path);
+    // The moved row still records the new place, and it serves the skill
+    // there: otherwise the old artifact may be the only copy.
+    let row = store.get_skill_target_by_id(&entry.row_id)?;
+    let row = row.filter(|row| Path::new(&row.target_path) == new);
+    if !row.is_some_and(|row| serves(ctx, &skill, new, Some(&row))) {
+        return Ok(Settled::Unfinished);
+    }
+    let Ok(old_id) = serde_json::from_str::<JournaledEntry>(&entry.old_entry) else {
         log::warn!(
             "[redeploy] unreadable journal entry {}; nothing was removed",
             entry.id
@@ -1824,21 +1605,15 @@ fn settle_entry(
         return Ok(left(RedeployLeftReason::Stale));
     };
     let old = Path::new(&entry.old_path);
-    let new = Path::new(&entry.new_path);
-    // The row still records the new place, and the new artifact is still the
-    // one deployed: otherwise the old one may be the only copy.
-    match store.get_skill_target_by_id(&entry.row_id)? {
-        Some(row) if Path::new(&row.target_path) == new && row.owns_artifact() => {}
-        _ => return Ok(left(RedeployLeftReason::Stale)),
-    }
-    if JournaledEntry::of(new)? != Some(new_id) {
-        return Ok(left(RedeployLeftReason::Stale));
-    }
-    match JournaledEntry::of(old)? {
-        None => return Ok(Settled::Finished),
-        Some(now) if now.id == new_id.id => return Ok(Settled::Finished),
-        Some(now) if now != old_id => return Ok(left(RedeployLeftReason::Replaced)),
-        Some(_) => {}
+    match JournaledEntry::of(old) {
+        Ok(None) => return Ok(Settled::Finished),
+        Ok(Some(_)) if same_entry(old, new) => return Ok(Settled::Finished),
+        Ok(Some(now)) if now != old_id => return Ok(left(RedeployLeftReason::Replaced)),
+        Ok(Some(_)) => {}
+        Err(err) => {
+            log::warn!("[redeploy] cannot read {:?}; kept pending: {err}", old);
+            return Ok(Settled::Unfinished);
+        }
     }
     if let Some(kept) = protected(ctx, old, old_id, new)? {
         return Ok(kept);
@@ -1848,7 +1623,52 @@ fn settle_entry(
     } else {
         answer
     };
-    remove_old(ctx, entry, old, authority)
+    remove_old(ctx, &skill, entry, old, authority)
+}
+
+/// Whether `path` verifiably serves `skill`: reachable as a folder, and the
+/// occupant check finds it ours by `row`'s own evidence (the moved row) or by
+/// the Library's (a link resolving to the Library copy, or a copy whose
+/// Content identity is the Library's). Anything unreadable does not serve.
+fn serves(
+    ctx: &Ctx<'_>,
+    skill: &SkillRecord,
+    path: &Path,
+    row: Option<&SkillTargetRecord>,
+) -> bool {
+    if !std::fs::metadata(path).is_ok_and(|meta| meta.is_dir()) {
+        return false;
+    }
+    let central = Path::new(&skill.central_path);
+    let library_hash = content_identity::read(Source::Managed {
+        store: ctx.store,
+        skill_id: &skill.id,
+    });
+    let library = Deployed::recorded(true, Some(central), library_hash.as_deref());
+    row.map(|row| Deployed::of_target(row, Some(skill)))
+        .into_iter()
+        .chain([library])
+        .any(|deployed| matches!(ownership::check(path, &deployed), Ok(Occupancy::Ours)))
+}
+
+/// The entry of a skill that is gone (deleted since): nothing is owed to it,
+/// so the entry goes. What it journaled and is still on disk — the old
+/// artifact, or a replacement's staged sibling — is reported left behind,
+/// untouched.
+fn skill_gone(entry: &RedeployJournalRecord) -> Settled {
+    let stays = if matches!(
+        entry.state.as_str(),
+        STATE_REPLACING | STATE_REPLACING_ANSWERED
+    ) {
+        Path::new(&entry.new_path)
+    } else {
+        Path::new(&entry.old_path)
+    };
+    if std::fs::symlink_metadata(stays).is_ok() {
+        left_at(RedeployLeftReason::Stale, stays)
+    } else {
+        Settled::Finished
+    }
 }
 
 /// Whether a live Deployment keeps the old artifact `old` (identity
@@ -1902,14 +1722,12 @@ fn protected(
 /// copy — Delete removes it, Leave disowns it, no answer asks.
 fn remove_old(
     ctx: &Ctx<'_>,
+    skill: &SkillRecord,
     entry: &RedeployJournalRecord,
     old: &Path,
     answer: Option<EditedCopyDecision>,
 ) -> Result<Settled> {
     let store = ctx.store;
-    let Some(skill) = store.get_skill_by_id(&entry.skill_id)? else {
-        return Ok(left(RedeployLeftReason::Stale));
-    };
     let central = Path::new(&skill.central_path);
     let library_hash = content_identity::read(Source::Managed {
         store,
@@ -1956,100 +1774,91 @@ fn remove_old(
 /// Finish a staged replacement an interruption cut short
 /// ([`staged_replace`]); its row was never switched, so the next run plans
 /// the move again and adopts what is in place. `old_path` is the new place
-/// (where the occupant was), `new_path` the staged artifact, and the
-/// occupant's set-aside sibling is derived from it:
+/// (where the occupant was), `new_path` the staged sibling:
 ///
-/// - cut between the two renames (nothing in place): the staged artifact is
-///   moved in when it is intact, else the occupant is put back;
-/// - the staged artifact in place: the occupant (at the staged name after an
-///   exchange, set aside after two renames) is removed under
-///   the replacement's authority (ours by evidence, or the operator's
+/// - the occupant still in place (cut before the swap): the replacement
+///   never happened and the old Deployment was never touched; the staged
+///   artifact — the app's own, checked by identity — is removed, and the
+///   entry goes once nothing staged is left;
+/// - the new place verifiably serving the skill ([`serves`] — the swap
+///   happened): the occupant, now at the staged name, is removed under the
+///   replacement's authority (ours by evidence, or the operator's
 ///   Overwrite), else reported left behind;
-/// - the occupant still in place: the staged artifact — the app's own,
-///   checked by identity — is removed;
-/// - anything else: reported left behind, nothing touched.
-fn settle_replacing(ctx: &Ctx<'_>, entry: &RedeployJournalRecord) -> Result<Settled> {
+/// - anything else (the new place absent, unreachable or not the skill's, a
+///   leftover the entry cannot recognise, a removal that failed): nothing is
+///   touched and the entry stays ([`Settled::Unfinished`]).
+fn settle_replacing(
+    ctx: &Ctx<'_>,
+    entry: &RedeployJournalRecord,
+    skill: &SkillRecord,
+) -> Result<Settled> {
     let dest = Path::new(&entry.old_path);
     let stage = Path::new(&entry.new_path);
-    let parsed = (
+    let (Ok(occupant), Ok(staged)) = (
         serde_json::from_str::<JournaledEntry>(&entry.old_entry),
         serde_json::from_str::<JournaledEntry>(&entry.new_entry),
-        aside_of(stage),
-        dest.parent().zip(dest.file_name()),
-    );
-    let (Ok(occupant), Ok(staged), Some(aside), Some((folder, name))) = parsed else {
+    ) else {
         log::warn!(
-            "[redeploy] unreadable journal entry {}; nothing was touched",
+            "[redeploy] unreadable journal entry {}; kept, nothing was touched",
             entry.id
         );
-        return Ok(left(RedeployLeftReason::Stale));
+        return Ok(Settled::Unfinished);
     };
-    let (Some(stage_name), Some(aside_name)) = (stage.file_name(), aside.file_name()) else {
-        return Ok(left(RedeployLeftReason::Stale));
+    let (Ok(in_place), Ok(at_stage)) = (JournaledEntry::of(dest), JournaledEntry::of(stage)) else {
+        return Ok(Settled::Unfinished);
     };
     let managed = managed_global_dirs(ctx.roots, &entry.tool);
-    if JournaledEntry::of(dest)?.is_none() {
-        let back = if JournaledEntry::of(stage)? == Some(staged) {
-            Some(stage_name)
-        } else if JournaledEntry::of(&aside)? == Some(occupant) {
-            Some(aside_name)
-        } else {
-            None
-        };
-        // Strict, like every redeploy rename: no reservation is ever made at
-        // the new place, so an empty folder there is never the app's own and
-        // is never taken as evidence — only the journaled identities are.
-        if let Some(from) = back {
-            let renamed = HeldDir::open(folder)
-                .map_err(anyhow::Error::from)
-                .and_then(|held| {
-                    strict_rename(&held, from, name).map_err(|err| rename_error(err, dest))
-                });
-            if let Err(err) = renamed {
-                // The new place stays empty: dropping the entry is safe only
-                // while an old Deployment of the move witnesses for it
-                // (finding 9), else it stays journaled for a later run.
-                if unserved(ctx, entry, dest, occupant)? {
-                    log::warn!(
-                        "[redeploy] could not finish {:?} and nothing else serves the skill; \
-                         kept pending: {err:#}",
-                        dest
-                    );
-                    return Ok(Settled::Unfinished);
+    let discard_staged = || {
+        remove_superseded_artifact_unlocked(
+            ctx.store,
+            ctx.central_dir,
+            stage,
+            &managed,
+            SupersededAuthority::Answered,
+        )
+    };
+    if in_place == Some(occupant) {
+        return Ok(match at_stage {
+            None => Settled::Finished,
+            Some(now) if now == staged => match discard_staged() {
+                Ok(_) => Settled::Finished,
+                Err(err) => {
+                    log::warn!("[redeploy] could not discard {:?}: {err:#}", stage);
+                    Settled::Unfinished
                 }
-                return Ok(Settled::Left {
-                    reason: RedeployLeftReason::RemovalFailed,
-                    error: Some(CommandError::from_anyhow(err)),
-                    at: Some(folder.join(from)),
-                });
-            }
-        }
+            },
+            Some(_) => Settled::Unfinished,
+        });
     }
-    let in_place = JournaledEntry::of(dest)?;
-    if in_place == Some(staged) {
-        // Swapped: the occupant lies at the staged name (an exchange) or set
-        // aside (two renames), owed its removal under the replacement's
-        // authority.
-        for at in [stage, aside.as_path()] {
-            match JournaledEntry::of(at)? {
-                None => continue,
-                Some(now) if now != occupant => {
-                    return Ok(left_at(RedeployLeftReason::Replaced, at))
-                }
-                Some(_) => {}
-            }
-            if let Some(kept) = protected(ctx, at, occupant, dest)? {
+    if !serves(ctx, skill, dest, None) {
+        return Ok(Settled::Unfinished);
+    }
+    match at_stage {
+        None => Ok(Settled::Finished),
+        // Never swapped in, and the new place serves without it.
+        Some(now) if now == staged => Ok(match discard_staged() {
+            Ok(_) => Settled::Finished,
+            Err(err) => Settled::Left {
+                reason: RedeployLeftReason::RemovalFailed,
+                error: Some(CommandError::from_anyhow(err)),
+                at: Some(stage.to_path_buf()),
+            },
+        }),
+        Some(now) if now != occupant => Ok(left_at(RedeployLeftReason::Replaced, stage)),
+        // Swapped: the occupant lies at the staged name, owed its removal
+        // under the replacement's authority.
+        Some(_) => {
+            if let Some(kept) = protected(ctx, stage, occupant, dest)? {
                 return Ok(match kept {
                     Settled::Left { reason, error, .. } => Settled::Left {
                         reason,
                         error,
-                        at: Some(at.to_path_buf()),
+                        at: Some(stage.to_path_buf()),
                     },
                     other => other,
                 });
             }
             let set_aside = RedeployJournalRecord {
-                old_path: at.to_string_lossy().into_owned(),
                 state: if entry.state == STATE_REPLACING_ANSWERED {
                     STATE_OVERWRITTEN
                 } else {
@@ -2058,64 +1867,14 @@ fn settle_replacing(ctx: &Ctx<'_>, entry: &RedeployJournalRecord) -> Result<Sett
                 .to_string(),
                 ..entry.clone()
             };
-            return Ok(match remove_old(ctx, &set_aside, at, None)? {
+            Ok(match remove_old(ctx, skill, &set_aside, stage, None)? {
                 // A set-aside occupant is never asked about: it was ours by
                 // evidence when it was replaced.
-                Settled::Awaiting => left_at(RedeployLeftReason::NotOurs, at),
+                Settled::Awaiting => left_at(RedeployLeftReason::NotOurs, stage),
                 settled => settled,
-            });
+            })
         }
-        return Ok(Settled::Finished);
     }
-    if in_place == Some(occupant) {
-        return Ok(match JournaledEntry::of(stage)? {
-            None => Settled::Finished,
-            Some(now) if now != staged => left_at(RedeployLeftReason::Replaced, stage),
-            Some(_) => match remove_superseded_artifact_unlocked(
-                ctx.store,
-                ctx.central_dir,
-                stage,
-                &managed,
-                SupersededAuthority::Answered,
-            ) {
-                Ok(_) => Settled::Finished,
-                Err(err) => Settled::Left {
-                    reason: RedeployLeftReason::RemovalFailed,
-                    error: Some(CommandError::from_anyhow(err)),
-                    at: Some(stage.to_path_buf()),
-                },
-            },
-        });
-    }
-    let stays = if JournaledEntry::of(&aside)?.is_some() {
-        aside
-    } else {
-        stage.to_path_buf()
-    };
-    Ok(left_at(RedeployLeftReason::Stale, &stays))
-}
-
-/// Whether the skill of `entry` exists and no old Deployment of its move
-/// witnesses for the empty new place `dest` ([`IntactOld`]'s rule). The
-/// journal names the move's switched row alone, so that row is the one
-/// candidate: missing another live row of the move keeps the entry pending,
-/// never drops it.
-fn unserved(
-    ctx: &Ctx<'_>,
-    entry: &RedeployJournalRecord,
-    dest: &Path,
-    occupant: JournaledEntry,
-) -> Result<bool> {
-    let Some(skill) = ctx.store.get_skill_by_id(&entry.skill_id)? else {
-        return Ok(false);
-    };
-    let rows: Vec<SkillTargetRecord> = ctx
-        .store
-        .list_skill_targets(&skill.id)?
-        .into_iter()
-        .filter(|row| row.id == entry.row_id)
-        .collect();
-    Ok(IntactOld::among(&skill, &rows, dest, occupant).is_none())
 }
 
 /// Record how `entry` settled — drop it, or keep it awaiting the answer or
@@ -2271,36 +2030,24 @@ pub(crate) mod test_seams {
     thread_local! {
         static CRASH_BEFORE_SWITCH: Cell<bool> = const { Cell::new(false) };
         static CRASH_AFTER_SWITCH: Cell<bool> = const { Cell::new(false) };
-        static CRASH_BEFORE_SET_ASIDE: Cell<bool> = const { Cell::new(false) };
-        static CRASH_BETWEEN_SWAP_RENAMES: Cell<bool> = const { Cell::new(false) };
+        static CRASH_BEFORE_SWAP: Cell<bool> = const { Cell::new(false) };
         static CRASH_AFTER_SWAP: Cell<bool> = const { Cell::new(false) };
-        static TWO_STEP_SWAP: Cell<bool> = const { Cell::new(false) };
-        static NO_EXCLUSIVE_RENAME: Cell<bool> = const { Cell::new(false) };
+        static NO_EXCHANGE: Cell<bool> = const { Cell::new(false) };
     }
 
-    /// Every redeploy rename on this thread reports no exclusive rename, as
-    /// on a file system without one (NFS, SMB, exFAT, …).
-    pub(crate) fn force_no_exclusive_rename() {
-        NO_EXCLUSIVE_RENAME.with(|cell| cell.set(true));
+    /// Staged replacements on this thread find no atomic exchange, as on an
+    /// OS or file system without one (Windows always; SMB, exFAT, …).
+    pub(crate) fn force_no_exchange() {
+        NO_EXCHANGE.with(|cell| cell.set(true));
     }
 
-    pub(super) fn no_exclusive_rename() -> bool {
-        NO_EXCLUSIVE_RENAME.with(Cell::get)
-    }
-
-    /// Staged replacements on this thread swap by two renames, as on an OS
-    /// or file system without an atomic exchange (Windows).
-    pub(crate) fn force_two_step_swap() {
-        TWO_STEP_SWAP.with(|cell| cell.set(true));
-    }
-
-    pub(super) fn two_step_swap() -> bool {
-        TWO_STEP_SWAP.with(Cell::get)
+    pub(super) fn no_exchange() -> bool {
+        NO_EXCHANGE.with(Cell::get)
     }
 
     /// The next staged replacement on this thread panics right after its
-    /// swap: the new artifact in place, the occupant beside it, nothing
-    /// switched.
+    /// swap: the new artifact in place, the occupant at the staged name,
+    /// nothing switched.
     pub(crate) fn crash_after_swap() {
         CRASH_AFTER_SWAP.with(|cell| cell.set(true));
     }
@@ -2312,26 +2059,14 @@ pub(crate) mod test_seams {
     }
 
     /// The next staged replacement on this thread panics after its staged
-    /// artifact is journaled and before the occupant is set aside.
-    pub(crate) fn crash_before_set_aside() {
-        CRASH_BEFORE_SET_ASIDE.with(|cell| cell.set(true));
+    /// artifact is journaled and before the swap.
+    pub(crate) fn crash_before_swap() {
+        CRASH_BEFORE_SWAP.with(|cell| cell.set(true));
     }
 
-    /// The next staged replacement on this thread panics between its two
-    /// renames: the occupant set aside, the staged artifact not yet in place.
-    pub(crate) fn crash_between_swap_renames() {
-        CRASH_BETWEEN_SWAP_RENAMES.with(|cell| cell.set(true));
-    }
-
-    pub(super) fn before_set_aside() {
-        if CRASH_BEFORE_SET_ASIDE.with(|cell| cell.replace(false)) {
-            panic!("simulated crash before the occupant is set aside");
-        }
-    }
-
-    pub(super) fn between_swap_renames() {
-        if CRASH_BETWEEN_SWAP_RENAMES.with(|cell| cell.replace(false)) {
-            panic!("simulated crash between the swap's renames");
+    pub(super) fn before_swap() {
+        if CRASH_BEFORE_SWAP.with(|cell| cell.replace(false)) {
+            panic!("simulated crash before the swap");
         }
     }
 

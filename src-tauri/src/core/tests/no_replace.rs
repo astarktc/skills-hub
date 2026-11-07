@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 use std::fs;
 
-use super::{ExchangeError, HeldDir, RenameError, StrictRenameError};
+use super::{ExchangeError, HeldDir, RenameError};
 
 fn held() -> (tempfile::TempDir, HeldDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -147,47 +147,4 @@ fn an_exchange_with_an_absent_name_changes_nothing() {
     ));
     assert_eq!(fs::read(dir.path().join("from/f")).unwrap(), b"ours");
     assert!(!dir.path().join("absent").exists());
-}
-
-/// The strict rename (the redeploy's) renames onto a free name and refuses
-/// any occupant like the ordinary one; where the file system has no exclusive
-/// rename it says so, making nothing at the new name — never a reservation.
-#[test]
-fn the_strict_rename_publishes_refuses_occupants_and_never_reserves() {
-    let (dir, held) = held();
-    fs::create_dir(dir.path().join("empty")).unwrap();
-    fs::write(dir.path().join("file"), b"theirs").unwrap();
-    for name in ["empty", "file"] {
-        let err = held
-            .rename_no_replace_strict(OsStr::new("from"), OsStr::new(name))
-            .unwrap_err();
-        assert!(
-            matches!(err, StrictRenameError::Occupied),
-            "{name}: {err:?}"
-        );
-    }
-    assert_eq!(fs::read_dir(dir.path().join("empty")).unwrap().count(), 0);
-    for name in ["../escape", "a/b", ".."] {
-        let err = held
-            .rename_no_replace_strict(OsStr::new("from"), OsStr::new(name))
-            .unwrap_err();
-        assert!(
-            matches!(err, StrictRenameError::Failed(_)),
-            "{name}: {err:?}"
-        );
-    }
-    match held.rename_no_replace_strict(OsStr::new("from"), OsStr::new("to")) {
-        Ok(()) => {
-            assert_eq!(fs::read(dir.path().join("to/f")).unwrap(), b"ours");
-            assert!(!dir.path().join("from").exists());
-        }
-        Err(StrictRenameError::Unsupported) => {
-            if cfg!(windows) {
-                panic!("Windows renames exclusively on every volume");
-            }
-            assert!(!dir.path().join("to").exists(), "no reservation");
-            assert_eq!(fs::read(dir.path().join("from/f")).unwrap(), b"ours");
-        }
-        Err(err) => panic!("{err:?}"),
-    }
 }

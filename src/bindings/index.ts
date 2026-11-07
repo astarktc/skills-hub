@@ -1041,9 +1041,10 @@ export type JournalStatus =
  */
 "awaiting_answer" |
 /**
- *  A replacement cut short that could not be finished, with nothing
- *  else provably serving the skill: still journaled, finished by a later
- *  run or launch.
+ *  Not finished: the new place does not verifiably serve the skill
+ *  (absent, unreachable, not ours), or what the entry journaled could not
+ *  be recognised or settled. Still journaled; every run and launch
+ *  retries it.
  */
 "unfinished";
 
@@ -1729,8 +1730,8 @@ export type RedeployLeftReason =
 /**  Something else occupies the old path since it was journaled. */
 "replaced" |
 /**
- *  The row no longer records the journaled new place, or the new artifact
- *  is no longer the one deployed: the old one may be the only copy.
+ *  Its skill is gone, or its journal entry could not be read: nothing
+ *  was touched.
  */
 "stale" |
 /**  Its removal failed or was refused. */

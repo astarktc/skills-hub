@@ -1921,14 +1921,14 @@ export const resources = {
             edited: "You chose to leave your edited copy; Skills Hub no longer manages it.",
             not_ours: "It isn't provably Skills Hub's copy, so it was left alone.",
             replaced: "Something else is at that place now, so it was left alone.",
-            stale: "The new copy isn't the one Skills Hub wrote any more, so the old one may be the only copy. It was left alone.",
+            stale: "Its skill is no longer in your library, or the record of the move could not be read, so it was left alone.",
             removal_failed: "It could not be removed.",
             holds_deployment:
               "A deployment lies inside it through a linked folder, so removing it would remove that one too. It was left alone.",
           },
           unfinished_one: "{{count}} move unfinished",
           unfinished_other: "{{count}} moves unfinished",
-          unfinishedTitle: "{{name}}: the move to {{path}} could not be finished",
+          unfinishedTitle: "{{name}}: the move involving {{path}} could not be finished",
           unfinishedMessage:
             "Nothing else serves the skill meanwhile, so the move stays pending. Skills Hub finishes it at the next launch or when you move Deployments again.",
           refused_one: "{{count}} answer no longer applied",

@@ -1016,9 +1016,9 @@ fn a_crash_after_the_removal_finishes_with_nothing_to_remove() {
     assert!(report.moves.is_empty());
 }
 
-/// The journal authorises nothing by its paths alone: a row that no longer
-/// records the journaled place (moved again since), or an old path taken
-/// by another folder, is reported left behind and nothing is touched.
+/// The journal authorises nothing by its paths alone: with the new place
+/// serving, an old path taken by another folder is reported left behind and
+/// nothing is touched.
 #[cfg(unix)]
 #[test]
 fn a_journal_entry_that_no_longer_matches_is_reported_and_touches_nothing() {
@@ -1038,20 +1038,85 @@ fn a_journal_entry_that_no_longer_matches_is_reported_and_touches_nothing() {
     assert!(f.store.list_redeploy_journal().unwrap().is_empty());
 }
 
+/// The journal is dropped only on positive evidence (round 4 disposition):
+/// with the new artifact gone, the old one may be the only copy, so it is
+/// kept and so is its entry — `unfinished`, counted, retried. Once the new
+/// place serves again (a later sync writes it), the entry finishes.
 #[cfg(unix)]
 #[test]
-fn a_journal_entry_whose_new_artifact_is_gone_keeps_the_old_one() {
+fn a_journal_entry_whose_new_artifact_is_gone_stays_unfinished() {
     let f = agents_fixture(&["codex"]);
     let old = f.link_row("codex", ".codex/skills/alpha");
     crash(&f, test_seams::crash_after_switch);
-    fs::remove_file(f.at(".agents/skills/alpha")).unwrap();
+    let new = f.at(".agents/skills/alpha");
+    fs::remove_file(&new).unwrap();
 
     let report = finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
         .unwrap()
         .unwrap();
 
-    assert_eq!(report.left_behind[0].reason, RedeployLeftReason::Stale);
+    assert_eq!(report.journal[0].status, JournalStatus::Unfinished);
+    assert!(report.left_behind.is_empty(), "{report:#?}");
     assert!(present(&old), "it may be the only copy");
+    assert_eq!(f.store.list_redeploy_journal().unwrap().len(), 1, "kept");
+    assert_eq!(f.preview().journal, 1, "counted");
+
+    link(&f.central, &new);
+    let report = f.run(&[]);
+
+    assert_eq!(report.journal[0].status, JournalStatus::Finished);
+    assert!(!present(&old));
+    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+}
+
+/// An unreachable new place (its folder moved away) authorises nothing: the
+/// entry is kept, never dropped as left behind, and finishes once the place
+/// is reachable again (every OS: copies).
+#[test]
+fn a_journal_entry_whose_new_place_is_unreachable_is_kept_until_it_serves() {
+    let f = fixture(&["mux"]);
+    let old = f.copy_row("mux", ".mux/skills/alpha");
+    crash(&f, test_seams::crash_after_switch);
+    let new = f.at(".xum/skills/alpha");
+    assert!(serves_at(&new));
+    fs::rename(f.at(".xum/skills"), f.at(".xum/away")).unwrap();
+
+    let report = finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
+        .unwrap()
+        .expect("reported");
+
+    assert_eq!(report.journal[0].status, JournalStatus::Unfinished);
+    assert!(report.left_behind.is_empty(), "{report:#?}");
+    assert!(serves_at(&old), "the old copy is kept");
+    assert_eq!(f.preview().journal, 1, "pending");
+
+    fs::rename(f.at(".xum/away"), f.at(".xum/skills")).unwrap();
+    let report = finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
+        .unwrap()
+        .expect("settled");
+
+    assert_eq!(report.journal[0].status, JournalStatus::Finished);
+    assert!(!present(&old));
+    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+}
+
+/// The other positive evidence: the skill record is gone. Its entry goes;
+/// the old artifact still on disk is reported left behind, untouched.
+#[test]
+fn a_journal_entry_whose_skill_is_gone_is_dropped_touching_nothing() {
+    let f = fixture(&["mux"]);
+    let old = f.copy_row("mux", ".mux/skills/alpha");
+    crash(&f, test_seams::crash_after_switch);
+    f.store.delete_skill("alpha").unwrap();
+
+    let report = finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
+        .unwrap()
+        .expect("settled");
+
+    assert_eq!(report.journal[0].status, JournalStatus::LeftBehind);
+    assert_eq!(report.left_behind[0].reason, RedeployLeftReason::Stale);
+    assert!(serves_at(&old), "untouched");
+    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -1359,14 +1424,14 @@ fn a_link_where_copies_are_taken_is_replaced_by_a_copy() {
     assert_eq!(f.preview(), RedeployPreview::default());
 }
 
-/// Interrupted before the occupant moves: the link still serves; the launch
-/// check drops what was staged, and the next run completes the move.
+/// Interrupted before the swap: the link still serves; the launch check
+/// drops what was staged, and the next run completes the move.
 #[cfg(unix)]
 #[test]
 fn a_replacement_interrupted_before_the_swap_keeps_the_link_and_completes() {
     let f = fixture(&["deep_agents_code"]);
     let dest = deep_agents_link(&f);
-    crash(&f, test_seams::crash_before_set_aside);
+    crash(&f, test_seams::crash_before_swap);
     assert_eq!(fs::read_link(&dest).unwrap(), f.central, "still deployed");
     assert_eq!(f.preview().journal, 1);
 
@@ -1385,9 +1450,8 @@ fn a_replacement_interrupted_before_the_swap_keeps_the_link_and_completes() {
 }
 
 /// Interrupted right after the atomic exchange: the new copy is in place,
-/// the old link beside it. The launch check removes the link; the next run
-/// records the copy as it is. (Two renames never replace this link: it is
-/// the only Deployment — the next test.)
+/// the old link at the staged name beside it. The launch check removes the
+/// link; the next run records the copy as it is.
 #[cfg(unix)]
 #[test]
 fn a_replacement_interrupted_after_the_swap_keeps_the_copy_and_completes() {
@@ -1413,8 +1477,8 @@ fn a_replacement_interrupted_after_the_swap_keeps_the_copy_and_completes() {
     assert_eq!(f.preview(), RedeployPreview::default());
 }
 
-/// Whether `status` is the refusal to replace the folder at `dest` without a
-/// moment the skill is missing.
+/// Whether `status` is the refusal to replace the folder at `dest` without an
+/// atomic exchange.
 fn refused_unsafe(status: &RedeployStatus, dest: &Path) -> bool {
     matches!(
         status,
@@ -1428,19 +1492,17 @@ fn refused_unsafe(status: &RedeployStatus, dest: &Path) -> bool {
     )
 }
 
-/// Without an atomic exchange (Windows, some file systems), the link where
-/// copies are taken is the only Deployment: two renames would leave the
-/// skill missing between them. The occupant is not touched, nothing staged
-/// stays, and the move is refused and still pending — no interruption point
-/// is ever reached.
+/// Without an atomic exchange (Windows always; SMB, exFAT, …), the link
+/// where copies are taken is never replaced: the occupant is not touched,
+/// nothing staged stays, and the move is refused and still pending — the
+/// swap's interruption point is never reached.
 #[cfg(unix)]
 #[test]
 fn without_an_exchange_the_only_deployment_is_never_replaced() {
     let f = fixture(&["deep_agents_code"]);
     let dest = deep_agents_link(&f);
     let before = EntryId::of(&dest).unwrap();
-    test_seams::force_two_step_swap();
-    test_seams::crash_between_swap_renames();
+    test_seams::force_no_exchange();
     test_seams::crash_after_swap();
 
     let report = f.run(&[]);
@@ -1502,18 +1564,12 @@ fn an_overwrite_interrupted_after_the_swap_is_finished_under_the_answer() {
 }
 
 /// Xum's copy moving onto a folder in the way, answered Overwrite, with the
-/// staged replacement interrupted where `arm` says (every platform: copies).
+/// staged replacement interrupted where `arm` says.
 fn xum_overwrite_interrupted(arm: fn()) -> (Fixture, PathBuf, PathBuf, RedeployAnswer) {
     let f = fixture(&["mux"]);
     let old = f.copy_row("mux", ".mux/skills/alpha");
     let dest = foreign_at(&f, ".xum/skills/alpha");
-    let answer = RedeployAnswer::Occupied {
-        skill_id: "alpha".into(),
-        folder_key: "mux".into(),
-        row_ids: vec!["row-mux".into()],
-        path: dest.to_string_lossy().into_owned(),
-        decision: OverrideDecision::Overwrite,
-    };
+    let answer = xum_overwrite(&dest);
     arm();
     let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         redeploy_unlocked(
@@ -1536,12 +1592,13 @@ fn xum_entries(f: &Fixture) -> usize {
     fs::read_dir(f.at(".xum/skills")).unwrap().count()
 }
 
-/// Interrupted before the occupant moves: the folder in the way is still
-/// there; the launch check drops what was staged, and the answered run
-/// completes the move.
+/// Interrupted before the swap: the folder in the way is still there; the
+/// launch check drops what was staged, and the answered run completes the
+/// move.
+#[cfg(unix)]
 #[test]
 fn an_overwrite_interrupted_before_the_swap_is_undone_at_launch() {
-    let (f, old, dest, answer) = xum_overwrite_interrupted(test_seams::crash_before_set_aside);
+    let (f, old, dest, answer) = xum_overwrite_interrupted(test_seams::crash_before_swap);
     assert_eq!(
         fs::read_to_string(dest.join("SKILL.md")).unwrap(),
         "someone else's"
@@ -1563,10 +1620,10 @@ fn an_overwrite_interrupted_before_the_swap_is_undone_at_launch() {
     assert!(!present(&old));
 }
 
-/// Interrupted right after the swap (an atomic exchange where the OS offers
-/// it, else the second of two renames): the skill is in its new place; the
-/// launch check removes the folder answered Overwrite for, and the next run
-/// records the skill as it is.
+/// Interrupted right after the atomic exchange: the skill is in its new
+/// place; the launch check removes the folder answered Overwrite for, and
+/// the next run records the skill as it is.
+#[cfg(unix)]
 #[test]
 fn an_overwrite_interrupted_after_the_swap_is_finished_at_launch() {
     let (f, old, dest, _) = xum_overwrite_interrupted(test_seams::crash_after_swap);
@@ -1590,57 +1647,59 @@ fn an_overwrite_interrupted_after_the_swap_is_finished_at_launch() {
     assert!(f.store.list_redeploy_journal().unwrap().is_empty());
 }
 
-/// Cut between two renames (no atomic exchange: Windows always, some file
-/// systems): nothing is at the new place for that instant and the skill is
-/// staged beside it; the launch check moves it in and removes the folder
-/// answered Overwrite for, and the next run records it.
-#[test]
-fn an_overwrite_cut_between_two_renames_is_finished_at_launch() {
-    let (f, old, dest, _) = xum_overwrite_interrupted(|| {
-        test_seams::force_two_step_swap();
-        test_seams::crash_between_swap_renames();
-    });
-    assert!(!present(&dest), "cut between the renames");
-
-    finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
-        .unwrap()
-        .expect("settled");
-
-    assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "v1");
-    assert_eq!(
-        xum_entries(&f),
-        1,
-        "the folder answered Overwrite for is gone, nothing staged is left"
-    );
-    let report = f.run(&[]);
+/// What an Overwrite refused for want of an exchange leaves: the old copy
+/// and the folder in the way as they were, nothing staged, nothing
+/// journaled, the row not switched, the move still pending.
+fn assert_overwrite_refused(f: &Fixture, report: &RedeployReport, old: &Path, dest: &Path) {
     assert!(
-        matches!(only_move(&report).status, RedeployStatus::Adopted),
+        refused_unsafe(&only_move(report).status, dest),
         "{report:#?}"
     );
-    assert!(!present(&old));
+    assert_eq!(fs::read_to_string(old.join("a.txt")).unwrap(), "v1");
+    assert_eq!(
+        fs::read_to_string(dest.join("SKILL.md")).unwrap(),
+        "someone else's"
+    );
+    assert_eq!(xum_entries(f), 1, "nothing staged stays");
     assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+    let row = f.row("mux").unwrap();
+    assert_eq!(row.status, SyncStatus::Synced, "the old copy still serves");
+    assert_eq!(Path::new(&row.target_path), old, "not switched");
+    assert_eq!(f.preview().global.correction, 1, "still pending");
 }
 
-/// Without an atomic exchange, two renames replace the folder in the way
-/// while the old copy keeps serving (every OS; Windows always takes this
-/// path): the move completes.
+/// Without an atomic exchange an Overwrite is refused before the folder in
+/// the way is touched — even while the old copy serves: redeploy has no
+/// two-rename fallback (round 20 t10 review, round 4 disposition). Forced
+/// here on every OS, so the Windows behaviour runs everywhere.
 #[test]
-fn an_overwrite_without_an_exchange_replaces_while_the_old_copy_serves() {
+fn an_overwrite_without_an_exchange_is_refused_and_touches_nothing() {
     let f = fixture(&["mux"]);
     let old = f.copy_row("mux", ".mux/skills/alpha");
     let dest = foreign_at(&f, ".xum/skills/alpha");
-    test_seams::force_two_step_swap();
+    let (old_id, dest_id) = (EntryId::of(&old).unwrap(), EntryId::of(&dest).unwrap());
+    test_seams::force_no_exchange();
+    test_seams::crash_after_swap();
 
     let report = f.run(&[xum_overwrite(&dest)]);
 
-    assert!(
-        matches!(only_move(&report).status, RedeployStatus::Moved),
-        "{report:#?}"
-    );
-    assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "v1");
-    assert_eq!(xum_entries(&f), 1, "nothing staged or set aside stays");
-    assert!(!present(&old));
-    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+    assert_overwrite_refused(&f, &report, &old, &dest);
+    assert_eq!(EntryId::of(&old).unwrap(), old_id);
+    assert_eq!(EntryId::of(&dest).unwrap(), dest_id);
+}
+
+/// Windows has no atomic exchange at all: with no test hook, an Overwrite is
+/// refused there the same way.
+#[cfg(windows)]
+#[test]
+fn windows_refuses_an_overwrite_for_want_of_an_exchange() {
+    let f = fixture(&["mux"]);
+    let old = f.copy_row("mux", ".mux/skills/alpha");
+    let dest = foreign_at(&f, ".xum/skills/alpha");
+
+    let report = f.run(&[xum_overwrite(&dest)]);
+
+    assert_overwrite_refused(&f, &report, &old, &dest);
 }
 
 fn xum_overwrite(dest: &Path) -> RedeployAnswer {
@@ -1662,10 +1721,9 @@ fn edited_skill_at(f: &Fixture, rel: &str) -> PathBuf {
 }
 
 /// Round 20 t10 review, finding 7 (Astra's probe): the old place is gone and
-/// the new place holds a different, usable copy — the only working one. An
-/// Overwrite without an atomic exchange would leave neither between its two
-/// renames, so the occupant is not touched: refused, pending, nothing staged
-/// stays, and no interruption point is reached.
+/// the new place holds a different, usable copy — the only working one.
+/// Without an exchange the occupant is not touched: refused, pending,
+/// nothing staged stays, and the swap's interruption point is never reached.
 #[test]
 fn an_overwrite_with_no_old_copy_and_no_exchange_never_touches_the_only_copy() {
     let f = fixture(&["mux"]);
@@ -1673,8 +1731,7 @@ fn an_overwrite_with_no_old_copy_and_no_exchange_never_touches_the_only_copy() {
     fs::remove_dir_all(&old).unwrap();
     let dest = edited_skill_at(&f, ".xum/skills/alpha");
     let before = EntryId::of(&dest).unwrap();
-    test_seams::force_two_step_swap();
-    test_seams::crash_between_swap_renames();
+    test_seams::force_no_exchange();
     test_seams::crash_after_swap();
 
     let report = f.run(&[xum_overwrite(&dest)]);
@@ -1685,7 +1742,7 @@ fn an_overwrite_with_no_old_copy_and_no_exchange_never_touches_the_only_copy() {
     );
     assert_eq!(EntryId::of(&dest).unwrap(), before, "the same folder");
     assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "v0 edited");
-    assert_eq!(xum_entries(&f), 1, "nothing staged or set aside stays");
+    assert_eq!(xum_entries(&f), 1, "nothing staged stays");
     assert!(f.store.list_redeploy_journal().unwrap().is_empty());
     let row = f.row("mux").unwrap();
     assert_eq!(row.status, SyncStatus::Error, "not synced anywhere (F14)");
@@ -1693,8 +1750,8 @@ fn an_overwrite_with_no_old_copy_and_no_exchange_never_touches_the_only_copy() {
     assert_eq!(f.preview().global.correction, 1, "still pending");
 }
 
-/// Finding 7, the one interruption point the refusal leaves (after staging,
-/// before the occupant could move): the only copy stays in place, and the
+/// Finding 7, the one interruption point a refusal leaves (after staging,
+/// before the exchange is tried): the only copy stays in place, and the
 /// launch check drops what was staged.
 #[test]
 fn an_overwrite_with_no_old_copy_interrupted_before_the_swap_keeps_the_only_copy() {
@@ -1703,8 +1760,8 @@ fn an_overwrite_with_no_old_copy_interrupted_before_the_swap_keeps_the_only_copy
     fs::remove_dir_all(&old).unwrap();
     let dest = edited_skill_at(&f, ".xum/skills/alpha");
     let before = EntryId::of(&dest).unwrap();
-    test_seams::force_two_step_swap();
-    test_seams::crash_before_set_aside();
+    test_seams::force_no_exchange();
+    test_seams::crash_before_swap();
     let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         redeploy_unlocked(
             &f.store,
@@ -1730,210 +1787,214 @@ fn an_overwrite_with_no_old_copy_interrupted_before_the_swap_keeps_the_only_copy
     assert!(f.store.list_redeploy_journal().unwrap().is_empty());
 }
 
-/// Round 20 t10 review, finding 8: on a file system without an exclusive
-/// rename the redeploy never falls back to reserving the name (an
-/// interruption there would leave an empty folder its journal cannot
-/// recognise). The strict rename says "unsupported" and nothing moves:
-/// refused, pending, the old copy and the folder in the way untouched,
-/// nothing staged stays, nothing journaled.
+// ---------------------------------------------------------------------------
+// Round 4 (Astra): ancestor aliases through the destination (findings 11, 12)
+// ---------------------------------------------------------------------------
+
+/// Whether the skill is served at `path`: its bytes read through it.
+fn serves_at(path: &Path) -> bool {
+    fs::read_to_string(path.join("a.txt")).is_ok_and(|text| text == "v1")
+}
+
+/// What each placement is, physically, before a refused move: the entry and
+/// the bytes read through it.
+#[cfg(unix)]
+fn placement_of(path: &Path) -> (Option<EntryId>, Option<String>) {
+    (
+        EntryId::of(path).unwrap(),
+        fs::read_to_string(path.join("a.txt"))
+            .or_else(|_| fs::read_to_string(path.join("SKILL.md")))
+            .ok(),
+    )
+}
+
+/// `f.at(rel)` spelled through the destination `~/.xum/skills/alpha`
+/// (`…/alpha/../../..` is the home folder).
+#[cfg(unix)]
+fn through_xum_alpha(f: &Fixture, rel: &str) -> PathBuf {
+    let mut path = f.at(".xum/skills/alpha/../../..");
+    path.extend(rel.split('/'));
+    path
+}
+
+/// Finding 11 (Astra's first probe): the old copy's parent `~/.mux/skills`
+/// is a link to `~/.xum/skills/alpha/../../../.mux-backing/skills` — a real
+/// copy, reached through the folder in the way. With no exchange the move is
+/// refused before any rename: both placements unchanged.
+#[cfg(unix)]
 #[test]
-fn without_an_exclusive_rename_nothing_moves() {
+fn f11_a_copy_reached_through_the_destination_is_refused_without_an_exchange() {
     let f = fixture(&["mux"]);
+    let dest = foreign_at(&f, ".xum/skills/alpha");
+    fs::create_dir_all(f.at(".mux-backing/skills")).unwrap();
+    fs::remove_dir_all(f.at(".mux/skills")).ok();
+    link(
+        &through_xum_alpha(&f, ".mux-backing/skills"),
+        &f.at(".mux/skills"),
+    );
     let old = f.copy_row("mux", ".mux/skills/alpha");
-    let dest = foreign_at(&f, ".xum/skills/alpha");
-    let (old_id, dest_id) = (EntryId::of(&old).unwrap(), EntryId::of(&dest).unwrap());
-    test_seams::force_two_step_swap();
-    test_seams::force_no_exclusive_rename();
-
-    let report = f.run(&[xum_overwrite(&dest)]);
-
-    assert!(
-        refused_unsafe(&only_move(&report).status, &dest),
-        "{report:#?}"
-    );
-    assert_eq!(EntryId::of(&old).unwrap(), old_id);
-    assert_eq!(fs::read_to_string(old.join("a.txt")).unwrap(), "v1");
-    assert_eq!(EntryId::of(&dest).unwrap(), dest_id);
-    assert_eq!(
-        fs::read_to_string(dest.join("SKILL.md")).unwrap(),
-        "someone else's"
-    );
-    assert_eq!(xum_entries(&f), 1, "nothing staged stays");
-    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
-    let row = f.row("mux").unwrap();
-    assert_eq!(row.status, SyncStatus::Synced, "the old copy still serves");
-    assert_eq!(Path::new(&row.target_path), old);
-    assert_eq!(f.preview().global.correction, 1, "still pending");
-}
-
-/// Mux's old link written as `text` (not as the app writes it), recorded as
-/// a live link row.
-#[cfg(unix)]
-fn mux_link_written_as(f: &Fixture, text: &Path) -> PathBuf {
-    let old = f.at(".mux/skills/alpha");
-    if present(&old) {
-        fs::remove_file(&old).unwrap();
-    }
-    link(text, &old);
-    f.seed("mux", &old, SyncMode::Symlink, SyncStatus::Synced, true);
-    old
-}
-
-/// Round 20 t10 review, finding 9 (Astra's probe): the link
-/// `~/.mux/skills/alpha` → `~/.xum/skills/alpha/../../../../central/alpha`
-/// resolves to the Library through the very folder in the way.
-#[cfg(unix)]
-fn through_the_destination(f: &Fixture) -> PathBuf {
-    let below_home = f.central.strip_prefix(f.home().parent().unwrap()).unwrap();
-    f.at(".xum/skills/alpha/../../../..").join(below_home)
-}
-
-/// Finding 9: an old link resolving to the Library only through the new
-/// place would dangle once the occupant is set aside — it is no witness for
-/// two renames. Refused before the first rename: both placements as they
-/// were, nothing staged, nothing journaled, still pending.
-#[cfg(unix)]
-#[test]
-fn f9_an_old_link_through_the_destination_is_no_witness() {
-    let f = fixture(&["mux"]);
-    let dest = foreign_at(&f, ".xum/skills/alpha");
-    let text = through_the_destination(&f);
-    let old = mux_link_written_as(&f, &text);
-    assert_eq!(fs::read_to_string(old.join("a.txt")).unwrap(), "v1");
-    let (old_id, dest_id) = (EntryId::of(&old).unwrap(), EntryId::of(&dest).unwrap());
-    test_seams::force_two_step_swap();
-    test_seams::crash_between_swap_renames();
+    assert!(f.at(".mux-backing/skills/alpha/a.txt").is_file());
+    let before = (placement_of(&old), placement_of(&dest));
+    test_seams::force_no_exchange();
     test_seams::crash_after_swap();
 
     let report = f.run(&[xum_overwrite(&dest)]);
 
-    assert!(
-        refused_unsafe(&only_move(&report).status, &dest),
-        "{report:#?}"
-    );
-    assert_eq!(EntryId::of(&old).unwrap(), old_id);
-    assert_eq!(fs::read_link(&old).unwrap(), text);
-    assert_eq!(fs::read_to_string(old.join("a.txt")).unwrap(), "v1");
-    assert_eq!(EntryId::of(&dest).unwrap(), dest_id);
+    assert_overwrite_refused(&f, &report, &old, &dest);
+    assert_eq!((placement_of(&old), placement_of(&dest)), before);
+    assert!(serves_at(&old));
+}
+
+/// Finding 11 (Astra's second probe): the old link's text is exactly the
+/// skill's recorded Library copy path, but that path runs through an alias
+/// (`~/.libalias`) that passes through the folder in the way. With no
+/// exchange the move is refused before any rename: both placements
+/// unchanged.
+#[cfg(unix)]
+#[test]
+fn f11_a_library_alias_through_the_destination_is_refused_without_an_exchange() {
+    let f = fixture(&["mux"]);
+    let dest = foreign_at(&f, ".xum/skills/alpha");
+    // `~/.libalias` → the folder holding the home, spelled through `dest`.
+    let above_home = f.home().parent().unwrap();
+    link(&f.at(".xum/skills/alpha/../../../.."), &f.at(".libalias"));
+    let aliased = f
+        .at(".libalias")
+        .join(f.central.strip_prefix(above_home).unwrap());
+    let mut skill = f.store.get_skill_by_id("alpha").unwrap().unwrap();
+    skill.central_path = aliased.to_string_lossy().into_owned();
+    f.store.upsert_skill(&skill).unwrap();
+    let old = f.at(".mux/skills/alpha");
+    link(&aliased, &old);
+    f.seed("mux", &old, SyncMode::Symlink, SyncStatus::Synced, true);
+    assert_eq!(fs::read_link(&old).unwrap(), aliased, "the app's text");
+    assert!(serves_at(&old));
+    let before = (placement_of(&old), placement_of(&dest));
+    test_seams::force_no_exchange();
+    test_seams::crash_after_swap();
+
+    let report = f.run(&[xum_overwrite(&dest)]);
+
+    assert_overwrite_refused(&f, &report, &old, &dest);
+    assert_eq!((placement_of(&old), placement_of(&dest)), before);
+    assert_eq!(fs::read_link(&old).unwrap(), aliased);
+}
+
+/// Finding 12's layout: both harness folders are aliases spelled through the
+/// folder in the way — `~/.xum/skills` → `H/actual/alpha/..` (so the
+/// destination `~/.xum/skills/alpha` is `H/actual/alpha`, someone else's)
+/// and `~/.mux/skills` → `H/actual/alpha/../mux`, holding the old copy.
+/// Answered Overwrite.
+#[cfg(unix)]
+fn f12_layout() -> (Fixture, PathBuf, PathBuf, RedeployAnswer) {
+    let f = fixture(&["mux"]);
+    let actual = f.at("actual");
+    foreign_at(&f, "actual/alpha");
+    fs::create_dir_all(actual.join("mux")).unwrap();
+    for (alias, text) in [
+        (".xum/skills", actual.join("alpha/..")),
+        (".mux/skills", actual.join("alpha/../mux")),
+    ] {
+        fs::remove_dir_all(f.at(alias)).ok();
+        link(&text, &f.at(alias));
+    }
+    let old = f.copy_row("mux", ".mux/skills/alpha");
+    let dest = f.at(".xum/skills/alpha");
     assert_eq!(
         fs::read_to_string(dest.join("SKILL.md")).unwrap(),
         "someone else's"
     );
-    assert_eq!(xum_entries(&f), 1, "nothing staged stays");
-    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
-    let row = f.row("mux").unwrap();
-    assert_eq!(Path::new(&row.target_path), old, "not switched");
-    assert_eq!(f.preview().global.correction, 1, "still pending");
+    let answer = xum_overwrite(&dest);
+    (f, old, dest, answer)
 }
 
-/// Finding 9: a relative link to the Library copy is not how the app writes
-/// one — no witness, refused before the first rename.
+/// Finding 12's invariant: a state where neither placement serves the skill
+/// keeps its journal entry.
+#[cfg(unix)]
+fn assert_never_unserved_and_forgotten(f: &Fixture, old: &Path, dest: &Path) {
+    let journaled = f.store.list_redeploy_journal().unwrap().len();
+    assert!(
+        serves_at(old) || serves_at(dest) || journaled > 0,
+        "old serves {}, new serves {}, journal entries {journaled}",
+        serves_at(old),
+        serves_at(dest)
+    );
+}
+
+/// Finding 12 with no exchange: refused before any rename, both aliases
+/// still resolving, both placements unchanged.
 #[cfg(unix)]
 #[test]
-fn f9_a_relative_link_to_the_library_is_no_witness() {
-    let f = fixture(&["mux"]);
-    let dest = foreign_at(&f, ".xum/skills/alpha");
-    let below_home = f.central.strip_prefix(f.home().parent().unwrap()).unwrap();
-    let text = Path::new("../../..").join(below_home);
-    let old = mux_link_written_as(&f, &text);
-    assert_eq!(fs::read_to_string(old.join("a.txt")).unwrap(), "v1");
-    let dest_id = EntryId::of(&dest).unwrap();
-    test_seams::force_two_step_swap();
+fn f12_aliases_through_the_destination_are_refused_without_an_exchange() {
+    let (f, old, dest, answer) = f12_layout();
+    let before = (placement_of(&old), placement_of(&dest));
+    test_seams::force_no_exchange();
 
-    let report = f.run(&[xum_overwrite(&dest)]);
+    let report = f.run(&[answer]);
 
     assert!(
         refused_unsafe(&only_move(&report).status, &dest),
         "{report:#?}"
     );
-    assert_eq!(fs::read_link(&old).unwrap(), text);
-    assert_eq!(EntryId::of(&dest).unwrap(), dest_id);
-    assert_eq!(xum_entries(&f), 1, "nothing staged stays");
+    assert_eq!((placement_of(&old), placement_of(&dest)), before);
+    assert!(serves_at(&old));
     assert!(f.store.list_redeploy_journal().unwrap().is_empty());
-    assert_eq!(f.preview().global.correction, 1, "still pending");
 }
 
-/// Finding 9: the link the app writes — the Library copy's absolute path —
-/// is a witness: two renames replace the folder in the way and the move
-/// completes.
+/// Finding 12 with the exchange: the new place is never empty, so neither
+/// alias ever dangles, and the swap completes — the skill served at every
+/// step, and no state forgets the journal while it is unserved.
 #[cfg(unix)]
 #[test]
-fn f9_an_app_written_link_witnesses_and_the_two_renames_complete() {
-    let f = fixture(&["mux"]);
-    let old = f.link_row("mux", ".mux/skills/alpha");
-    assert_eq!(fs::read_link(&old).unwrap(), f.central);
-    let dest = foreign_at(&f, ".xum/skills/alpha");
-    test_seams::force_two_step_swap();
+fn f12_aliases_through_the_destination_complete_with_the_exchange() {
+    let (f, old, dest, answer) = f12_layout();
 
-    let report = f.run(&[xum_overwrite(&dest)]);
+    let report = f.run(&[answer]);
 
     assert!(
-        matches!(only_move(&report).status, RedeployStatus::Moved),
+        matches!(
+            only_move(&report).status,
+            RedeployStatus::Moved | RedeployStatus::LeftOld { .. }
+        ),
         "{report:#?}"
     );
-    assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "v1");
-    assert_eq!(xum_entries(&f), 1, "nothing staged or set aside stays");
-    assert!(!present(&old));
-    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+    assert!(serves_at(&dest), "{report:#?}");
+    assert_never_unserved_and_forgotten(&f, &old, &dest);
 }
 
-/// Finding 9, the launch check (Astra's second probe): cut between the two
-/// renames, the old link then reaching the Library only through the empty
-/// new place, and no exclusive rename to finish with. Nothing serves the
-/// skill, so the entry is never dropped as left behind: it stays journaled,
-/// pending, and a later launch with an exclusive rename finishes it.
+/// Finding 12, cut at each step of the staged replacement and finished at
+/// launch: no state leaves the skill unserved with its journal entry gone.
 #[cfg(unix)]
 #[test]
-fn f9_the_launch_check_keeps_an_unfinished_entry_with_no_witness() {
-    let f = fixture(&["mux"]);
-    f.link_row("mux", ".mux/skills/alpha");
-    let dest = foreign_at(&f, ".xum/skills/alpha");
-    test_seams::force_two_step_swap();
-    test_seams::crash_between_swap_renames();
-    let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        redeploy_unlocked(
-            &f.store,
-            &f.roots,
-            &f.central_dir(),
-            &PlacementSettings::default(),
-            &[xum_overwrite(&dest)],
-            NOW,
-            |_| {},
-        )
-    }))
-    .is_err();
-    assert!(crashed, "interrupted");
-    assert!(!present(&dest), "cut between the renames");
-    let old = mux_link_written_as(&f, &through_the_destination(&f));
-    assert!(!old.join("a.txt").exists(), "the old link dangles");
-    test_seams::force_no_exclusive_rename();
+fn f12_a_cut_replacement_never_forgets_an_unserved_skill() {
+    for arm in [
+        test_seams::crash_before_swap as fn(),
+        test_seams::crash_after_swap,
+        test_seams::crash_before_switch,
+        test_seams::crash_after_switch,
+    ] {
+        let (f, old, dest, answer) = f12_layout();
+        arm();
+        let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            redeploy_unlocked(
+                &f.store,
+                &f.roots,
+                &f.central_dir(),
+                &PlacementSettings::default(),
+                std::slice::from_ref(&answer),
+                NOW,
+                |_| {},
+            )
+        }))
+        .is_err();
+        assert!(crashed, "interrupted");
+        assert_never_unserved_and_forgotten(&f, &old, &dest);
 
-    let report = finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
-        .unwrap()
-        .expect("reported");
-
-    assert_eq!(report.journal.len(), 1, "{report:#?}");
-    assert_eq!(report.journal[0].status, JournalStatus::Unfinished);
-    assert!(report.left_behind.is_empty(), "{report:#?}");
-    assert_eq!(f.store.list_redeploy_journal().unwrap().len(), 1, "kept");
-    assert_eq!(xum_entries(&f), 2, "staged and set aside, both kept");
-    assert_eq!(f.preview().journal, 1, "pending");
-
-    // A later launch, with an exclusive rename, finishes it.
-    std::thread::scope(|scope| {
-        scope
-            .spawn(|| finish_journal(&f.store, &f.roots, &f.central_dir(), NOW).unwrap())
-            .join()
-            .unwrap()
-    })
-    .expect("settled");
-    assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "v1");
-    assert_eq!(
-        xum_entries(&f),
-        1,
-        "the folder answered Overwrite for is gone"
-    );
-    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+        finish_journal(&f.store, &f.roots, &f.central_dir(), NOW).unwrap();
+        assert_never_unserved_and_forgotten(&f, &old, &dest);
+        f.run(&[]);
+        assert_never_unserved_and_forgotten(&f, &old, &dest);
+    }
 }
 
 /// F15 (destination aliased onto the central repo): the folder serving Codex

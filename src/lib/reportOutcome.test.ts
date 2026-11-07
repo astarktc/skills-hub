@@ -3331,7 +3331,7 @@ describe("redeployOutcome", () => {
       tone: "failure",
       message: "Finished an interrupted move: 1 move unfinished",
     });
-    expect(outcome.errors.map((e) => e.title)).toEqual(["a: the move to /h/.xum/skills/a could not be finished"]);
+    expect(outcome.errors.map((e) => e.title)).toEqual(["a: the move involving /h/.xum/skills/a could not be finished"]);
     expect(outcome.errors[0].subject).toEqual({ skillId: "a", skillName: "a", tool: "mux" });
   });
 
