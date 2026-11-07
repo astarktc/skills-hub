@@ -1,6 +1,6 @@
 # 19: A skill's name is always one folder name, from install onward
 
-Status: ready-for-agent
+Status: done — fe804958
 
 **Blocked by:** 18 (it introduces the name rule, `placement::deployment_path` / `is_folder_name`).
 
@@ -15,21 +15,36 @@ existing folder (`SkillExists`), but bytes from an untrusted source should never
 
 ## Acceptance criteria
 
-- [ ] **Every path that names a skill applies the one name rule** (ticket 18's `is_folder_name`): no empty name, no
+- [x] **Every path that names a skill applies the one name rule** (ticket 18's `is_folder_name`): no empty name, no
       `.` or `..`, nothing absolute or drive-relative, no separator, no NUL. That covers:
   - `finalize_install` (the requested name and the SKILL.md name);
   - Explore's install;
   - onboarding import;
   - Re-point if it renames;
   - Edit.
-- [ ] **A SKILL.md name that fails the rule** falls back to the derived name, the way an existing name already falls
+- [x] **A SKILL.md name that fails the rule** falls back to the derived name, the way an existing name already falls
       back today. A **requested name that fails** is a typed refusal (ADR-0001), with a `describeCommandError` branch
       and an i18n key, raised before any acquisition.
-- [ ] **The Library copy is admitted physically inside the central repo** at finalize (the removal fence's claim),
+- [x] **The Library copy is admitted physically inside the central repo** at finalize (the removal fence's claim),
       not only lexically.
-- [ ] **Existing records whose `central_path` is outside the central repo** are reported by Skill health as
+- [x] **Existing records whose `central_path` is outside the central repo** are reported by Skill health as
       Unlocatable-style, never deployed from. Decide whether one exists in practice; a migration is not needed unless
       one does.
-- [ ] **Tests:** a SKILL.md with `name: ../../x` installs under the derived name inside the Library; a requested
+- [x] **Tests:** a SKILL.md with `name: ../../x` installs under the derived name inside the Library; a requested
       `../x` is refused before download; Windows separators.
-- [ ] `npm run version:check && npm run check` is green.
+- [x] `npm run version:check && npm run check` is green.
+
+## Comments
+
+- 2026-11-06 (orchestrator): **done, merged as `fe804958` (PR #23)**, after two Astra review rounds
+  (`.scratch/reviews/round20-t19-names-review.md`).
+  - **What shipped:**
+    - One name rule (`placement::is_folder_name`) applied at every install and rename path.
+    - `SKILL_NAME_INVALID`, raised before any download.
+    - Physical admission of the destination's parent.
+    - Exclusive publication through `core/no_replace.rs`: Linux `renameat2(RENAME_NOREPLACE)`, macOS
+      `renameatx_np(RENAME_EXCL)`, Windows `MoveFileExW` without replace or copy.
+    - Records with a bad name quarantined as Unlocatable, with Remove as the repair, Edit included.
+  - **Gate on the merged main:** 1,435 frontend tests; 1,150 Rust tests, 1 ignored.
+  - **Left out:** concurrent same-user-process hardening is out of the stated scope, now BACKLOG #119.
+  - The children's per-pass entries stayed uncommitted in their worktrees; this entry stands in for them.
