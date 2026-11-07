@@ -28,7 +28,7 @@ use crate::core::redeploy::{
     EditedCopyDecision, JournalStatus, RedeployAnswer, RedeployCause, RedeployKept,
     RedeployLeftReason, RedeployPreview, RedeployReport, RedeploySkip, RedeployStatus,
 };
-use crate::core::removal_fence::central_repo_of;
+use crate::core::removal_fence::{central_repo_of, EntryId};
 use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord};
 use crate::core::sync_status::{SyncMode, SyncStatus};
 use crate::core::tool_adapters::{adapter_by_key, mark_installed_in};
@@ -1384,62 +1384,79 @@ fn a_replacement_interrupted_before_the_swap_keeps_the_link_and_completes() {
     assert_deep_agents_copy(&f, &dest);
 }
 
-/// Interrupted right after the swap (an atomic exchange, or the second of
-/// two renames): the new copy is in place, the old link beside it. The launch
-/// check removes the link; the next run records the copy as it is.
+/// Interrupted right after the atomic exchange: the new copy is in place,
+/// the old link beside it. The launch check removes the link; the next run
+/// records the copy as it is. (Two renames never replace this link: it is
+/// the only Deployment — the next test.)
 #[cfg(unix)]
 #[test]
 fn a_replacement_interrupted_after_the_swap_keeps_the_copy_and_completes() {
-    for two_step in [false, true] {
-        let f = fixture(&["deep_agents_code"]);
-        let dest = deep_agents_link(&f);
-        if two_step {
-            test_seams::force_two_step_swap();
-        }
-        crash(&f, test_seams::crash_after_swap);
-        assert!(dest.join("a.txt").is_file(), "deployed in the new place");
-        assert!(!fs::symlink_metadata(&dest)
-            .unwrap()
-            .file_type()
-            .is_symlink());
-
-        finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
-            .unwrap()
-            .expect("settled");
-        assert_deep_agents_copy(&f, &dest);
-
-        assert!(matches!(
-            only_move(&f.run(&[])).status,
-            RedeployStatus::Adopted
-        ));
-        assert_eq!(f.row("deep_agents_code").unwrap().mode, SyncMode::Copy);
-        assert_eq!(f.preview(), RedeployPreview::default());
-    }
-}
-
-/// Interrupted between two renames (no atomic exchange: Windows, some file
-/// systems): nothing is at the new place for that instant, the copy is
-/// staged beside it. The launch check moves it in.
-#[cfg(unix)]
-#[test]
-fn a_replacement_interrupted_between_two_renames_is_moved_in_at_launch() {
     let f = fixture(&["deep_agents_code"]);
     let dest = deep_agents_link(&f);
-    test_seams::force_two_step_swap();
-    crash(&f, test_seams::crash_between_swap_renames);
-    assert!(!present(&dest));
-    assert_eq!(deep_agents_extras(&f).len(), 2, "staged copy and the link");
+    crash(&f, test_seams::crash_after_swap);
+    assert!(dest.join("a.txt").is_file(), "deployed in the new place");
+    assert!(!fs::symlink_metadata(&dest)
+        .unwrap()
+        .file_type()
+        .is_symlink());
 
-    let finished = finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
+    finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
         .unwrap()
         .expect("settled");
-
-    assert_eq!(finished.journal[0].status, JournalStatus::Finished);
     assert_deep_agents_copy(&f, &dest);
+
     assert!(matches!(
         only_move(&f.run(&[])).status,
         RedeployStatus::Adopted
     ));
+    assert_eq!(f.row("deep_agents_code").unwrap().mode, SyncMode::Copy);
+    assert_eq!(f.preview(), RedeployPreview::default());
+}
+
+/// Whether `status` is the refusal to replace the folder at `dest` without a
+/// moment the skill is missing.
+fn refused_unsafe(status: &RedeployStatus, dest: &Path) -> bool {
+    matches!(
+        status,
+        RedeployStatus::Failed {
+            error: CommandError::DestinationRefused {
+                path,
+                reason: DestinationRefusal::CannotReplaceSafely,
+                ..
+            },
+        } if Path::new(path) == dest
+    )
+}
+
+/// Without an atomic exchange (Windows, some file systems), the link where
+/// copies are taken is the only Deployment: two renames would leave the
+/// skill missing between them. The occupant is not touched, nothing staged
+/// stays, and the move is refused and still pending — no interruption point
+/// is ever reached.
+#[cfg(unix)]
+#[test]
+fn without_an_exchange_the_only_deployment_is_never_replaced() {
+    let f = fixture(&["deep_agents_code"]);
+    let dest = deep_agents_link(&f);
+    let before = EntryId::of(&dest).unwrap();
+    test_seams::force_two_step_swap();
+    test_seams::crash_between_swap_renames();
+    test_seams::crash_after_swap();
+
+    let report = f.run(&[]);
+
+    assert!(
+        refused_unsafe(&only_move(&report).status, &dest),
+        "{report:#?}"
+    );
+    assert_eq!(fs::read_link(&dest).unwrap(), f.central, "still deployed");
+    assert_eq!(EntryId::of(&dest).unwrap(), before, "the same entry");
+    assert!(deep_agents_extras(&f).is_empty(), "nothing staged stays");
+    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+    let row = f.row("deep_agents_code").unwrap();
+    assert_eq!(row.status, SyncStatus::Synced);
+    assert_eq!(row.mode, SyncMode::Symlink);
+    assert_eq!(f.preview().global.correction, 1, "still pending");
 }
 
 /// An Overwrite over a folder in the way is staged the same way: interrupted
@@ -1602,6 +1619,151 @@ fn an_overwrite_cut_between_two_renames_is_finished_at_launch() {
     );
     assert!(!present(&old));
     assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+}
+
+/// Without an atomic exchange, two renames replace the folder in the way
+/// while the old copy keeps serving (every OS; Windows always takes this
+/// path): the move completes.
+#[test]
+fn an_overwrite_without_an_exchange_replaces_while_the_old_copy_serves() {
+    let f = fixture(&["mux"]);
+    let old = f.copy_row("mux", ".mux/skills/alpha");
+    let dest = foreign_at(&f, ".xum/skills/alpha");
+    test_seams::force_two_step_swap();
+
+    let report = f.run(&[xum_overwrite(&dest)]);
+
+    assert!(
+        matches!(only_move(&report).status, RedeployStatus::Moved),
+        "{report:#?}"
+    );
+    assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "v1");
+    assert_eq!(xum_entries(&f), 1, "nothing staged or set aside stays");
+    assert!(!present(&old));
+    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+}
+
+fn xum_overwrite(dest: &Path) -> RedeployAnswer {
+    RedeployAnswer::Occupied {
+        skill_id: "alpha".into(),
+        folder_key: "mux".into(),
+        row_ids: vec!["row-mux".into()],
+        path: dest.to_string_lossy().into_owned(),
+        decision: OverrideDecision::Overwrite,
+    }
+}
+
+/// A usable copy of the skill that is not the Library's (an older edit).
+fn edited_skill_at(f: &Fixture, rel: &str) -> PathBuf {
+    let path = f.at(rel);
+    copy_of(&f.central, &path);
+    fs::write(path.join("a.txt"), "v0 edited").unwrap();
+    path
+}
+
+/// Round 20 t10 review, finding 7 (Astra's probe): the old place is gone and
+/// the new place holds a different, usable copy — the only working one. An
+/// Overwrite without an atomic exchange would leave neither between its two
+/// renames, so the occupant is not touched: refused, pending, nothing staged
+/// stays, and no interruption point is reached.
+#[test]
+fn an_overwrite_with_no_old_copy_and_no_exchange_never_touches_the_only_copy() {
+    let f = fixture(&["mux"]);
+    let old = f.copy_row("mux", ".mux/skills/alpha");
+    fs::remove_dir_all(&old).unwrap();
+    let dest = edited_skill_at(&f, ".xum/skills/alpha");
+    let before = EntryId::of(&dest).unwrap();
+    test_seams::force_two_step_swap();
+    test_seams::crash_between_swap_renames();
+    test_seams::crash_after_swap();
+
+    let report = f.run(&[xum_overwrite(&dest)]);
+
+    assert!(
+        refused_unsafe(&only_move(&report).status, &dest),
+        "{report:#?}"
+    );
+    assert_eq!(EntryId::of(&dest).unwrap(), before, "the same folder");
+    assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "v0 edited");
+    assert_eq!(xum_entries(&f), 1, "nothing staged or set aside stays");
+    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+    let row = f.row("mux").unwrap();
+    assert_eq!(row.status, SyncStatus::Error, "not synced anywhere (F14)");
+    assert_eq!(Path::new(&row.target_path), old, "not switched");
+    assert_eq!(f.preview().global.correction, 1, "still pending");
+}
+
+/// Finding 7, the one interruption point the refusal leaves (after staging,
+/// before the occupant could move): the only copy stays in place, and the
+/// launch check drops what was staged.
+#[test]
+fn an_overwrite_with_no_old_copy_interrupted_before_the_swap_keeps_the_only_copy() {
+    let f = fixture(&["mux"]);
+    let old = f.copy_row("mux", ".mux/skills/alpha");
+    fs::remove_dir_all(&old).unwrap();
+    let dest = edited_skill_at(&f, ".xum/skills/alpha");
+    let before = EntryId::of(&dest).unwrap();
+    test_seams::force_two_step_swap();
+    test_seams::crash_before_set_aside();
+    let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        redeploy_unlocked(
+            &f.store,
+            &f.roots,
+            &f.central_dir(),
+            &PlacementSettings::default(),
+            &[xum_overwrite(&dest)],
+            NOW,
+            |_| {},
+        )
+    }))
+    .is_err();
+    assert!(crashed, "interrupted");
+    assert_eq!(EntryId::of(&dest).unwrap(), before);
+
+    finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
+        .unwrap()
+        .expect("settled");
+
+    assert_eq!(EntryId::of(&dest).unwrap(), before, "the same folder");
+    assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "v0 edited");
+    assert_eq!(xum_entries(&f), 1, "nothing staged stays");
+    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+}
+
+/// Round 20 t10 review, finding 8: on a file system without an exclusive
+/// rename the redeploy never falls back to reserving the name (an
+/// interruption there would leave an empty folder its journal cannot
+/// recognise). The strict rename says "unsupported" and nothing moves:
+/// refused, pending, the old copy and the folder in the way untouched,
+/// nothing staged stays, nothing journaled.
+#[test]
+fn without_an_exclusive_rename_nothing_moves() {
+    let f = fixture(&["mux"]);
+    let old = f.copy_row("mux", ".mux/skills/alpha");
+    let dest = foreign_at(&f, ".xum/skills/alpha");
+    let (old_id, dest_id) = (EntryId::of(&old).unwrap(), EntryId::of(&dest).unwrap());
+    test_seams::force_two_step_swap();
+    test_seams::force_no_exclusive_rename();
+
+    let report = f.run(&[xum_overwrite(&dest)]);
+
+    assert!(
+        refused_unsafe(&only_move(&report).status, &dest),
+        "{report:#?}"
+    );
+    assert_eq!(EntryId::of(&old).unwrap(), old_id);
+    assert_eq!(fs::read_to_string(old.join("a.txt")).unwrap(), "v1");
+    assert_eq!(EntryId::of(&dest).unwrap(), dest_id);
+    assert_eq!(
+        fs::read_to_string(dest.join("SKILL.md")).unwrap(),
+        "someone else's"
+    );
+    assert_eq!(xum_entries(&f), 1, "nothing staged stays");
+    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+    let row = f.row("mux").unwrap();
+    assert_eq!(row.status, SyncStatus::Synced, "the old copy still serves");
+    assert_eq!(Path::new(&row.target_path), old);
+    assert_eq!(f.preview().global.correction, 1, "still pending");
 }
 
 /// F15 (destination aliased onto the central repo): the folder serving Codex

@@ -256,6 +256,8 @@ export const resources = {
             "Did not write {{path}}: its folder ({{resolved}}) is outside every skills folder Skills Hub manages for it. Use Move Deployments in Settings → Harnesses to deploy it where the harness reads skills.",
           overlapsDeployment:
             "Did not write {{path}}: a linked folder nests it with the deployment at {{resolved}}, so writing there would change or remove that deployment. Replace the link that nests them with a real folder, then move again.",
+          cannotReplaceSafely:
+            "Did not replace the folder at {{path}}: Skills Hub could not replace it safely on this disk — an interruption could have left the skill missing. Nothing was changed and the move is still pending: move the folder at {{path}} aside, then Move again.",
         },
         redeployPending:
           "Not deployed to {{tool}} here: its deployment at {{path}} waits to move to its new folder. Use Move Deployments in Settings → Harnesses.",

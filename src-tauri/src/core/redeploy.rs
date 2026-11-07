@@ -36,7 +36,10 @@
 //!    `TARGET_EXISTS` row for the one overwrite ask. A Keep answer leaves the
 //!    move undone (`kept`, still pending). A genuine replacement — Overwrite,
 //!    or ours in the wrong mode — is **staged** ([`staged_replace`]): deployed
-//!    beside the occupant, journaled, then swapped in. A Disabled row and a
+//!    beside the occupant, journaled, then swapped in — atomically, or by two
+//!    renames only while a working old Deployment stays in place; otherwise
+//!    the occupant is not touched and the move is refused, still pending
+//!    (`DESTINATION_REFUSED`, `cannotReplaceSafely`). A Disabled row and a
 //!    row that never deployed (no claim) are re-recorded at the new place with
 //!    nothing written.
 //! 2. **Switch** in one transaction: the folder's row takes the new key, path
@@ -70,6 +73,7 @@
 //! Core never resolves roots: callers pass the host roots and the configured
 //! central repo (`commands::installer_paths`).
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -85,7 +89,7 @@ use super::environment::HostRoots;
 use super::errors::{CommandError, DestinationRefusal, SignalError};
 use super::global_sync::OverrideDecision;
 use super::mutation_guard;
-use super::no_replace::{ExchangeError, HeldDir, RenameError};
+use super::no_replace::{ExchangeError, HeldDir, StrictRenameError};
 use super::ownership::{self, Deployed, Occupancy};
 use super::placement::{
     self, capability_entry, managed_global_dirs, readers_of_global_dir, row_reachable, DeployMode,
@@ -1272,16 +1276,27 @@ fn aside_of(stage: &Path) -> Option<PathBuf> {
 /// 4. swap them — the occupant checked to still be the one judged right
 ///    before: one atomic exchange where the OS offers it
 ///    (`no_replace::HeldDir::exchange`; the occupant lands at the staged
-///    name), else the occupant set aside (`….old`) and the staged artifact
-///    moved in, each an exclusive rename (`core::no_replace`);
+///    name), else — only while a working old Deployment of this move stays
+///    in place elsewhere ([`IntactOld`], re-verified right before) — the
+///    occupant set aside (`….old`) and the staged artifact moved in, each a
+///    strict exclusive rename (`HeldDir::rename_no_replace_strict`, never the
+///    reservation fallback);
 /// 5. the switch (the caller) drops the `replacing` entry and journals the
 ///    set-aside occupant as an old artifact, removed like any other.
+///
+/// With neither an exchange nor an intact old Deployment, or without an
+/// exclusive rename on the file system, the occupant is never touched: what
+/// was staged is undone and the move fails with `DESTINATION_REFUSED`
+/// (`cannotReplaceSafely`), still pending — the folder at the new place may
+/// be the only working one, and two renames leave the new place empty
+/// between them (round 20 t10 review, findings 7 and 8).
 ///
 /// A failure before the occupant moves undoes what was staged; a failure
 /// between the two renames puts the occupant back. What an interruption
 /// leaves, the journal finish completes ([`settle_replacing`]): with the
 /// exchange the new place is never empty; with two renames it is empty only
-/// between them, and the finish moves the staged artifact in.
+/// between them, the old Deployment still serving, and the finish moves the
+/// staged artifact in.
 #[allow(clippy::too_many_arguments)]
 fn staged_replace(
     ctx: &Ctx<'_>,
@@ -1305,6 +1320,9 @@ fn staged_replace(
     let aside_name = format!("{STAGE_PREFIX}{id}{STAGE_OLD}");
     let stage = folder.join(&stage_name);
     let aside = folder.join(&aside_name);
+    // The working old Deployment that would serve while two renames leave the
+    // new place empty, judged before anything is staged.
+    let intact_old = IntactOld::find(planned, occupant);
 
     // 1. The occupant could be removed at all.
     removal_fence::admit(
@@ -1407,24 +1425,32 @@ fn staged_replace(
         Err(ExchangeError::Failed(err)) => {
             return undo(anyhow::Error::new(err).context(format!("redeploy: swap at {:?}", dest)))
         }
-        // Elsewhere two exclusive renames: set the occupant aside, then move
-        // the staged artifact in (the journal finishes a cut between them).
+        // Elsewhere two strict exclusive renames — set the occupant aside,
+        // then move the staged artifact in; the journal finishes a cut
+        // between them — but only while a working old Deployment of this move
+        // stays in place, re-verified now: the new place is empty between
+        // the renames. Otherwise the occupant is not touched.
         Err(ExchangeError::Unsupported) => {
-            if let Err(err) = held.rename_no_replace(name, aside_name.as_ref()) {
+            if !intact_old.as_ref().is_some_and(|old| old.holds(dest)) {
+                return undo(cannot_replace_safely(dest));
+            }
+            if let Err(err) = strict_rename(&held, name, aside_name.as_ref()) {
                 return undo(rename_error(err, dest));
             }
             #[cfg(test)]
             test_seams::between_swap_renames();
-            if let Err(err) = held.rename_no_replace(stage_name.as_ref(), name) {
+            if let Err(err) = strict_rename(&held, stage_name.as_ref(), name) {
                 let err = rename_error(err, dest);
-                return match held.rename_no_replace(aside_name.as_ref(), name) {
+                return match strict_rename(&held, aside_name.as_ref(), name) {
                     Ok(()) => undo(err),
-                    // Neither in place: the journal entry stays for the finish.
-                    Err(back) => Err(err.context(format!(
-                        "and the folder set aside at {:?} could not be put back: {}",
+                    // Neither in place (the old Deployment still serves): the
+                    // journal entry stays for the finish. Flattened, so no
+                    // typed refusal in the chain claims nothing was touched.
+                    Err(back) => Err(anyhow::anyhow!(
+                        "{err:#}; and the folder set aside at {:?} could not be put back: {:#}",
                         aside,
                         rename_error(back, dest)
-                    ))),
+                    )),
                 };
             }
             aside
@@ -1456,12 +1482,112 @@ fn staged_replace(
     })
 }
 
-fn rename_error(err: RenameError, at: &Path) -> anyhow::Error {
+/// Every rename of the redeploy: exclusive, and never the reservation
+/// fallback (`no_replace` module docs) — an interruption between that
+/// fallback's `mkdirat` and its rename would leave an empty folder the
+/// journal finish could not tell from anything else.
+fn strict_rename(held: &HeldDir, from: &OsStr, to: &OsStr) -> Result<(), StrictRenameError> {
+    #[cfg(test)]
+    if test_seams::no_exclusive_rename() {
+        return Err(StrictRenameError::Unsupported);
+    }
+    held.rename_no_replace_strict(from, to)
+}
+
+fn rename_error(err: StrictRenameError, at: &Path) -> anyhow::Error {
     match err {
-        RenameError::Occupied => anyhow::anyhow!("redeploy: something took {:?} meanwhile", at),
-        RenameError::Failed(err) => {
+        StrictRenameError::Occupied => {
+            anyhow::anyhow!("redeploy: something took {:?} meanwhile", at)
+        }
+        StrictRenameError::Unsupported => cannot_replace_safely(at),
+        StrictRenameError::Failed(err) => {
             anyhow::Error::new(err).context(format!("redeploy: rename at {:?}", at))
         }
+    }
+}
+
+/// The refusal to replace the occupant at `dest` (`cannotReplaceSafely`):
+/// nothing touched, the move pending until the operator moves it aside.
+fn cannot_replace_safely(dest: &Path) -> anyhow::Error {
+    let path = dest.to_string_lossy().into_owned();
+    anyhow::anyhow!(SignalError::DestinationRefused {
+        resolved: path.clone(),
+        path,
+        reason: DestinationRefusal::CannotReplaceSafely,
+    })
+}
+
+/// A working old Deployment of a move, away from its new place: what keeps
+/// the skill served while two renames leave the new place empty (round 20
+/// t10 review, finding 7). Judged independently of the occupant — its own
+/// row's evidence (a link resolving to the Library copy, or a copy whose
+/// Content identity is the one recorded) — and re-verified right before the
+/// first rename.
+struct IntactOld {
+    path: PathBuf,
+    entry: JournaledEntry,
+    deployed: Deployed,
+}
+
+impl IntactOld {
+    /// The first live row of `planned` whose artifact is not the new place
+    /// (by path or physical identity), is not the occupant, and holds now.
+    fn find(planned: &Planned, occupant: JournaledEntry) -> Option<Self> {
+        let dest = &planned.dest;
+        for row in planned
+            .rows
+            .iter()
+            .filter(|row| row.owns_artifact() && row.status != SyncStatus::Disabled)
+        {
+            let path = PathBuf::from(&row.target_path);
+            if path == *dest || same_entry(&path, dest) {
+                continue;
+            }
+            // Absent or unreadable: not a working Deployment.
+            let Ok(Some(entry)) = JournaledEntry::of(&path) else {
+                continue;
+            };
+            if entry.id == occupant.id {
+                continue;
+            }
+            let old = Self {
+                path,
+                entry,
+                deployed: Deployed::of_target(row, Some(&planned.skill)),
+            };
+            if old.holds(dest) {
+                return Some(old);
+            }
+        }
+        None
+    }
+
+    /// Whether it is still the entry judged, still provably the skill, and
+    /// untouched by renames at `dest`: neither reached through the folder at
+    /// `dest` nor holding it. Anything unreadable does not hold.
+    fn holds(&self, dest: &Path) -> bool {
+        if !matches!(JournaledEntry::of(&self.path), Ok(Some(now)) if now == self.entry) {
+            return false;
+        }
+        if !matches!(
+            ownership::check(&self.path, &self.deployed),
+            Ok(Occupancy::Ours)
+        ) {
+            return false;
+        }
+        let (Some(parent), Some(folder)) = (self.path.parent(), dest.parent()) else {
+            return false;
+        };
+        let apart = (|| -> Result<bool> {
+            if real_dir(dest) && Place::of(parent)?.within(&Place::of(dest)?) {
+                return Ok(false);
+            }
+            if real_dir(&self.path) && Place::of(folder)?.within(&Place::of(&self.path)?) {
+                return Ok(false);
+            }
+            Ok(true)
+        })();
+        apart.unwrap_or(false)
     }
 }
 
@@ -1775,12 +1901,14 @@ fn settle_replacing(ctx: &Ctx<'_>, entry: &RedeployJournalRecord) -> Result<Sett
         } else {
             None
         };
+        // Strict, like every redeploy rename: no reservation is ever made at
+        // the new place, so an empty folder there is never the app's own and
+        // is never taken as evidence — only the journaled identities are.
         if let Some(from) = back {
             let renamed = HeldDir::open(folder)
                 .map_err(anyhow::Error::from)
                 .and_then(|held| {
-                    held.rename_no_replace(from, name)
-                        .map_err(|err| rename_error(err, dest))
+                    strict_rename(&held, from, name).map_err(|err| rename_error(err, dest))
                 });
             if let Err(err) = renamed {
                 return Ok(Settled::Left {
@@ -2017,6 +2145,17 @@ pub(crate) mod test_seams {
         static CRASH_BETWEEN_SWAP_RENAMES: Cell<bool> = const { Cell::new(false) };
         static CRASH_AFTER_SWAP: Cell<bool> = const { Cell::new(false) };
         static TWO_STEP_SWAP: Cell<bool> = const { Cell::new(false) };
+        static NO_EXCLUSIVE_RENAME: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Every redeploy rename on this thread reports no exclusive rename, as
+    /// on a file system without one (NFS, SMB, exFAT, …).
+    pub(crate) fn force_no_exclusive_rename() {
+        NO_EXCLUSIVE_RENAME.with(|cell| cell.set(true));
+    }
+
+    pub(super) fn no_exclusive_rename() -> bool {
+        NO_EXCLUSIVE_RENAME.with(Cell::get)
     }
 
     /// Staged replacements on this thread swap by two renames, as on an OS

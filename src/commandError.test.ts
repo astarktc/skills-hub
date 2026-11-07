@@ -182,6 +182,22 @@ describe("describeCommandError", () => {
     );
   });
 
+  it("says the redeploy left the folder at the new place untouched and what to do, for DESTINATION_REFUSED cannotReplaceSafely", () => {
+    expect(
+      describeCommandError(
+        {
+          code: "DESTINATION_REFUSED",
+          path: "/home/u/.xum/skills/alpha",
+          resolved: "/home/u/.xum/skills/alpha",
+          reason: "cannotReplaceSafely",
+        },
+        t,
+      ),
+    ).toBe(
+      'errors.destinationRefused.cannotReplaceSafely {"path":"/home/u/.xum/skills/alpha","resolved":"/home/u/.xum/skills/alpha"}',
+    );
+  });
+
   it("names the path and what to check for REMOVAL_PERMISSION_DENIED, keeping the I/O chain out of the copy", () => {
     expect(
       describeCommandError(

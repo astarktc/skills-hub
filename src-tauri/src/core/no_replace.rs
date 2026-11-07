@@ -35,12 +35,19 @@
 //! needs no fallback, and could not use one: a directory cannot be renamed
 //! onto an existing one there.
 //!
+//! [`HeldDir::rename_no_replace_strict`] is the same rename without that
+//! fallback: where the file system has no exclusive rename it says so
+//! ([`StrictRenameError::Unsupported`]) and changes nothing. The redeploy
+//! uses it for every rename (`core::redeploy`): an interruption between the
+//! reservation and the rename would leave an empty folder its journal cannot
+//! tell from anything else (round 20 t10 review, finding 8).
+//!
 //! [`HeldDir::exchange`] swaps two entries of the held directory in one step
 //! where the kernel offers it (Linux `renameat2(.., RENAME_EXCHANGE)`, macOS
 //! `renameatx_np(.., RENAME_SWAP)`), so neither name is ever empty — how the
 //! redeploy replaces a Deployment recoverably (`core::redeploy`). Elsewhere
-//! (Windows, a file system without it) it says so, and the caller falls back
-//! to two exclusive renames under its own journal.
+//! (Windows, a file system without it) it says so, and the caller decides
+//! whether two strict renames under its own journal are safe.
 //!
 //! Scope (CONTEXT.md, Artifact removal): another process swapping entries
 //! inside the Library while the app acts is out of scope. This module closes
@@ -59,6 +66,18 @@ pub(crate) enum RenameError {
     /// changed.
     Occupied,
     /// Any other failure. Nothing was put at the new name.
+    Failed(io::Error),
+}
+
+/// Why [`HeldDir::rename_no_replace_strict`] did not rename. Nothing changed
+/// in any case.
+#[derive(Debug)]
+pub(crate) enum StrictRenameError {
+    /// Something is at the new name (of any type, a link included).
+    Occupied,
+    /// No exclusive rename on this file system; no fallback was tried.
+    Unsupported,
+    /// Any other failure.
     Failed(io::Error),
 }
 
@@ -108,6 +127,30 @@ impl HeldDir {
         sys::rename_no_replace(self, from, to)
     }
 
+    /// [`Self::rename_no_replace`] without the reservation fallback: where
+    /// the file system has no exclusive rename,
+    /// [`StrictRenameError::Unsupported`] and nothing changed — no entry is
+    /// ever made at `to` but the renamed one. Both are single folder names.
+    pub(crate) fn rename_no_replace_strict(
+        &self,
+        from: &OsStr,
+        to: &OsStr,
+    ) -> Result<(), StrictRenameError> {
+        for name in [from, to] {
+            let mut components = Path::new(name).components();
+            if !matches!(
+                (components.next(), components.next()),
+                (Some(Component::Normal(_)), None)
+            ) {
+                return Err(StrictRenameError::Failed(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("{name:?} is not one entry name"),
+                )));
+            }
+        }
+        sys::rename_no_replace_strict(self, from, to)
+    }
+
     /// Exchange this directory's entries `a` and `b` (both present, of any
     /// type) in one atomic step, where the OS and file system offer it;
     /// [`ExchangeError::Unsupported`] elsewhere. Both are single folder names.
@@ -138,7 +181,7 @@ mod sys {
     use std::os::unix::io::{AsRawFd, RawFd};
     use std::path::Path;
 
-    use super::{ExchangeError, HeldDir, RenameError};
+    use super::{ExchangeError, HeldDir, RenameError, StrictRenameError};
 
     pub(super) fn open(path: &Path) -> io::Result<File> {
         std::fs::OpenOptions::new()
@@ -165,6 +208,24 @@ mod sys {
                 rename_onto_reservation(fd, &from, &to)
             }
             Err(err) => Err(classify(err)),
+        }
+    }
+
+    pub(super) fn rename_no_replace_strict(
+        dir: &HeldDir,
+        from: &OsStr,
+        to: &OsStr,
+    ) -> Result<(), StrictRenameError> {
+        let fd = dir.dir.as_raw_fd();
+        let from = c_name(from).map_err(StrictRenameError::Failed)?;
+        let to = c_name(to).map_err(StrictRenameError::Failed)?;
+        match exclusive_rename(fd, &from, &to) {
+            Ok(()) => Ok(()),
+            Err(err) if unsupported(&err) => Err(StrictRenameError::Unsupported),
+            Err(err) => Err(match classify(err) {
+                RenameError::Occupied => StrictRenameError::Occupied,
+                RenameError::Failed(err) => StrictRenameError::Failed(err),
+            }),
         }
     }
 
@@ -349,7 +410,7 @@ mod sys {
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS};
     use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
 
-    use super::{ExchangeError, HeldDir, RenameError};
+    use super::{ExchangeError, HeldDir, RenameError, StrictRenameError};
 
     /// Windows has no atomic exchange of two directory entries.
     pub(super) fn exchange(_dir: &HeldDir, _a: &OsStr, _b: &OsStr) -> Result<(), ExchangeError> {
@@ -395,6 +456,19 @@ mod sys {
                 code as i32,
             ))),
         }
+    }
+
+    /// `MoveFileExW` without replace is exclusive on every volume: no
+    /// fallback exists to refuse, so this is the ordinary rename.
+    pub(super) fn rename_no_replace_strict(
+        dir: &HeldDir,
+        from: &OsStr,
+        to: &OsStr,
+    ) -> Result<(), StrictRenameError> {
+        rename_no_replace(dir, from, to).map_err(|err| match err {
+            RenameError::Occupied => StrictRenameError::Occupied,
+            RenameError::Failed(err) => StrictRenameError::Failed(err),
+        })
     }
 }
 

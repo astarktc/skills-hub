@@ -413,6 +413,14 @@ pub enum DestinationRefusal {
     /// `resolved` names the Deployment in the way. Raised by the redeploy
     /// (`core::redeploy`).
     OverlapsDeployment,
+    /// A folder is at the new place and the redeploy cannot replace it
+    /// without a moment in which neither it nor the skill is there: no atomic
+    /// exchange here (Windows always, some file systems) while no working old
+    /// Deployment of the skill stays in place meanwhile, or no exclusive
+    /// rename on this file system. Nothing was touched; the move stays
+    /// pending until the operator moves that folder aside. `resolved` is the
+    /// new place. Raised by the redeploy (`core::redeploy`).
+    CannotReplaceSafely,
 }
 
 /// Why Move Library folder refused a destination (the backend classifies;
