@@ -1,6 +1,6 @@
 # 10: Redeploy (global scope) and the registry corrections
 
-Status: ready-for-agent
+Status: done — b7f26e08
 
 **Blocked by:** 09, 18 (the occupant check).
 
@@ -14,14 +14,14 @@ duplicate of ours.
 
 ## Acceptance criteria
 
-- [ ] **`core/redeploy.rs` replaces `core/target_relocation.rs`.** The old module is deleted; its tests are ported where
+- [x] **`core/redeploy.rs` replaces `core/target_relocation.rs`.** The old module is deleted; its tests are ported where
       they still apply. Each recorded global Deployment's (path, mode, folder key) is compared with placement's answer,
       and every difference is a move. No cause is named in the module.
-- [ ] **Preview:** a read-only entry point answers counts per scope and per cause (correction / migration).
-- [ ] **Mutation:** an entry point under `mutation_guard::serialized`, with progress over a Channel and no cancel. The
+- [x] **Preview:** a read-only entry point answers counts per scope and per cause (correction / migration).
+- [x] **Mutation:** an entry point under `mutation_guard::serialized`, with progress over a Channel and no cancel. The
       unlocked seam is for composites (12 and 14 call it inside their own guarded section). The layout is read once
       per operation.
-- [ ] **Per move, in order:**
+- [x] **Per move, in order:**
   1. **Deploy** to the new place through `sync_engine`'s capability-aware overwrite path.
      - Ours or identical content there is **adopted**.
      - Different content is a `TARGET_EXISTS` row for the one overwrite ask. A Keep answer leaves the move undone and
@@ -34,22 +34,22 @@ duplicate of ours.
      - A differing copy raises the **edited-copy question** as a row of the same ask: delete / leave. Leaving disowns
        it and the report names its readers.
      - A successful removal clears the journal entry.
-- [ ] **Journal finish.** Every run and the launch check finish journal entries first: remove-or-report, acting only
+- [x] **Journal finish.** Every run and the launch check finish journal entries first: remove-or-report, acting only
       while the row and both identities still match, otherwise reporting the entry left behind (`library_move`'s resume
       rule).
-- [ ] **Disabled and never-synced `error` rows** are re-recorded at the new place with nothing written.
-- [ ] **Row collapse (Q24).** When several rows land in one folder, the folder row is live if any had the skill live,
+- [x] **Disabled and never-synced `error` rows** are re-recorded at the new place with nothing written.
+- [x] **Row collapse (Q24).** When several rows land in one folder, the folder row is live if any had the skill live,
       and `disabled` only if all did. Each disable that no longer holds is report data naming the harness.
-- [ ] **`RedeployReport` on the wire as itself.**
+- [x] **`RedeployReport` on the wire as itself.**
   - Per move: `moved | adopted | unchanged | left_old { edited } | kept { declined } | skipped { disabled } |
     failed { error }`.
   - It also carries the duplicates left behind (with readers), the disables that no longer hold, and the journal
     entries finished or left behind.
   - `reportOutcome` folds it, and pending or left-behind entries surface; the fold no longer skips them.
-- [ ] **Launch check.** At startup: journal finish, then preview. If there is work, the app offers it once through
+- [x] **Launch check.** At startup: journal finish, then preview. If there is work, the app offers it once through
       `offerDialog`, and accepting runs the mutation under `runAction`. If declined, Settings → Harnesses shows a
       "Move N Deployments" line backed by the preview. Nothing else moves at launch.
-- [ ] **Registry corrections (Q12 table in the grill log).**
+- [x] **Registry corrections (Q12 table in the grill log).**
   - Codex, Goose, OpenHands and Zencoder go to `.agents/skills`.
   - Antigravity goes to `.gemini/config/skills`, with detect `+ .gemini/antigravity-cli`.
   - Kimi goes to `.kimi-code/skills`.
@@ -60,9 +60,9 @@ duplicate of ours.
   - Each old dir goes into `former_skills_dirs`. The README table and the brief-snapshot / table tests are updated,
     and the Wave A pin that kept the deferred detect dirs absent is removed deliberately.
   - Project-dir corrections are 11's.
-- [ ] **Typed errors (ADR-0001)** for every new refusal, each with a binding, a `describeCommandError` branch and an
+- [x] **Typed errors (ADR-0001)** for every new refusal, each with a binding, a `describeCommandError` branch and an
       i18n key.
-- [ ] **Tests** (core integration, temp roots, Tool dirs outside the central dir):
+- [x] **Tests** (core integration, temp roots, Tool dirs outside the central dir):
   - every report status;
   - deploy-first ordering;
   - adopt-identical;
@@ -75,10 +75,10 @@ duplicate of ours.
   - idempotence;
   - **audit 3 F14 (aliased roots), F15 (destination aliased onto the central repo), F16 (Keep over a copy with
     local-only edits)**.
-- [ ] **Frontend:** hook tests for the offer, run and decline paths and the "Move N" line; `reportOutcome` fold tests.
-- [ ] **CONTEXT.md:** **Redeploy**, its **journal** and **launch check** replace "Target relocation". "Former skills dir"
+- [x] **Frontend:** hook tests for the offer, run and decline paths and the "Move N" line; `reportOutcome` fold tests.
+- [x] **CONTEXT.md:** **Redeploy**, its **journal** and **launch check** replace "Target relocation". "Former skills dir"
       is updated.
-- [ ] `npm run version:check && npm run check` is green. Windows arms are proven by `gh pr checks` on a draft PR.
+- [x] `npm run version:check && npm run check` is green. Windows arms are proven by `gh pr checks` on a draft PR.
 
 ## Notes
 
@@ -107,3 +107,20 @@ duplicate of ours.
   OpenHands and Zencoder into `~/.agents/skills`. Those move to ticket 12, so they land with the shared-folder
   preference. If the implementation already includes them, the review's fix pass splits them out: their registry rows,
   README cells and brief-snapshot/table tests revert to `main`. Everything else in the Q12 table stays here.
+- 2026-11-07 (orchestrator): **done, merged as `b7f26e08` (PR #24)**, after five review rounds: Astra all five, Sol rounds 1–2,
+  plus the orchestrator's own check of fix pass 5 (`.scratch/reviews/round20-t10-redeploy-review.md`).
+  - **What shipped:**
+    - `core/redeploy.rs` replaces `target_relocation`: deploy first, one transaction for the row switch and the
+      journal, cleanup only through `ownership::check` and the fence, answers bound to their row and journal entry.
+    - Adoption is non-destructive.
+    - An occupied destination is replaced only by an atomic exchange; with no exchange it is refused and stays
+      pending (Windows, SMB, exFAT).
+    - The journal is dropped only on positive evidence.
+    - The launch check, the offer, and the "Move N Deployments" line.
+    - The registry corrections for Antigravity, Kimi Code, Kilo, Xum and Devin. The `.agents` moves are held for
+      ticket 12.
+  - **Gate on the merged main:** 1,470 frontend tests; 1,205 Rust tests, 1 ignored.
+  - **Follow-ups:**
+    - ticket 12 carries Sol 101/103/105/106/111/113 and Astra 10/13/15/16, plus the fixture row ids;
+    - ticket 16 carries Sol 102/104/112 and Astra's `entry_id` merge.
+  - The children's per-pass entries stayed uncommitted in their worktrees; this entry stands in for them.
