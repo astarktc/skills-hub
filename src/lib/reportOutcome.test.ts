@@ -10,6 +10,7 @@ import type {
   InvocationEditReport,
   LibraryMoveReport,
   ProjectSyncOutcome,
+  RedeployReport,
   ProjectSyncReport,
   RefreshReport,
   RemovalReport,
@@ -34,6 +35,8 @@ import {
   libraryMoveCounts,
   libraryMoveOutcome,
   projectRemovalOutcome,
+  redeployCounts,
+  redeployOutcome,
   projectSyncOutcome,
   refreshOutcome,
   removalOutcome,
@@ -3142,5 +3145,164 @@ describe("per-Deployment folds of the per-row reports (round 4)", () => {
     };
     expect(libraryMoveCounts(report)).toMatchObject({ relinked: 0, failed: 1 });
     expect(libraryMoveOutcome(report, ctx).errors).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Redeploy (round 20 #108)
+// ---------------------------------------------------------------------------
+
+describe("redeployOutcome", () => {
+  const EMPTY: RedeployReport = { moves: [], journal: [], left_behind: [], edited_copies: [], lost_disables: [] };
+  const move = (
+    skill: string,
+    status: RedeployReport["moves"][number]["status"],
+  ): RedeployReport["moves"][number] => ({
+    skill_id: skill,
+    skill_name: skill,
+    folder_key: "agents_skills",
+    path: `/h/.agents/skills/${skill}`,
+    cause: "correction",
+    rows: [{ id: `r-${skill}`, tool: "codex", from: `/h/.codex/skills/${skill}` }],
+    status,
+  });
+  const en = () => {
+    const i18n = i18next.createInstance();
+    // As the app configures it: React escapes, i18next does not.
+    void i18n.init({ lng: "en", resources, interpolation: { escapeValue: false } });
+    return { t: i18n.t.bind(i18n) as unknown as typeof t };
+  };
+
+  it("counts every move status, and skips none", () => {
+    const report: RedeployReport = {
+      ...EMPTY,
+      moves: [
+        move("a", { status: "moved" }),
+        move("b", { status: "adopted" }),
+        move("c", { status: "unchanged" }),
+        move("d", { status: "left_old", edited: true }),
+        move("e", { status: "kept", reason: "declined" }),
+        move("f", { status: "skipped", reason: "disabled" }),
+        move("g", { status: "failed", error: { code: "OTHER", message: "boom" } }),
+        move("h", {
+          status: "failed",
+          error: { code: "TARGET_EXISTS", path: "/h/.agents/skills/h", modifiedAt: null, sameContent: false },
+        }),
+      ],
+    };
+    expect(redeployCounts(report)).toMatchObject({
+      moved: 4,
+      kept: 1,
+      skipped: 1,
+      failed: 1,
+      collisions: 1,
+      review: 1,
+    });
+  });
+
+  it("an all-moved run is a success headline and reloads nothing", () => {
+    const outcome = redeployOutcome({ ...EMPTY, moves: [move("a", { status: "moved" })] }, en());
+    expect(outcome.toast).toMatchObject({ tone: "success", message: "1 moved" });
+    expect(outcome.completion).toEqual({ reload: false, closeModal: false, conflict: false });
+    expect(outcome.errors).toEqual([]);
+    expect(outcome.warnings).toEqual([]);
+  });
+
+  it("a folder in the way and an edited copy are pending: entries to review", () => {
+    const outcome = redeployOutcome(
+      {
+        ...EMPTY,
+        moves: [
+          move("a", {
+            status: "failed",
+            error: { code: "TARGET_EXISTS", path: "/h/.agents/skills/a", modifiedAt: null, sameContent: false },
+          }),
+          move("b", { status: "left_old", edited: true }),
+        ],
+        edited_copies: [
+          { skill_id: "b", skill_name: "b", tool: "codex", path: "/h/.codex/skills/b", modified_at: null, readers: ["codex", "cursor"] },
+        ],
+      },
+      { ...en(), toolLabelById: { codex: "Codex", cursor: "Cursor" } },
+    );
+    expect(outcome.toast).toMatchObject({ tone: "conflict", message: "1 moved · 2 to review" });
+    expect(outcome.warnings.map((w) => w.review)).toEqual([true, true]);
+    expect(outcome.warnings[0].title).toBe("a: a different folder is at /h/.agents/skills/a");
+    expect(outcome.warnings[1].title).toBe("b: your edited copy at /h/.codex/skills/b is waiting for a decision");
+    expect(outcome.warnings[1].message).toContain("Shows twice in Codex, Cursor.");
+    expect(outcome.errors).toEqual([]);
+  });
+
+  it("an old copy left behind names its readers; a failed removal is an error", () => {
+    const outcome = redeployOutcome(
+      {
+        ...EMPTY,
+        moves: [move("a", { status: "left_old", edited: false })],
+        left_behind: [
+          { skill_id: "a", skill_name: "a", tool: "codex", path: "/h/.codex/skills/a", reason: "not_ours", readers: ["cursor"], error: null },
+          {
+            skill_id: "b",
+            skill_name: "b",
+            tool: "codex",
+            path: "/h/.codex/skills/b",
+            reason: "removal_failed",
+            readers: [],
+            error: { code: "REMOVAL_PERMISSION_DENIED", path: "/h/.codex/skills/b", detail: "EACCES" },
+          },
+        ],
+      },
+      { ...en(), toolLabelById: { cursor: "Cursor" } },
+    );
+    expect(outcome.toast?.tone).toBe("failure");
+    expect(outcome.toast?.message).toBe("1 moved · 2 old copies left");
+    expect(outcome.warnings[0].message).toBe(
+      "It isn't provably Skills Hub's copy, so it was left alone. Shows twice in Cursor.",
+    );
+    expect(outcome.errors[0].error).toMatchObject({ code: "REMOVAL_PERMISSION_DENIED" });
+  });
+
+  it("a disable that no longer holds is reported, naming the harness", () => {
+    const outcome = redeployOutcome(
+      {
+        ...EMPTY,
+        moves: [move("a", { status: "moved" })],
+        lost_disables: [{ skill_id: "a", skill_name: "a", tool: "goose", folder_key: "agents_skills" }],
+      },
+      { ...en(), toolLabelById: { goose: "Goose", agents_skills: ".agents/skills" } },
+    );
+    expect(outcome.toast?.tone).toBe("skipped");
+    expect(outcome.warnings[0].title).toBe("a: turned off for Goose no longer holds");
+    expect(outcome.warnings[0].subject).toEqual({ skillId: "a", skillName: "a", tool: "agents_skills" });
+  });
+
+  it("a kept move is a quiet declined note; a failed one an error", () => {
+    const kept = redeployOutcome({ ...EMPTY, moves: [move("a", { status: "kept", reason: "declined" })] }, en());
+    expect(kept.toast).toMatchObject({ tone: "declined", message: "1 kept existing" });
+    expect(kept.notes).toEqual(["a: kept the existing folder at /h/.agents/skills/a; it stays where it was."]);
+    const failed = redeployOutcome(
+      { ...EMPTY, moves: [move("a", { status: "failed", error: { code: "OTHER", message: "boom" } })] },
+      { ...en(), toolLabelById: { agents_skills: ".agents/skills" } },
+    );
+    expect(failed.toast?.tone).toBe("failure");
+    expect(failed.errors[0].title).toBe("a was not moved to .agents/skills");
+  });
+
+  it("the launch check's journal finish reads as a finished interrupted move", () => {
+    const outcome = redeployOutcome(
+      {
+        ...EMPTY,
+        journal: [{ skill_id: "a", skill_name: "a", tool: "codex", path: "/h/.codex/skills/a", status: "finished" }],
+      },
+      en(),
+      { resumed: true },
+    );
+    expect(outcome.toast?.message).toBe("Finished an interrupted move: 1 old copy removed");
+  });
+
+  it("every left-behind reason has English copy", () => {
+    const { t: tr } = en();
+    for (const reason of ["edited", "not_ours", "replaced", "stale", "removal_failed"] as const) {
+      expect(tr(`redeploy.report.left.${reason}`)).not.toContain("redeploy.report");
+    }
   });
 });

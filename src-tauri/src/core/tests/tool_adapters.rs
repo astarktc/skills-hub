@@ -549,7 +549,7 @@ fn a_mixed_separator_path_recorded_before_the_fix_still_matches_the_registry() {
         Some("claude_code")
     );
 
-    // Target relocation finds a row by its parent: a former dir recorded
+    // A row's old artifact is found by its parent: a former dir recorded
     // with mixed separators is still that former dir.
     let augment = adapter_by_key("augment").expect("augment adapter");
     let former = std::path::PathBuf::from(r"C:\Users\op\.augment/rules\grill-me");

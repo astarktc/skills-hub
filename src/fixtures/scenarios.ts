@@ -27,6 +27,7 @@ import {
   makeSkill,
   type FixtureLocalFolder,
   type FixtureRepo,
+  type FixtureRedeployMove,
   type FixtureRepoCandidate,
   type FixtureState,
   type ForeignDir,
@@ -286,6 +287,7 @@ function baseState(scenario: ScenarioName, now: number): FixtureState {
     gitCacheEntriesInUse: 0,
     nextId: Math.floor(now / 1000) % 100_000,
     cancelRequested: false,
+    redeploy: { moves: [], awaiting: [] },
   };
 }
 
@@ -448,6 +450,39 @@ function registry(now: number): FixtureState {
   state.installedTools = [...DETECTED_TOOLS, "agents_skills", "opencode", "workbuddy", "codewhale"];
   state.seenTools = [...state.installedTools];
   state.settings = defaultSettings([...ALL, "opencode", "workbuddy", "codewhale", "goose"]);
+  return state;
+}
+
+// ---------------------------------------------------------------------------
+// redeploy — the first 1.4.0 launch (round 20 #108)
+// ---------------------------------------------------------------------------
+
+/**
+ * The rich library on the first launch after the registry corrections: every
+ * Codex Deployment still sits in `~/.codex/skills`, which Codex now reads only
+ * as a deprecated folder — the `.agents/skills` folder serves it. The launch
+ * offers to move them. One move meets a different folder at the new place
+ * (the overwrite ask), and one old copy was edited in place (the edited-copy
+ * question, a row of the same ask).
+ */
+function redeploy(now: number): FixtureState {
+  const state: FixtureState = { ...rich(now), scenario: "redeploy" };
+  const moves: FixtureRedeployMove[] = [];
+  for (const skill of state.skills) {
+    const codex = skill.dto.targets.find((target) => target.tool === "codex" && target.synced_at !== null);
+    if (!codex) continue;
+    const name = skill.dto.name;
+    moves.push({
+      skillId: skill.dto.id,
+      tool: "codex",
+      from: codex.target_path,
+      folderKey: "agents_skills",
+      to: `${HOME}/.agents/skills/${name}`,
+      ...(name === "zod-schema-first" ? { occupied: true } : {}),
+      ...(name === "handoff" ? { edited: true } : {}),
+    });
+  }
+  state.redeploy = { moves, awaiting: [] };
   return state;
 }
 
@@ -695,6 +730,7 @@ const BUILDERS: Record<ScenarioName, (now: number) => FixtureState> = {
   "first-run": firstRun,
   failures,
   registry,
+  redeploy,
 };
 
 export function buildScenario(name: ScenarioName, now = Date.now()): FixtureState {

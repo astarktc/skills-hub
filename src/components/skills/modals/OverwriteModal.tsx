@@ -32,6 +32,11 @@ type OverwriteModalProps = {
  * and its buttons are never disabled on `loading` — the action is waiting on
  * exactly this answer.
  *
+ * A redeploy's ask also carries **edited copies** (round 20 #108): an old
+ * copy edited after Skills Hub wrote it, answered Delete (`overwrite`) or
+ * Leave (`keep`), Leave chosen until the operator picks Delete — an edit is
+ * never deleted by default. With any such row the choices are per row.
+ *
  * Three kinds of answer: an Overwrite / per-row choice (`confirmed` or
  * `{ choices }`), the explicit "Keep existing" (`declined` — recorded: the
  * backend marks the pairs disabled) and a dismissal — Escape or an outside
@@ -75,10 +80,15 @@ function OverwriteAsk({
   t,
 }: OverwriteModalProps & { confirmRef: RefObject<HTMLButtonElement | null> }) {
   const rows = pending?.rows ?? []
-  // Overwrite is the action the operator asked for; each row can be kept.
-  const [choices, setChoices] = useState<OverwriteChoice[]>(() => rows.map(() => 'overwrite'))
-  const perRow = rows.length > 1
-  const mixed = choices.some((choice) => choice === 'keep')
+  const edited = (row: OverwriteRow) => row.question === 'editedCopy'
+  // Overwrite is the action the operator asked for; each row can be kept. An
+  // edited copy starts at Leave: deleting it is the operator's explicit pick.
+  const [choices, setChoices] = useState<OverwriteChoice[]>(() =>
+    rows.map((row) => (edited(row) ? 'keep' : 'overwrite')),
+  )
+  const anyEdited = rows.some(edited)
+  const perRow = rows.length > 1 || anyEdited
+  const mixed = anyEdited || choices.some((choice) => choice === 'keep')
 
   const confirm = () => {
     if (!pending) return
@@ -89,7 +99,10 @@ function OverwriteAsk({
     <>
       {pending ? (
         <DialogBody>
-          <p>{t('overwrite.body', { count: rows.length })}</p>
+          {rows.some((row) => !edited(row)) ? (
+            <p>{t('overwrite.body', { count: rows.filter((row) => !edited(row)).length })}</p>
+          ) : null}
+          {anyEdited ? <p className="mt-1">{t('overwriteAsk.editedHint')}</p> : null}
           {perRow ? <p className="mt-1">{t('overwriteAsk.perRowHint')}</p> : null}
           <ul className="m-0 flex max-h-[40vh] list-none flex-col divide-y divide-border overflow-y-auto rounded-md border border-border p-0">
             {rows.map((row, index) => (
@@ -104,7 +117,7 @@ function OverwriteAsk({
                   </div>
                   {perRow ? (
                     <Segmented
-                      aria-label={t('overwriteAsk.choiceLabel', {
+                      aria-label={t(edited(row) ? 'overwriteAsk.editedChoiceLabel' : 'overwriteAsk.choiceLabel', {
                         name: row.skillName,
                         tool: row.toolLabel,
                       })}
@@ -116,8 +129,12 @@ function OverwriteAsk({
                       }
                       className="shrink-0"
                     >
-                      <SegmentedItem value="keep">{t('overwriteAsk.keep')}</SegmentedItem>
-                      <SegmentedItem value="overwrite">{t('overwriteAsk.overwrite')}</SegmentedItem>
+                      <SegmentedItem value="keep">
+                        {t(edited(row) ? 'overwriteAsk.leave' : 'overwriteAsk.keep')}
+                      </SegmentedItem>
+                      <SegmentedItem value="overwrite">
+                        {t(edited(row) ? 'overwriteAsk.delete' : 'overwriteAsk.overwrite')}
+                      </SegmentedItem>
                     </Segmented>
                   ) : null}
                 </div>
@@ -149,13 +166,23 @@ function OverwriteAsk({
   )
 }
 
-/** "Modified 2h ago · differs from the skill" — the facts the backend reported. */
+/**
+ * "Modified 2h ago · differs from the skill" — the facts the backend
+ * reported; an edited copy says so and names who shows it twice if left.
+ */
 function RowFacts({ row, t }: { row: OverwriteRow; t: TFunction }) {
   const parts = [
     ...(row.modifiedAt !== null
       ? [t('overwriteAsk.modified', { when: formatRelativeTime(row.modifiedAt, t) })]
       : []),
-    t(row.sameContent ? 'overwriteAsk.identical' : 'overwriteAsk.differs'),
+    ...(row.question === 'editedCopy'
+      ? [
+          t('overwriteAsk.edited'),
+          ...(row.readers?.length
+            ? [t('overwriteAsk.readers', { readers: row.readers.join(t('common.listSeparator')) })]
+            : []),
+        ]
+      : [t(row.sameContent ? 'overwriteAsk.identical' : 'overwriteAsk.differs')]),
   ]
   return <span className="block text-xs text-muted-foreground">{parts.join(' · ')}</span>
 }

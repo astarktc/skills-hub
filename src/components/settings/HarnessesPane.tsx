@@ -32,6 +32,12 @@ type HarnessesPaneProps = {
   onOpenGeneral: () => void;
   /** Why every mutation control here is held while an action runs (D19) — a save included — or null. */
   blockedReason: string | null;
+  /**
+   * The redeploy (round 20 #108): how many Deployments are still to move or
+   * decide (the preview's count) and the run. A declined launch offer stays
+   * reachable here.
+   */
+  redeploy: { pendingCount: number; onRun: () => void };
   t: TFunction;
 };
 
@@ -67,6 +73,7 @@ export function HarnessesPane({
   onScanSelectedOnlyChange,
   onOpenGeneral,
   blockedReason,
+  redeploy,
   t,
 }: HarnessesPaneProps) {
   const [undetectedOpen, setUndetectedOpen] = useState(false);
@@ -130,6 +137,29 @@ export function HarnessesPane({
         </p>
         <p className="m-0 text-xs text-muted-foreground">{t("settingsDialog.harnesses.offKeeps")}</p>
       </div>
+
+      {redeploy.pendingCount > 0 ? (
+        <div className="flex items-start justify-between gap-4 rounded-lg border border-border px-3 py-2.5">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <p className="m-0 text-sm font-medium text-foreground">
+              {t("redeploy.line", { count: redeploy.pendingCount })}
+            </p>
+            <p className="m-0 text-xs text-muted-foreground">{t("redeploy.lineHint")}</p>
+          </div>
+          <Button
+            variant="outline"
+            tone="accent"
+            size="sm"
+            className="shrink-0"
+            onClick={redeploy.onRun}
+            disabled={blockedReason !== null}
+            focusableWhenDisabled
+            title={blockedReason ?? undefined}
+          >
+            {t("redeploy.lineAction")}
+          </Button>
+        </div>
+      ) : null}
 
       <section className="flex flex-col gap-2" aria-labelledby={`${listId}-heading`}>
         <h4 id={`${listId}-heading`} className="m-0 text-xs font-medium text-faint">

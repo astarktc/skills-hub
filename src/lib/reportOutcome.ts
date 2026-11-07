@@ -12,6 +12,7 @@ import type {
   LibraryMoveReport,
   ProjectSyncReport,
   PropagationOutcome,
+  RedeployReport,
   RefreshReport,
   RemovalReport,
   RowRef,
@@ -2119,6 +2120,161 @@ export function libraryMoveOutcome(
   out.toast = toast(
     tone,
     opts.resumed ? ctx.t("libraryMove.report.resumed", { summary }) : summary,
+    detailOf(out.notes),
+  );
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Redeploy (round 20 #108)
+// ---------------------------------------------------------------------------
+
+/** What a redeploy report counts, per move and per old copy. */
+export function redeployCounts(report: RedeployReport) {
+  let moved = 0;
+  let failed = 0;
+  let collisions = 0;
+  let kept = 0;
+  let skipped = 0;
+  for (const move of report.moves) {
+    switch (move.status.status) {
+      case "moved":
+      case "adopted":
+      case "unchanged":
+      case "left_old":
+        moved += 1;
+        break;
+      case "kept":
+        kept += 1;
+        break;
+      case "skipped":
+        skipped += 1;
+        break;
+      case "failed":
+        if (move.status.error.code === "TARGET_EXISTS") collisions += 1;
+        else failed += 1;
+        break;
+    }
+  }
+  const removed = report.journal.filter((entry) => entry.status === "finished").length;
+  return {
+    moved,
+    failed,
+    collisions,
+    kept,
+    skipped,
+    review: report.edited_copies.length + collisions,
+    leftBehind: report.left_behind.length,
+    removalFailed: report.left_behind.filter((item) => item.reason === "removal_failed").length,
+    lostDisables: report.lost_disables.length,
+    removed,
+  };
+}
+
+/**
+ * Fold a `RedeployReport` (the redeploy's run, or the launch check's journal
+ * finish when `resumed`) into one Outcome: a composite headline over the
+ * moves, an error per failed move, a "to review" entry per folder in a
+ * move's way and per edited copy still awaiting its answer (pending work
+ * surfaces — the fold skips no non-failed status), a warning per old copy
+ * left behind naming the harnesses that show it twice, and one per Disable
+ * a collapse no longer honours. Nothing reloads: the command answers the
+ * catalog.
+ */
+export function redeployOutcome(
+  report: RedeployReport,
+  ctx: ReportContext,
+  opts: { resumed?: boolean } = {},
+): Outcome<PlainEntry> {
+  const out = empty();
+  out.completion = { reload: false, closeModal: false, conflict: false };
+  const counts = redeployCounts(report);
+  const tool = (key: string) => ctx.toolLabelById?.[key] ?? toolLabel(ctx.t, key);
+  const readers = (keys: readonly string[]) =>
+    keys.length ? ` ${ctx.t("redeploy.report.readers", { readers: keys.map(tool).join(ctx.t("common.listSeparator")) })}` : "";
+
+  for (const move of report.moves) {
+    const subject: EntrySubject = { skillId: move.skill_id, skillName: move.skill_name, tool: move.folder_key };
+    const { status } = move;
+    if (status.status === "failed") {
+      if (status.error.code === "TARGET_EXISTS") {
+        out.warnings.push({
+          title: ctx.t("redeploy.report.occupiedTitle", { name: move.skill_name, path: move.path }),
+          message: ctx.t("redeploy.report.occupiedMessage"),
+          subject,
+          error: status.error,
+          review: true,
+        });
+      } else {
+        out.errors.push({
+          title: ctx.t("redeploy.report.failedTitle", { name: move.skill_name, tool: tool(move.folder_key) }),
+          message: errorMessage(ctx, status.error),
+          subject,
+          error: status.error,
+        });
+      }
+    } else if (status.status === "kept") {
+      out.notes.push(ctx.t("redeploy.report.keptLine", { name: move.skill_name, path: move.path }));
+    }
+  }
+  for (const copy of report.edited_copies) {
+    out.warnings.push({
+      title: ctx.t("redeploy.report.editedTitle", { name: copy.skill_name, path: copy.path }),
+      message: ctx.t("redeploy.report.editedMessage") + readers(copy.readers),
+      subject: { skillId: copy.skill_id, skillName: copy.skill_name, tool: copy.tool },
+      review: true,
+    });
+  }
+  for (const item of report.left_behind) {
+    const entry: PlainEntry = {
+      title: ctx.t("redeploy.report.leftTitle", { name: item.skill_name, path: item.path }),
+      message:
+        (item.reason === "removal_failed" && item.error
+          ? errorMessage(ctx, item.error)
+          : ctx.t(`redeploy.report.left.${item.reason}`)) + readers(item.readers),
+      subject: { skillId: item.skill_id, skillName: item.skill_name, tool: item.tool },
+      ...(item.error ? { error: item.error } : {}),
+    };
+    if (item.reason === "removal_failed") out.errors.push(entry);
+    else out.warnings.push(entry);
+  }
+  for (const lost of report.lost_disables) {
+    out.warnings.push({
+      title: ctx.t("redeploy.report.lostDisableTitle", { name: lost.skill_name, tool: tool(lost.tool) }),
+      message: ctx.t("redeploy.report.lostDisableMessage", {
+        folder: tool(lost.folder_key),
+        tool: tool(lost.tool),
+      }),
+      subject: { skillId: lost.skill_id, skillName: lost.skill_name, tool: lost.folder_key },
+    });
+  }
+  if (counts.skipped > 0) out.notes.push(ctx.t("redeploy.report.skippedLine", { count: counts.skipped }));
+
+  const parts: string[] = [];
+  const part = (key: string, count: number) => {
+    if (count > 0) parts.push(ctx.t(key, { count }));
+  };
+  part(HEADLINE_DONE_KEY.moved, counts.moved);
+  part("redeploy.report.removed", counts.removed);
+  part("outcome.targetsFailed", counts.failed);
+  part("redeploy.report.kept", counts.kept);
+  part("redeploy.report.review", counts.review);
+  part("redeploy.report.leftBehind", counts.leftBehind);
+  if (parts.length === 0) parts.push(ctx.t(HEADLINE_DONE_KEY.moved, { count: 0 }));
+  const tone: OutcomeTone =
+    counts.failed > 0 || counts.removalFailed > 0
+      ? "failure"
+      : counts.review > 0
+        ? "conflict"
+        : counts.leftBehind > 0 || counts.lostDisables > 0
+          ? "skipped"
+          : counts.kept > 0
+            ? "declined"
+            : "success";
+  const summary = parts.join(HEADLINE_SEPARATOR);
+  out.toast = toast(
+    tone,
+    opts.resumed ? ctx.t("redeploy.report.resumed", { summary }) : summary,
     detailOf(out.notes),
   );
   return out;

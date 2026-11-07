@@ -18,13 +18,18 @@ import type {
   ProjectSyncOutcome,
   ProjectSyncReport,
   PropagationOutcome,
+  RedeployAnswer,
+  RedeployMove,
+  RedeployReport,
   RefreshReport,
 } from "../bindings";
 
 /** Where an asked row's retry goes. */
 export type OverwriteScope =
   | { kind: "global" }
-  | { kind: "project"; projectId: string };
+  | { kind: "project"; projectId: string }
+  /** A redeploy's row, answered through the next redeploy run. */
+  | { kind: "redeploy" };
 
 /** One occupied sync target the operator decides about. */
 export type OverwriteRow = {
@@ -39,6 +44,14 @@ export type OverwriteRow = {
   /** The folder is byte-identical to the skill (the backend's answer). */
   sameContent: boolean;
   scope: OverwriteScope;
+  /**
+   * What is asked (redeploy only): `occupied` — a folder in a move's way
+   * (Overwrite / Keep); `editedCopy` — an old copy edited after Skills Hub
+   * wrote it (Delete = `overwrite`, Leave = `keep`). Absent: occupied.
+   */
+  question?: "occupied" | "editedCopy";
+  /** The harnesses that show a left edited copy twice (labels). */
+  readers?: string[];
 };
 
 /** The operator's per-row decision. */
@@ -48,7 +61,9 @@ export type OverwriteChoice = "overwrite" | "keep";
 export const overwriteRowKey = (row: OverwriteRow): string =>
   row.scope.kind === "project"
     ? `project\n${row.scope.projectId}\n${row.skillId}\n${row.toolKey}`
-    : `global\n${row.skillId}\n${row.toolKey}`;
+    : row.scope.kind === "redeploy"
+      ? `redeploy\n${row.question ?? "occupied"}\n${row.skillId}\n${row.toolKey}\n${row.path}`
+      : `global\n${row.skillId}\n${row.toolKey}`;
 
 type Labels = Readonly<Record<string, string>>;
 type TargetExists = Extract<CommandError, { code: "TARGET_EXISTS" }>;
@@ -346,4 +361,115 @@ export function mergeRefreshRetry(
     return { ...skill, status: { ...skill.status, targets: merged.targets } };
   });
   return { report: { skills }, declined };
+}
+
+// ---------------------------------------------------------------------------
+// Redeploy (round 20 #108): folders in a move's way and edited old copies,
+// one ask
+// ---------------------------------------------------------------------------
+
+/**
+ * The askable rows of a redeploy report: every move a different folder
+ * stands in the way of (`TARGET_EXISTS`, keyed by the move's folder) and
+ * every edited old copy awaiting its answer (keyed by its row's key) — one
+ * ask, answered per row.
+ */
+export function redeployAskRows(report: RedeployReport, toolLabelById: Labels): OverwriteRow[] {
+  const label = (key: string) => toolLabelById[key] ?? key;
+  const rows: OverwriteRow[] = [];
+  for (const move of report.moves) {
+    if (move.status.status !== "failed") continue;
+    const error = targetExists(move.status.error);
+    if (!error) continue;
+    rows.push({
+      skillId: move.skill_id,
+      skillName: move.skill_name,
+      toolKey: move.folder_key,
+      toolLabel: label(move.folder_key),
+      ...facts(error),
+      scope: { kind: "redeploy" },
+      question: "occupied",
+    });
+  }
+  for (const copy of report.edited_copies) {
+    rows.push({
+      skillId: copy.skill_id,
+      skillName: copy.skill_name,
+      toolKey: copy.tool,
+      toolLabel: label(copy.tool),
+      path: copy.path,
+      modifiedAt: copy.modified_at,
+      sameContent: false,
+      scope: { kind: "redeploy" },
+      question: "editedCopy",
+      readers: copy.readers.map(label),
+    });
+  }
+  return rows;
+}
+
+/** The answers for the asked redeploy rows, each naming the path it showed. */
+export function redeployAnswers(
+  rows: readonly OverwriteRow[],
+  choices: readonly OverwriteChoice[],
+): RedeployAnswer[] {
+  return rows.flatMap((row, index): RedeployAnswer[] => {
+    if (row.scope.kind !== "redeploy") return [];
+    const choice = choices[index];
+    return row.question === "editedCopy"
+      ? [
+          {
+            question: "edited_copy",
+            skill_id: row.skillId,
+            tool: row.toolKey,
+            path: row.path,
+            decision: choice === "overwrite" ? "delete" : "leave",
+          },
+        ]
+      : [
+          {
+            question: "occupied",
+            skill_id: row.skillId,
+            folder_key: row.toolKey,
+            path: row.path,
+            decision: choice,
+          },
+        ];
+  });
+}
+
+const moveKey = (move: Pick<RedeployMove, "skill_id" | "folder_key">) => `${move.skill_id}\n${move.folder_key}`;
+
+/**
+ * One operator action's redeploy report, after the answered retry: each
+ * asked move replaced by the retry's move for it; an edited copy the retry
+ * settled no longer awaits, and its move reads `moved` once the copy was
+ * deleted (`left_old` when it was left); everything else the retry found
+ * (its journal, left-behind copies, lost disables, copies still awaiting)
+ * joins the report.
+ */
+export function mergeRedeployRetry(first: RedeployReport, retry: RedeployReport): RedeployReport {
+  const retried = new Map(retry.moves.map((move) => [moveKey(move), move]));
+  const settled = new Map(
+    retry.journal.map((entry) => [`${entry.skill_id}\n${entry.tool}\n${entry.path}`, entry.status]),
+  );
+  const moves = first.moves.map((move) => {
+    const again = retried.get(moveKey(move));
+    if (again) return again;
+    if (move.status.status !== "left_old") return move;
+    const outcomes = move.rows
+      .map((row) => settled.get(`${move.skill_id}\n${row.tool}\n${row.from}`))
+      .filter((status) => status !== undefined);
+    if (outcomes.length > 0 && outcomes.every((status) => status === "finished" || status === "retained"))
+      return { ...move, status: { status: "moved" as const } };
+    return move;
+  });
+  const firstKeys = new Set(first.moves.map(moveKey));
+  return {
+    moves: [...moves, ...retry.moves.filter((move) => !firstKeys.has(moveKey(move)))],
+    journal: [...first.journal, ...retry.journal.filter((entry) => entry.status !== "awaiting_answer")],
+    left_behind: [...first.left_behind, ...retry.left_behind],
+    edited_copies: retry.edited_copies,
+    lost_disables: [...first.lost_disables, ...retry.lost_disables],
+  };
 }

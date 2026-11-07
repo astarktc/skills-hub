@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { BatchTargetOutcome, InstallBatchReport, ProjectSyncReport, PropagationOutcome, RefreshReport } from "../bindings";
+import type {
+  BatchTargetOutcome,
+  InstallBatchReport,
+  ProjectSyncReport,
+  PropagationOutcome,
+  RedeployReport,
+  RefreshReport,
+} from "../bindings";
 import {
   globalCollisionRows,
   globalOverrides,
@@ -11,6 +18,9 @@ import {
   mergePropagationRetry,
   mergeRefreshRetry,
   propagationCollisionRows,
+  redeployAnswers,
+  redeployAskRows,
+  mergeRedeployRetry,
   refreshCollisionRows,
 } from "./overwriteAsk";
 
@@ -214,5 +224,108 @@ describe("Propagation rows (ticket 09 B2)", () => {
     const { report: merged, declined } = mergeRefreshRetry(report, { rows, global: [], projects: null });
     expect(declined).toEqual([]);
     expect(merged).toEqual(report);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Redeploy (round 20 #108)
+// ---------------------------------------------------------------------------
+
+describe("the redeploy's ask", () => {
+  const EMPTY: RedeployReport = { moves: [], journal: [], left_behind: [], edited_copies: [], lost_disables: [] };
+  const move = (
+    skill: string,
+    status: RedeployReport["moves"][number]["status"],
+  ): RedeployReport["moves"][number] => ({
+    skill_id: skill,
+    skill_name: skill,
+    folder_key: "agents_skills",
+    path: `/h/.agents/skills/${skill}`,
+    cause: "correction",
+    rows: [{ id: `r-${skill}`, tool: "codex", from: `/h/.codex/skills/${skill}` }],
+    status,
+  });
+  const first: RedeployReport = {
+    ...EMPTY,
+    moves: [
+      move("a", {
+        status: "failed",
+        error: { code: "TARGET_EXISTS", path: "/h/.agents/skills/a", modifiedAt: 5, sameContent: false },
+      }),
+      move("b", { status: "left_old", edited: true }),
+      move("c", { status: "moved" }),
+    ],
+    edited_copies: [
+      { skill_id: "b", skill_name: "b", tool: "codex", path: "/h/.codex/skills/b", modified_at: 9, readers: ["codex"] },
+    ],
+  };
+
+  it("asks the folders in a move's way and the edited copies in one ask", () => {
+    const rows = redeployAskRows(first, { agents_skills: ".agents/skills", codex: "Codex" });
+    expect(rows).toEqual([
+      {
+        skillId: "a",
+        skillName: "a",
+        toolKey: "agents_skills",
+        toolLabel: ".agents/skills",
+        path: "/h/.agents/skills/a",
+        modifiedAt: 5,
+        sameContent: false,
+        scope: { kind: "redeploy" },
+        question: "occupied",
+      },
+      {
+        skillId: "b",
+        skillName: "b",
+        toolKey: "codex",
+        toolLabel: "Codex",
+        path: "/h/.codex/skills/b",
+        modifiedAt: 9,
+        sameContent: false,
+        scope: { kind: "redeploy" },
+        question: "editedCopy",
+        readers: ["Codex"],
+      },
+    ]);
+    expect(new Set(rows.map(overwriteRowKey)).size).toBe(2);
+  });
+
+  it("answers each row at the path it showed: Overwrite/Keep, Delete/Leave", () => {
+    const rows = redeployAskRows(first, {});
+    expect(redeployAnswers(rows, ["keep", "overwrite"])).toEqual([
+      { question: "occupied", skill_id: "a", folder_key: "agents_skills", path: "/h/.agents/skills/a", decision: "keep" },
+      { question: "edited_copy", skill_id: "b", tool: "codex", path: "/h/.codex/skills/b", decision: "delete" },
+    ]);
+    expect(redeployAnswers(rows, ["overwrite", "keep"])[1]).toMatchObject({ decision: "leave" });
+  });
+
+  it("merges the retry: asked moves replaced, a deleted edited copy reads moved", () => {
+    const retry: RedeployReport = {
+      ...EMPTY,
+      moves: [move("a", { status: "moved" })],
+      journal: [{ skill_id: "b", skill_name: "b", tool: "codex", path: "/h/.codex/skills/b", status: "finished" }],
+    };
+    const merged = mergeRedeployRetry(first, retry);
+    expect(merged.moves.map((m) => [m.skill_id, m.status.status])).toEqual([
+      ["a", "moved"],
+      ["b", "moved"],
+      ["c", "moved"],
+    ]);
+    expect(merged.edited_copies).toEqual([]);
+    expect(merged.journal).toHaveLength(1);
+  });
+
+  it("a left edited copy keeps its move left_old and joins what stays", () => {
+    const retry: RedeployReport = {
+      ...EMPTY,
+      journal: [{ skill_id: "b", skill_name: "b", tool: "codex", path: "/h/.codex/skills/b", status: "left_behind" }],
+      left_behind: [
+        { skill_id: "b", skill_name: "b", tool: "codex", path: "/h/.codex/skills/b", reason: "edited", readers: [], error: null },
+      ],
+    };
+    const merged = mergeRedeployRetry(first, retry);
+    expect(merged.moves[1].status).toEqual({ status: "left_old", edited: true });
+    expect(merged.left_behind).toHaveLength(1);
+    expect(merged.moves[0].status.status).toBe("failed");
   });
 });

@@ -107,7 +107,7 @@ than re-tagging.
 - **New AI tool adapter**: add the `ToolId` variant (+ its `as_key` arm) and one `ToolAdapter` literal in
   the `TOOL_ADAPTERS` registry (`core/tool_adapters/mod.rs`) — every per-tool fact lives in that literal
   (`skills_dir` / `detect_dirs` / `former_skills_dirs` — usually `&[]`; a corrected global dir goes there so
-  Target relocation moves existing targets — `project_skills_dir`, `group` for virtual-group membership,
+  the Redeploy (`core/redeploy.rs`) can remove the old artifact there — `project_skills_dir`, `group` for virtual-group membership,
   `supports_symlink`), **and** add its row to the README supported-tools table, **and** extend the
   `project_relative_skills_dir_for_every_tool` and `every_existing_row_resolves_to_the_paths_it_always_has` table
   tests (`core/tests/tool_adapters.rs`). Its `reads` literal (`core/tool_adapters/reads.rs`) records the shared-folder
@@ -144,7 +144,8 @@ than re-tagging.
   `resolve_project_collisions`, `resolve_target_collisions`, configure project tools, remove project,
   gitignore update, Refresh's apply phase, Onboarding import's apply phase, Move Library folder
   (`library_move::move_library` — the only writer of the Library folder setting — and `resume_library_move`, which
-  startup runs to finish a move journaled at its switch)) wraps its **own** body in
+  startup runs to finish a move journaled at its switch), the Redeploy (`redeploy::redeploy`, and `finish_journal`,
+  which startup runs to finish its journal)) wraps its **own** body in
   `core/mutation_guard::serialized` at its entry point — commands carry no lock state and make no
   per-call-site decision. The mutex is private to that module; per-target internals are unlocked
   `pub(crate)` `*_unlocked` seams. The guard is non-reentrant, so **an entry point never calls another
@@ -516,7 +517,7 @@ than re-tagging.
   skills folders (a global row's current and former registry dirs, `placement::managed_global_dirs`; an assignment's
   project skills dir), and **every replacement** claims its destination's skills dir through `Replace::within` — a
   stored path (Propagation's global rows, its ask's answer, Library move's relink) its managed dirs, a derived one
-  (the global batch, project sync / Propagation / Enable / collision retry, the project relink, Target relocation)
+  (the global batch, project sync / Propagation / Enable / collision retry, the project relink, the Redeploy)
   the dir it was derived in — so a malformed record outside them is refused, never removed. A name becomes a path
   only through `placement::deployment_path`: a skill or stored assignment name that is not exactly one normal path
   component is the typed `INVALID_PATH` `not_a_folder_name`, refused before the disk is touched (report data in a

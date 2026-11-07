@@ -248,7 +248,15 @@ export const resources = {
         removalRefusedMountTableUnreadable:
           "Refused to remove {{path}}: Skills Hub could not read the system's list of mounted folders (/proc/self/mountinfo), so it cannot rule out that a folder inside it is mounted from somewhere else — possibly your Skills Hub library. Check that /proc is mounted and readable for your account, then try again.",
         removalRefusedResolvesElsewhere:
-          "Refused to remove {{path}}: it leads to {{resolved}}, outside the folder Skills Hub manages there. A folder on that path is probably a link — check where it points, then try again.",
+          "Left {{path}} in place: it leads to {{resolved}}, outside every skills folder Skills Hub manages for it, so it is not Skills Hub's to remove. If that folder is yours, move it aside yourself; to put the skill back where the harness reads it, use Move Deployments in Settings → Harnesses.",
+        destinationRefused: {
+          inLibrary:
+            "Did not write {{path}}: its folder leads into your Skills Hub library ({{resolved}}), so a deployment there would write into the library itself. Replace that link with a real folder, then try again.",
+          outsideSkillsFolder:
+            "Did not write {{path}}: its folder ({{resolved}}) is outside every skills folder Skills Hub manages for it. Use Move Deployments in Settings → Harnesses to deploy it where the harness reads skills.",
+        },
+        redeployPending:
+          "Not deployed to {{tool}} here: its deployment at {{path}} waits to move to its new folder. Use Move Deployments in Settings → Harnesses.",
         libraryDestination: {
           notAbsolute:
             "Choose a full folder path for the Library — {{path}} is not one.",
@@ -671,6 +679,14 @@ export const resources = {
         keep: "Keep",
         overwrite: "Overwrite",
         apply: "Apply choices",
+        // The redeploy's edited-copy question: a row of the same ask.
+        editedHint:
+          "Some old copies were edited after Skills Hub wrote them. Their skill is already in its new folder; decide whether to delete each edited copy or leave it.",
+        edited: "your edited copy — left, it is no longer managed",
+        readers: "shows twice in {{readers}} if left",
+        leave: "Leave",
+        delete: "Delete",
+        editedChoiceLabel: "{{name}}: edited copy for {{tool}}",
       },
       // The app shell (ticket 11): the sidebar and its foot.
       shell: {
@@ -1857,6 +1873,59 @@ export const resources = {
           copiesLine_other: "{{count}} copied deployments left as they are.",
           disabledLine_one: "{{count}} turned-off deployment left as it is.",
           disabledLine_other: "{{count}} turned-off deployments left as they are.",
+        },
+      },
+      // Redeploy (round 20 #108): the launch offer, the Harnesses pane line,
+      // the progress words and the report's lines.
+      redeploy: {
+        offer: {
+          title_one: "Move {{count}} Deployment to its new folder?",
+          title_other: "Move {{count}} Deployments to their new folders?",
+          body: "Some harnesses read skills from a new folder now ({{harnesses}}). Skills Hub deploys each skill to its new folder first, then removes the old copy only when it is provably its own. A copy you edited is asked about, never removed silently.",
+          journal_one: "{{count}} old copy from an interrupted move still needs a decision.",
+          journal_other: "{{count}} old copies from an interrupted move still need a decision.",
+          confirm: "Move now",
+          cancel: "Not now",
+        },
+        line_one: "Move {{count}} Deployment",
+        line_other: "Move {{count}} Deployments",
+        lineHint:
+          "Some Deployments are in folders their harnesses no longer read. Moving deploys each to its new folder first, then removes the old copy only when it is provably Skills Hub's.",
+        lineAction: "Move now",
+        label: "Move Deployments",
+        activity: "Moving Deployments",
+        resumedLabel: "Finish an interrupted move",
+        step: "Moving {{name}}",
+        report: {
+          resumed: "Finished an interrupted move: {{summary}}",
+          leftBehind_one: "{{count}} old copy left",
+          leftBehind_other: "{{count}} old copies left",
+          kept_one: "{{count}} kept existing",
+          kept_other: "{{count}} kept existing",
+          review_one: "{{count}} to review",
+          review_other: "{{count}} to review",
+          removed_one: "{{count}} old copy removed",
+          removed_other: "{{count}} old copies removed",
+          failedTitle: "{{name}} was not moved to {{tool}}",
+          occupiedTitle: "{{name}}: a different folder is at {{path}}",
+          occupiedMessage: "Nothing was moved. Move Deployments again to choose Overwrite or Keep.",
+          keptLine: "{{name}}: kept the existing folder at {{path}}; it stays where it was.",
+          editedTitle: "{{name}}: your edited copy at {{path}} is waiting for a decision",
+          editedMessage: "Move Deployments again to delete it or leave it.",
+          leftTitle: "{{name}}: the old copy at {{path}} stays",
+          left: {
+            edited: "You chose to leave your edited copy; Skills Hub no longer manages it.",
+            not_ours: "It isn't provably Skills Hub's copy, so it was left alone.",
+            replaced: "Something else is at that place now, so it was left alone.",
+            stale: "The new copy isn't the one Skills Hub wrote any more, so the old one may be the only copy. It was left alone.",
+            removal_failed: "It could not be removed.",
+          },
+          readers: "Shows twice in {{readers}}.",
+          lostDisableTitle: "{{name}}: turned off for {{tool}} no longer holds",
+          lostDisableMessage:
+            "{{folder}} now serves {{tool}}, and another harness it serves had the skill on, so the skill stays on there. Turn it off for the folder if you want it off for all of them.",
+          skippedLine_one: "{{count}} turned-off or never-deployed Deployment re-recorded in its new folder.",
+          skippedLine_other: "{{count}} turned-off or never-deployed Deployments re-recorded in their new folders.",
         },
       },
       // Keyboard shortcuts, in the Settings frame (D37).

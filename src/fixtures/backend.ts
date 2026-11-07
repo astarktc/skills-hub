@@ -50,6 +50,11 @@ import type {
   ProjectSyncStatus,
   ProjectViewDto,
   PropagationOutcome,
+  RedeployAnswer,
+  RedeployPreview,
+  RedeployProgress,
+  RedeployReport,
+  RedeployResultDto,
   PropagationScope,
   PropagationSkip,
   RefreshProgressDto,
@@ -95,6 +100,7 @@ import {
   toolLabelOf,
   type FixtureFile,
   type FixtureProject,
+  type FixtureRedeployMove,
   type FixtureSkill,
   type StoredAssignment,
   type StoredTarget,
@@ -2070,6 +2076,113 @@ export function createFixtureBackend(
     };
   };
 
+  /** Rust `redeploy::preview`: the moves still to make and the journal still owed. */
+  const redeployPreview = (): RedeployPreview => {
+    const harnesses: string[] = [];
+    for (const move of state.redeploy.moves) if (!harnesses.includes(move.tool)) harnesses.push(move.tool);
+    return {
+      global: { correction: state.redeploy.moves.length, migration: 0 },
+      journal: state.redeploy.awaiting.length,
+      harnesses,
+    };
+  };
+
+  /** The harnesses showing an old copy left in `move.from`'s folder. */
+  const oldCopyReaders = (move: FixtureRedeployMove) =>
+    [move.tool, "cursor"].filter((key) => isInstalled(key));
+
+  /**
+   * Rust `redeploy::redeploy`: finish the journal (edited copies awaiting an
+   * answer: Delete removes, Leave disowns, no answer asks again), then every
+   * move — a folder in the way asks (`TARGET_EXISTS`) unless answered, Keep
+   * leaves the move pending, otherwise the row moves to its folder and an
+   * edited old copy is asked about.
+   */
+  const redeployDeployments = async (
+    answers: RedeployAnswer[],
+    onProgress: ProgressSink<RedeployProgress>,
+  ): Promise<RedeployResultDto> => {
+    const report: RedeployReport = { moves: [], journal: [], left_behind: [], edited_copies: [], lost_disables: [] };
+    const nameOf = (skillId: string) => state.skills.find((s) => s.dto.id === skillId)?.dto.name ?? skillId;
+    const editedCopy = (move: FixtureRedeployMove) => ({
+      skill_id: move.skillId,
+      skill_name: nameOf(move.skillId),
+      tool: move.tool,
+      path: move.from,
+      modified_at: now() - 3 * 60 * 60 * 1000,
+      readers: oldCopyReaders(move),
+    });
+    const total = state.redeploy.awaiting.length + state.redeploy.moves.length;
+    let done = 0;
+    const awaiting: FixtureRedeployMove[] = [];
+    for (const move of state.redeploy.awaiting) {
+      emit(onProgress, { done: done++, total, name: nameOf(move.skillId) });
+      await pause(120);
+      const answer = answers.find(
+        (a) => a.question === "edited_copy" && a.skill_id === move.skillId && a.tool === move.tool && a.path === move.from,
+      );
+      const entry = { skill_id: move.skillId, skill_name: nameOf(move.skillId), tool: move.tool, path: move.from };
+      if (!answer || answer.question !== "edited_copy") {
+        awaiting.push(move);
+        report.journal.push({ ...entry, status: "awaiting_answer" });
+        report.edited_copies.push(editedCopy(move));
+      } else if (answer.decision === "delete") {
+        report.journal.push({ ...entry, status: "finished" });
+      } else {
+        report.journal.push({ ...entry, status: "left_behind" });
+        report.left_behind.push({ ...entry, reason: "edited", readers: oldCopyReaders(move), error: null });
+      }
+    }
+    const remaining: FixtureRedeployMove[] = [];
+    for (const move of state.redeploy.moves) {
+      emit(onProgress, { done: done++, total, name: nameOf(move.skillId) });
+      await pause(Math.max(20, Math.min(160, 2400 / Math.max(total, 1))));
+      const skill = state.skills.find((s) => s.dto.id === move.skillId);
+      const answer = answers.find(
+        (a) => a.question === "occupied" && a.skill_id === move.skillId && a.folder_key === move.folderKey,
+      );
+      const base = {
+        skill_id: move.skillId,
+        skill_name: nameOf(move.skillId),
+        folder_key: move.folderKey,
+        path: move.to,
+        cause: "correction" as const,
+        rows: [{ id: `${move.skillId}:${move.tool}`, tool: move.tool, from: move.from }],
+      };
+      if (move.occupied && !answer) {
+        remaining.push(move);
+        report.moves.push({
+          ...base,
+          status: {
+            status: "failed",
+            error: { code: "TARGET_EXISTS", path: move.to, modifiedAt: now() - 2 * 86_400_000, sameContent: false },
+          },
+        });
+        continue;
+      }
+      if (answer && answer.question === "occupied" && answer.decision === "keep") {
+        remaining.push(move);
+        report.moves.push({ ...base, status: { status: "kept", reason: "declined" } });
+        continue;
+      }
+      const target = skill?.dto.targets.find((t) => t.tool === move.tool);
+      if (target) {
+        target.tool = move.folderKey;
+        target.target_path = move.to;
+        target.synced_at = now();
+      }
+      if (move.edited) {
+        awaiting.push(move);
+        report.edited_copies.push(editedCopy(move));
+        report.moves.push({ ...base, status: { status: "left_old", edited: true } });
+      } else {
+        report.moves.push({ ...base, status: { status: "moved" } });
+      }
+    }
+    state.redeploy = { moves: remaining, awaiting };
+    return { report, skills: skillsDto(), preview: redeployPreview() };
+  };
+
   // Rust `catalog::duplicate_reads`: an installed reader's snapshot pairs,
   // kept to the installed entries (the snapshot never names a sibling).
   const duplicateReads = (key: string): ToolInfoDto["duplicate_readers"] => {
@@ -2306,6 +2419,12 @@ export function createFixtureBackend(
     moveLibrary: async (destination, onProgress) => moveLibrary(destination, onProgress),
     // The fixture's moves never crash, so no resume ever waits to be taken.
     takeResumedLibraryMove: async () => null,
+    // Nor does a redeploy: the launch check finishes no journal.
+    getRedeployLaunchCheck: async () => {
+      await pause(60);
+      return { finished: null, preview: redeployPreview() };
+    },
+    redeployDeployments: async (answers, onProgress) => redeployDeployments(answers, onProgress),
     getToolStatus: async () => {
       await pause(80);
       return toolStatus();
