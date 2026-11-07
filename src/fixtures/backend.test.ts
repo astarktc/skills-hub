@@ -1805,6 +1805,48 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
   });
 });
 
+describe("ticket 18: ownership means the current occupant (ADR-0007)", () => {
+  it("a folder that took an owned assignment's path is asked about on resync and left in place by Delete", async () => {
+    const { handlers, state } = backendFor("rich");
+    const zod = await byName(handlers, "zod-schema-first");
+    const { project } = await handlers.registerProject("/Users/alex/Projects/occupant-probe");
+    await handlers.configureProjectTools(project.id, ["claude_code"], null);
+    await handlers.bulkAssignSkill(project.id, zod.id);
+    const path = `${project.path}/.claude/skills/${zod.name}`;
+    state.projectOccupants.push(path);
+
+    const resync = await handlers.resyncProject(project.id);
+    expect(resync.report.items[0].status).toMatchObject({ status: "failed", error: { code: "TARGET_EXISTS" } });
+    expect(state.projectOccupants).toContain(path);
+
+    const deleted = await handlers.deleteManagedSkill(zod.id);
+    const left = deleted.targets.find((target) => target.path === path);
+    expect(left?.status).toEqual({ status: "left_in_place" });
+    expect(deleted.record_deleted).toBe(true);
+    expect(state.projectOccupants, "the operator's folder survives").toContain(path);
+  });
+
+  it("a successful Disable gives the path up: a folder appearing later is never Delete's", async () => {
+    const { handlers, state } = backendFor("rich");
+    const zod = await byName(handlers, "zod-schema-first");
+    const { project } = await handlers.registerProject("/Users/alex/Projects/disable-probe");
+    await handlers.configureProjectTools(project.id, ["claude_code"], null);
+    await handlers.bulkAssignSkill(project.id, zod.id);
+    await handlers.disableSkillTargets({ kind: "skill", skill_id: zod.id });
+    const row = state.projects
+      .find((p) => p.id === project.id)!
+      .assignments.find((a) => a.skill_id === zod.id)!;
+    expect(row.synced_at).toBeNull();
+    const path = `${project.path}/.claude/skills/${zod.name}`;
+    state.projectOccupants.push(path);
+
+    const deleted = await handlers.deleteManagedSkill(zod.id);
+
+    expect(deleted.targets.some((target) => target.path === path)).toBe(false);
+    expect(state.projectOccupants).toContain(path);
+  });
+});
+
 describe("ticket 17: Projects — a missing folder, Sync this, the kept row, a stale view", () => {
   it("Sync All skips archived-app (folder missing) as one project entry, its rows untouched", async () => {
     const { handlers, state } = backendFor("failures");

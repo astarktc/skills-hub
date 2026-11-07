@@ -461,6 +461,7 @@ fn git_repoint_to_another_repo_propagates_every_existing_scope() {
             status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(1),
+            content_hash: None,
         })
         .unwrap();
     let project = f.paths.roots.home.join("project");

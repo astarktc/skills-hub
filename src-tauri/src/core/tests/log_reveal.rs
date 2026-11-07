@@ -455,6 +455,7 @@ fn seed_kept_target(store: &SkillStore, skill: &SkillRecord, tool: &str, target:
             status: SyncStatus::Error,
             last_error: Some("permission denied".to_string()),
             synced_at: Some(1),
+            content_hash: None,
         })
         .expect("upsert target");
 }

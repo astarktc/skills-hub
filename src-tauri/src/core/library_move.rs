@@ -86,7 +86,7 @@ use super::skill_store::{
     AssignmentTransition, SkillRecord, SkillStore, SkillTargetRecord, TargetTransition,
 };
 use super::sync_engine::{
-    sync_dir_for_tool_with_overwrite, sync_dir_for_tool_within_root, SyncOutcome,
+    sync_dir_for_tool_with_overwrite, sync_dir_for_tool_within_root, Replace, SyncOutcome,
 };
 use super::sync_status::{SyncMode, SyncStatus};
 use super::tool_adapters::{
@@ -2175,16 +2175,23 @@ fn relink_one(
             store,
             skill_id: &new_record.id,
         };
+        // The occupant was verified ours just above (a link to the old or
+        // new copy), so its replacement is the relink's own decision.
         let outcome = match rows {
-            Rows::Global(_) => {
-                sync_dir_for_tool_with_overwrite(adapter, &m.new, identity, path, true, library)?
-            }
+            Rows::Global(_) => sync_dir_for_tool_with_overwrite(
+                adapter,
+                &m.new,
+                identity,
+                path,
+                Replace::confirmed(),
+                library,
+            )?,
             Rows::Assignment { project_root, .. } => sync_dir_for_tool_within_root(
                 adapter,
                 &m.new,
                 identity,
                 path,
-                true,
+                Replace::confirmed(),
                 project_root,
                 library,
             )?,
@@ -2198,6 +2205,13 @@ fn relink_one(
         }),
         Ok(Some(outcome)) => {
             let target_path = path.to_string_lossy();
+            // A relink that fell back to a copy records the identity it
+            // deployed, the evidence a later removal checks it against.
+            let hash = outcome
+                .mode_used
+                .can_drift()
+                .then(|| content_identity::read(Source::Directory(&m.new)))
+                .flatten();
             match rows {
                 Rows::Global(rows) => {
                     for row in rows {
@@ -2207,16 +2221,12 @@ fn relink_one(
                                 mode: outcome.mode_used,
                                 target_path: &target_path,
                                 synced_at: now,
+                                content_hash: hash.as_deref(),
                             },
                         )?;
                     }
                 }
                 Rows::Assignment { rows, .. } => {
-                    let hash = outcome
-                        .mode_used
-                        .can_drift()
-                        .then(|| content_identity::read(Source::Directory(&m.new)))
-                        .flatten();
                     for row in rows {
                         store.transition_assignment(
                             &row.id,

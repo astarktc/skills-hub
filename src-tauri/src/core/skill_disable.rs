@@ -6,10 +6,11 @@
 //!   the named harness (`core::placement`) has its artifact removed and its
 //!   row kept with Sync status `disabled` — a folder with no row yet gets a
 //!   `disabled` marker row keyed by the folder, so a Tool the skill was never
-//!   on can be switched off before a Deploy reaches it. A marker
-//!   owns nothing at its path (`SkillTargetRecord::owns_artifact`: only a
-//!   successful sync of ours, recorded as `synced_at`, makes a row an owner,
-//!   whatever its status), so no removal (Delete included) touches that path
+//!   on can be switched off before a Deploy reaches it. A marker, like every
+//!   row a Disable settled, has no claim on its path
+//!   (`SkillTargetRecord::owns_artifact`: only a successful sync of ours,
+//!   recorded as `synced_at`, makes one, and a successful Disable gives it
+//!   up), so no removal (Delete included) touches that path
 //!   and no re-sync overwrites it, even after a failed Enable turned the row
 //!   `error`; a marker is admitted only once the Tool's shared artifact
 //!   settled;
@@ -28,7 +29,10 @@
 //! 1. **Removal goes through `artifact_removal`.** Disable plans the existing
 //!    scopes (`SkillTool`; `SkillGlobal` + one `ProjectSkill` per project) and
 //!    executes them with [`Settlement::Disable`]: a row flips to `disabled`
-//!    only after its artifact is gone; a failed removal keeps the row `error`
+//!    only after its artifact is gone — removed, already absent, or never its
+//!    own (a folder that took its path is left in place, ADR-0007) — and then
+//!    gives its claim on the path up, so nothing that appears there later is
+//!    ever its to remove; a failed removal keeps the row `error` and its claim
 //!    (ADR-0002) so the operator can retry. A row owning no artifact (never
 //!    materialised, e.g. `error` after a failed Enable) flips to `disabled`
 //!    with no path touched. This module never removes a path.
@@ -320,13 +324,7 @@ fn execute_disable(
     }
     plan.markers = markers;
     for target in &mut plan.targets {
-        let mut kept = Vec::with_capacity(target.rows.len());
-        for row in target.rows.drain(..) {
-            if !row_is_disabled(store, &row)? {
-                kept.push(row);
-            }
-        }
-        target.rows = kept;
+        target.retain_rows(|row| Ok(!row_is_disabled(store, row)?))?;
     }
     plan.targets.retain(|target| !target.rows.is_empty());
     artifact_removal::execute_settling_unlocked(store, central_dir, plan, Settlement::Disable)

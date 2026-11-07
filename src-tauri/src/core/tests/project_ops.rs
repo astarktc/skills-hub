@@ -617,8 +617,12 @@ fn remove_project_and_artifacts_removes_project_scope_target_for_divergent_tool(
     assert!(report.failures().is_empty());
 }
 
+/// An orphaned assignment (its skill row gone) has no Library copy its link
+/// could be shown to resolve to, so its artifact is not provably the app's
+/// (ADR-0007): the project goes, the artifact is left in place and reported
+/// so.
 #[test]
-fn remove_project_and_artifacts_orphan_branch_removes_project_scope_target() {
+fn remove_project_and_artifacts_orphan_branch_leaves_its_unverifiable_artifact() {
     let (_db_dir, store) = make_store();
     let tmpdir = tempfile::tempdir().expect("tmpdir");
     let (project, skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rpc-pi-orphan");
@@ -634,14 +638,17 @@ fn remove_project_and_artifacts_orphan_branch_removes_project_scope_target() {
         "precondition: orphaned assignment row must survive"
     );
 
-    project_ops::remove_project_and_artifacts(&store, &central_repo_of(&store), &project.id)
-        .expect("remove project");
+    let report =
+        project_ops::remove_project_and_artifacts(&store, &central_repo_of(&store), &project.id)
+            .expect("remove project");
 
     assert!(
-        target.symlink_metadata().is_err(),
-        "orphan branch should remove project-scope target: {:?}",
+        target.symlink_metadata().is_ok(),
+        "an unverifiable artifact stays: {:?}",
         target
     );
+    assert_eq!(report.left_in_place_rows(), 1);
+    assert!(store.get_project_by_id(&project.id).unwrap().is_none());
 }
 
 #[test]
@@ -665,8 +672,9 @@ fn remove_project_tool_and_artifacts_removes_project_scope_target_for_divergent_
     );
 }
 
+/// The orphan case at Project × Tool grain: left in place, row settled.
 #[test]
-fn remove_project_tool_and_artifacts_orphan_branch_removes_project_scope_target() {
+fn remove_project_tool_and_artifacts_orphan_branch_leaves_its_unverifiable_artifact() {
     let (_db_dir, store) = make_store();
     let tmpdir = tempfile::tempdir().expect("tmpdir");
     let (project, skill, target) = setup_pi_assignment(tmpdir.path(), &store, "rtc-pi-orphan");
@@ -690,8 +698,8 @@ fn remove_project_tool_and_artifacts_orphan_branch_removes_project_scope_target(
     .expect("remove tool");
 
     assert!(
-        target.symlink_metadata().is_err(),
-        "orphan branch should remove project-scope target: {:?}",
+        target.symlink_metadata().is_ok(),
+        "an unverifiable artifact stays: {:?}",
         target
     );
     assert!(store
@@ -702,7 +710,8 @@ fn remove_project_tool_and_artifacts_orphan_branch_removes_project_scope_target(
 
 /// The orphan case as a plan/report assertion: the assignment row names a
 /// skill that no longer exists, so the plan locates the artifact from the
-/// row's own `skill_name`, removes it, and settles the row.
+/// row's own `skill_name`; with no Library copy to verify it against, the
+/// artifact is left in place and the row settles.
 #[test]
 fn remove_project_tool_and_artifacts_plans_orphan_rows_from_their_stored_skill_name() {
     let (_db_dir, store) = make_store();
@@ -734,8 +743,8 @@ fn remove_project_tool_and_artifacts_plans_orphan_rows_from_their_stored_skill_n
     .expect("remove tool");
 
     assert!(report.failures().is_empty());
-    assert_eq!(report.removed_rows(), 1);
-    assert!(target.symlink_metadata().is_err(), "artifact removed");
+    assert_eq!((report.removed_rows(), report.left_in_place_rows()), (0, 1));
+    assert!(target.symlink_metadata().is_ok(), "artifact left in place");
     assert!(store
         .list_project_skill_assignments_for_project_tool(&project.id, "pi")
         .unwrap()

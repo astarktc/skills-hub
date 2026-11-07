@@ -302,6 +302,7 @@ fn row(id: &str, skill: &str, tool: &str, status: SyncStatus) -> SkillTargetReco
         status,
         last_error: None,
         synced_at: Some(1),
+        content_hash: None,
     }
 }
 

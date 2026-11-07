@@ -11,10 +11,17 @@
 //!   and attaches the rows that describe each path. Tools sharing a skills
 //!   directory share one artifact, so one [`RemovalTarget`] carries several
 //!   [`RowRef`]s — the path is removed once and every member row is settled.
-//! * [`execute_unlocked`] touches the filesystem with **one presence rule**
+//! * [`execute_unlocked`] touches the filesystem with **one occupant rule**
 //!   and **one settlement rule**:
-//!   - presence: `symlink_metadata` decides, so a broken symlink counts as
-//!     present and is removed; an absent path is a successful removal.
+//!   - occupant: right before each removal, `core::ownership::check` reads
+//!     what is at the path against the evidence of the rows describing it
+//!     (ADR-0007). Only an occupant one of them proves its own — a link
+//!     resolving to the skill's Library copy, or a copy still holding the
+//!     identity the row deployed — is removed. Anything else stays where it
+//!     is and is reported [`RemovalTargetStatus::LeftInPlace`]: the rows
+//!     settle as if their artifact were gone (it is), never by deleting
+//!     another folder. An absent path is a successful removal; an occupant
+//!     that cannot be read is a failure (the rows are kept `error`).
 //!   - admission: every removal is admitted by the entry's physical identity
 //!     (`core::removal_fence`) — never inside the central library (the
 //!     configured central repo the caller passes as `central_dir`, plus every
@@ -29,11 +36,13 @@
 //!     `error` carrying the diagnostic, so the failure stays observable and
 //!     the operator can retry (ADR-0002). Rows are never deleted blind, and a
 //!     row is never marked `disabled` while its artifact is still there.
-//!   - ownership: a row the app never materialised (`synced_at` NULL, see
-//!     `SkillTargetRecord::owns_artifact`) owns nothing at its path,
+//!   - claim: a row without a claim on its path (never materialised, or
+//!     given up by a successful Disable or a Keep answer — `synced_at` NULL,
+//!     see `SkillTargetRecord::owns_artifact`) has no evidence at all,
 //!     whatever its status — a `disabled` marker, or one a failed Enable
 //!     turned `error` — so planning sets it aside as a marker: no path is
-//!     removed for it. Delete clears the row alone
+//!     removed for it. A row's claim alone never removes anything: the
+//!     occupant rule above decides. Delete clears the row alone
 //!     ([`RemovalReport::cleared_markers`]) and Disable records it
 //!     `disabled`, both only when every target of the scope succeeded;
 //!     until then it keeps its status and `last_error`.
@@ -69,12 +78,16 @@ use crate::core::{
     environment::HostRoots,
     errors::{CommandError, SignalError},
     mutation_guard,
+    ownership::{self, Deployed, Occupancy},
     placement::{self, row_folder, ScopeKind},
     project_sync::resolve_assignment_artifact,
     removal_fence::{Claim, Fence, ProtectedLibrary},
     skill_health::{self, SkillOutcomeKind},
-    skill_store::{AssignmentTransition, ProjectRecord, SkillRecord, SkillStore, TargetTransition},
-    sync_engine::{remove_central_copy, remove_path_any},
+    skill_store::{
+        AssignmentTransition, ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore,
+        SkillTargetRecord, TargetTransition,
+    },
+    sync_engine::{remove_central_copy, remove_path_any, typed_removal_failure},
     tool_adapters::{
         adapter_by_key, ensure_path_within_tool_dirs, former_skills_dirs_in, installed_set_in,
         ToolAdapter,
@@ -202,6 +215,52 @@ impl RowRef {
 pub struct RemovalTarget {
     pub path: PathBuf,
     pub rows: Vec<RowRef>,
+    /// What each row recorded as deployed, index-aligned with `rows`: the
+    /// evidence the occupant at `path` is checked against when it is removed.
+    /// Kept aligned through [`RemovalTarget::retain_rows`].
+    evidence: Vec<Deployed>,
+}
+
+impl RemovalTarget {
+    /// Keep only the rows `keep` selects, with their own evidence: a row
+    /// dropped from the target lends nothing to the rows that stay.
+    pub(crate) fn retain_rows(
+        &mut self,
+        mut keep: impl FnMut(&RowRef) -> Result<bool>,
+    ) -> Result<()> {
+        let mut rows = Vec::with_capacity(self.rows.len());
+        let mut evidence = Vec::with_capacity(self.evidence.len());
+        for (row, deployed) in self.rows.drain(..).zip(self.evidence.drain(..)) {
+            if keep(&row)? {
+                rows.push(row);
+                evidence.push(deployed);
+            }
+        }
+        self.rows = rows;
+        self.evidence = evidence;
+        Ok(())
+    }
+
+    /// The occupant check over every row's own evidence, now: ours when
+    /// one row proves it its own (each row speaks only for itself), absent
+    /// when nothing is there, else foreign. A read failure that no row's
+    /// evidence settled is an `Err`.
+    fn occupancy(&self) -> Result<Occupancy> {
+        let mut verdict = Occupancy::Absent;
+        let mut failure = None;
+        for deployed in &self.evidence {
+            match ownership::check(&self.path, deployed) {
+                Ok(Occupancy::Ours) => return Ok(Occupancy::Ours),
+                Ok(Occupancy::Absent) => {}
+                Ok(Occupancy::Foreign) => verdict = Occupancy::Foreign,
+                Err(err) => failure = Some(err),
+            }
+        }
+        match failure {
+            Some(err) => Err(err),
+            None => Ok(verdict),
+        }
+    }
 }
 
 /// Everything a scope resolves to, read before any row is deleted.
@@ -227,6 +286,11 @@ pub struct RemovalPlan {
 pub enum RemovalTargetStatus {
     /// Removed, or already absent.
     Removed,
+    /// Something occupies the path that no attached row can show is the
+    /// artifact it deployed (ADR-0007): a folder put where the app's link
+    /// was, a copy edited in place, a copy a pre-1.4.0 row never recorded.
+    /// It was kept untouched, and the rows settled as their artifact gone.
+    LeftInPlace,
     /// Every attached row was kept with status `error` and the original chain.
     Failed { error: CommandError },
 }
@@ -270,7 +334,7 @@ impl RemovalReport {
                 RemovalTargetStatus::Failed { error } => {
                     Some(format!("{}: {error}", target.path.display()))
                 }
-                RemovalTargetStatus::Removed => None,
+                RemovalTargetStatus::Removed | RemovalTargetStatus::LeftInPlace => None,
             })
             .collect()
     }
@@ -298,20 +362,26 @@ impl RemovalReport {
         merged
     }
 
-    /// Rows whose artifact was removed (and whose row was therefore deleted).
+    /// Rows whose artifact was removed (and whose row was therefore settled).
     pub fn removed_rows(&self) -> usize {
-        self.count_rows(true)
+        self.count_rows(|status| matches!(status, RemovalTargetStatus::Removed))
     }
 
     /// Rows kept with Sync status `error` because their artifact stayed.
     pub fn failed_rows(&self) -> usize {
-        self.count_rows(false)
+        self.count_rows(|status| matches!(status, RemovalTargetStatus::Failed { .. }))
     }
 
-    fn count_rows(&self, removed: bool) -> usize {
+    /// Rows settled while the folder at their path, not theirs, was kept.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn left_in_place_rows(&self) -> usize {
+        self.count_rows(|status| matches!(status, RemovalTargetStatus::LeftInPlace))
+    }
+
+    fn count_rows(&self, counted: impl Fn(&RemovalTargetStatus) -> bool) -> usize {
         self.targets
             .iter()
-            .filter(|t| matches!(t.status, RemovalTargetStatus::Removed) == removed)
+            .filter(|t| counted(&t.status))
             .map(|t| t.rows.len())
             .sum()
     }
@@ -332,6 +402,7 @@ impl fmt::Display for RemovalReport {
         for target in &self.targets {
             let status = match &target.status {
                 RemovalTargetStatus::Removed => "removed".to_string(),
+                RemovalTargetStatus::LeftInPlace => "left in place".to_string(),
                 RemovalTargetStatus::Failed { error } => format!("failed: {:#}", error),
             };
             let tools: Vec<&str> = target.rows.iter().map(RowRef::tool).collect();
@@ -357,21 +428,21 @@ impl fmt::Display for RemovalReport {
 /// roots that decide Tool installedness), so planning takes no ambient roots.
 /// Unlocked internal seam.
 pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPlan> {
-    let mut builder = TargetBuilder::default();
+    let mut builder = TargetBuilder::new(store);
     let mut skill: Option<SkillRecord> = None;
 
     match scope {
         RemovalScope::Skill { skill_id } => {
             skill = store.get_skill_by_id(skill_id)?;
             for row in store.list_skill_targets(skill_id)? {
-                builder.push_global(&row);
+                builder.push_global(&row)?;
             }
             let assignments = store.list_project_skill_assignments_by_skill(skill_id)?;
-            push_assignments(store, &mut builder, assignments)?;
+            builder.push_assignments(assignments)?;
         }
         RemovalScope::SkillGlobal { skill_id } => {
             for row in store.list_skill_targets(skill_id)? {
-                builder.push_global(&row);
+                builder.push_global(&row)?;
             }
         }
         RemovalScope::SkillTool {
@@ -387,7 +458,7 @@ pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPl
                 .collect();
             if folder_locatable(roots, &folder) {
                 for row in &rows {
-                    builder.push_global(row);
+                    builder.push_global(row)?;
                 }
             } else {
                 // No harness sharing the folder is on this machine any more,
@@ -401,13 +472,13 @@ pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPl
                 // refusing planning keeps every row.
                 for row in &rows {
                     ensure_path_within_tool_dirs(roots, Path::new(&row.target_path))?;
-                    builder.push_global(row);
+                    builder.push_global(row)?;
                 }
             }
         }
         RemovalScope::Project { project_id } => {
             let assignments = store.list_project_skill_assignments(project_id)?;
-            push_assignments(store, &mut builder, assignments)?;
+            builder.push_assignments(assignments)?;
         }
         RemovalScope::ProjectTool {
             project_id,
@@ -415,7 +486,7 @@ pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPl
         } => {
             let assignments =
                 store.list_project_skill_assignments_for_project_tool(project_id, tool_key)?;
-            push_assignments(store, &mut builder, assignments)?;
+            builder.push_assignments(assignments)?;
         }
         RemovalScope::ProjectSkillTool {
             project_id,
@@ -430,7 +501,7 @@ pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPl
                     &a.skill_id == skill_id && row_folder(ScopeKind::Project, &a.tool) == folder
                 })
                 .collect();
-            push_assignments(store, &mut builder, assignments)?;
+            builder.push_assignments(assignments)?;
         }
         RemovalScope::ProjectSkill {
             project_id,
@@ -441,12 +512,12 @@ pub(crate) fn plan(store: &SkillStore, scope: &RemovalScope) -> Result<RemovalPl
                 .into_iter()
                 .filter(|assignment| &assignment.skill_id == skill_id)
                 .collect();
-            push_assignments(store, &mut builder, assignments)?;
+            builder.push_assignments(assignments)?;
         }
         RemovalScope::EveryGlobalTarget => {
             for skill in store.list_skills()? {
                 for row in store.list_skill_targets(&skill.id)? {
-                    builder.push_global(&row);
+                    builder.push_global(&row)?;
                 }
             }
         }
@@ -491,107 +562,131 @@ fn folder_locatable(roots: &HostRoots, folder: &str) -> bool {
     placement::folder_reachable(ScopeKind::Global, folder, &installed_set_in(roots))
 }
 
-/// Resolve each assignment row's project-scope artifact path. A row whose
-/// project or tool can no longer be resolved has no locatable artifact, so
-/// it is not planned (and not settled) — the project-side callers own that
-/// case.
-fn push_assignments(
-    store: &SkillStore,
-    builder: &mut TargetBuilder,
-    assignments: Vec<crate::core::skill_store::ProjectSkillAssignmentRecord>,
-) -> Result<()> {
-    let mut projects: HashMap<String, Option<ProjectRecord>> = HashMap::new();
-    for assignment in assignments {
-        if !assignment.owns_artifact() {
-            builder.markers.push(RowRef::assignment(
-                &assignment.id,
-                &assignment.project_id,
-                &assignment.skill_id,
-                &assignment.tool,
-            ));
-            continue;
-        }
-        let project = match projects.get(&assignment.project_id) {
-            Some(cached) => cached.clone(),
-            None => {
-                let looked_up = store.get_project_by_id(&assignment.project_id)?;
-                projects.insert(assignment.project_id.clone(), looked_up.clone());
-                looked_up
-            }
-        };
-        let Some(project) = project else {
-            log::warn!(
-                "artifact removal: assignment {} names missing project {}",
-                assignment.id,
-                assignment.project_id
-            );
-            continue;
-        };
-        let Some(adapter) = adapter_by_key(&assignment.tool) else {
-            log::warn!(
-                "artifact removal: assignment {} names unknown tool {}",
-                assignment.id,
-                assignment.tool
-            );
-            continue;
-        };
-        // One naming rule for project artifacts: the stored assignment name
-        // (`project_sync::assignment_artifact_name`); the live skill row is
-        // its fallback supplier, read only for an un-backfilled row.
-        let Some(path) =
-            resolve_assignment_artifact(Path::new(&project.path), adapter, &assignment, || {
-                Ok(store
-                    .get_skill_by_id(&assignment.skill_id)?
-                    .map(|skill| skill.name))
-            })?
-        else {
-            log::warn!(
-                "artifact removal: assignment {} has no skill name to locate its artifact",
-                assignment.id
-            );
-            continue;
-        };
-        builder.push(
-            path,
-            RowRef::assignment(
-                &assignment.id,
-                &assignment.project_id,
-                &assignment.skill_id,
-                &assignment.tool,
-            ),
-        );
-    }
-    Ok(())
-}
-
 /// Accumulates rows into targets deduped by path — a shared skills dir means
-/// one artifact with several rows — and sets markers aside (rows owning no
-/// artifact, whatever their status): they describe no artifact of ours, so
-/// they never join (or create) a target.
-#[derive(Default)]
-struct TargetBuilder {
+/// one artifact with several rows — each with the evidence its row recorded
+/// (`core::ownership::Deployed`, read from the row and its skill's record),
+/// and sets markers aside (rows without a claim on their path, whatever their
+/// status): they describe no artifact of ours, so they never join (or create)
+/// a target.
+struct TargetBuilder<'a> {
+    store: &'a SkillStore,
     targets: Vec<RemovalTarget>,
     markers: Vec<RowRef>,
+    /// Skill records by id, read once: the Library copy a row's link must
+    /// resolve to, and an un-backfilled assignment's name.
+    skills: HashMap<String, Option<SkillRecord>>,
+    projects: HashMap<String, Option<ProjectRecord>>,
 }
 
-impl TargetBuilder {
-    fn push(&mut self, path: PathBuf, row: RowRef) {
+impl<'a> TargetBuilder<'a> {
+    fn new(store: &'a SkillStore) -> Self {
+        Self {
+            store,
+            targets: Vec::new(),
+            markers: Vec::new(),
+            skills: HashMap::new(),
+            projects: HashMap::new(),
+        }
+    }
+
+    fn skill(&mut self, skill_id: &str) -> Result<Option<SkillRecord>> {
+        if let Some(cached) = self.skills.get(skill_id) {
+            return Ok(cached.clone());
+        }
+        let looked_up = self.store.get_skill_by_id(skill_id)?;
+        self.skills.insert(skill_id.to_string(), looked_up.clone());
+        Ok(looked_up)
+    }
+
+    fn project(&mut self, project_id: &str) -> Result<Option<ProjectRecord>> {
+        if let Some(cached) = self.projects.get(project_id) {
+            return Ok(cached.clone());
+        }
+        let looked_up = self.store.get_project_by_id(project_id)?;
+        self.projects
+            .insert(project_id.to_string(), looked_up.clone());
+        Ok(looked_up)
+    }
+
+    fn push(&mut self, path: PathBuf, row: RowRef, deployed: Deployed) {
         match self.targets.iter_mut().find(|t| t.path == path) {
-            Some(target) => target.rows.push(row),
+            Some(target) => {
+                target.rows.push(row);
+                target.evidence.push(deployed);
+            }
             None => self.targets.push(RemovalTarget {
                 path,
                 rows: vec![row],
+                evidence: vec![deployed],
             }),
         }
     }
 
-    fn push_global(&mut self, row: &crate::core::skill_store::SkillTargetRecord) {
+    fn push_global(&mut self, row: &SkillTargetRecord) -> Result<()> {
         let row_ref = RowRef::global(&row.id, &row.skill_id, &row.tool);
         if !row.owns_artifact() {
             self.markers.push(row_ref);
         } else {
-            self.push(PathBuf::from(&row.target_path), row_ref);
+            let skill = self.skill(&row.skill_id)?;
+            let deployed = Deployed::of_target(row, skill.as_ref());
+            self.push(PathBuf::from(&row.target_path), row_ref, deployed);
         }
+        Ok(())
+    }
+
+    /// Resolve each assignment row's project-scope artifact path. A row whose
+    /// project or tool can no longer be resolved has no locatable artifact,
+    /// so it is not planned (and not settled) — the project-side callers own
+    /// that case.
+    fn push_assignments(&mut self, assignments: Vec<ProjectSkillAssignmentRecord>) -> Result<()> {
+        for assignment in assignments {
+            let row_ref = RowRef::assignment(
+                &assignment.id,
+                &assignment.project_id,
+                &assignment.skill_id,
+                &assignment.tool,
+            );
+            if !assignment.owns_artifact() {
+                self.markers.push(row_ref);
+                continue;
+            }
+            let Some(project) = self.project(&assignment.project_id)? else {
+                log::warn!(
+                    "artifact removal: assignment {} names missing project {}",
+                    assignment.id,
+                    assignment.project_id
+                );
+                continue;
+            };
+            let Some(adapter) = adapter_by_key(&assignment.tool) else {
+                log::warn!(
+                    "artifact removal: assignment {} names unknown tool {}",
+                    assignment.id,
+                    assignment.tool
+                );
+                continue;
+            };
+            let skill = self.skill(&assignment.skill_id)?;
+            // One naming rule for project artifacts: the stored assignment name
+            // (`project_sync::assignment_artifact_name`); the live skill row is
+            // its fallback supplier, read only for an un-backfilled row.
+            let Some(path) = resolve_assignment_artifact(
+                Path::new(&project.path),
+                adapter,
+                &assignment,
+                || Ok(skill.as_ref().map(|skill| skill.name.clone())),
+            )?
+            else {
+                log::warn!(
+                    "artifact removal: assignment {} has no skill name to locate its artifact",
+                    assignment.id
+                );
+                continue;
+            };
+            let deployed = Deployed::of_assignment(&assignment, skill.as_ref());
+            self.push(path, row_ref, deployed);
+        }
+        Ok(())
     }
 
     fn finish(self) -> (Vec<RemovalTarget>, Vec<RowRef>) {
@@ -654,21 +749,31 @@ pub(crate) fn execute_settling_unlocked(
     let fence = Fence::new(&library);
 
     for target in plan.targets {
-        let result = if is_present(&target.path) {
-            remove_path_any(&target.path, &fence)
-        } else {
-            Ok(())
+        // The occupant rule, at the moment of removal: only what a row shows
+        // is its own artifact is removed; a foreign occupant stays.
+        let result = match target.occupancy() {
+            Ok(Occupancy::Absent) => Ok(RemovalTargetStatus::Removed),
+            Ok(Occupancy::Ours) => {
+                remove_path_any(&target.path, &fence).map(|()| RemovalTargetStatus::Removed)
+            }
+            Ok(Occupancy::Foreign) => Ok(RemovalTargetStatus::LeftInPlace),
+            // Not knowing the occupant is never "foreign" (the row would
+            // settle as if its artifact were gone) nor "ours": it fails like a
+            // removal that could not run, and the row is kept (ADR-0002).
+            Err(err) => Err(typed_removal_failure(&target.path, err)),
         };
 
         let status = match result {
-            Ok(()) => {
+            Ok(status) => {
+                // The artifact is gone or was never this row's: either way
+                // the row's claim ends here (ADR-0007).
                 for row in &target.rows {
                     match settlement {
                         Settlement::Delete => delete_row(store, row)?,
                         Settlement::Disable => settle_row_as_disabled(store, row)?,
                     }
                 }
-                RemovalTargetStatus::Removed
+                status
             }
             Err(error) => {
                 let detail = format!("{error:#}");
@@ -726,7 +831,7 @@ pub(crate) fn execute_settling_unlocked(
             // every one).
             if let Some(error) = targets.iter().find_map(|t| match &t.status {
                 RemovalTargetStatus::Failed { error } => Some(error),
-                RemovalTargetStatus::Removed => None,
+                RemovalTargetStatus::Removed | RemovalTargetStatus::LeftInPlace => None,
             }) {
                 skill_health::note_outcome(
                     store,
@@ -802,7 +907,9 @@ fn settle_row_as_error(store: &SkillStore, row: &RowRef, error: &str) -> Result<
 /// Fenced to `adapter`'s **former** skills dirs, the only place a relocation
 /// leaves an artifact behind; anything else is refused as
 /// `PathOutsideToolDirs`, and the removal is admitted physically against
-/// the central library and those dirs. Presence follows the module rule.
+/// the central library and those dirs. Presence follows the module rule,
+/// and the old artifact is removed only while it is still what the row
+/// deployed (`deployed`, the occupant check): anything else there is left.
 /// Unlocked internal seam.
 ///
 /// Only Target relocation calls it, and relocation is not run at launch
@@ -817,6 +924,7 @@ pub(crate) fn remove_superseded_artifact_unlocked(
     central_dir: &Path,
     adapter: &ToolAdapter,
     path: &Path,
+    deployed: &Deployed,
 ) -> Result<()> {
     let former = former_skills_dirs_in(roots, adapter);
     let fenced = former
@@ -827,7 +935,7 @@ pub(crate) fn remove_superseded_artifact_unlocked(
             path: path.to_string_lossy().into_owned(),
         });
     }
-    if is_present(path) {
+    if ownership::check(path, deployed)? == Occupancy::Ours {
         let library = ProtectedLibrary::new(store, central_dir);
         remove_path_any(path, &Fence::new(&library).claiming(Claim::Within(&former)))?;
     }

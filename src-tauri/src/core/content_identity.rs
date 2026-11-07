@@ -81,6 +81,23 @@ pub fn compare(source: Source<'_>, target: &Path) -> Comparison {
     }
 }
 
+/// Compare a target directory with an identity recorded earlier — what a
+/// Deployment row recorded as deployed (`core::ownership`). The target is
+/// re-hashed now; a missing or unreadable target is `Unknown`, never a match.
+pub fn compare_recorded(recorded: &str, target: &Path) -> Comparison {
+    if !target.is_dir() {
+        return Comparison::Unknown;
+    }
+    match hash_dir(target) {
+        Ok(hash) if hash == recorded => Comparison::Same,
+        Ok(_) => Comparison::Different,
+        Err(error) => {
+            log::warn!("[content identity] identity of {target:?} unavailable: {error:#}");
+            Comparison::Unknown
+        }
+    }
+}
+
 /// The conservative two-state answer: `true` only for a known `Same`, so an
 /// unknown identity reads as "not the same" — right for keep / refuse-to-
 /// overwrite decisions, never for a deletion (use [`compare`]).

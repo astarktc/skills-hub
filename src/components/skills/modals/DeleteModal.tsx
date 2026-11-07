@@ -185,6 +185,14 @@ export default function DeleteModal({
                 : t("deleteDialog.report.removedNothing")}
             </p>
           )}
+          {row.leftInPlace.map((target) => (
+            <div key={target.path} className="flex flex-col gap-1">
+              <p className="m-0 text-muted-foreground">
+                {t("deleteDialog.report.leftInPlace", { tools: target.tools.join(", ") })}
+              </p>
+              <code className="font-mono text-xs break-all text-muted-foreground">{target.path}</code>
+            </div>
+          ))}
           {row.kept.map((target) => (
             <div key={target.path} className="flex flex-col gap-1 rounded-md border border-border bg-card p-2">
               <p className="m-0 text-foreground">{t("deleteDialog.report.stillIn", { tools: target.tools.join(", ") })}</p>

@@ -130,6 +130,22 @@ fn copy_only_tool() -> &'static ToolAdapter {
     crate::core::tool_adapters::test_overrides::shadow(adapter)
 }
 
+/// The Content identity of the stale copy [`seed_stale_copy`] writes: what a
+/// copy-mode row recorded as deployed when it wrote that copy (the evidence
+/// the occupant check verifies it against before Propagation replaces it).
+fn stale_identity() -> Option<String> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let copy = dir.path().join("skill");
+    seed_stale_copy(&copy);
+    crate::core::content_identity::read(crate::core::content_identity::Source::Directory(&copy))
+}
+
+/// What a row of `mode` recorded as deployed: the stale copy's identity for a
+/// copy, nothing for a link.
+fn deployed_identity(mode: SyncMode) -> Option<String> {
+    mode.can_drift().then(stale_identity).flatten()
+}
+
 /// A global target row pointing at `target_path`, in `mode`.
 fn seed_global_target(f: &Fixture, id: &str, tool: &str, target_path: &Path, mode: SyncMode) {
     f.store
@@ -142,6 +158,7 @@ fn seed_global_target(f: &Fixture, id: &str, tool: &str, target_path: &Path, mod
             status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(1),
+            content_hash: deployed_identity(mode),
         })
         .expect("seed target");
 }
@@ -477,7 +494,7 @@ fn seed_project_copy_assignment(f: &Fixture, project_path: &Path) -> PathBuf {
             status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(1),
-            content_hash: None,
+            content_hash: stale_identity(),
             created_at: 1,
         })
         .expect("seed assignment");
@@ -747,6 +764,7 @@ fn seed_unowned_target(f: &Fixture, tool: &str, target_path: &Path) {
             status: SyncStatus::Error,
             last_error: Some("an earlier first sync failed".to_string()),
             synced_at: None,
+            content_hash: None,
         })
         .expect("seed unowned target");
 }
@@ -992,6 +1010,7 @@ fn a_disabled_member_mints_no_sharer_and_skips_the_group() {
             status: SyncStatus::Disabled,
             last_error: None,
             synced_at: None,
+            content_hash: None,
         })
         .expect("seed disabled marker");
 
@@ -1069,7 +1088,7 @@ fn seed_trae_assignment(
             },
             last_error: None,
             synced_at: owned.then_some(1),
-            content_hash: None,
+            content_hash: deployed_identity(mode).filter(|_| owned),
             created_at: 1,
         })
         .expect("seed assignment");
@@ -1330,6 +1349,7 @@ fn a_disabled_row_keeps_its_folders_other_rows_unwritten() {
             status: SyncStatus::Disabled,
             last_error: None,
             synced_at: None,
+            content_hash: None,
         })
         .expect("seed disabled marker");
 

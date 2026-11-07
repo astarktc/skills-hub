@@ -54,6 +54,7 @@ fn seed_target(store: &SkillStore, skill_id: &str, tool: &str) {
             status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(9),
+            content_hash: None,
         })
         .expect("upsert target");
 }
@@ -537,6 +538,7 @@ fn the_catalog_shows_a_folders_state_folded_over_every_row() {
             status: SyncStatus::Error,
             last_error: Some("an earlier first sync failed".to_string()),
             synced_at: None,
+            content_hash: None,
         })
         .unwrap();
 
@@ -579,6 +581,7 @@ fn the_catalog_carries_a_partially_disabled_folders_facts() {
             status: SyncStatus::Disabled,
             last_error: None,
             synced_at: Some(3),
+            content_hash: None,
         })
         .unwrap();
 

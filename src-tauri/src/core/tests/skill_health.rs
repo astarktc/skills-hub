@@ -481,6 +481,10 @@ fn a_kept_delete_records_delete_incomplete_with_the_failed_targets_error() {
             status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(1),
+            // What the row deployed: the copy written above.
+            content_hash: crate::core::content_identity::read(
+                crate::core::content_identity::Source::Directory(&target),
+            ),
         })
         .unwrap();
     fs::set_permissions(&target, fs::Permissions::from_mode(0o555)).unwrap();

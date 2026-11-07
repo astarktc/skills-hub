@@ -377,8 +377,12 @@ export function createFixtureBackend(
    */
   const recordKept = (skill: FixtureSkill, row: BatchRow): BatchTargetStatus => {
     const stored = skill.dto.targets.find((t) => t.tool === row.key);
-    if (stored) stored.status = "disabled";
-    else
+    if (stored) {
+      // The folder in its way is not its own: the row gives its path up
+      // (ADR-0007).
+      stored.status = "disabled";
+      stored.synced_at = null;
+    } else
       skill.dto.targets.push({
         tool: row.key,
         mode: "symlink",
@@ -543,11 +547,14 @@ export function createFixtureBackend(
   // `disabled`; an assignment's when it was deployed (`synced`/`stale`) in an
   // existing folder.
   //
-  // Ownership (Rust `owns_artifact`), independent of the row's status: only a
-  // row the app materialised (`synced_at !== null`) owns its path. A row that
-  // never did (a `disabled` marker, or one a failed Enable turned `error`) is
-  // a marker: removal never plans its path, and re-sync / Propagation never
-  // overwrite it. Once the whole scope succeeded, Delete clears the row alone
+  // Ownership (Rust `core::ownership`, ADR-0007), independent of the row's
+  // status: a row claims its path once the app materialised it
+  // (`synced_at !== null`) until a successful Disable or a Keep answer gives
+  // it up — and even a claim never reaches a folder the app did not put there
+  // (`foreign`, `projectOccupants`): that is left in place, or asked about. A
+  // row with no claim (a `disabled` marker, or one a failed Enable turned
+  // `error`) is a marker: removal never plans its path, and re-sync /
+  // Propagation never overwrite it. Once the whole scope succeeded, Delete clears the row alone
   // and Disable records it `disabled`; until then it keeps status and
   // `last_error`.
 
@@ -626,6 +633,20 @@ export function createFixtureBackend(
     for (const [path, rowTools] of byPath) {
       const rows = rowTools.map((tool) => globalRowRef(skill.dto.id, tool));
       const described = skill.dto.targets.filter((t) => rowTools.includes(t.tool));
+      // Rust `ownership::check`: a folder the app did not put there is never
+      // removed; the rows settle and the report says it was left in place.
+      if (state.foreign.some((f) => `${globalRoot(f.tool)}/${f.name}` === path)) {
+        if (settle === "disable") {
+          for (const row of described) {
+            row.status = "disabled";
+            row.synced_at = null;
+          }
+        } else {
+          skill.dto.targets = skill.dto.targets.filter((t) => !rowTools.includes(t.tool));
+        }
+        targets.push({ path, rows, status: { status: "left_in_place" } });
+        continue;
+      }
       const present = presentAt(path, described.some((t) => t.status !== "disabled"));
       const stuck = state.lockedPaths.includes(path) || rowTools.some((tool) => state.unwritableTools.includes(tool));
       if (present && stuck) {
@@ -635,7 +656,11 @@ export function createFixtureBackend(
       } else {
         artifacts.set(path, false);
         if (settle === "disable") {
-          for (const row of described) row.status = "disabled";
+          // A successful Disable gives the path up (ADR-0007).
+          for (const row of described) {
+            row.status = "disabled";
+            row.synced_at = null;
+          }
         } else {
           skill.dto.targets = skill.dto.targets.filter((t) => !rowTools.includes(t.tool));
         }
@@ -678,6 +703,19 @@ export function createFixtureBackend(
         continue;
       }
       const path = assignmentPath(project, a);
+      // Rust `ownership::check`: a folder in `projectOccupants` is never the
+      // app's, so it is left in place and the row settles (ADR-0007).
+      if (state.projectOccupants.includes(path)) {
+        if (settle === "disable") {
+          a.status = "disabled";
+          a.last_error = null;
+          a.synced_at = null;
+          a.content_hash = null;
+          remaining.push(a);
+        }
+        targets.push({ path, rows, status: { status: "left_in_place" } });
+        continue;
+      }
       const present = project.path_exists && presentAt(path, a.status === "synced" || a.status === "stale");
       const stuck =
         state.lockedPaths.includes(path) || state.unwritableProjectTools.includes(`${project.id}:${a.tool}`);
@@ -689,11 +727,11 @@ export function createFixtureBackend(
         targets.push({ path, rows, status: { status: "failed", error: PERMISSION_DENIED(path) } });
       } else {
         artifacts.set(path, false);
-        // Whatever sat at a path this row owns is removed with it.
-        state.projectOccupants = state.projectOccupants.filter((p) => p !== path);
         if (settle === "disable") {
+          // A successful Disable gives the path up (ADR-0007).
           a.status = "disabled";
           a.last_error = null;
+          a.synced_at = null;
           a.content_hash = null;
           remaining.push(a);
         }
@@ -801,11 +839,11 @@ export function createFixtureBackend(
 
   /**
    * One assignment through Rust `project_sync::sync_assignment_target`.
-   * `overwrite` is the caller's policy: off for a first sync (assign, Enable),
-   * and for a re-sync / Propagation only a row that owns its path may replace
-   * what is there (Rust `owns_artifact`). Someone else's folder in the way
-   * of a sync without overwrite is refused as `TARGET_EXISTS`, the global
-   * batch's code.
+   * `overwrite` is the operator's Overwrite answer (D12) and nothing else: a
+   * folder in `projectOccupants` is never what the app put there, so a
+   * re-sync or Propagation meets it as `TARGET_EXISTS` too (Rust
+   * `ownership::check`, ADR-0007), the global batch's code. The app's own
+   * artifact is modelled as no occupant, and is replaced as before.
    */
   const syncAssignment = (
     project: FixtureProject,
@@ -838,7 +876,6 @@ export function createFixtureBackend(
         // recovers `sync_engine::TargetExistsError`); `last_error` keeps the chain.
         a.status = "error";
         a.last_error = `target already exists: "${path}"`;
-        a.content_hash = null;
         return { status: "failed", error: targetExists(path) };
       }
       state.projectOccupants = state.projectOccupants.filter((p) => p !== path);
@@ -915,11 +952,11 @@ export function createFixtureBackend(
     (state.skills.find((s) => s.dto.id === a.skill_id)?.dto.disabled_at ?? null) !== null;
 
   /**
-   * Project re-sync: a disabled assignment is skipped (see above); only a row
-   * that owns its path replaces what is there, any other is a first sync.
+   * Project re-sync: a disabled assignment is skipped (see above); only the
+   * app's own artifact is replaced, a folder in the way is asked about.
    */
   const resyncOne = (project: FixtureProject, a: StoredAssignment): ProjectSyncOutcomeStatus =>
-    isDisabledAssignment(a) ? skippedDisabled : syncAssignment(project, a, ownsArtifact(a));
+    isDisabledAssignment(a) ? skippedDisabled : syncAssignment(project, a, false);
 
   /**
    * Rust `ProjectSyncReport::folder_missing`: every project sync (assign,
@@ -1205,9 +1242,9 @@ export function createFixtureBackend(
         skippedGlobal(row.tool, { reason: "link_follows_source" });
         continue;
       }
-      // A first sync (the row owns nothing) meets a foreign folder as
-      // TARGET_EXISTS; an owner replaces it.
-      const occupied = !owned && state.foreign.some((f) => `${globalRoot(f.tool)}/${f.name}` === row.target_path);
+      // A foreign folder is never replaced silently, whoever's row meets it
+      // (Rust `ownership::check`, ADR-0007): TARGET_EXISTS for the ask.
+      const occupied = state.foreign.some((f) => `${globalRoot(f.tool)}/${f.name}` === row.target_path);
       // An unwritable dir refuses the replacement's removal of the existing
       // copy: the typed removal-permission failure (not the batch's
       // TOOL_NOT_WRITABLE).
@@ -1249,7 +1286,7 @@ export function createFixtureBackend(
           push(scope, { status: "failed", error: missingSource(skill), first_deploy: !ownsArtifact(a) });
         } else {
           const owned = ownsArtifact(a);
-          const result = syncAssignment(project, a, owned);
+          const result = syncAssignment(project, a, false);
           push(
             scope,
             result.status === "failed"
@@ -2050,11 +2087,16 @@ export function createFixtureBackend(
       };
     }
     if (isDisabledAssignment(a)) return outcomeOf(project, a, skippedDisabled);
-    if (a.synced_at !== null) return outcomeOf(project, a, { status: "already_assigned" });
+    // Only a row whose path holds its own artifact again has nothing left to
+    // answer; a claiming row another folder took the path of is answered.
+    if (a.synced_at !== null && !state.projectOccupants.includes(assignmentPath(project, a)))
+      return outcomeOf(project, a, { status: "already_assigned" });
     if (!project.path_exists) return null;
     if (decision.decision === "keep") {
       a.status = "disabled";
       a.last_error = null;
+      a.synced_at = null;
+      a.content_hash = null;
       return outcomeOf(project, a, { status: "declined" });
     }
     return outcomeOf(project, a, syncAssignment(project, a, true));

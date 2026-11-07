@@ -1000,6 +1000,7 @@ fn global_and_project_sync_independent() {
         status: SyncStatus::Synced,
         last_error: None,
         synced_at: Some(2000),
+        content_hash: None,
     };
     store.upsert_skill_target(&global_target).unwrap();
 
@@ -2565,7 +2566,7 @@ fn the_target_write_seam_refuses_a_missing_project_root() {
         &central_repo_of(&store),
         &project,
         &row,
-        true,
+        project_sync::ReplaceRule::Confirmed,
         3000,
     )
     .expect_err("refused");
@@ -2982,6 +2983,11 @@ fn dropping_a_harness_removes_its_legacy_assignment_and_keeps_the_folders_row() 
             id: "legacy-trae-cn".to_string(),
             tool: "trae_cn".to_string(),
             skill_name: "previous-name".to_string(),
+            // The copy it deployed under the old name, and its identity.
+            mode: SyncMode::Copy,
+            content_hash: crate::core::content_identity::read(
+                crate::core::content_identity::Source::Directory(&old),
+            ),
             ..folder_row.clone()
         })
         .unwrap();
@@ -3166,13 +3172,10 @@ fn our_link(skill: &SkillRecord, path: &Path) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     #[cfg(unix)]
     std::os::unix::fs::symlink(&skill.central_path, path).unwrap();
-    #[cfg(not(unix))]
-    {
-        // No unprivileged symlink on Windows CI: stand in with a folder.
-        let _ = &skill.central_path;
-        fs::create_dir_all(path).unwrap();
-        fs::write(path.join("SKILL.md"), "ours").unwrap();
-    }
+    // No unprivileged symlink on Windows CI: a junction is the link the
+    // engine falls back to there, and resolves to the copy just the same.
+    #[cfg(windows)]
+    junction::create(&skill.central_path, path).unwrap();
 }
 
 fn row_of(
@@ -3389,6 +3392,20 @@ fn siblings_recording_the_same_path_settle_each_by_its_own_sync() {
     let artifact = trae_dir(&project).join("trae-skill");
     fs::create_dir_all(&artifact).unwrap();
     fs::write(artifact.join("SKILL.md"), "stale copy of ours").unwrap();
+    // The owner deployed that copy and recorded its identity.
+    store
+        .transition_assignment(
+            "pa-trae_cn",
+            crate::core::skill_store::AssignmentTransition::SyncCompleted {
+                mode: SyncMode::Copy,
+                synced_at: 1500,
+                content_hash: crate::core::content_identity::read(
+                    crate::core::content_identity::Source::Directory(&artifact),
+                )
+                .as_deref(),
+            },
+        )
+        .unwrap();
 
     let report =
         project_sync::resync_project(&store, &central_repo_of(&store), &project.id, 3000).unwrap();

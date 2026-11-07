@@ -610,10 +610,12 @@ fn a_disabled_skill_is_never_rematerialised_by_any_automatic_pass() {
 /// Onboarding import's first sync is the gated global batch, and an import
 /// always creates a *new* skill (the name must be free), so it can never carry
 /// a disabled row of its own. The one way it could meet a Disable is an
-/// unmanaged copy of a disabled skill reappearing in the Tool's dir. The
-/// disabled row still records that path, so the plan never offers it: naming
-/// it fails per group (even with Replace) and leaves the disabled pair and
-/// the copy alone.
+/// unmanaged copy of a disabled skill reappearing in the Tool's dir. A
+/// successful Disable gave the row's path up (ADR-0007), so the copy there is
+/// an unmanaged folder like any other and the plan may offer it: its name is
+/// managed, so the import skips it — or, with the operator's Replace, takes
+/// its bytes into the Library — and either way the disabled pair stays
+/// disabled and the copy is left as found.
 #[test]
 fn onboarding_import_never_rematerialises_a_disabled_pair() {
     for replace in [false, true] {
@@ -661,13 +663,30 @@ fn onboarding_import_leaves_a_disabled_pair(replace: bool) {
     )
     .expect("the import reads its own plan");
 
-    assert!(
-        matches!(
-            report.groups.as_slice(),
-            [group] if matches!(group.status, ImportGroupStatus::Failed { .. })
+    match (replace, report.groups.as_slice()) {
+        (false, [group]) => assert!(
+            matches!(
+                group.status,
+                ImportGroupStatus::Skipped {
+                    reason: crate::core::onboarding_import::ImportSkipReason::NameManaged { .. }
+                }
+            ),
+            "{report:?}"
         ),
-        "replace={replace}: {report:?}"
-    );
+        (true, [group]) => match &group.status {
+            ImportGroupStatus::Replaced { targets, .. } => assert!(
+                targets.iter().all(|t| matches!(
+                    t.status,
+                    BatchTargetStatus::Skipped {
+                        error: CommandError::TargetDisabled { .. }
+                    }
+                )),
+                "the disabled pair is never synced: {report:?}"
+            ),
+            other => panic!("expected Replaced, got {other:?}"),
+        },
+        _ => panic!("replace={replace}: {report:?}"),
+    }
     assert_eq!(f.status("claude_code"), Some(SyncStatus::Disabled));
     assert!(
         !reappeared
@@ -1339,6 +1358,7 @@ fn propagation_never_overwrites_a_path_the_row_does_not_own() {
             status: SyncStatus::Error,
             last_error: Some("target exists".into()),
             synced_at: None,
+            content_hash: None,
         })
         .unwrap();
     let project = project(&f, "claude_code");
@@ -1375,10 +1395,13 @@ fn propagation_never_overwrites_a_path_the_row_does_not_own() {
     assert_eq!(f.status("claude_code"), Some(SyncStatus::Error));
 }
 
-/// F1's other half: a disabled row the app once deployed still owns its
-/// path, so an artifact that reappears there is Delete's to remove.
+/// Replaces `an_owned_disabled_target_is_still_removed_by_delete`, which
+/// pinned the opposite (ADR-0007, round 20 t09 review: Astra 10, Sol 102). A
+/// successful Disable gives the row's path up: a folder that appears there
+/// later is not the app's, and Delete leaves it where it is while it settles
+/// the row and deletes the skill.
 #[test]
-fn an_owned_disabled_target_is_still_removed_by_delete() {
+fn a_folder_that_appears_after_a_pair_disable_survives_delete() {
     let f = fixture(&["claude_code"]);
     f.sync(&["claude_code"]);
     disable_targets(
@@ -1389,20 +1412,131 @@ fn an_owned_disabled_target_is_still_removed_by_delete() {
         NOW,
     )
     .unwrap();
+    let row = f
+        .store
+        .get_skill_target(&f.skill_id, "claude_code")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.status, SyncStatus::Disabled);
+    assert!(
+        !row.owns_artifact(),
+        "a successful Disable gives the path up"
+    );
     let path = f.global_path(".claude/skills");
-    fs::create_dir_all(&path).unwrap();
-    fs::write(path.join("SKILL.md"), "reappeared").unwrap();
+    foreign_folder(&path);
 
     let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
 
-    assert!(report.record_deleted);
-    assert_eq!(report.removed_rows(), 1);
-    assert!(!exists_any(&path), "the owned path is removed");
+    assert!(report.record_deleted, "{report}");
+    assert!(report.targets.is_empty(), "no path planned: {report}");
+    assert_eq!(report.cleared_markers.len(), 1);
+    assert!(foreign_bytes_survive(&path), "the later folder survives");
 }
 
-/// Sketch 8: Delete of a disabled skill settles its (owned, disabled) global
-/// and project rows, the central copy and the record; a reappeared owned
-/// artifact that cannot be removed keeps the skill (ADR-0002) until a retry.
+/// The same at both scopes through a skill-grain Disable: the global folder
+/// and the project folder that appeared afterwards both survive Delete.
+#[test]
+fn a_folder_that_appears_after_a_skill_disable_survives_delete_at_both_scopes() {
+    let f = fixture(&["claude_code"]);
+    f.sync(&["claude_code"]);
+    let project = project(&f, "claude_code");
+    assign_skill_to_project_tools(
+        &f.store,
+        &central_repo_of(&f.store),
+        &project.id,
+        &f.skill_id,
+        NOW,
+    )
+    .unwrap();
+    disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &HostRoots::under_home(f.home()),
+        &f.skill(),
+        NOW,
+    )
+    .unwrap();
+    let assignment = f
+        .store
+        .get_project_skill_assignment(&project.id, &f.skill_id, "claude_code")
+        .unwrap()
+        .unwrap();
+    assert_eq!(assignment.status, SyncStatus::Disabled);
+    assert!(
+        !assignment.owns_artifact(),
+        "the assignment gave its path up"
+    );
+    let global = f.global_path(".claude/skills");
+    let assigned = Path::new(&project.path).join(".claude/skills/alpha");
+    foreign_folder(&global);
+    foreign_folder(&assigned);
+
+    let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
+
+    assert!(report.record_deleted, "{report}");
+    assert!(report.targets.is_empty(), "no path planned: {report}");
+    assert_eq!(report.cleared_markers.len(), 2);
+    assert!(foreign_bytes_survive(&global));
+    assert!(foreign_bytes_survive(&assigned));
+}
+
+/// A Disable whose removal failed keeps the row's claim (ADR-0002): a retry
+/// of Disable removes the artifact that is still the app's, and only then
+/// gives the path up.
+#[cfg(unix)]
+#[test]
+fn a_disable_whose_removal_failed_keeps_ownership_until_a_retry_removes_it() {
+    let f = fixture(&["claude_code"]);
+    f.sync(&["claude_code"]);
+    let path = f.global_path(".claude/skills");
+    let parent = f.home().join(".claude/skills");
+    if !lock_dir(&parent) {
+        return;
+    }
+    let failed = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &HostRoots::under_home(f.home()),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
+    unlock_dir(&parent);
+    assert_eq!(failed.failed_rows(), 1, "{failed}");
+    let row = f
+        .store
+        .get_skill_target(&f.skill_id, "claude_code")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.status, SyncStatus::Error);
+    assert!(row.owns_artifact(), "a failed removal keeps ownership");
+    assert!(exists_any(&path), "the link is still there");
+
+    let retried = disable_targets(
+        &f.store,
+        &central_repo_of(&f.store),
+        &HostRoots::under_home(f.home()),
+        &f.pair("claude_code"),
+        NOW,
+    )
+    .unwrap();
+
+    assert_eq!(retried.removed_rows(), 1, "{retried}");
+    assert!(!exists_any(&path), "the retry removed the app's link");
+    let row = f
+        .store
+        .get_skill_target(&f.skill_id, "claude_code")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.status, SyncStatus::Disabled);
+    assert!(!row.owns_artifact());
+}
+
+/// Sketch 8: Delete of a disabled skill settles its disabled global and
+/// project rows, the central copy and the record. A successful Disable gave
+/// every row's path up, so Delete touches no path at all: a folder that
+/// reappeared at the global path — even one Delete could not remove — is not
+/// its to remove, and stays.
 #[cfg(unix)]
 #[test]
 fn delete_disabled_skill_settles_rows_and_cascade() {
@@ -1433,27 +1567,20 @@ fn delete_disabled_skill_settles_rows_and_cascade() {
             .central_path,
     );
 
-    // A reappeared owned artifact behind a locked parent: Delete keeps all.
+    // A reappeared folder behind a locked parent: not Delete's to touch.
     let global = f.global_path(".claude/skills");
     fs::create_dir_all(&global).unwrap();
     let parent = f.home().join(".claude/skills");
     if !lock_dir(&parent) {
         return;
     }
-    let kept = remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
-    unlock_dir(&parent);
-    assert!(!kept.record_deleted && !kept.central_removed);
-    // The absent project artifact settled (its row deleted); only the
-    // locked global one is kept.
-    assert_eq!((kept.removed_rows(), kept.failed_rows()), (1, 1));
-    assert_eq!(f.status("claude_code"), Some(SyncStatus::Error));
-    assert!(central.is_dir(), "central copy kept for the retry");
-
     let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
+    unlock_dir(&parent);
 
     assert!(report.record_deleted && report.central_removed, "{report}");
-    assert_eq!((report.removed_rows(), report.failed_rows()), (1, 0));
-    assert!(!exists_any(&global));
+    assert_eq!((report.removed_rows(), report.failed_rows()), (0, 0));
+    assert_eq!(report.cleared_markers.len(), 2);
+    assert!(exists_any(&global), "the reappeared folder stays");
     assert!(!central.exists());
     assert!(f.store.get_skill_by_id(&f.skill_id).unwrap().is_none());
     assert!(f.store.list_skill_targets(&f.skill_id).unwrap().is_empty());
@@ -2078,14 +2205,17 @@ fn enable_admission_keeps_the_ownership_of_a_failed_removal() {
         .transition_assignment(&row(&f).id, AssignmentTransition::Disabled)
         .unwrap();
     assert!(
-        row(&f).owns_artifact(),
-        "Disable keeps the historical record"
+        !row(&f).owns_artifact(),
+        "a successful Disable gives the path up (ADR-0007)"
     );
     f.store
         .transition_assignment(&row(&f).id, AssignmentTransition::EnableAdmitted)
         .unwrap();
     assert_eq!(row(&f).status, SyncStatus::Disabled);
-    assert!(!row(&f).owns_artifact(), "admission clears a disabled row");
+    assert!(
+        !row(&f).owns_artifact(),
+        "admission leaves a disabled row unclaimed"
+    );
 }
 
 /// Seed the pre-1.4.0 per-sharer state: the folder's row plus a sibling row
@@ -2187,6 +2317,7 @@ fn global_enable_re_records_each_taken_row_under_its_own_key_at_the_skills_place
             status: SyncStatus::Disabled,
             last_error: None,
             synced_at: None,
+            content_hash: None,
         })
         .unwrap();
     let roots = HostRoots::under_home(f.home());
@@ -2265,6 +2396,7 @@ fn a_global_write_or_enable_never_repurposes_another_rows_record() {
                 status,
                 last_error: None,
                 synced_at: None,
+                content_hash: None,
             })
             .unwrap();
     };
@@ -2413,6 +2545,7 @@ fn enabling_a_legacy_row_whose_own_harness_is_gone_leaves_no_row() {
             status: SyncStatus::Disabled,
             last_error: None,
             synced_at: Some(1),
+            content_hash: None,
         })
         .unwrap();
 
@@ -2460,6 +2593,7 @@ fn a_disabled_legacy_sibling_row_gates_the_folder() {
             status: SyncStatus::Disabled,
             last_error: None,
             synced_at: None,
+            content_hash: None,
         })
         .unwrap();
 
@@ -2507,6 +2641,7 @@ fn a_pair_enable_of_a_reachable_folder_deploys_it_when_only_a_gone_harnesss_row_
             status: SyncStatus::Disabled,
             last_error: None,
             synced_at: Some(1),
+            content_hash: None,
         })
         .unwrap();
 

@@ -664,12 +664,9 @@ fn a_disabled_skill_is_moved_and_its_rows_skipped() {
 
     let report = f.run();
 
-    assert!(matches!(
-        report.deployments[0].status,
-        RelinkStatus::Skipped {
-            reason: RelinkSkip::Disabled
-        }
-    ));
+    // A successful Disable gave the row's path up (ADR-0007): it describes
+    // no Deployment of ours, so there is nothing to relink or redeploy.
+    assert!(report.deployments.is_empty(), "{:?}", report.deployments);
     assert!(
         !f.home().join(".claude/skills/alpha").exists(),
         "not redeployed"

@@ -1635,6 +1635,13 @@ export type RemovalTargetOutcome = {
 export type RemovalTargetStatus =
 /**  Removed, or already absent. */
 { status: "removed" } |
+/**
+ *  Something occupies the path that no attached row can show is the
+ *  artifact it deployed (ADR-0007): a folder put where the app's link
+ *  was, a copy edited in place, a copy a pre-1.4.0 row never recorded.
+ *  It was kept untouched, and the rows settled as their artifact gone.
+ */
+{ status: "left_in_place" } |
 /**  Every attached row was kept with status `error` and the original chain. */
 { status: "failed"; error: CommandError };
 

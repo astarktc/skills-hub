@@ -45,9 +45,10 @@ use super::artifact_removal::remove_superseded_artifact_unlocked;
 use super::content_identity::{self, Source};
 use super::environment::HostRoots;
 use super::mutation_guard;
+use super::ownership::Deployed;
 use super::removal_fence::ProtectedLibrary;
 use super::skill_store::{SkillRecord, SkillStore, TargetTransition};
-use super::sync_engine::{self, SyncOutcome};
+use super::sync_engine::{self, Replace, SyncOutcome};
 use super::sync_status::SyncStatus;
 use super::tool_adapters::{adapter_by_key, former_skills_dirs_in, skills_dir_in, ToolAdapter};
 
@@ -81,6 +82,9 @@ pub fn relocate_former_global_targets(
 struct Move {
     old: PathBuf,
     adapter: &'static ToolAdapter,
+    /// What the row that found the old artifact recorded: the old artifact
+    /// is removed only when it is still that (`core::ownership`).
+    deployed: Deployed,
     outcome: Option<SyncOutcome>,
 }
 
@@ -133,6 +137,7 @@ pub(crate) fn relocate_unlocked(
                     moves.push(Move {
                         old: old.clone(),
                         adapter,
+                        deployed: Deployed::of_target(&row, Some(&skill)),
                         outcome,
                     });
                     moves.len() - 1
@@ -141,12 +146,23 @@ pub(crate) fn relocate_unlocked(
 
             match &moves[index].outcome {
                 Some(outcome) => {
+                    let content_hash = outcome
+                        .mode_used
+                        .can_drift()
+                        .then(|| {
+                            content_identity::read(Source::Managed {
+                                store,
+                                skill_id: &skill.id,
+                            })
+                        })
+                        .flatten();
                     store.transition_skill_target(
                         &row.id,
                         TargetTransition::SyncCompleted {
                             mode: outcome.mode_used,
                             target_path: &outcome.target_path.to_string_lossy(),
                             synced_at: now,
+                            content_hash: content_hash.as_deref(),
                         },
                     )?;
                     log::info!(
@@ -169,6 +185,7 @@ pub(crate) fn relocate_unlocked(
                 central_dir,
                 relocated.adapter,
                 &relocated.old,
+                &relocated.deployed,
             ) {
                 log::warn!(
                     "relocated {} but could not remove its former target {}: {:#}",
@@ -211,13 +228,6 @@ fn materialise(
     }
     let name = old.file_name()?;
     let target = skills_dir_in(roots, adapter).join(name);
-    let overwrite = content_identity::same_content(
-        Source::Managed {
-            store,
-            skill_id: &skill.id,
-        },
-        &target,
-    );
     let identity = Source::Managed {
         store,
         skill_id: &skill.id,
@@ -227,7 +237,7 @@ fn materialise(
         central,
         identity,
         &target,
-        overwrite,
+        Replace::never().or_same_content(true),
         &ProtectedLibrary::new(store, central_dir),
     ) {
         Ok(outcome) => Some(outcome),

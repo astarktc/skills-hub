@@ -514,11 +514,13 @@ export function makeSkill(spec: SkillSpec, now: number, index: number): FixtureS
     synced_at: status === "synced" || status === "error" ? syncedAt : null,
   });
   // A skill disabled at skill grain has every row disabled (Rust
-  // `skill_disable`): a synced row flips status and keeps where and when it
-  // was synced (`TargetTransition::Disabled`).
+  // `skill_disable`): a synced row flips status, keeps where it was, and gives
+  // its claim on the path up (`TargetTransition::Disabled`, ADR-0007).
   for (const tool of spec.synced ?? [])
     targets.push(
-      spec.skillDisabled ? { ...row(tool, "synced"), status: "disabled" } : row(tool, "synced"),
+      spec.skillDisabled
+        ? { ...row(tool, "synced"), status: "disabled", synced_at: null }
+        : row(tool, "synced"),
     );
   for (const tool of spec.errored ?? []) targets.push(row(tool, "error"));
   for (const tool of spec.disabled ?? []) targets.push(row(tool, "disabled"));
@@ -604,7 +606,8 @@ export function makeProject(
         mode,
         status,
         last_error: status === "error" ? (a.lastError ?? "sync failed") : null,
-        synced_at: status === "pending" || status === "error" ? null : now - (5 + i) * HOUR,
+        // A disabled assignment gave its claim up when its Disable succeeded (ADR-0007).
+        synced_at: status === "pending" || status === "error" || status === "disabled" ? null : now - (5 + i) * HOUR,
         content_hash: recordedHash(mode, status, skill.contentHash),
         created_at: created + i * HOUR,
       };

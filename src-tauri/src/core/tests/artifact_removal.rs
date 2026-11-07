@@ -215,8 +215,17 @@ fn seed_global_target_at(store: &SkillStore, skill: &SkillRecord, tool: &str, ta
             status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(1),
+            // What the row deployed: the copy just written (the evidence the
+            // occupant check verifies it against).
+            content_hash: deployed_identity(target),
         })
         .expect("upsert target");
+}
+
+/// The Content identity of the copy at `target`, as a row records it when it
+/// deploys one.
+fn deployed_identity(target: &Path) -> Option<String> {
+    crate::core::content_identity::read(crate::core::content_identity::Source::Directory(target))
 }
 
 fn seed_project(store: &SkillStore, base: &Path, name: &str) -> ProjectRecord {
@@ -234,7 +243,8 @@ fn seed_project(store: &SkillStore, base: &Path, name: &str) -> ProjectRecord {
 
 /// Seed an assignment row with the given status and materialize its
 /// project-scope target on disk (a real dir, so removal is observable). The
-/// row records a sync of ours (`synced_at`), so it owns that artifact.
+/// row records a sync of ours (`synced_at`) and the identity of the copy it
+/// deployed, so the occupant check finds that artifact its own.
 fn seed_assignment(
     store: &SkillStore,
     project: &ProjectRecord,
@@ -242,6 +252,12 @@ fn seed_assignment(
     tool: &str,
     status: SyncStatus,
 ) -> PathBuf {
+    let adapter = adapter_by_key(tool).expect("adapter");
+    let target =
+        project_sync::resolve_project_sync_target(Path::new(&project.path), adapter, &skill.name)
+            .expect("project dir");
+    fs::create_dir_all(&target).expect("create project target");
+    fs::write(target.join("SKILL.md"), "# synced\n").unwrap();
     store
         .add_project_skill_assignment(&ProjectSkillAssignmentRecord {
             id: uuid::Uuid::new_v4().to_string(),
@@ -253,16 +269,10 @@ fn seed_assignment(
             status,
             last_error: None,
             synced_at: Some(1),
-            content_hash: None,
+            content_hash: deployed_identity(&target),
             created_at: 1,
         })
         .expect("add assignment");
-    let adapter = adapter_by_key(tool).expect("adapter");
-    let target =
-        project_sync::resolve_project_sync_target(Path::new(&project.path), adapter, &skill.name)
-            .expect("project dir");
-    fs::create_dir_all(&target).expect("create project target");
-    fs::write(target.join("SKILL.md"), "# synced\n").unwrap();
     target
 }
 
@@ -665,9 +675,37 @@ fn plan_for_a_skill_with_no_rows_is_empty() {
 // Execution — presence rule, settlement rule, per-target outcomes
 // ---------------------------------------------------------------------------
 
+/// The link the app wrote, dangling because the Library copy is gone (an
+/// Unlocatable skill), still names that copy exactly: it is present, ours,
+/// and removed as itself.
 #[cfg(unix)]
 #[test]
-fn a_broken_symlink_counts_as_present_and_is_removed() {
+fn a_broken_link_to_the_library_copy_counts_as_present_and_is_removed() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = make_skill_dir(&tmp.path().join("central"), "link");
+    let skill = seed_skill(&store, "link", &central);
+    let link = tmp.path().join("tools").join("broken-link");
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    symlink(&central, &link).unwrap();
+    seed_global_target_at(&store, &skill, "claude_code", &link);
+    fs::remove_dir_all(&central).unwrap();
+    assert!(!link.exists(), "the link's destination is gone");
+
+    let report = unsync_skill_targets(&store, &skill.id).expect("unsync");
+
+    assert!(!exists_any(&link), "the dangling link itself is removed");
+    assert_eq!(report.removed_rows(), 1);
+    assert!(store.list_skill_targets(&skill.id).unwrap().is_empty());
+}
+
+/// A dangling link to anywhere else is nothing the row deployed: it is left
+/// in place, reported so, and the row settles (ADR-0007).
+#[cfg(unix)]
+#[test]
+fn a_broken_link_elsewhere_is_left_in_place() {
     use std::os::unix::fs::symlink;
 
     let tmp = tempfile::tempdir().unwrap();
@@ -677,13 +715,16 @@ fn a_broken_symlink_counts_as_present_and_is_removed() {
     let link = tmp.path().join("tools").join("broken-link");
     fs::create_dir_all(link.parent().unwrap()).unwrap();
     symlink(tmp.path().join("does-not-exist"), &link).unwrap();
-    assert!(!link.exists(), "the link's destination is gone");
     seed_global_target_at(&store, &skill, "claude_code", &link);
 
     let report = unsync_skill_targets(&store, &skill.id).expect("unsync");
 
-    assert!(!exists_any(&link), "the dangling link itself is removed");
-    assert_eq!(report.removed_rows(), 1);
+    assert!(exists_any(&link), "a link the row did not write stays");
+    assert!(matches!(
+        report.targets[0].status,
+        RemovalTargetStatus::LeftInPlace
+    ));
+    assert_eq!((report.removed_rows(), report.left_in_place_rows()), (0, 1));
     assert!(store.list_skill_targets(&skill.id).unwrap().is_empty());
 }
 
@@ -1316,6 +1357,19 @@ fn a_project_artifact_under_a_dir_aliased_onto_the_central_repo_is_refused() {
     let skill = seed_skill(&store, "alpha", &central);
     let project = seed_project(&store, tmp.path(), "proj");
     let target = seed_assignment(&store, &project, &skill, "claude_code", SyncStatus::Synced);
+    // The row deployed a copy of the central bytes, so through the alias the
+    // central copy itself passes the occupant check: the fence still refuses.
+    let row = &store.list_project_skill_assignments(&project.id).unwrap()[0];
+    store
+        .transition_assignment(
+            &row.id,
+            crate::core::skill_store::AssignmentTransition::SyncCompleted {
+                mode: SyncMode::Copy,
+                synced_at: 1,
+                content_hash: deployed_identity(&central).as_deref(),
+            },
+        )
+        .unwrap();
     // Replace the project's Tool dir with a link onto the central repo.
     let tool_dir = target.parent().unwrap().to_path_buf();
     fs::remove_dir_all(&tool_dir).unwrap();

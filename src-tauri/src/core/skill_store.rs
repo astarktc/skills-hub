@@ -17,7 +17,7 @@ const LEGACY_APP_IDENTIFIERS: &[&str] = &[
 ];
 
 // Schema versioning: bump when making changes and add a migration step.
-const SCHEMA_VERSION: i32 = 11;
+const SCHEMA_VERSION: i32 = 12;
 
 /// V11: Skill health — the last settled outcome of a skill-level operation
 /// (`core::skill_health`): its kind, the tagged `CommandError` as JSON, and
@@ -25,6 +25,23 @@ const SCHEMA_VERSION: i32 = 11;
 const MIGRATION_V11: &str = "ALTER TABLE skills ADD COLUMN last_outcome_kind TEXT NULL;
 ALTER TABLE skills ADD COLUMN last_outcome_error TEXT NULL;
 ALTER TABLE skills ADD COLUMN last_outcome_at INTEGER NULL;";
+
+/// V12: a global Deployment row records the Content identity it deployed (a
+/// copy), as project assignments do since V5 — the evidence the occupant
+/// check (`core::ownership`) verifies a copy against (ADR-0007).
+const MIGRATION_V12_COLUMN: &str = "ALTER TABLE skill_targets ADD COLUMN content_hash TEXT NULL;";
+
+/// V12, conservative upgrade (ADR-0007): a successful Disable gives its path
+/// up from now on, but rows disabled before kept their claim (`synced_at`),
+/// and a Keep answer over an existing row did too. Such a claim must never
+/// let a removal reach whatever occupies the path later, so every `disabled`
+/// row gives it up. A row is only ever `disabled` once its artifact is gone
+/// (or was never there), so nothing of ours is orphaned by this.
+const MIGRATION_V12_RELINQUISH: &str =
+    "UPDATE skill_targets SET synced_at = NULL, content_hash = NULL
+  WHERE status = 'disabled';
+UPDATE project_skill_assignments SET synced_at = NULL, content_hash = NULL
+  WHERE status = 'disabled';";
 
 // Minimal schema for MVP: skills, skill_targets, settings, discovered_skills(optional).
 const SCHEMA_V1: &str = r#"
@@ -187,33 +204,41 @@ pub struct SkillTargetRecord {
     #[cfg_attr(not(test), allow(dead_code))]
     pub last_error: Option<String>,
     pub synced_at: Option<i64>,
+    /// The Content identity this row deployed, recorded for a copy at every
+    /// successful write (schema V12); `None` for a link, and for a row
+    /// written before V12. The evidence `core::ownership` checks a copy
+    /// against.
+    pub content_hash: Option<String>,
 }
 
-/// The one artifact-ownership rule for both Sync-target tables, independent
-/// of the row's lifecycle status: a row owns the artifact at its path only
-/// once a sync of ours succeeded there, which every success writer records
-/// as `synced_at` (`Recorded`/`SyncCompleted` — global first sync, project
-/// assign/resync/Enable, Propagation, relocation — and every earlier version
-/// of the app). A row the app never materialised (`synced_at` NULL) owns
-/// nothing, whatever its status: the pair-grain marker
-/// (`TargetTransition::DisabledRecorded`), the assignment recorded `disabled`
-/// for a disabled skill, the "Keep existing" decline of D9, the `error` row a
-/// failed first sync records (`TargetTransition::FailedRecorded`) — and the
-/// same rows after a failed first sync (Enable's `TARGET_EXISTS`) turned them `error`, or
-/// a reconcile re-derived their status. They record intent and where the
-/// target *would* be, and must never make whatever sits at that path
-/// removable or overwritable. No lifecycle transition clears `synced_at`
-/// (`Disabled`/`SyncFailed`/`Reconciled` keep it), so an owner stays one; only
-/// a successful sync makes a row an owner. Unknown ownership (a legacy or
-/// partially written row) is treated as none: at worst an artifact of ours is
-/// left on disk, never someone else's deleted. Readers: `artifact_removal::plan`,
-/// the project re-sync and Propagation overwrite policy, target relocation.
+/// A row's **claim** on its path, for both Sync-target tables and
+/// independent of its lifecycle status: the app wrote the path through this
+/// row (a sync of ours succeeded there, recorded as `synced_at` by every
+/// success writer — global first sync, project assign/resync/Enable,
+/// Propagation, relocation, Library move) and has not given it up since. A
+/// claim is never ownership by itself (ADR-0007): what occupies the path now
+/// is verified against the row's evidence when the app acts
+/// (`core::ownership::check`). A row without a claim has no evidence at all, so
+/// nothing at its path is ever its to remove or replace.
+///
+/// A row the app never materialised has no claim, whatever its status: the
+/// pair-grain marker (`TargetTransition::DisabledRecorded`), the assignment
+/// recorded `disabled` for a disabled skill, the "Keep existing" decline of
+/// D9, the `error` row a failed first sync records
+/// (`TargetTransition::FailedRecorded`) — and the same rows after a failed
+/// first sync (Enable's `TARGET_EXISTS`) turned them `error`, or a reconcile
+/// re-derived their status. A row gives its claim up when Disable removed its
+/// artifact or found it already gone (`TargetTransition::Disabled`,
+/// `AssignmentTransition::Disabled`), and when the operator kept another
+/// folder in its way; a failed removal keeps it (ADR-0002). Unknown ownership
+/// (a legacy or partially written row) is treated as none: at worst an
+/// artifact of ours is left on disk, never someone else's deleted.
 fn owns_artifact(synced_at: Option<i64>) -> bool {
     synced_at.is_some()
 }
 
 impl SkillTargetRecord {
-    /// See [`owns_artifact`]: a sync of ours succeeded at this row's path.
+    /// See [`owns_artifact`]: the row's claim on its path (wrote it, kept it).
     pub fn owns_artifact(&self) -> bool {
         owns_artifact(self.synced_at)
     }
@@ -286,7 +311,7 @@ pub struct SkillProjectDeploymentRecord {
 }
 
 impl ProjectSkillAssignmentRecord {
-    /// See [`owns_artifact`]: a sync of ours succeeded at this row's path.
+    /// See [`owns_artifact`]: the row's claim on its path (wrote it, kept it).
     pub fn owns_artifact(&self) -> bool {
         owns_artifact(self.synced_at)
     }
@@ -332,13 +357,14 @@ fn read_lifecycle(
 /// naming what happened instead of rebuilding a whole record literal.
 #[derive(Clone, Copy, Debug)]
 pub enum TargetTransition<'a> {
-    /// A sync just succeeded: records the mode actually used and where the
-    /// artifact landed (a shared skills dir group settles every member row
-    /// with the one path that was written).
+    /// A sync just succeeded: records the mode actually used, where the
+    /// artifact landed and the Content identity it deployed (`Some` for a
+    /// copy only — a link follows the Library copy and cannot drift).
     SyncCompleted {
         mode: SyncMode,
         target_path: &'a str,
         synced_at: i64,
+        content_hash: Option<&'a str>,
     },
     /// The insert-shaped sibling of [`SyncCompleted`](Self::SyncCompleted):
     /// a sync succeeded for a `(skill_id, tool)` pair that may have no row
@@ -353,9 +379,12 @@ pub enum TargetTransition<'a> {
         mode: SyncMode,
         target_path: &'a str,
         synced_at: i64,
+        content_hash: Option<&'a str>,
     },
-    /// A sync failed; `error` is the diagnostic chain, and the row keeps its
-    /// recorded mode and path so the failure stays observable.
+    /// A sync or removal failed; `error` is the diagnostic chain, and the row
+    /// keeps its recorded mode, path, claim and deployed identity so the
+    /// failure stays observable and what it deployed stays checkable
+    /// (ADR-0002: a failed removal keeps ownership).
     SyncFailed { error: &'a str },
     /// The insert-shaped sibling of [`SyncFailed`](Self::SyncFailed): a
     /// first sync of a `(skill_id, tool)` pair failed to materialise (any
@@ -372,16 +401,20 @@ pub enum TargetTransition<'a> {
         target_path: &'a str,
         error: &'a str,
     },
-    /// The row's artifact was removed at the operator's request and the row
-    /// is kept as the durable "not on this Tool" record (`Disabled`). Mode,
-    /// path and `synced_at` are kept: they describe where the target was.
+    /// The row's artifact was removed at the operator's request, or found
+    /// already gone, and the row is kept as the durable "not on this Tool"
+    /// record (`Disabled`). The row gives its claim up (`synced_at` and the
+    /// deployed identity cleared, ADR-0007): whatever appears at the path
+    /// later is not its own. Mode and path are kept: where the target was.
     Disabled,
     /// The insert-shaped sibling of [`Disabled`](Self::Disabled): a pair
     /// with no row yet is recorded `Disabled` under the caller's
     /// `target_id` (an existing row keeps its id and only flips status), so
     /// a Tool the skill was never on can be switched off before any Deploy
-    /// reaches it. `mode` and `target_path` are where the target
-    /// *would* be.
+    /// reaches it — or the operator kept the folder in a row's way (Keep,
+    /// D12). `mode` and `target_path` are where the target *would* be. An
+    /// existing row gives its claim up like [`Disabled`](Self::Disabled): the
+    /// folder at its path is not its own.
     DisabledRecorded {
         skill_id: &'a str,
         tool: &'a str,
@@ -403,29 +436,79 @@ pub enum AssignmentTransition<'a> {
         synced_at: i64,
         content_hash: Option<&'a str>,
     },
-    /// A sync or Artifact removal failed; `error` is the diagnostic chain. The
-    /// recorded hash is dropped (the target's content is unknown).
+    /// A sync or Artifact removal failed; `error` is the diagnostic chain.
+    /// The claim and the deployed identity are kept: the occupant check
+    /// (`core::ownership`) re-reads the target before anything acts on it, and
+    /// a failed removal keeps ownership (ADR-0002).
     SyncFailed { error: &'a str },
-    /// The assignment's artifact was removed by a skill-level Disable and the
-    /// row kept as its record. The hash is dropped (nothing is deployed).
+    /// The assignment's artifact was removed by a skill-level Disable (or was
+    /// already gone), or the operator kept the folder in its way (Keep, D12),
+    /// and the row is kept as its record. The row gives its claim up
+    /// (`synced_at` and the deployed identity cleared, ADR-0007).
     Disabled,
     /// Enable admits a `disabled` row to its first sync. A successful Disable
-    /// removed the row's artifact, so its historical `synced_at` no longer
-    /// describes anything of ours on disk: ownership is cleared (the one
-    /// transition that clears it), so a first sync that meets a folder in the
-    /// way leaves a non-owner the overwrite ask can settle, and only a sync
-    /// that succeeds makes the row an owner again. Status, mode and path stay
-    /// until that sync settles the row. A row that is not `disabled` is left
-    /// untouched: a failed removal keeps its ownership (ADR-0002).
+    /// already gave the row's claim up; this clears it again for a row
+    /// disabled by an older app before the V12 upgrade ran, so a first sync
+    /// that meets a folder in the way leaves a non-owner the overwrite ask
+    /// can settle, and only a sync that succeeds makes the row an owner again.
+    /// Status, mode and path stay until that sync settles the row. A row that
+    /// is not `disabled` is left untouched: a failed removal keeps its
+    /// ownership (ADR-0002).
     EnableAdmitted,
     /// A reconcile pass decided the row's true status (see
-    /// `sync_status::next_status`). `content_hash` is the confirmed source
-    /// hash for a `Synced` copy, `None` otherwise. Mode and `synced_at` are
-    /// untouched — nothing was written to disk.
-    Reconciled {
-        status: SyncStatus,
+    /// `sync_status::next_status`). Mode, `synced_at` and the deployed
+    /// identity are untouched — nothing was written to disk, and a stale copy
+    /// is still the copy the row deployed.
+    Reconciled { status: SyncStatus },
+}
+
+/// What a lifecycle transition writes to a row's claim on its path
+/// (`synced_at`) and its deployed identity (`content_hash`) — the two
+/// columns ownership is checked from (`core::ownership`), written together.
+#[derive(Clone, Copy, Debug)]
+enum ClaimWrite<'a> {
+    /// A sync of ours just succeeded: the row claims its path, with what it
+    /// deployed (`Some` for a copy only).
+    Set {
+        synced_at: i64,
         content_hash: Option<&'a str>,
     },
+    /// Nothing written to disk, or a failure: the claim and evidence stay.
+    Keep,
+    /// The row gives its path up (Disable, Keep): neither claim nor evidence.
+    GiveUp,
+}
+
+impl<'a> ClaimWrite<'a> {
+    /// The `SET` fragment (appended after the transition's own columns),
+    /// binding `synced_at` as `?{at}` and `content_hash` as `?{at + 1}`, and
+    /// the two values to bind there.
+    fn sql(self, at: usize) -> (String, Option<i64>, Option<&'a str>) {
+        let hash = at + 1;
+        match self {
+            ClaimWrite::Set {
+                synced_at,
+                content_hash,
+            } => (
+                format!(", synced_at = ?{at}, content_hash = ?{hash}"),
+                Some(synced_at),
+                content_hash,
+            ),
+            ClaimWrite::Keep => (
+                format!(
+                    ", synced_at = COALESCE(?{at}, synced_at), \
+                     content_hash = COALESCE(?{hash}, content_hash)"
+                ),
+                None,
+                None,
+            ),
+            ClaimWrite::GiveUp => (
+                format!(", synced_at = ?{at}, content_hash = ?{hash}"),
+                None,
+                None,
+            ),
+        }
+    }
 }
 
 /// Whether `table` already has a column named `column` (`PRAGMA table_info`).
@@ -486,6 +569,8 @@ impl SkillStore {
                 tx.execute_batch("ALTER TABLE skills ADD COLUMN disabled_at INTEGER NULL;")?;
                 // V11: Skill health (the stored last outcome)
                 tx.execute_batch(MIGRATION_V11)?;
+                // V12: the deployed Content identity of a global row
+                tx.execute_batch(MIGRATION_V12_COLUMN)?;
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version < SCHEMA_VERSION {
                 // Incremental migrations
@@ -556,6 +641,17 @@ impl SkillStore {
                     // the three columns land together, presence-guarded on
                     // the first like V9/V10.
                     tx.execute_batch(MIGRATION_V11)?;
+                }
+                if user_version < 12 {
+                    // Ownership is evidence (ADR-0007): global rows record
+                    // what they deployed, presence-guarded like V9–V11; a
+                    // pre-V12 row recorded nothing, so it owns only a link
+                    // resolving to its Library copy. Every disabled row gives
+                    // its path up.
+                    if !column_exists(&tx, "skill_targets", "content_hash")? {
+                        tx.execute_batch(MIGRATION_V12_COLUMN)?;
+                    }
+                    tx.execute_batch(MIGRATION_V12_RELINQUISH)?;
                 }
                 tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version > SCHEMA_VERSION {
@@ -822,16 +918,17 @@ impl SkillStore {
         self.with_conn(|conn| {
             conn.execute(
                 "INSERT INTO skill_targets (
-          id, skill_id, tool, target_path, mode, status, last_error, synced_at
+          id, skill_id, tool, target_path, mode, status, last_error, synced_at, content_hash
         ) VALUES (
-          ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+          ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
         )
         ON CONFLICT(skill_id, tool) DO UPDATE SET
           target_path = excluded.target_path,
           mode = excluded.mode,
           status = excluded.status,
           last_error = excluded.last_error,
-          synced_at = excluded.synced_at",
+          synced_at = excluded.synced_at,
+          content_hash = excluded.content_hash",
                 params![
                     record.id,
                     record.skill_id,
@@ -840,7 +937,8 @@ impl SkillStore {
                     record.mode.as_str(),
                     record.status.as_str(),
                     record.last_error,
-                    record.synced_at
+                    record.synced_at,
+                    record.content_hash
                 ],
             )?;
             Ok(())
@@ -1160,7 +1258,7 @@ impl SkillStore {
     pub fn list_skill_targets(&self, skill_id: &str) -> Result<Vec<SkillTargetRecord>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, skill_id, tool, target_path, mode, status, last_error, synced_at
+                "SELECT id, skill_id, tool, target_path, mode, status, last_error, synced_at, content_hash
          FROM skill_targets
          WHERE skill_id = ?1
          ORDER BY tool ASC",
@@ -1178,6 +1276,7 @@ impl SkillStore {
                     status,
                     last_error,
                     synced_at: row.get(7)?,
+                    content_hash: row.get(8)?,
                 })
             })?;
 
@@ -1222,7 +1321,7 @@ impl SkillStore {
     ) -> Result<Option<SkillTargetRecord>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, skill_id, tool, target_path, mode, status, last_error, synced_at
+                "SELECT id, skill_id, tool, target_path, mode, status, last_error, synced_at, content_hash
          FROM skill_targets
          WHERE skill_id = ?1 AND tool = ?2",
             )?;
@@ -1240,6 +1339,7 @@ impl SkillStore {
                     status,
                     last_error,
                     synced_at: row.get(7)?,
+                    content_hash: row.get(8)?,
                 }))
             } else {
                 Ok(None)
@@ -1571,25 +1671,28 @@ impl SkillStore {
         target_id: &str,
         transition: TargetTransition<'_>,
     ) -> Result<()> {
-        let (status, last_error, mode, target_path, synced_at) = match transition {
+        let (status, last_error, mode, target_path, claim) = match transition {
             TargetTransition::Recorded {
                 skill_id,
                 tool,
                 mode,
                 target_path,
                 synced_at,
+                content_hash,
             } => {
                 return self.with_conn(|conn| {
                     conn.execute(
                         "INSERT INTO skill_targets (
-                           id, skill_id, tool, target_path, mode, status, last_error, synced_at
-                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)
+                           id, skill_id, tool, target_path, mode, status, last_error, synced_at,
+                           content_hash
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?8)
                          ON CONFLICT(skill_id, tool) DO UPDATE SET
                            target_path = excluded.target_path,
                            mode = excluded.mode,
                            status = excluded.status,
                            last_error = excluded.last_error,
-                           synced_at = excluded.synced_at",
+                           synced_at = excluded.synced_at,
+                           content_hash = excluded.content_hash",
                         params![
                             target_id,
                             skill_id,
@@ -1597,7 +1700,8 @@ impl SkillStore {
                             target_path,
                             mode.as_str(),
                             SyncStatus::Synced.as_str(),
-                            synced_at
+                            synced_at,
+                            content_hash
                         ],
                     )?;
                     Ok(())
@@ -1607,15 +1711,19 @@ impl SkillStore {
                 mode,
                 target_path,
                 synced_at,
+                content_hash,
             } => (
                 SyncStatus::Synced,
                 None,
                 Some(mode),
                 Some(target_path),
-                Some(synced_at),
+                ClaimWrite::Set {
+                    synced_at,
+                    content_hash,
+                },
             ),
             TargetTransition::SyncFailed { error } => {
-                (SyncStatus::Error, Some(error), None, None, None)
+                (SyncStatus::Error, Some(error), None, None, ClaimWrite::Keep)
             }
             TargetTransition::FailedRecorded {
                 skill_id,
@@ -1645,7 +1753,9 @@ impl SkillStore {
                     Ok(())
                 });
             }
-            TargetTransition::Disabled => (SyncStatus::Disabled, None, None, None, None),
+            TargetTransition::Disabled => {
+                (SyncStatus::Disabled, None, None, None, ClaimWrite::GiveUp)
+            }
             TargetTransition::DisabledRecorded {
                 skill_id,
                 tool,
@@ -1659,7 +1769,9 @@ impl SkillStore {
                          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL)
                          ON CONFLICT(skill_id, tool) DO UPDATE SET
                            status = excluded.status,
-                           last_error = NULL",
+                           last_error = NULL,
+                           synced_at = NULL,
+                           content_hash = NULL",
                         params![
                             target_id,
                             skill_id,
@@ -1673,21 +1785,24 @@ impl SkillStore {
                 });
             }
         };
+        let (claim_sql, synced_at, content_hash) = claim.sql(6);
         self.with_conn(|conn| {
             conn.execute(
-                "UPDATE skill_targets
-                 SET status = ?1, last_error = ?2,
-                     mode = COALESCE(?3, mode),
-                     target_path = COALESCE(?4, target_path),
-                     synced_at = COALESCE(?5, synced_at)
-                 WHERE id = ?6",
+                &format!(
+                    "UPDATE skill_targets
+                     SET status = ?1, last_error = ?2,
+                         mode = COALESCE(?3, mode),
+                         target_path = COALESCE(?4, target_path){claim_sql}
+                     WHERE id = ?5"
+                ),
                 params![
                     status.as_str(),
                     last_error,
                     mode.map(SyncMode::as_str),
                     target_path,
+                    target_id,
                     synced_at,
-                    target_id
+                    content_hash
                 ],
             )?;
             Ok(())
@@ -1700,7 +1815,7 @@ impl SkillStore {
         assignment_id: &str,
         transition: AssignmentTransition<'_>,
     ) -> Result<()> {
-        let (status, last_error, synced_at, mode, content_hash) = match transition {
+        let (status, last_error, mode, claim) = match transition {
             AssignmentTransition::SyncCompleted {
                 mode,
                 synced_at,
@@ -1708,14 +1823,18 @@ impl SkillStore {
             } => (
                 SyncStatus::Synced,
                 None,
-                Some(synced_at),
                 Some(mode),
-                content_hash,
+                ClaimWrite::Set {
+                    synced_at,
+                    content_hash,
+                },
             ),
             AssignmentTransition::SyncFailed { error } => {
-                (SyncStatus::Error, Some(error), None, None, None)
+                (SyncStatus::Error, Some(error), None, ClaimWrite::Keep)
             }
-            AssignmentTransition::Disabled => (SyncStatus::Disabled, None, None, None, None),
+            AssignmentTransition::Disabled => {
+                (SyncStatus::Disabled, None, None, ClaimWrite::GiveUp)
+            }
             AssignmentTransition::EnableAdmitted => {
                 return self.with_conn(|conn| {
                     conn.execute(
@@ -1727,26 +1846,24 @@ impl SkillStore {
                     Ok(())
                 });
             }
-            AssignmentTransition::Reconciled {
-                status,
-                content_hash,
-            } => (status, None, None, None, content_hash),
+            AssignmentTransition::Reconciled { status } => (status, None, None, ClaimWrite::Keep),
         };
+        let (claim_sql, synced_at, content_hash) = claim.sql(5);
         self.with_conn(|conn| {
             conn.execute(
-                "UPDATE project_skill_assignments
-                 SET status = ?1, last_error = ?2,
-                     synced_at = COALESCE(?3, synced_at),
-                     mode = COALESCE(?4, mode),
-                     content_hash = ?5
-                 WHERE id = ?6",
+                &format!(
+                    "UPDATE project_skill_assignments
+                     SET status = ?1, last_error = ?2,
+                         mode = COALESCE(?3, mode){claim_sql}
+                     WHERE id = ?4"
+                ),
                 params![
                     status.as_str(),
                     last_error,
-                    synced_at,
                     mode.map(SyncMode::as_str),
-                    content_hash,
-                    assignment_id
+                    assignment_id,
+                    synced_at,
+                    content_hash
                 ],
             )?;
             Ok(())

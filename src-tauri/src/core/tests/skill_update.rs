@@ -285,6 +285,10 @@ fn every_byte_adapter_settles_and_reports_propagation() {
                 status: SyncStatus::Synced,
                 last_error: None,
                 synced_at: Some(1),
+                // What the row deployed: the copy written above.
+                content_hash: crate::core::content_identity::read(
+                    crate::core::content_identity::Source::Directory(&target),
+                ),
             })
             .unwrap();
         let mut request = staged_request(&paths, &record);
@@ -532,6 +536,7 @@ fn git_restore_rebuilds_the_central_copy_and_its_dangling_link() {
             status: crate::core::sync_status::SyncStatus::Synced,
             last_error: None,
             synced_at: Some(1),
+            content_hash: None,
         })
         .unwrap();
     fs::remove_dir_all(&record.central_path).unwrap();
@@ -609,6 +614,10 @@ fn a_refresh_keeps_an_executable_script_executable_in_the_central_copy_and_a_cop
             status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(1),
+            // What the row deployed: the copy written above.
+            content_hash: crate::core::content_identity::read(
+                crate::core::content_identity::Source::Directory(&target),
+            ),
         })
         .unwrap();
     let api = StubApi {

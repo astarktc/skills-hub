@@ -420,18 +420,23 @@ than re-tagging.
   from `skills_dir`.
 - **Artifact removal is one module.** `core/artifact_removal.rs` plans by scope (`Skill`, `SkillGlobal`,
   `SkillTool`, `Project`, `ProjectTool`, `ProjectSkill`, `ProjectSkillTool`, `EveryGlobalTarget`; a scope carries the
-  roots its planning needs), executes with one presence rule (`symlink_metadata`) and one settlement
+  roots its planning needs), executes with one occupant rule and one settlement
   rule — a row whose artifact could not be removed is **kept** with sync status `error`, rows are
   deleted only on success (`docs/adr/0002-keep-row-with-error-on-failed-artifact-removal.md`) — and
   reports per target. Disable (`skill_disable`) is the one caller that settles success differently
   (`execute_settling_unlocked(.., Settlement::Disable)`: rows kept `disabled`, never deleted; failure is
-  still `error`). **Ownership** is independent of status: only a row the app materialised
-  (`synced_at` set — `owns_artifact`) owns its path. A never-synced row (the pair marker, an assignment recorded for a
-  disabled skill, the same rows after a failed Enable turned them `error`) owns nothing: planning sets it aside, no path
-  is touched, and once the scope succeeds Delete clears the row alone (`RemovalReport.cleared_markers`) and Disable
-  flips it `disabled`; re-sync and Propagation never overwrite its path. Only a successful sync makes a row an owner;
-  Enable's admission (`AssignmentTransition::EnableAdmitted`) clears a `disabled` assignment's ownership (its Disable
-  removed the artifact), never an `error` row's. Callers (`project_ops`, `project_sync`, `skill_disable`, the delete command) build a scope
+  still `error`). **Ownership is evidence checked when acting** (ADR-0007): `core/ownership.rs::check(path, &Deployed)`
+  runs right before every removal (here) and every replacement (`sync_engine::Replace::if_ours` — resync,
+  Propagation, the global batch); the occupant is ours only as a link resolving by physical identity to the skill's
+  Library copy, or a copy whose Content identity equals the row's recorded `content_hash` (both tables; a global row
+  written before V12 has none). Any other occupant is kept: a removal reports it `left_in_place`, a write raises
+  `TARGET_EXISTS` for the ask. `synced_at` (`owns_artifact`) is only the row's **claim** — needed, never sufficient. A
+  row without one (never synced: the pair marker, an assignment recorded for a disabled skill, the same rows after a
+  failed Enable turned them `error`) has no evidence: planning sets it aside, no path is touched, and once the scope
+  succeeds Delete clears the row alone (`RemovalReport.cleared_markers`) and Disable flips it `disabled`. A successful
+  Disable (and a Keep answer) gives the claim up (`TargetTransition::Disabled` / `AssignmentTransition::Disabled`
+  clear `synced_at` + `content_hash`); a failed removal keeps it. Every success writer records the deployed
+  `content_hash` for a copy. Callers (`project_ops`, `project_sync`, `skill_disable`, the delete command) build a scope
   and read the report; they never delete a path themselves (project reconcile may probe one with `symlink_metadata`).
 - **Git bytes have two single entry points.** `git_cache::fetch_through_cache` is the only way into the
   clone cache (per-key locks, TTL as an `i64` value from `settings::git_cache_ttl_ms`, no DB handle in

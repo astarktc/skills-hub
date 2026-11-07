@@ -5,7 +5,7 @@ use crate::core::errors::CommandError;
 use crate::core::removal_fence::ProtectedLibrary;
 use crate::core::sync_engine::{
     copy_dir_recursive, remove_admitted, sync_dir_for_tool_with_overwrite, sync_dir_hybrid,
-    sync_dir_hybrid_with_overwrite, SyncMode,
+    sync_dir_hybrid_with_overwrite, Replace, SyncMode,
 };
 use crate::core::tool_adapters::adapter_by_key;
 
@@ -209,7 +209,7 @@ fn symlink_capable_tool_gets_a_link() {
         src_dir.path(),
         Source::Directory(src_dir.path()),
         &target,
-        false,
+        Replace::never(),
         &ProtectedLibrary::unrecorded(),
     )
     .unwrap();
@@ -236,7 +236,7 @@ fn deep_agents_code_is_deployed_by_copy() {
         src_dir.path(),
         Source::Directory(src_dir.path()),
         &target,
-        false,
+        Replace::never(),
         &ProtectedLibrary::unrecorded(),
     )
     .unwrap();
@@ -268,7 +268,7 @@ fn any_adapter_without_symlink_support_is_copied() {
         src_dir.path(),
         Source::Directory(src_dir.path()),
         &target,
-        false,
+        Replace::never(),
         &ProtectedLibrary::unrecorded(),
     )
     .unwrap();
@@ -390,7 +390,7 @@ fn overwrite_refuses_a_case_variant_of_its_source() {
             &source,
             Source::Directory(&source),
             &target,
-            true,
+            Replace::confirmed(),
             &ProtectedLibrary::unrecorded(),
         )
         .unwrap_err(),
@@ -559,7 +559,7 @@ fn sync_within_root_links_under_a_present_root() {
         src.path(),
         Source::Directory(src.path()),
         &target,
-        false,
+        Replace::never(),
         &root,
         &ProtectedLibrary::unrecorded(),
     )
@@ -595,7 +595,7 @@ fn copy_within_root_never_recreates_a_root_that_vanishes_mid_copy() {
         src.path(),
         Source::Directory(src.path()),
         &target,
-        false,
+        Replace::never(),
         &root,
         &ProtectedLibrary::unrecorded(),
     )
@@ -619,7 +619,7 @@ fn copy_within_root_never_recreates_a_root_that_vanishes_mid_copy() {
         src.path(),
         Source::Directory(src.path()),
         &target,
-        false,
+        Replace::never(),
         &root,
         &ProtectedLibrary::unrecorded(),
     )
@@ -651,7 +651,7 @@ fn global_sync_still_creates_missing_parents() {
             src.path(),
             Source::Directory(src.path()),
             &target,
-            true,
+            Replace::confirmed(),
             &ProtectedLibrary::unrecorded(),
         )
         .unwrap();
@@ -761,6 +761,7 @@ mod junction_leg {
                 status: SyncStatus::Synced,
                 last_error: None,
                 synced_at: Some(1),
+                content_hash: None,
             })
             .unwrap();
         (store, skill)

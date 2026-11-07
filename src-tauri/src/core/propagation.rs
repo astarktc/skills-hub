@@ -40,13 +40,14 @@ use anyhow::Result;
 use super::environment::HostRoots;
 use super::errors::{CommandError, SignalError};
 use super::installer::InstallerPaths;
+use super::ownership::Deployed;
 use super::placement::{self, row_folder, ScopeKind};
 use super::project_sync::{deploy_adapter, AssignmentSyncContext};
 use super::removal_fence::ProtectedLibrary;
 use super::skill_store::{
     AssignmentTransition, ProjectSkillAssignmentRecord, SkillRecord, SkillStore, TargetTransition,
 };
-use super::sync_engine;
+use super::sync_engine::{self, Replace};
 use super::sync_status::{SyncMode, SyncStatus};
 use super::tool_adapters::{installed_set_in, ToolAdapter};
 
@@ -155,7 +156,6 @@ pub(crate) fn propagate_unlocked(
     })?;
     skill.content_hash =
         super::content_identity::read(super::content_identity::Source::Managed { store, skill_id });
-    let central_path = PathBuf::from(&skill.central_path);
 
     let mut report = PropagationReport::default();
     if store.skill_disabled_at(skill_id)?.is_some() {
@@ -182,8 +182,7 @@ pub(crate) fn propagate_unlocked(
         store,
         &paths.central_dir,
         &paths.roots,
-        &central_path,
-        skill_id,
+        &skill,
         now,
         &mut report,
     )?;
@@ -222,11 +221,12 @@ fn propagate_global_rows(
     store: &SkillStore,
     central_dir: &Path,
     roots: &HostRoots,
-    central_path: &Path,
-    skill_id: &str,
+    skill: &SkillRecord,
     now: i64,
     report: &mut PropagationReport,
 ) -> Result<()> {
+    let skill_id = skill.id.as_str();
+    let central_path = Path::new(&skill.central_path);
     let rows = store.list_skill_targets(skill_id)?;
     if rows.is_empty() {
         return Ok(());
@@ -272,9 +272,13 @@ fn propagate_global_rows(
         // A link already follows the central copy — but only a link of ours:
         // a row that never materialised (a failed first sync's `error` row,
         // `owns_artifact` false) has no link yet, so it gets a first sync,
-        // and foreign bytes there are `TARGET_EXISTS`. The artifact is ours
-        // to replace only when this row materialised it.
+        // and foreign bytes there are `TARGET_EXISTS`. Whatever occupies the
+        // path is replaced only when the row's evidence proves it the row's
+        // own when it is met (`core::ownership`): our stale copy, still
+        // holding what the row deployed, is; a copy edited in place or a
+        // folder put where our link was is asked about.
         let owned = row.owns_artifact();
+        let deployed = Deployed::of_target(row, Some(skill));
         if owned && !needs_new_bytes(row.mode, adapter) {
             report.targets.push(skipped_global(
                 &row.tool,
@@ -292,7 +296,7 @@ fn propagate_global_rows(
                 central_path,
                 super::content_identity::Source::Managed { store, skill_id },
                 Path::new(&row.target_path),
-                owned,
+                Replace::if_ours(&deployed),
                 &ProtectedLibrary::new(store, central_dir),
             )
         };
@@ -300,12 +304,20 @@ fn propagate_global_rows(
         let status = match result {
             Ok(outcome) => {
                 let target_path = outcome.target_path.to_string_lossy().to_string();
+                // A copy records the identity it now holds: the freshly
+                // finalized one Propagation read for every target.
+                let content_hash = outcome
+                    .mode_used
+                    .can_drift()
+                    .then(|| skill.content_hash.clone())
+                    .flatten();
                 store.transition_skill_target(
                     &row.id,
                     TargetTransition::SyncCompleted {
                         mode: outcome.mode_used,
                         target_path: &target_path,
                         synced_at: now,
+                        content_hash: content_hash.as_deref(),
                     },
                 )?;
                 PropagationStatus::Synced {
@@ -418,6 +430,7 @@ fn propagate_one_assignment(
     // The freshly finalized central hash is the supplier: computed once for
     // every target, and absent only when hashing the central copy failed.
     let central_path = Path::new(&skill.central_path);
+    let deployed = Deployed::of_assignment(assignment, Some(skill));
     let result = if central_path.is_dir() {
         let ctx = AssignmentSyncContext {
             store,
@@ -425,9 +438,10 @@ fn propagate_one_assignment(
             project_path: &project_path,
             adapter,
             skill,
-            // Only an artifact of ours is replaced; a row that never
-            // materialised gets a first sync (`owns_artifact`).
-            overwrite: assignment.owns_artifact(),
+            // Only an artifact the row's evidence proves its own is
+            // replaced, checked when it is met (see the global arm); a row
+            // that never materialised gets a first sync.
+            replace: Replace::if_ours(&deployed),
             now,
         };
         super::project_sync::sync_assignment_target(&ctx, assignment, || skill.content_hash.clone())
