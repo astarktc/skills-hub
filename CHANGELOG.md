@@ -2,6 +2,72 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.5] - 2026-11-07
+
+Round 20, wave B, first part. Skills Hub now checks that a folder is still the one it deployed before replacing or
+removing it, keeps skill names inside the Library, and moves Deployments whose harness folder was corrected. On a
+machine whose harnesses are all in their current folders (Claude Code, Codex, Pi, `.agents/skills`), nothing moves.
+
+### Safer deployment changes
+
+- **A folder Skills Hub didn't put there is left alone.** Before replacing or removing a deployed skill, Skills Hub
+  checks that what's at that path is still the link or copy it deployed. If you replaced a link with your own folder,
+  or edited a deployed copy, Update and resync ask before overwriting it, and Remove and Disable leave it in place and
+  name it in the report ("Left in place").
+- **Disable gives up the path.** Once Disable has removed a skill from a harness, Skills Hub no longer treats that
+  path as its own. A folder that later appears there is kept, and Enable asks before replacing it. On upgrade, this
+  applies to every skill that was already disabled.
+- **A shared folder is never removed while another harness still uses it.** Disabling one harness keeps a folder or
+  link another enabled harness still relies on, and the report says "Kept: still used by …".
+- **Every Overwrite or Keep answer applies only to the folder you were shown.** If that folder changed in the
+  meantime, the answer isn't used and nothing is touched.
+- **Skill names stay inside the Library.** A name must be a single folder name. A repository whose skill file names a
+  path, or a name you type with a "/", can no longer place files outside your Library: the skill falls back to its
+  folder name, or is refused before anything is downloaded. Installing never overwrites an existing folder. A skill
+  already stored under such a name shows as "Invalid skill name" and can only be removed.
+- **Older copy-mode Deployments.** Copies deployed before this release didn't record what they contained, so Skills
+  Hub can't prove they're its own. It leaves them in place on Remove and Disable, and asks once before replacing one
+  on Update; answering Overwrite records the evidence. This affects Deep Agents Code and Windows copies made where
+  links weren't available. Links are unaffected.
+
+### Corrected harness folders
+
+- **New global skills folders:** Antigravity `~/.gemini/config/skills`, Kimi Code `~/.kimi-code/skills`, Kilo
+  `~/.kilo/skills`, Xum `~/.xum/skills`, Devin (Windsurf) `~/.config/devin/skills` (on Windows
+  `%APPDATA%\devin\skills`). Kimi Code now has its own folder instead of sharing Amp's.
+- **Existing Deployments move with one offer at launch.** Skills Hub deploys each skill to its new folder first, then
+  removes the old copy only if it is still the copy it deployed; an edited old copy is yours to keep or delete. Choose
+  "Not now" and Settings → Harnesses keeps a "Move N Deployments" line.
+- **An interrupted move is finished at the next launch.** Every step is journaled, so a crash or quit leaves at most
+  a duplicate, never a missing skill.
+- **Where a disk can't swap folders in one step** (Windows, SMB, exFAT), Skills Hub won't overwrite a different folder
+  already at the new place. It asks you to move that folder aside, then Move again.
+- **Still to come in 1.4.0:** Codex, Goose, OpenHands and Zencoder moving to `~/.agents/skills`, the shared-folder
+  preference, and the corrected project folders. QwenPaw's folder correction is deferred.
+
+### Smoke list for this release
+
+1. Before installing, run `ls -la ~/.claude/skills ~/.codex/skills ~/.pi/agent/skills ~/.agents/skills` and note
+   My Skills' count and your four projects.
+2. Install 1.3.5 over 1.3.4 and launch it. No move offer appears, My Skills and the projects look the same, and
+   Settings → Harnesses shows no "Move" line.
+3. Run the same `ls -la` and compare: no link moved or disappeared.
+4. With a throwaway skill: replace one of its deployed links with a folder of your own, then Remove the skill. The
+   folder stays, and the report names it as left in place. Delete that folder yourself afterwards.
+
+### Internal
+
+- New `core/placement.rs`: which Deployment folder serves each harness. New rows are recorded once per folder;
+  existing per-harness rows keep their meaning until a redeploy converts them (ADR-0007).
+- New `core/ownership.rs`: ownership is evidence checked when acting, not a timestamp. Schema V12 adds
+  `skill_targets.content_hash` and clears the claim of already-disabled rows. New removal outcomes `left_in_place` and
+  `kept_in_use`.
+- New `core/redeploy.rs` replaces `target_relocation`: deploy first, a journal (`redeploy_journal`), replacement only
+  by atomic exchange, a launch check, and answers bound to their row or journal entry.
+- New `core/no_replace.rs`: exclusive publication of new installs (`renameat2`/`renameatx_np`/`MoveFileExW`).
+- The saved harness selection moves to `global_selected_folders_v2`.
+- ADR-0007: ownership is evidence; legacy rows convert explicitly.
+
 ## [1.3.4] - 2026-11-06
 
 Round 20, wave A. Skills Hub learns about the wider field of AI coding tools: 28 new harnesses, plus 9 served

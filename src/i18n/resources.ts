@@ -158,9 +158,9 @@ export const resources = {
         centralMissing: "Central copy missing",
         centralMissingTooltip:
           "The copy in Skills Hub's Library is gone, so every harness's link to it is dangling. Restore it from its source, or remove it.",
-        notAFolderName: "Name isn\u2019t a folder name",
+        notAFolderName: "Invalid skill name",
         notAFolderNameTooltip:
-          "This skill's name isn't a single folder name, so its copy may lie outside Skills Hub's Library. It can't be deployed or updated. Remove it, then add it again under a plain name.",
+          "This skill's name can't be used as a folder name, so its copy may sit outside your Library. It can't be deployed or updated. Remove it, then add it again under a plain name.",
         repoint: "Re-point",
         detach: "Detach",
         restore: "Restore",
@@ -198,7 +198,7 @@ export const resources = {
         skillExistsInHubNamed:
           '"{{name}}" already exists in Hub. Go to My Skills to update it.',
         skillNameInvalid:
-          '"{{name}}" can\u2019t be a skill\u2019s name: a name becomes a folder, so it must be one folder name \u2014 not empty, not "." or "..", with no "/" or "\\". Nothing was downloaded or written.',
+          '"{{name}}" can\u2019t be used as a skill name: it must be a single folder name, with no "/" or "\\", and not "." or "..". The skill wasn\u2019t added or changed.',
         targetExists: "Target folder already exists and was left in place.",
         toolNotInstalled:
           "The selected harness is not installed. Check that it is installed, then retry.",
@@ -248,16 +248,16 @@ export const resources = {
         removalRefusedMountTableUnreadable:
           "Refused to remove {{path}}: Skills Hub could not read the system's list of mounted folders (/proc/self/mountinfo), so it cannot rule out that a folder inside it is mounted from somewhere else — possibly your Skills Hub library. Check that /proc is mounted and readable for your account, then try again.",
         removalRefusedResolvesElsewhere:
-          "Left {{path}} in place: it leads to {{resolved}}, outside every skills folder Skills Hub manages for it, so it is not Skills Hub's to remove. If that folder is yours, move it aside yourself; to put the skill back where the harness reads it, use Move Deployments in Settings → Harnesses.",
+          "Left {{path}} in place: it leads to {{resolved}}, which is outside the skills folders Skills Hub manages, so Skills Hub won't remove it. If that folder is yours, move it aside yourself, then try again.",
         destinationRefused: {
           inLibrary:
-            "Did not write {{path}}: its folder leads into your Skills Hub library ({{resolved}}), so a deployment there would write into the library itself. Replace that link with a real folder, then try again.",
+            "Didn't deploy to {{path}}: that folder links into your Library ({{resolved}}), so deploying there would write into the Library itself. Replace the link with a real folder, then try again.",
           outsideSkillsFolder:
-            "Did not write {{path}}: its folder ({{resolved}}) is outside every skills folder Skills Hub manages for it. Use Move Deployments in Settings → Harnesses to deploy it where the harness reads skills.",
+            "Didn't deploy to {{path}}: that folder ({{resolved}}) is outside the skills folders Skills Hub manages. Use Move Deployments in Settings → Harnesses to deploy it where the harness reads skills.",
           overlapsDeployment:
-            "Did not write {{path}}: a linked folder nests it with the deployment at {{resolved}}, so writing there would change or remove that deployment. Replace the link that nests them with a real folder, then move again.",
+            "Didn't deploy to {{path}}: through a linked folder it overlaps the deployment at {{resolved}}, so writing there would change or remove that deployment. Replace the link with a real folder, then Move again.",
           cannotReplaceSafely:
-            "Did not replace the folder at {{path}}: Skills Hub could not replace it safely on this disk — an interruption could have left the skill missing. Nothing was changed and the move is still pending: move the folder at {{path}} aside, then Move again.",
+            "Didn't replace the folder at {{path}}: this disk can't swap folders in one step, so an interruption could leave the skill missing. Nothing was changed and the move is still pending. Move the folder at {{path}} aside yourself, then Move again.",
         },
         redeployPending:
           "Not deployed to {{tool}} here: its deployment at {{path}} waits to move to its new folder. Use Move Deployments in Settings → Harnesses.",
@@ -342,7 +342,7 @@ export const resources = {
         invalidPathMissing: "Path not found: {{path}}",
         invalidPathNotADirectory: "Path is not a directory: {{path}}",
         invalidPathNotAFolderName:
-          "The skill's name isn't a single folder name, so it would land outside its skills folder. Nothing was written or removed there: {{path}}",
+          "The skill's name can't be used as a deployment folder name, so nothing was written or removed at {{path}}.",
         invalidPath: "Path cannot be used ({{reason}}): {{path}}",
         importKeptDivergentTitle: "Kept a different copy: {{name}} -> {{tool}}",
         importKeptDivergentMessage:
@@ -358,7 +358,7 @@ export const resources = {
         refreshSkippedCentralMissing:
           "Its central copy is missing. Restore or remove it from its card.",
         refreshSkippedNotAFolderName:
-          "Its name isn\u2019t a single folder name, so its copy may lie outside the Library. Remove it from its card.",
+          "Its name can\u2019t be used as a folder name, so it was skipped. Remove it from its card, then add it again under a plain name.",
         targetDisabled:
           "{{tool}} is disabled for this skill. Enable it to deploy there again.",
         syncSkippedDisabledTitle: "Not deployed: {{name}} -> {{tool}}",
@@ -686,9 +686,9 @@ export const resources = {
         apply: "Apply choices",
         // The redeploy's edited-copy question: a row of the same ask.
         editedHint:
-          "Some old copies were edited after Skills Hub wrote them. Their skill is already in its new folder; decide whether to delete each edited copy or leave it.",
-        edited: "your edited copy — left, it is no longer managed",
-        readers: "shows twice in {{readers}} if left",
+          "Some old copies were edited after Skills Hub deployed them. The skill already works from its new folder; decide whether to delete each edited copy or leave it as an unmanaged folder.",
+        edited: "edited copy — if you leave it, it becomes an unmanaged folder",
+        readers: "still visible in {{readers}} if left",
         leave: "Leave",
         delete: "Delete",
         editedChoiceLabel: "{{name}}: edited copy for {{tool}}",
@@ -813,7 +813,7 @@ export const resources = {
         pending: "{{tool}}: not deployed yet",
         failed: "{{tool}}: failed — the last deploy did not complete",
         failedFirst: "{{tool}}: failed — the first deploy did not complete",
-        failedDisable: "{{tool}}: failed — disabling did not finish, the copy is still there",
+        failedDisable: "{{tool}}: Disable incomplete — the copy is still there",
         missing: "{{tool}}: copy missing — the deployed copy is gone",
         stale: "{{tool}}: out of date copy — the copy differs from the skill",
         disabled: "{{tool}}: disabled",
@@ -872,7 +872,7 @@ export const resources = {
             pending: "Not deployed yet",
             failed: "Failed \u2014 the last deploy did not complete",
             failedFirst: "Failed \u2014 the first deploy did not complete",
-            failedDisable: "Failed \u2014 disabling did not finish, the copy is still there",
+            failedDisable: "Disable incomplete \u2014 the copy is still there",
             missing: "Copy missing \u2014 the deployed copy is gone",
             stale: "Out of date copy \u2014 the copy differs from the skill",
             disabled: "Disabled",
@@ -1886,7 +1886,7 @@ export const resources = {
         offer: {
           title_one: "Move {{count}} Deployment to its new folder?",
           title_other: "Move {{count}} Deployments to their new folders?",
-          body: "Some harnesses read skills from a new folder now ({{harnesses}}). Skills Hub deploys each skill to its new folder first, then removes the old copy only when it is provably its own. A copy you edited is asked about, never removed silently.",
+          body: "Some Deployments belong in a different folder now ({{harnesses}}). Skills Hub deploys each skill to its new folder first, then removes the old copy only if it is still the copy Skills Hub deployed. A copy you edited is asked about, never removed silently.",
           journal_one: "{{count}} old copy from an interrupted move still needs a decision.",
           journal_other: "{{count}} old copies from an interrupted move still need a decision.",
           confirm: "Move now",
@@ -1895,14 +1895,14 @@ export const resources = {
         line_one: "Move {{count}} Deployment",
         line_other: "Move {{count}} Deployments",
         lineHint:
-          "Some Deployments are in folders their harnesses no longer read. Moving deploys each to its new folder first, then removes the old copy only when it is provably Skills Hub's.",
+          "Some Deployments belong in a different folder now. Moving deploys each to its new folder first, then removes the old copy only if it is still the copy Skills Hub deployed.",
         lineAction: "Move now",
         label: "Move Deployments",
         activity: "Moving Deployments",
         resumedLabel: "Finish an interrupted move",
         step: "Moving {{name}}",
         report: {
-          resumed: "Finished an interrupted move: {{summary}}",
+          resumed: "Interrupted move: {{summary}}",
           leftBehind_one: "{{count}} old copy left",
           leftBehind_other: "{{count}} old copies left",
           kept_one: "{{count}} kept existing",
@@ -1914,13 +1914,13 @@ export const resources = {
           failedTitle: "{{name}} was not moved to {{tool}}",
           occupiedTitle: "{{name}}: a different folder is at {{path}}",
           occupiedMessage: "Nothing was moved. Move Deployments again to choose Overwrite or Keep.",
-          keptLine: "{{name}}: kept the existing folder at {{path}}; it stays where it was.",
+          keptLine: "{{name}}: kept the folder at {{path}}. The Deployment was not moved.",
           editedTitle: "{{name}}: your edited copy at {{path}} is waiting for a decision",
           editedMessage: "Move Deployments again to delete it or leave it.",
           leftTitle: "{{name}}: the old copy at {{path}} stays",
           left: {
-            edited: "You chose to leave your edited copy; Skills Hub no longer manages it.",
-            not_ours: "It isn't provably Skills Hub's copy, so it was left alone.",
+            edited: "You chose to leave your edited copy. It is now an unmanaged folder.",
+            not_ours: "It isn't the copy Skills Hub deployed, so it was left alone.",
             replaced: "Something else is at that place now, so it was left alone.",
             stale: "Its skill is no longer in your library, or the record of the move could not be read, so it was left alone.",
             removal_failed: "It could not be removed.",
@@ -1931,18 +1931,18 @@ export const resources = {
           unfinished_other: "{{count}} moves unfinished",
           unfinishedTitle: "{{name}}: the move involving {{path}} could not be finished",
           unfinishedMessage:
-            "Nothing else serves the skill meanwhile, so the move stays pending. Skills Hub finishes it at the next launch or when you move Deployments again.",
-          refused_one: "{{count}} answer no longer applied",
-          refused_other: "{{count}} answers no longer applied",
+            "Skills Hub couldn't confirm that another copy still serves the skill, so it kept the move pending. It tries again at the next launch, or when you Move Deployments again.",
+          refused_one: "{{count}} answer no longer applies",
+          refused_other: "{{count}} answers no longer apply",
           refusedTitle: "An answer about {{path}} no longer applies",
           refusedMessage:
-            "What it answered changed since you were asked, so nothing was changed there. Move Deployments again to answer what is there now.",
-          readers: "Shows twice in {{readers}}.",
-          lostDisableTitle: "{{name}}: turned off for {{tool}} no longer holds",
+            "That Deployment changed after you were asked, so your answer wasn't used and nothing was changed there. Move Deployments again to answer for what is there now.",
+          readers: "Still visible in {{readers}}.",
+          lostDisableTitle: "{{name}} is no longer disabled for {{tool}}",
           lostDisableMessage:
-            "{{folder}} now serves {{tool}}, and another harness it serves had the skill on, so the skill stays on there. Turn it off for the folder if you want it off for all of them.",
-          skippedLine_one: "{{count}} turned-off or never-deployed Deployment re-recorded in its new folder.",
-          skippedLine_other: "{{count}} turned-off or never-deployed Deployments re-recorded in their new folders.",
+            "{{folder}} now serves {{tool}}, and another harness that folder serves had the skill on, so it stays on. Disable it for the folder to turn it off for all of them.",
+          skippedLine_one: "{{count}} disabled or never-deployed Deployment now points to its new folder; nothing was written.",
+          skippedLine_other: "{{count}} disabled or never-deployed Deployments now point to their new folders; nothing was written.",
         },
       },
       // Keyboard shortcuts, in the Settings frame (D37).

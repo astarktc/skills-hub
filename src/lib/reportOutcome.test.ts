@@ -3280,7 +3280,7 @@ describe("redeployOutcome", () => {
     expect(outcome.warnings.map((w) => w.review)).toEqual([true, true]);
     expect(outcome.warnings[0].title).toBe("a: a different folder is at /h/.agents/skills/a");
     expect(outcome.warnings[1].title).toBe("b: your edited copy at /h/.codex/skills/b is waiting for a decision");
-    expect(outcome.warnings[1].message).toContain("Shows twice in Codex, Cursor.");
+    expect(outcome.warnings[1].message).toContain("Still visible in Codex, Cursor.");
     expect(outcome.errors).toEqual([]);
   });
 
@@ -3307,7 +3307,7 @@ describe("redeployOutcome", () => {
     expect(outcome.toast?.tone).toBe("failure");
     expect(outcome.toast?.message).toBe("1 moved · 2 old copies left");
     expect(outcome.warnings[0].message).toBe(
-      "It isn't provably Skills Hub's copy, so it was left alone. Shows twice in Cursor.",
+      "It isn't the copy Skills Hub deployed, so it was left alone. Still visible in Cursor.",
     );
     expect(outcome.errors[0].error).toMatchObject({ code: "REMOVAL_PERMISSION_DENIED" });
   });
@@ -3322,14 +3322,14 @@ describe("redeployOutcome", () => {
       { ...en(), toolLabelById: { goose: "Goose", agents_skills: ".agents/skills" } },
     );
     expect(outcome.toast?.tone).toBe("skipped");
-    expect(outcome.warnings[0].title).toBe("a: turned off for Goose no longer holds");
+    expect(outcome.warnings[0].title).toBe("a is no longer disabled for Goose");
     expect(outcome.warnings[0].subject).toEqual({ skillId: "a", skillName: "a", tool: "agents_skills" });
   });
 
   it("a kept move is a quiet declined note; a failed one an error", () => {
     const kept = redeployOutcome({ ...EMPTY, moves: [move("a", { status: "kept", reason: "declined" })] }, en());
     expect(kept.toast).toMatchObject({ tone: "declined", message: "1 kept existing" });
-    expect(kept.notes).toEqual(["a: kept the existing folder at /h/.agents/skills/a; it stays where it was."]);
+    expect(kept.notes).toEqual(["a: kept the folder at /h/.agents/skills/a. The Deployment was not moved."]);
     const failed = redeployOutcome(
       { ...EMPTY, moves: [move("a", { status: "failed", error: { code: "OTHER", message: "boom" } })] },
       { ...en(), toolLabelById: { agents_skills: ".agents/skills" } },
@@ -3349,7 +3349,7 @@ describe("redeployOutcome", () => {
       en(),
       { resumed: true },
     );
-    expect(outcome.toast?.message).toBe("Finished an interrupted move: 1 old copy removed");
+    expect(outcome.toast?.message).toBe("Interrupted move: 1 old copy removed");
   });
 
   it("a journal entry left unfinished is an error, and the headline counts it", () => {
@@ -3365,7 +3365,7 @@ describe("redeployOutcome", () => {
     );
     expect(outcome.toast).toMatchObject({
       tone: "failure",
-      message: "Finished an interrupted move: 1 move unfinished",
+      message: "Interrupted move: 1 move unfinished",
     });
     expect(outcome.errors.map((e) => e.title)).toEqual(["a: the move involving /h/.xum/skills/a could not be finished"]);
     expect(outcome.errors[0].subject).toEqual({ skillId: "a", skillName: "a", tool: "mux" });
@@ -3381,7 +3381,7 @@ describe("redeployOutcome", () => {
       },
       en(),
     );
-    expect(outcome.toast).toMatchObject({ tone: "failure", message: "1 answer no longer applied" });
+    expect(outcome.toast).toMatchObject({ tone: "failure", message: "1 answer no longer applies" });
     expect(outcome.errors.map((e) => e.title)).toEqual(["An answer about /h/.codex/skills/a no longer applies"]);
   });
 
