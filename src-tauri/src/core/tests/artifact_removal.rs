@@ -158,7 +158,9 @@ fn roots_of(store: &SkillStore) -> HostRoots {
     HostRoots::under_home(&store.db_path().with_file_name("home"))
 }
 
-/// Claude Code's global skills dir under the test's roots.
+/// Claude Code's global skills dir under the test's roots (the unix-only
+/// link tests build their links in it).
+#[cfg(unix)]
 fn claude_dir(store: &SkillStore) -> PathBuf {
     skills_dir_in(
         &roots_of(store),
