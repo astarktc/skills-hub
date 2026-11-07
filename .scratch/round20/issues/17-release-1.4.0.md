@@ -2,7 +2,7 @@
 
 Status: ready-for-agent
 
-**Blocked by:** 09, 10, 11, 12, 13, 14, 15, 16.
+**Blocked by:** 09, 10, 11, 12, 13, 14, 15, 16, 18, 19.
 
 **Spec:** `.scratch/round20/spec.md` § Wave B spec; user story 58. Release procedure: AGENTS.md § Release.
 
