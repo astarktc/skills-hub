@@ -84,3 +84,8 @@ previews "would move N" and runs as one redeploy action with a report.
     ("finish the Disable" or Enable), never "re-recorded".
   - **Sol 106:** bring the fixture's registry snapshot to the production facts as they stand after the release split.
     Derive edited-copy readers from it. Add a regression test that a moved target and its catalog folder agree.
+- 2026-11-07 (orchestrator): carried over from the ticket 10 review, round 2.
+  - **Sol 111:** `NOT_FOUND` of kind `redeploy_question` reads "question changed, run Move again".
+  - **Sol 113:** a replacement undone at startup reads "discarded an unfinished replacement; still pending", not "old
+    copy removed".
+  - **Astra:** the fixture uses stable row-instance ids, not `${skillId}:${tool}`.

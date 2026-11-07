@@ -52,3 +52,6 @@ treatment as a second row kind in the same ask.
     keeps old-copy readers separate from proven duplicate readers.
   - **Sol 104 / Astra 4:** a move with both a folder in the way and an edited old copy asks both questions in one ask
     for that one operator action.
+- 2026-11-07 (orchestrator): carried over from the ticket 10 review, round 2.
+  - **Sol 112:** two edited-copy questions at one path can be told apart, with distinct accessible labels.
+  - **Astra:** the retry-report merge associates settlement by `entry_id`, not by `(skill, tool, path)`.

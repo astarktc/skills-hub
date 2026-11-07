@@ -99,3 +99,69 @@ Each item has a home and is carried into that ticket.
 
 Fix pass 1 takes findings 1–3 and rebases onto `main`, which now has ticket 19. The non-blocking items are carried
 into tickets 12 and 16.
+
+---
+
+# Round 2: fix pass 1 (`ca7fc957`, rebased onto `ee373883`)
+
+- **Verdicts:** Sol **SHIP**; Astra **BLOCK** (findings 7 and 8).
+- **Round 1:** findings 1–3 are closed. Ticket 19's safeguards survived the rebase. CI is green.
+
+## Blocking (Astra)
+
+### 7. P1: the two-rename fallback can interrupt the only working Deployment (`redeploy.rs:1413–1420`)
+
+Without an atomic exchange (always the case on Windows), replacement moves the occupant to `.old`, then `.new` into
+place. Nothing checks that a working old Deployment still exists.
+
+Reproduced: the old Kilo place is absent, and the destination holds a different, usable copy. After an Overwrite, an
+interruption between the two renames leaves the skill at neither place. Startup recovers this case, but it still
+breaks "never a missing skill".
+
+**Fix:** use the two-rename path only while an independently verified, distinct old Deployment stays intact. When it's
+the only working placement and no exchange is available, leave the occupant untouched and keep the move pending.
+
+### 8. P1: an interruption inside the reservation fallback defeats recovery and drops the journal
+
+- **Where:** `no_replace.rs:165`, `:221–232`; `redeploy.rs:1770–1794`, `:1861`, `:1892–1893`.
+- **Cause:** on a filesystem without an exclusive rename, `rename_no_replace` does `mkdirat` and then `renameat`.
+  Recovery doesn't recognise the empty reservation: it reports `LeftBehind / Stale` and deletes the replacement journal
+  entry.
+- **Result:** the old place is absent, an empty folder sits at the new place, and the staged skill sits beside it with
+  no journal.
+
+**Fix:** give redeploy a strict no-replace primitive that returns "unsupported" instead of falling back, and handle
+that refusal without disturbing the working placement. Alternatively, journal the reservation and recover it
+explicitly. Never treat an arbitrary empty folder as evidence.
+
+## Verified (Astra)
+
+- **Nested aliases:** closed, including the inverse case and the protected cleanup on every path. F15's
+  `holds_deployment` is correct.
+- **Answer identity:** closed. The identity is preserved through `report → ask → answers → command`.
+- **Adoption:** non-destructive.
+- **The atomic exchange:** sound. It uses Linux `RENAME_EXCHANGE` and macOS `RENAME_SWAP`.
+- **The ordinary two-rename recovery tests** pass.
+
+## Non-blocking
+
+Each item has a home and is carried into that ticket.
+
+| Item | Ticket | What |
+|---|---|---|
+| Sol 111 | 12 | `NOT_FOUND` of kind `redeploy_question` on a failed move reads "Item not found: redeploy_question:…". Specialise it in `describeCommandError` with the "question changed, run Move again" copy. |
+| Sol 112 | 16 | Two edited-copy questions at one path look identical in the ask and have identical accessible labels. Show enough provenance to tell them apart. |
+| Sol 113 | 12 | An interruption before the swap, undone at startup, reads "1 old copy removed". Distinguish "discarded an unfinished replacement; still pending". |
+| Astra | 16 | The retry-report merge (`overwriteAsk.ts:468–480`) associates settlement by `(skill_id, tool, path)`. Use `entry_id`. |
+| Astra | 12 | The fixture rebuilds row ids as `${skillId}:${tool}`. Use stable row-instance ids. |
+
+**Gate (both reviewers):** 1,467 frontend tests; 1,195 Rust tests, 1 ignored.
+
+## Disposition (orchestrator, 2026-11-07)
+
+Fix pass 2 takes findings 7 and 8 as narrowly as possible. A destination is replaced only:
+- by an atomic exchange; or
+- by two strict no-replace renames, while a verified distinct old Deployment stays intact.
+
+Otherwise the move is refused and stays pending, with an actionable reason: move the folder at the new place aside,
+then Move again. The reservation fallback is never used inside redeploy.
