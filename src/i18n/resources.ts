@@ -613,6 +613,7 @@ export const resources = {
         updateCancelled: "{{name}}: update cancelled — nothing was changed",
         declinedLine: "{{name}}: kept your existing {{tool}} folder",
         leftInPlaceLine: "Left {{path}} in place: it isn't what Skills Hub put there",
+        keptInUseLine: "Kept {{path}}: still used by {{harnesses}}",
         keptDifferentLine_one: "{{name}}: {{count}} different copy kept in {{harnesses}}",
         keptDifferentLine_other: "{{name}}: {{count}} different copies kept in {{harnesses}}",
       },

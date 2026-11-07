@@ -2003,6 +2003,16 @@ export type RemovalTargetStatus =
  *  It was kept untouched, and the rows settled as their artifact gone.
  */
 { status: "left_in_place" } |
+/**
+ *  The artifact is the app's, but another live row outside this
+ *  operation still records it (by path or as the same physical entry):
+ *  another harness's Deployment of the same folder, typically a pre-1.3.5
+ *  row on a folder its harness no longer serves. It was kept untouched,
+ *  and the rows in scope settled as a removal settles them. `by` names
+ *  the other rows' Tool keys, each once, in the order found; those rows
+ *  were not touched.
+ */
+{ status: "kept_in_use"; by: string[] } |
 /**  Every attached row was kept with status `error` and the original chain. */
 { status: "failed"; error: CommandError };
 

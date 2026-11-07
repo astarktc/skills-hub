@@ -713,6 +713,7 @@ export function createFixtureBackend(
     const inScope = skill.dto.targets.filter(
       (t) => tools.includes(t.tool) && !(settle === "disable" && t.status === "disabled"),
     );
+    const scoped = new Set<object>(inScope);
     for (const row of inScope) {
       if (!ownsArtifact(row)) {
         markers.push({
@@ -755,6 +756,22 @@ export function createFixtureBackend(
         continue;
       }
       const present = presentAt(path, implied);
+      // Rust's in-use rule: the app's artifact another live row outside the
+      // removal still records stays; the rows in scope settle as removed.
+      const by = present ? liveRecordersOf(path, scoped) : [];
+      if (by.length > 0) {
+        if (settle === "disable") {
+          for (const row of described) {
+            row.status = "disabled";
+            row.synced_at = null;
+            row.deployed_hash = null;
+          }
+        } else {
+          skill.dto.targets = skill.dto.targets.filter((t) => !rowTools.includes(t.tool));
+        }
+        targets.push({ path, rows, status: { status: "kept_in_use", by } });
+        continue;
+      }
       const stuck = state.lockedPaths.includes(path) || rowTools.some((tool) => state.unwritableTools.includes(tool));
       if (present && stuck) {
         artifacts.set(path, true);
@@ -782,6 +799,28 @@ export function createFixtureBackend(
   const assignmentPath = (project: FixtureProject, a: StoredAssignment) =>
     `${projectToolDir(project, a.tool)}/${a.skill_name}`;
 
+  /**
+   * Rust `artifact_removal`'s in-use rule: the Tool keys of every live row
+   * outside the removal (any skill, either scope; not `disabled`, holding its
+   * claim) that records `path`, each once. The fixture has no physical
+   * identity, so a path matches by its spelling; its data never puts a
+   * global and a project row on one path.
+   */
+  const liveRecordersOf = (path: string, scoped: ReadonlySet<object>): string[] => {
+    const by: string[] = [];
+    const note = (tool: string) => {
+      if (!by.includes(tool)) by.push(tool);
+    };
+    for (const skill of state.skills)
+      for (const t of skill.dto.targets)
+        if (!scoped.has(t) && t.status !== "disabled" && ownsArtifact(t) && t.target_path === path) note(t.tool);
+    for (const project of state.projects)
+      for (const a of project.assignments)
+        if (!scoped.has(a) && a.status !== "disabled" && ownsArtifact(a) && assignmentPath(project, a) === path)
+          note(a.tool);
+    return by;
+  };
+
   const removeAssignments = (
     project: FixtureProject,
     keep: (a: StoredAssignment) => boolean,
@@ -790,6 +829,9 @@ export function createFixtureBackend(
     const targets: RemovalTargetOutcome[] = [];
     const markers: Marker[] = [];
     const remaining: StoredAssignment[] = [];
+    const scoped = new Set<object>(
+      project.assignments.filter((a) => !keep(a) && !(settle === "disable" && a.status === "disabled")),
+    );
     for (const a of project.assignments) {
       if (keep(a) || (settle === "disable" && a.status === "disabled")) {
         remaining.push(a);
@@ -826,6 +868,19 @@ export function createFixtureBackend(
         continue;
       }
       const present = project.path_exists && presentAt(path, a.status === "synced" || a.status === "stale");
+      // Rust's in-use rule (see `liveRecordersOf`).
+      const by = present ? liveRecordersOf(path, scoped) : [];
+      if (by.length > 0) {
+        if (settle === "disable") {
+          a.status = "disabled";
+          a.last_error = null;
+          a.synced_at = null;
+          a.content_hash = null;
+          remaining.push(a);
+        }
+        targets.push({ path, rows, status: { status: "kept_in_use", by } });
+        continue;
+      }
       const stuck =
         state.lockedPaths.includes(path) || state.unwritableProjectTools.includes(`${project.id}:${a.tool}`);
       if (present && stuck) {

@@ -1709,3 +1709,204 @@ fn removal_rows_and_markers_name_the_deployment_folder_they_describe() {
         "trae"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The in-use rule: never remove an artifact another live row outside the
+// operation records (release 1.3.5 review, Astra finding 1)
+// ---------------------------------------------------------------------------
+
+/// The target's one status, when it is `KeptInUse`: the other rows' keys.
+fn kept_by(report: &RemovalReport) -> Vec<String> {
+    assert_eq!(report.targets.len(), 1, "{report}");
+    match &report.targets[0].status {
+        RemovalTargetStatus::KeptInUse { by } => by.clone(),
+        other => panic!("expected kept in use, got {other:?}"),
+    }
+}
+
+/// A second live assignment row of `tool` describing the artifact the
+/// `like` row deployed (a pre-1.3.5 per-harness row on one project folder).
+fn seed_sibling_assignment(store: &SkillStore, like: &ProjectSkillAssignmentRecord, tool: &str) {
+    store
+        .add_project_skill_assignment(&ProjectSkillAssignmentRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            tool: tool.to_string(),
+            ..like.clone()
+        })
+        .expect("add sibling assignment");
+}
+
+/// The project-scope equivalent: two live assignment rows recording one
+/// artifact, one of them dropped by a removal keyed to its own harness
+/// (configure tools dropping Kimi Code). The artifact stays for the other row,
+/// the dropped row is removed, the other row is untouched; the project's own
+/// removal, with both rows in scope, still takes it.
+#[test]
+fn a_project_removal_keeps_an_artifact_another_live_assignment_records() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = make_skill_dir(&tmp.path().join("central"), "alpha");
+    let skill = seed_skill(&store, "alpha", &central);
+    let project = seed_project(&store, tmp.path(), "proj");
+    let shared = seed_assignment(&store, &project, &skill, "amp", SyncStatus::Synced);
+    let amp = store
+        .list_project_skill_assignments(&project.id)
+        .unwrap()
+        .remove(0);
+    seed_sibling_assignment(&store, &amp, "kimi_cli");
+
+    let kimi_scope = RemovalScope::ProjectTool {
+        project_id: project.id.clone(),
+        tool_key: "kimi_cli".to_string(),
+    };
+    let report = execute_unlocked(
+        &store,
+        &central_repo_of(&store),
+        plan(&store, &kimi_scope).unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(kept_by(&report), vec!["amp".to_string()]);
+    assert_eq!(report.kept_in_use_rows(), 1);
+    assert!(shared.join("SKILL.md").is_file(), "Amp's artifact stays");
+    let rows = store.list_project_skill_assignments(&project.id).unwrap();
+    assert_eq!(rows.len(), 1, "Kimi's row is removed");
+    let left = &rows[0];
+    assert_eq!(
+        (
+            &left.id,
+            &left.tool,
+            left.status,
+            left.synced_at,
+            &left.content_hash
+        ),
+        (
+            &amp.id,
+            &amp.tool,
+            amp.status,
+            amp.synced_at,
+            &amp.content_hash
+        ),
+        "Amp's row is left exactly as it was"
+    );
+
+    let report = execute_unlocked(
+        &store,
+        &central_repo_of(&store),
+        plan(
+            &store,
+            &RemovalScope::Project {
+                project_id: project.id.clone(),
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        (report.removed_rows(), report.kept_in_use_rows()),
+        (1, 0),
+        "{report}"
+    );
+    assert!(!exists_any(&shared));
+}
+
+/// A disabled or never-materialised row records nothing: it never keeps an
+/// artifact another row's removal takes.
+#[test]
+fn a_row_without_a_live_claim_never_keeps_an_artifact() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let central = make_skill_dir(&tmp.path().join("central"), "alpha");
+    let skill = seed_skill(&store, "alpha", &central);
+    let project = seed_project(&store, tmp.path(), "proj");
+    let shared = seed_assignment(&store, &project, &skill, "amp", SyncStatus::Synced);
+    let amp = store
+        .list_project_skill_assignments(&project.id)
+        .unwrap()
+        .remove(0);
+    store
+        .add_project_skill_assignment(&ProjectSkillAssignmentRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            tool: "kimi_cli".to_string(),
+            status: SyncStatus::Disabled,
+            synced_at: None,
+            ..amp.clone()
+        })
+        .unwrap();
+
+    let report = execute_unlocked(
+        &store,
+        &central_repo_of(&store),
+        plan(
+            &store,
+            &RemovalScope::ProjectTool {
+                project_id: project.id.clone(),
+                tool_key: "amp".to_string(),
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        (report.removed_rows(), report.kept_in_use_rows()),
+        (1, 0),
+        "{report}"
+    );
+    assert!(!exists_any(&shared));
+}
+
+/// The match is physical too: another live row recording the same entry
+/// through an aliased folder (Claude Code's skills dir linked onto Amp's)
+/// keeps it, although no path is spelled the same.
+#[cfg(unix)]
+#[test]
+fn an_artifact_another_live_row_records_through_an_alias_is_kept() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = make_store(tmp.path());
+    let home = home_with(tmp.path(), &["amp", "claude_code"]);
+    let central = make_skill_dir(&tmp.path().join("central"), "alpha");
+    let skill = seed_skill(&store, "alpha", &central);
+    let amp_target = seed_global_target(&store, &skill, "amp");
+    let claude = claude_dir(&store);
+    std::os::unix::fs::symlink(amp_target.parent().unwrap(), &claude).unwrap();
+    seed_global_target_at(&store, &skill, "claude_code", &claude.join("alpha"));
+
+    let report = unsync_skill_from_tool(&store, &home, &skill.id, "amp").unwrap();
+
+    assert_eq!(kept_by(&report), vec!["claude_code".to_string()]);
+    assert!(amp_target.join("SKILL.md").is_file());
+    assert!(store.get_skill_target(&skill.id, "amp").unwrap().is_none());
+    assert_eq!(
+        store
+            .get_skill_target(&skill.id, "claude_code")
+            .unwrap()
+            .unwrap()
+            .status,
+        SyncStatus::Synced
+    );
+}
+
+#[test]
+fn a_kept_in_use_target_crosses_the_wire_with_the_other_rows_keys() {
+    let report = RemovalReport {
+        scope: None,
+        targets: vec![RemovalTargetOutcome {
+            path: PathBuf::from("shared"),
+            rows: vec![RowRef::global("t2", "s1", "kimi_cli")],
+            status: RemovalTargetStatus::KeptInUse {
+                by: vec!["amp".into()],
+            },
+        }],
+        central_removed: false,
+        record_deleted: false,
+        cleared_markers: Vec::new(),
+        disabled_markers: Vec::new(),
+    };
+    assert_eq!(
+        serde_json::to_value(&report.targets[0].status).unwrap(),
+        serde_json::json!({ "status": "kept_in_use", "by": ["amp"] })
+    );
+    assert!(report.failures().is_empty());
+    assert!(report.to_string().contains("kept: still used by amp"));
+}

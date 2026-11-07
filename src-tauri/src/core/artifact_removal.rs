@@ -22,6 +22,21 @@
 //!     settle as if their artifact were gone (it is), never by deleting
 //!     another folder. An absent path is a successful removal; an occupant
 //!     that cannot be read is a failure (the rows are kept `error`).
+//!   - in use: an occupant proven ours is still never removed while another
+//!     **live** row outside the operation records it — any skill, either
+//!     table; live = not `disabled` and holding its claim (`synced_at`) —
+//!     by the same path or as the same physical entry (`EntryId`, read now).
+//!     A pre-1.3.5 row whose harness's folder was corrected since
+//!     (`kimi_cli` on Amp's `~/.config/agents/skills`) is the case: its pair
+//!     no longer shares a folder with Amp's row, yet both rows record one
+//!     link. The artifact stays, the rows in scope settle exactly as a
+//!     removal would settle them, and the target is reported
+//!     [`RemovalTargetStatus::KeptInUse`] naming the other rows' Tool keys.
+//!     The other rows lend nothing and are left exactly as they were. A
+//!     recorded path that cannot be read fails the target (rows kept
+//!     `error`): never removed blind.
+//!     Skill-wide Delete puts every row of its skill in scope, so it still
+//!     removes a folder its own rows share.
 //!   - admission: every removal is admitted by the entry's physical identity
 //!     (`core::removal_fence`) — never inside the central library (the
 //!     configured central repo the caller passes as `central_dir`, plus every
@@ -73,7 +88,7 @@
 //! `skill_disable`. There is no unrecorded unsync: an operator's removal of
 //! a global target is a Disable (`core::skill_disable`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -86,13 +101,14 @@ use crate::core::{
     ownership::{self, Deployed, Occupancy},
     placement::{self, row_folder, ScopeKind},
     project_sync::resolve_assignment_artifact,
-    removal_fence::{Claim, Fence, ProtectedLibrary},
+    removal_fence::{Claim, EntryId, Fence, ProtectedLibrary},
     skill_health::{self, SkillOutcomeKind},
     skill_store::{
         AssignmentTransition, ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore,
         SkillTargetRecord, TargetTransition,
     },
     sync_engine::{remove_central_copy, remove_path_any, typed_removal_failure},
+    sync_status::SyncStatus,
     tool_adapters::{
         adapter_by_key, ensure_path_within_tool_dirs, installed_set_in, project_skills_dir_in,
     },
@@ -331,6 +347,14 @@ pub enum RemovalTargetStatus {
     /// was, a copy edited in place, a copy a pre-1.4.0 row never recorded.
     /// It was kept untouched, and the rows settled as their artifact gone.
     LeftInPlace,
+    /// The artifact is the app's, but another live row outside this
+    /// operation still records it (by path or as the same physical entry):
+    /// another harness's Deployment of the same folder, typically a pre-1.3.5
+    /// row on a folder its harness no longer serves. It was kept untouched,
+    /// and the rows in scope settled as a removal settles them. `by` names
+    /// the other rows' Tool keys, each once, in the order found; those rows
+    /// were not touched.
+    KeptInUse { by: Vec<String> },
     /// Every attached row was kept with status `error` and the original chain.
     Failed { error: CommandError },
 }
@@ -376,7 +400,9 @@ impl RemovalReport {
                 RemovalTargetStatus::Failed { error } => {
                     Some(format!("{}: {error}", target.path.display()))
                 }
-                RemovalTargetStatus::Removed | RemovalTargetStatus::LeftInPlace => None,
+                RemovalTargetStatus::Removed
+                | RemovalTargetStatus::LeftInPlace
+                | RemovalTargetStatus::KeptInUse { .. } => None,
             })
             .collect()
     }
@@ -420,6 +446,13 @@ impl RemovalReport {
         self.count_rows(|status| matches!(status, RemovalTargetStatus::LeftInPlace))
     }
 
+    /// Rows settled while their artifact, still recorded by a live row
+    /// outside the operation, was kept.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn kept_in_use_rows(&self) -> usize {
+        self.count_rows(|status| matches!(status, RemovalTargetStatus::KeptInUse { .. }))
+    }
+
     fn count_rows(&self, counted: impl Fn(&RemovalTargetStatus) -> bool) -> usize {
         self.targets
             .iter()
@@ -445,6 +478,9 @@ impl fmt::Display for RemovalReport {
             let status = match &target.status {
                 RemovalTargetStatus::Removed => "removed".to_string(),
                 RemovalTargetStatus::LeftInPlace => "left in place".to_string(),
+                RemovalTargetStatus::KeptInUse { by } => {
+                    format!("kept: still used by {}", by.join(", "))
+                }
                 RemovalTargetStatus::Failed { error } => format!("failed: {:#}", error),
             };
             let tools: Vec<&str> = target.rows.iter().map(RowRef::tool).collect();
@@ -836,22 +872,39 @@ pub(crate) fn execute_settling_unlocked(
 ) -> Result<RemovalReport> {
     let mut targets: Vec<RemovalTargetOutcome> = Vec::with_capacity(plan.targets.len());
     let library = ProtectedLibrary::new(store, central_dir);
+    // Every row this operation settles; the live rows outside it are read
+    // once, under the guard (nothing here writes them).
+    let in_scope: HashSet<RowKey> = plan
+        .targets
+        .iter()
+        .flat_map(|target| target.rows.iter())
+        .chain(plan.markers.iter())
+        .map(RowKey::of)
+        .collect();
+    let others = live_records_outside(store, &in_scope)?;
 
     for target in plan.targets {
         // The occupant rule, at the moment of removal: only what a row shows
         // is its own artifact is removed — and only inside a skills folder
         // that row is managed in (a malformed stored path elsewhere is
         // refused, `ResolvesElsewhere`, and its rows kept `error`); a foreign
-        // occupant stays.
+        // occupant stays. An artifact of ours another live row outside the
+        // operation still records stays too (the in-use rule).
         let result = match target.refused.clone() {
             Some(refusal) => Err(anyhow::anyhow!(refusal)),
             None => match target.occupant() {
                 Ok(TargetOccupant::Absent) => Ok(RemovalTargetStatus::Removed),
-                Ok(TargetOccupant::Ours { within }) => remove_path_any(
-                    &target.path,
-                    &Fence::new(&library).claiming(Claim::Within(within)),
-                )
-                .map(|()| RemovalTargetStatus::Removed),
+                Ok(TargetOccupant::Ours { within }) => {
+                    match still_recorded(&target.path, &others) {
+                        Ok(by) if !by.is_empty() => Ok(RemovalTargetStatus::KeptInUse { by }),
+                        Ok(_) => remove_path_any(
+                            &target.path,
+                            &Fence::new(&library).claiming(Claim::Within(within)),
+                        )
+                        .map(|()| RemovalTargetStatus::Removed),
+                        Err(err) => Err(typed_removal_failure(&target.path, err)),
+                    }
+                }
                 Ok(TargetOccupant::Foreign) => Ok(RemovalTargetStatus::LeftInPlace),
                 // Not knowing the occupant is never "foreign" (the row would
                 // settle as if its artifact were gone) nor "ours": it fails like a
@@ -862,8 +915,9 @@ pub(crate) fn execute_settling_unlocked(
 
         let status = match result {
             Ok(status) => {
-                // The artifact is gone or was never this row's: either way
-                // the row's claim ends here (ADR-0007).
+                // The artifact is gone, was never this row's, or is another
+                // live row's to keep: either way this row's claim ends here
+                // (ADR-0007), and the other row keeps its own.
                 for row in &target.rows {
                     match settlement {
                         Settlement::Delete => delete_row(store, row)?,
@@ -928,7 +982,9 @@ pub(crate) fn execute_settling_unlocked(
             // every one).
             if let Some(error) = targets.iter().find_map(|t| match &t.status {
                 RemovalTargetStatus::Failed { error } => Some(error),
-                RemovalTargetStatus::Removed | RemovalTargetStatus::LeftInPlace => None,
+                RemovalTargetStatus::Removed
+                | RemovalTargetStatus::LeftInPlace
+                | RemovalTargetStatus::KeptInUse { .. } => None,
             }) {
                 skill_health::note_outcome(
                     store,
@@ -960,6 +1016,114 @@ pub(crate) fn execute_settling_unlocked(
         cleared_markers,
         disabled_markers,
     })
+}
+
+/// A row's identity across both tables (ids are unique per table only).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum RowKey {
+    Global(String),
+    Assignment(String),
+}
+
+impl RowKey {
+    fn of(row: &RowRef) -> Self {
+        match row {
+            RowRef::GlobalTarget { id, .. } => RowKey::Global(id.clone()),
+            RowRef::Assignment { id, .. } => RowKey::Assignment(id.clone()),
+        }
+    }
+}
+
+/// A live row outside the operation, with the artifact path it records.
+struct LiveRecord {
+    path: PathBuf,
+    tool: String,
+}
+
+/// Every **live** row outside `in_scope` — not `disabled`, holding its
+/// claim (`owns_artifact`) — of either table, with the path it records: a
+/// global row's stored path, an assignment's artifact resolved as planning
+/// resolves it (`resolve_assignment_artifact`). An assignment whose project,
+/// Tool or name no longer resolves records no locatable artifact and is
+/// skipped, as planning skips it.
+fn live_records_outside(store: &SkillStore, in_scope: &HashSet<RowKey>) -> Result<Vec<LiveRecord>> {
+    let live = |status: SyncStatus, owns: bool| owns && status != SyncStatus::Disabled;
+    let mut records = Vec::new();
+    let mut names: HashMap<String, String> = HashMap::new();
+    for skill in store.list_skills()? {
+        names.insert(skill.id.clone(), skill.name.clone());
+        for row in store.list_skill_targets(&skill.id)? {
+            if live(row.status, row.owns_artifact())
+                && !in_scope.contains(&RowKey::Global(row.id.clone()))
+            {
+                records.push(LiveRecord {
+                    path: PathBuf::from(&row.target_path),
+                    tool: row.tool,
+                });
+            }
+        }
+    }
+    for project in store.list_projects()? {
+        for assignment in store.list_project_skill_assignments(&project.id)? {
+            if !live(assignment.status, assignment.owns_artifact())
+                || in_scope.contains(&RowKey::Assignment(assignment.id.clone()))
+            {
+                continue;
+            }
+            let Some(adapter) = adapter_by_key(&assignment.tool) else {
+                continue;
+            };
+            let live_name = names.get(&assignment.skill_id).cloned();
+            if let Ok(Some(path)) =
+                resolve_assignment_artifact(Path::new(&project.path), adapter, &assignment, || {
+                    Ok(live_name)
+                })
+            {
+                records.push(LiveRecord {
+                    path,
+                    tool: assignment.tool,
+                });
+            }
+        }
+    }
+    Ok(records)
+}
+
+/// The Tool keys of the live rows in `others` that record the artifact at
+/// `path` now: by the same path, or as the same physical entry (`EntryId`,
+/// read without following a leaf link, so a spelling through an aliased
+/// folder counts). Each key once, in the order found. A recorded path that
+/// cannot be read is an `Err`: whether it is this entry is unknown.
+fn still_recorded(path: &Path, others: &[LiveRecord]) -> Result<Vec<String>> {
+    let mut by: Vec<String> = Vec::new();
+    let mut here: Option<Option<EntryId>> = None;
+    for other in others {
+        let same = if other.path == path {
+            true
+        } else {
+            let here = match here {
+                Some(id) => id,
+                None => {
+                    let id = EntryId::of(path)
+                        .with_context(|| format!("read the entry at {:?}", path))?;
+                    here = Some(id);
+                    id
+                }
+            };
+            match here {
+                Some(id) => {
+                    EntryId::of(&other.path).with_context(|| {
+                        format!("read {:?}, recorded by a {} row", other.path, other.tool)
+                    })? == Some(id)
+                }
+                None => false,
+            }
+        };
+        if same && !by.contains(&other.tool) {
+            by.push(other.tool.clone());
+        }
+    }
+    Ok(by)
 }
 
 fn delete_row(store: &SkillStore, row: &RowRef) -> Result<()> {

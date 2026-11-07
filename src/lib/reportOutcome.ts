@@ -400,16 +400,18 @@ function deploymentOf(row: RowRef): string {
 }
 
 /** Which way a Deployment settled when its rows settled differently: a kept row wins. */
-const REMOVAL_RANK = { failed: 4, removed: 3, left_in_place: 2, cleared: 1, flipped: 0 } as const;
+const REMOVAL_RANK = { failed: 5, removed: 4, kept_in_use: 3, left_in_place: 2, cleared: 1, flipped: 0 } as const;
 type RemovalKind = keyof typeof REMOVAL_RANK;
 
 /**
  * Counts **Deployments**, one per (skill, folder) — per project for an
  * assignment — however many rows describe it (`deploymentOf`), each counted
- * once by its strongest settlement (failed › removed › left in place ›
- * cleared › flipped). `removed` / `failed` count the Deployments of removed /
- * kept targets; `left_in_place` those settled while the folder at their path,
- * not what the app put there, was kept (ADR-0007); `cleared` counts those
+ * once by its strongest settlement (failed › removed › kept in use › left in
+ * place › cleared › flipped). `removed` / `failed` count the Deployments of
+ * removed / kept targets; `kept_in_use` those settled while their artifact,
+ * still recorded by another live row outside the operation, was kept;
+ * `left_in_place` those settled while the folder at their path, not what the
+ * app put there, was kept (ADR-0007); `cleared` counts those
  * settled without touching any path (`cleared_markers`: rows that owned no
  * artifact), so an unassignment that only cleared such a row still counts as
  * one without claiming an artifact was removed. `flipped` counts the markers
@@ -426,21 +428,35 @@ function removalCounts(report: RemovalReport) {
   for (const target of report.targets) for (const row of target.rows) note(row, target.status.status);
   for (const row of report.cleared_markers) note(row, "cleared");
   for (const row of report.disabled_markers) note(row, "flipped");
-  const counts = { removed: 0, failed: 0, left_in_place: 0, cleared: 0, flipped: 0 };
+  const counts = { removed: 0, failed: 0, kept_in_use: 0, left_in_place: 0, cleared: 0, flipped: 0 };
   for (const kind of settled.values()) counts[kind]++;
   return counts;
 }
 
 /**
- * The quiet lines of a removal's left-in-place folders (ADR-0007): one per
- * path, each a folder the removal kept because it is not what the app put
- * there (the operator's own folder, a copy edited in place). Not a failure —
- * the Deployment settled — and nothing to answer, but never silent.
+ * The quiet lines of the folders a removal kept, one per path: a folder left
+ * in place because it is not what the app put there (ADR-0007: the
+ * operator's own folder, a copy edited in place), or one kept because
+ * another live row outside the removal still records it (`kept_in_use`).
+ * Not a failure — the Deployment settled — and nothing to answer, but never
+ * silent.
  */
-function leftInPlaceNotes(report: RemovalReport, ctx: ReportContext): string[] {
-  return report.targets
-    .filter((target) => target.status.status === "left_in_place")
-    .map((target) => ctx.t("outcome.leftInPlaceLine", { path: target.path }));
+function keptFolderNotes(report: RemovalReport, ctx: ReportContext): string[] {
+  return report.targets.flatMap((target) => {
+    const { status } = target;
+    if (status.status === "left_in_place") return [ctx.t("outcome.leftInPlaceLine", { path: target.path })];
+    // Kept because another live row outside the removal still records it
+    // (another harness's Deployment of the same folder): named by those
+    // rows' harnesses, which were left as they were.
+    if (status.status === "kept_in_use")
+      return [
+        ctx.t("outcome.keptInUseLine", {
+          path: target.path,
+          harnesses: [...new Set(status.by.map((tool) => label(ctx, tool)))].join(ctx.t("common.listSeparator")),
+        }),
+      ];
+    return [];
+  });
 }
 
 /**
@@ -847,7 +863,7 @@ export function removalOutcome(
   const out = empty();
   const counts = removalCounts(report);
   const failed = collectRemovalFailures(out, report, ctx, "errors.unsyncFailedTitle");
-  out.notes.push(...leftInPlaceNotes(report, ctx));
+  out.notes.push(...keptFolderNotes(report, ctx));
   const detail = detailOf(out.notes);
   // A skill-grain Disable (`skill` / `all`) always records the skill
   // disabled, so it is never "nothing planned" — even with nothing deployed.
@@ -880,7 +896,7 @@ export function removalOutcome(
       ctx.t,
       "disabled",
       {
-        done: counts.removed + counts.left_in_place + counts.cleared + counts.flipped,
+        done: counts.removed + counts.kept_in_use + counts.left_in_place + counts.cleared + counts.flipped,
         failed: counts.failed,
       },
       { detail },
@@ -899,14 +915,14 @@ export function removalOutcome(
             }),
           )
         : toast("success", ctx.t("status.syncDisabled"), detail);
-  // Whatever the toast, the left-in-place lines reach the run's notes.
+  // Whatever the toast, the kept-folder lines reach the run's notes.
   // One skill off a project's Tools: the count line over its assignments
   // ("2 unassigned · 1 failed"); a kept row stays in the matrix, failed.
   if (ctx.action === "bulkUnassign")
     out.toast = headlineToast(
       ctx.t,
       "unassigned",
-      { done: counts.removed + counts.left_in_place + counts.cleared, failed: counts.failed },
+      { done: counts.removed + counts.kept_in_use + counts.left_in_place + counts.cleared, failed: counts.failed },
       { detail },
     );
   return out;
@@ -1066,9 +1082,9 @@ export function projectRemovalOutcome(
     ctx,
     "errors.projectRemovalFailedTitle",
   );
-  out.notes.push(...leftInPlaceNotes(report, ctx));
+  out.notes.push(...keptFolderNotes(report, ctx));
   const detail = detailOf(out.notes);
-  const done = counts.removed + counts.left_in_place + counts.cleared;
+  const done = counts.removed + counts.kept_in_use + counts.left_in_place + counts.cleared;
   // Removing a project closes its dialog either way: a row whose artifact
   // stayed keeps the project listed with that cell failed (ADR-0002), which
   // the dialog said before it ran. A tool configuration that kept a row
@@ -1640,7 +1656,7 @@ export function deleteOutcome(
     collectRemovalFailures(part, settlement.report, ctx, "errors.deleteKeptTargetTitle", {
       [settlement.skillId]: settlement.name,
     });
-    const left = leftInPlaceNotes(settlement.report, ctx);
+    const left = keptFolderNotes(settlement.report, ctx);
     out.notes.push(...(batch ? left.map((line) => `${settlement.name}: ${line}`) : left));
     keptTargets += removalCounts(settlement.report).failed;
     // A kept target is finished by removing the skill again (the Delete
