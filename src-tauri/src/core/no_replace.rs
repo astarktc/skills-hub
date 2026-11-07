@@ -76,6 +76,8 @@ pub(crate) enum StrictRenameError {
     /// Something is at the new name (of any type, a link included).
     Occupied,
     /// No exclusive rename on this file system; no fallback was tried.
+    /// (Never on Windows, whose rename is exclusive on every volume.)
+    #[cfg_attr(windows, allow(dead_code))]
     Unsupported,
     /// Any other failure.
     Failed(io::Error),
