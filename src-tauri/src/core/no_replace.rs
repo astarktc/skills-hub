@@ -23,7 +23,8 @@
 //! access, so the directory cannot be renamed or removed while it is held.
 //!
 //! Where the file system has no exclusive rename (Linux `EINVAL` / `ENOSYS`:
-//! NFS, CIFS, older FUSE; macOS `ENOTSUP`: SMB, exFAT, …), the new name is
+//! NFS, CIFS, older FUSE; macOS `ENOTSUP` / `EOPNOTSUPP` / `EINVAL`: SMB,
+//! exFAT, …), the new name is
 //! reserved by an exclusive `mkdirat` — which fails on any entry, a dangling
 //! link included, following none — and the rename lands on that reservation.
 //! A reservation alone is not the primitive, only this fallback: POSIX
@@ -33,6 +34,11 @@
 //! would be replaced (no content lost, nothing written elsewhere). Windows
 //! needs no fallback, and could not use one: a directory cannot be renamed
 //! onto an existing one there.
+//!
+//! Scope (CONTEXT.md, Artifact removal): another process swapping entries
+//! inside the Library while the app acts is out of scope. This module closes
+//! the app's own check-then-act gaps; hardening against a concurrent
+//! same-user process is BACKLOG #119.
 
 use std::ffi::OsStr;
 use std::fs::File;
