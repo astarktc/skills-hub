@@ -37,8 +37,9 @@
 //!    move undone (`kept`, still pending). A genuine replacement — Overwrite,
 //!    or ours in the wrong mode — is **staged** ([`staged_replace`]): deployed
 //!    beside the occupant, journaled, then swapped in — atomically, or by two
-//!    renames only while a working old Deployment stays in place; otherwise
-//!    the occupant is not touched and the move is refused, still pending
+//!    renames only while a working old Deployment stays in place (a copy, or
+//!    a link written as the Library copy's absolute path — [`IntactOld`]);
+//!    otherwise the occupant is not touched and the move is refused, still pending
 //!    (`DESTINATION_REFUSED`, `cannotReplaceSafely`). A Disabled row and a
 //!    row that never deployed (no claim) are re-recorded at the new place with
 //!    nothing written.
@@ -74,7 +75,7 @@
 //! central repo (`commands::installer_paths`).
 
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf, Prefix};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -279,6 +280,10 @@ pub enum JournalStatus {
     /// An edited copy still awaiting the operator's answer (see
     /// `edited_copies`); still journaled.
     AwaitingAnswer,
+    /// A replacement cut short that could not be finished, with nothing
+    /// else provably serving the skill: still journaled, finished by a later
+    /// run or launch.
+    Unfinished,
 }
 
 /// An old artifact the redeploy left on disk: a duplicate of a moved skill.
@@ -967,6 +972,7 @@ fn execute(
         let stays = match &settled {
             Settled::Awaiting => Some(true),
             Settled::Left { reason, .. } => Some(*reason == RedeployLeftReason::Edited),
+            Settled::Unfinished => Some(false),
             Settled::Finished | Settled::Retained => None,
         };
         if let Some(edited) = stays {
@@ -1519,28 +1525,46 @@ fn cannot_replace_safely(dest: &Path) -> anyhow::Error {
 
 /// A working old Deployment of a move, away from its new place: what keeps
 /// the skill served while two renames leave the new place empty (round 20
-/// t10 review, finding 7). Judged independently of the occupant — its own
-/// row's evidence (a link resolving to the Library copy, or a copy whose
-/// Content identity is the one recorded) — and re-verified right before the
-/// first rename.
+/// t10 review, finding 7) — the two-rename fallback's witness. Judged
+/// independently of the occupant — its own row's evidence (a link resolving
+/// to the Library copy, or a copy whose Content identity is the one
+/// recorded) — and re-verified right before the first rename.
+///
+/// Only what the app writes witnesses (finding 9): a real folder (a copy),
+/// or a link whose text is exactly the skill's recorded Library copy path —
+/// absolute, with no `..`, a real folder not reached through the new place.
+/// A relative link, a `..` in its text, a link to a link or any other text
+/// does not, even when it resolves to the Library now: its resolution may
+/// pass through the new place and dangle once the occupant is set aside.
 struct IntactOld {
     path: PathBuf,
     entry: JournaledEntry,
     deployed: Deployed,
+    /// The skill's recorded Library copy: the one text a witnessing link has.
+    library: PathBuf,
 }
 
 impl IntactOld {
     /// The first live row of `planned` whose artifact is not the new place
     /// (by path or physical identity), is not the occupant, and holds now.
     fn find(planned: &Planned, occupant: JournaledEntry) -> Option<Self> {
-        let dest = &planned.dest;
-        for row in planned
-            .rows
+        Self::among(&planned.skill, &planned.rows, &planned.dest, occupant)
+    }
+
+    /// The first live row of `rows` (of `skill`) whose artifact is not `dest`
+    /// (by path or physical identity), is not the occupant, and holds now.
+    fn among(
+        skill: &SkillRecord,
+        rows: &[SkillTargetRecord],
+        dest: &Path,
+        occupant: JournaledEntry,
+    ) -> Option<Self> {
+        for row in rows
             .iter()
             .filter(|row| row.owns_artifact() && row.status != SyncStatus::Disabled)
         {
             let path = PathBuf::from(&row.target_path);
-            if path == *dest || same_entry(&path, dest) {
+            if path == dest || same_entry(&path, dest) {
                 continue;
             }
             // Absent or unreadable: not a working Deployment.
@@ -1553,7 +1577,8 @@ impl IntactOld {
             let old = Self {
                 path,
                 entry,
-                deployed: Deployed::of_target(row, Some(&planned.skill)),
+                deployed: Deployed::of_target(row, Some(skill)),
+                library: PathBuf::from(&skill.central_path),
             };
             if old.holds(dest) {
                 return Some(old);
@@ -1562,11 +1587,24 @@ impl IntactOld {
         None
     }
 
-    /// Whether it is still the entry judged, still provably the skill, and
-    /// untouched by renames at `dest`: neither reached through the folder at
-    /// `dest` nor holding it. Anything unreadable does not hold.
+    /// Whether it is still the entry judged, still a witness as the app
+    /// writes one (a real folder, or a link written as the Library copy's
+    /// path), still provably the skill, and untouched by renames at `dest`:
+    /// neither reached through the folder at `dest` nor holding it. Anything
+    /// unreadable does not hold.
     fn holds(&self, dest: &Path) -> bool {
         if !matches!(JournaledEntry::of(&self.path), Ok(Some(now)) if now == self.entry) {
+            return false;
+        }
+        let Ok(meta) = std::fs::symlink_metadata(&self.path) else {
+            return false;
+        };
+        let written = if meta.file_type().is_symlink() {
+            self.links_as_written(dest)
+        } else {
+            meta.is_dir()
+        };
+        if !written {
             return false;
         }
         if !matches!(
@@ -1589,6 +1627,59 @@ impl IntactOld {
         })();
         apart.unwrap_or(false)
     }
+
+    /// Whether the link is one the app wrote: its text, compared as a path
+    /// (never resolved), exactly the recorded Library copy path — itself
+    /// absolute, free of `..`, a real folder (not a link) and not reached
+    /// through `dest`, by spelling or physically.
+    fn links_as_written(&self, dest: &Path) -> bool {
+        let library = &self.library;
+        if !library.is_absolute()
+            || library
+                .components()
+                .any(|part| matches!(part, Component::ParentDir))
+        {
+            return false;
+        }
+        let Ok(text) = std::fs::read_link(&self.path) else {
+            return false;
+        };
+        if as_written(&text) != as_written(library) {
+            return false;
+        }
+        if !real_dir(library) || library.starts_with(dest) {
+            return false;
+        }
+        match (Place::of(library), Place::of(dest)) {
+            (Ok(library), Ok(dest)) => !library.within(&dest),
+            _ => false,
+        }
+    }
+}
+
+/// `path` as written, a Windows verbatim prefix (`\\?\C:\…`,
+/// `\\?\UNC\server\share\…` — how a link's text reads back) spelled
+/// plainly (`C:\…`, `\\server\share\…`); nothing else changes and nothing is
+/// resolved. Elsewhere a path has no prefix and is returned as it is.
+fn as_written(path: &Path) -> PathBuf {
+    let mut parts = path.components();
+    let plain = match parts.next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::VerbatimDisk(disk) => format!("{}:", disk as char).into(),
+            Prefix::VerbatimUNC(server, share) => {
+                let mut plain = std::ffi::OsString::from(r"\\");
+                plain.push(server);
+                plain.push(r"\");
+                plain.push(share);
+                plain
+            }
+            _ => return path.to_path_buf(),
+        },
+        _ => return path.to_path_buf(),
+    };
+    let mut out = PathBuf::from(plain);
+    out.extend(parts);
+    out
 }
 
 /// Q24: every Disabled row that collapsed into a folder row where another
@@ -1683,6 +1774,10 @@ enum Settled {
     },
     /// An edited copy awaiting the answer; stays journaled.
     Awaiting,
+    /// A staged replacement that could not be finished while nothing
+    /// provably serves the skill in its stead; stays journaled, pending, for
+    /// a later run to finish.
+    Unfinished,
 }
 
 fn left(reason: RedeployLeftReason) -> Settled {
@@ -1911,6 +2006,17 @@ fn settle_replacing(ctx: &Ctx<'_>, entry: &RedeployJournalRecord) -> Result<Sett
                     strict_rename(&held, from, name).map_err(|err| rename_error(err, dest))
                 });
             if let Err(err) = renamed {
+                // The new place stays empty: dropping the entry is safe only
+                // while an old Deployment of the move witnesses for it
+                // (finding 9), else it stays journaled for a later run.
+                if unserved(ctx, entry, dest, occupant)? {
+                    log::warn!(
+                        "[redeploy] could not finish {:?} and nothing else serves the skill; \
+                         kept pending: {err:#}",
+                        dest
+                    );
+                    return Ok(Settled::Unfinished);
+                }
                 return Ok(Settled::Left {
                     reason: RedeployLeftReason::RemovalFailed,
                     error: Some(CommandError::from_anyhow(err)),
@@ -1989,8 +2095,31 @@ fn settle_replacing(ctx: &Ctx<'_>, entry: &RedeployJournalRecord) -> Result<Sett
     Ok(left_at(RedeployLeftReason::Stale, &stays))
 }
 
-/// Record how `entry` settled — drop it, or keep it awaiting the answer —
-/// and add what the report owes the operator.
+/// Whether the skill of `entry` exists and no old Deployment of its move
+/// witnesses for the empty new place `dest` ([`IntactOld`]'s rule). The
+/// journal names the move's switched row alone, so that row is the one
+/// candidate: missing another live row of the move keeps the entry pending,
+/// never drops it.
+fn unserved(
+    ctx: &Ctx<'_>,
+    entry: &RedeployJournalRecord,
+    dest: &Path,
+    occupant: JournaledEntry,
+) -> Result<bool> {
+    let Some(skill) = ctx.store.get_skill_by_id(&entry.skill_id)? else {
+        return Ok(false);
+    };
+    let rows: Vec<SkillTargetRecord> = ctx
+        .store
+        .list_skill_targets(&skill.id)?
+        .into_iter()
+        .filter(|row| row.id == entry.row_id)
+        .collect();
+    Ok(IntactOld::among(&skill, &rows, dest, occupant).is_none())
+}
+
+/// Record how `entry` settled — drop it, or keep it awaiting the answer or
+/// unfinished — and add what the report owes the operator.
 fn record_settled(
     ctx: &Ctx<'_>,
     entry: &RedeployJournalRecord,
@@ -2047,6 +2176,7 @@ fn record_settled(
             });
             JournalStatus::AwaitingAnswer
         }
+        Settled::Unfinished => JournalStatus::Unfinished,
     })
 }
 

@@ -1926,6 +1926,11 @@ export const resources = {
             holds_deployment:
               "A deployment lies inside it through a linked folder, so removing it would remove that one too. It was left alone.",
           },
+          unfinished_one: "{{count}} move unfinished",
+          unfinished_other: "{{count}} moves unfinished",
+          unfinishedTitle: "{{name}}: the move to {{path}} could not be finished",
+          unfinishedMessage:
+            "Nothing else serves the skill meanwhile, so the move stays pending. Skills Hub finishes it at the next launch or when you move Deployments again.",
           refused_one: "{{count}} answer no longer applied",
           refused_other: "{{count}} answers no longer applied",
           refusedTitle: "An answer about {{path}} no longer applies",

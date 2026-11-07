@@ -1766,6 +1766,176 @@ fn without_an_exclusive_rename_nothing_moves() {
     assert_eq!(f.preview().global.correction, 1, "still pending");
 }
 
+/// Mux's old link written as `text` (not as the app writes it), recorded as
+/// a live link row.
+#[cfg(unix)]
+fn mux_link_written_as(f: &Fixture, text: &Path) -> PathBuf {
+    let old = f.at(".mux/skills/alpha");
+    if present(&old) {
+        fs::remove_file(&old).unwrap();
+    }
+    link(text, &old);
+    f.seed("mux", &old, SyncMode::Symlink, SyncStatus::Synced, true);
+    old
+}
+
+/// Round 20 t10 review, finding 9 (Astra's probe): the link
+/// `~/.mux/skills/alpha` → `~/.xum/skills/alpha/../../../../central/alpha`
+/// resolves to the Library through the very folder in the way.
+#[cfg(unix)]
+fn through_the_destination(f: &Fixture) -> PathBuf {
+    let below_home = f.central.strip_prefix(f.home().parent().unwrap()).unwrap();
+    f.at(".xum/skills/alpha/../../../..").join(below_home)
+}
+
+/// Finding 9: an old link resolving to the Library only through the new
+/// place would dangle once the occupant is set aside — it is no witness for
+/// two renames. Refused before the first rename: both placements as they
+/// were, nothing staged, nothing journaled, still pending.
+#[cfg(unix)]
+#[test]
+fn f9_an_old_link_through_the_destination_is_no_witness() {
+    let f = fixture(&["mux"]);
+    let dest = foreign_at(&f, ".xum/skills/alpha");
+    let text = through_the_destination(&f);
+    let old = mux_link_written_as(&f, &text);
+    assert_eq!(fs::read_to_string(old.join("a.txt")).unwrap(), "v1");
+    let (old_id, dest_id) = (EntryId::of(&old).unwrap(), EntryId::of(&dest).unwrap());
+    test_seams::force_two_step_swap();
+    test_seams::crash_between_swap_renames();
+    test_seams::crash_after_swap();
+
+    let report = f.run(&[xum_overwrite(&dest)]);
+
+    assert!(
+        refused_unsafe(&only_move(&report).status, &dest),
+        "{report:#?}"
+    );
+    assert_eq!(EntryId::of(&old).unwrap(), old_id);
+    assert_eq!(fs::read_link(&old).unwrap(), text);
+    assert_eq!(fs::read_to_string(old.join("a.txt")).unwrap(), "v1");
+    assert_eq!(EntryId::of(&dest).unwrap(), dest_id);
+    assert_eq!(
+        fs::read_to_string(dest.join("SKILL.md")).unwrap(),
+        "someone else's"
+    );
+    assert_eq!(xum_entries(&f), 1, "nothing staged stays");
+    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+    let row = f.row("mux").unwrap();
+    assert_eq!(Path::new(&row.target_path), old, "not switched");
+    assert_eq!(f.preview().global.correction, 1, "still pending");
+}
+
+/// Finding 9: a relative link to the Library copy is not how the app writes
+/// one — no witness, refused before the first rename.
+#[cfg(unix)]
+#[test]
+fn f9_a_relative_link_to_the_library_is_no_witness() {
+    let f = fixture(&["mux"]);
+    let dest = foreign_at(&f, ".xum/skills/alpha");
+    let below_home = f.central.strip_prefix(f.home().parent().unwrap()).unwrap();
+    let text = Path::new("../../..").join(below_home);
+    let old = mux_link_written_as(&f, &text);
+    assert_eq!(fs::read_to_string(old.join("a.txt")).unwrap(), "v1");
+    let dest_id = EntryId::of(&dest).unwrap();
+    test_seams::force_two_step_swap();
+
+    let report = f.run(&[xum_overwrite(&dest)]);
+
+    assert!(
+        refused_unsafe(&only_move(&report).status, &dest),
+        "{report:#?}"
+    );
+    assert_eq!(fs::read_link(&old).unwrap(), text);
+    assert_eq!(EntryId::of(&dest).unwrap(), dest_id);
+    assert_eq!(xum_entries(&f), 1, "nothing staged stays");
+    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+    assert_eq!(f.preview().global.correction, 1, "still pending");
+}
+
+/// Finding 9: the link the app writes — the Library copy's absolute path —
+/// is a witness: two renames replace the folder in the way and the move
+/// completes.
+#[cfg(unix)]
+#[test]
+fn f9_an_app_written_link_witnesses_and_the_two_renames_complete() {
+    let f = fixture(&["mux"]);
+    let old = f.link_row("mux", ".mux/skills/alpha");
+    assert_eq!(fs::read_link(&old).unwrap(), f.central);
+    let dest = foreign_at(&f, ".xum/skills/alpha");
+    test_seams::force_two_step_swap();
+
+    let report = f.run(&[xum_overwrite(&dest)]);
+
+    assert!(
+        matches!(only_move(&report).status, RedeployStatus::Moved),
+        "{report:#?}"
+    );
+    assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "v1");
+    assert_eq!(xum_entries(&f), 1, "nothing staged or set aside stays");
+    assert!(!present(&old));
+    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+}
+
+/// Finding 9, the launch check (Astra's second probe): cut between the two
+/// renames, the old link then reaching the Library only through the empty
+/// new place, and no exclusive rename to finish with. Nothing serves the
+/// skill, so the entry is never dropped as left behind: it stays journaled,
+/// pending, and a later launch with an exclusive rename finishes it.
+#[cfg(unix)]
+#[test]
+fn f9_the_launch_check_keeps_an_unfinished_entry_with_no_witness() {
+    let f = fixture(&["mux"]);
+    f.link_row("mux", ".mux/skills/alpha");
+    let dest = foreign_at(&f, ".xum/skills/alpha");
+    test_seams::force_two_step_swap();
+    test_seams::crash_between_swap_renames();
+    let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        redeploy_unlocked(
+            &f.store,
+            &f.roots,
+            &f.central_dir(),
+            &PlacementSettings::default(),
+            &[xum_overwrite(&dest)],
+            NOW,
+            |_| {},
+        )
+    }))
+    .is_err();
+    assert!(crashed, "interrupted");
+    assert!(!present(&dest), "cut between the renames");
+    let old = mux_link_written_as(&f, &through_the_destination(&f));
+    assert!(!old.join("a.txt").exists(), "the old link dangles");
+    test_seams::force_no_exclusive_rename();
+
+    let report = finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
+        .unwrap()
+        .expect("reported");
+
+    assert_eq!(report.journal.len(), 1, "{report:#?}");
+    assert_eq!(report.journal[0].status, JournalStatus::Unfinished);
+    assert!(report.left_behind.is_empty(), "{report:#?}");
+    assert_eq!(f.store.list_redeploy_journal().unwrap().len(), 1, "kept");
+    assert_eq!(xum_entries(&f), 2, "staged and set aside, both kept");
+    assert_eq!(f.preview().journal, 1, "pending");
+
+    // A later launch, with an exclusive rename, finishes it.
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| finish_journal(&f.store, &f.roots, &f.central_dir(), NOW).unwrap())
+            .join()
+            .unwrap()
+    })
+    .expect("settled");
+    assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "v1");
+    assert_eq!(
+        xum_entries(&f),
+        1,
+        "the folder answered Overwrite for is gone"
+    );
+    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+}
+
 /// F15 (destination aliased onto the central repo): the folder serving Codex
 /// is an alias of the Library. The deploy is refused before anything is
 /// written; the central bytes and the old link survive.

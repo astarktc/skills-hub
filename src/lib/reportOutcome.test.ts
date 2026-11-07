@@ -3316,6 +3316,25 @@ describe("redeployOutcome", () => {
     expect(outcome.toast?.message).toBe("Finished an interrupted move: 1 old copy removed");
   });
 
+  it("a journal entry left unfinished is an error, and the headline counts it", () => {
+    const outcome = redeployOutcome(
+      {
+        ...EMPTY,
+        journal: [
+          { entry_id: "e-a", skill_id: "a", skill_name: "a", tool: "mux", path: "/h/.xum/skills/a", status: "unfinished" },
+        ],
+      },
+      en(),
+      { resumed: true },
+    );
+    expect(outcome.toast).toMatchObject({
+      tone: "failure",
+      message: "Finished an interrupted move: 1 move unfinished",
+    });
+    expect(outcome.errors.map((e) => e.title)).toEqual(["a: the move to /h/.xum/skills/a could not be finished"]);
+    expect(outcome.errors[0].subject).toEqual({ skillId: "a", skillName: "a", tool: "mux" });
+  });
+
   it("an answer refused as stale is an error, and the headline counts it", () => {
     const outcome = redeployOutcome(
       {

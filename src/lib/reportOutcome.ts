@@ -2157,6 +2157,7 @@ export function redeployCounts(report: RedeployReport) {
     }
   }
   const removed = report.journal.filter((entry) => entry.status === "finished").length;
+  const unfinished = report.journal.filter((entry) => entry.status === "unfinished").length;
   return {
     moved,
     failed,
@@ -2170,6 +2171,8 @@ export function redeployCounts(report: RedeployReport) {
     /** Answers refused as stale: nothing was done for them. */
     refused: report.refused_answers.length,
     removed,
+    /** Replacements cut short that stay journaled, nothing else serving the skill. */
+    unfinished,
   };
 }
 
@@ -2227,6 +2230,14 @@ export function redeployOutcome(
       review: true,
     });
   }
+  for (const entry of report.journal) {
+    if (entry.status !== "unfinished") continue;
+    out.errors.push({
+      title: ctx.t("redeploy.report.unfinishedTitle", { name: entry.skill_name, path: entry.path }),
+      message: ctx.t("redeploy.report.unfinishedMessage"),
+      subject: { skillId: entry.skill_id, skillName: entry.skill_name, tool: entry.tool },
+    });
+  }
   for (const item of report.left_behind) {
     const entry: PlainEntry = {
       title: ctx.t("redeploy.report.leftTitle", { name: item.skill_name, path: item.path }),
@@ -2266,13 +2277,14 @@ export function redeployOutcome(
   part(HEADLINE_DONE_KEY.moved, counts.moved);
   part("redeploy.report.removed", counts.removed);
   part("outcome.targetsFailed", counts.failed);
+  part("redeploy.report.unfinished", counts.unfinished);
   part("redeploy.report.refused", counts.refused);
   part("redeploy.report.kept", counts.kept);
   part("redeploy.report.review", counts.review);
   part("redeploy.report.leftBehind", counts.leftBehind);
   if (parts.length === 0) parts.push(ctx.t(HEADLINE_DONE_KEY.moved, { count: 0 }));
   const tone: OutcomeTone =
-    counts.failed > 0 || counts.removalFailed > 0 || counts.refused > 0
+    counts.failed > 0 || counts.removalFailed > 0 || counts.refused > 0 || counts.unfinished > 0
       ? "failure"
       : counts.review > 0
         ? "conflict"

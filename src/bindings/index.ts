@@ -1039,7 +1039,13 @@ export type JournalStatus =
  *  An edited copy still awaiting the operator's answer (see
  *  `edited_copies`); still journaled.
  */
-"awaiting_answer";
+"awaiting_answer" |
+/**
+ *  A replacement cut short that could not be finished, with nothing
+ *  else provably serving the skill: still journaled, finished by a later
+ *  run or launch.
+ */
+"unfinished";
 
 export type LeftBehind = {
 	path: string,

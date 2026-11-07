@@ -370,6 +370,22 @@ describe("the redeploy's ask", () => {
     ]);
   });
 
+  it("an entry the first run left unfinished reads as the retry settled it, once", () => {
+    const unfinished = {
+      entry_id: "e-x",
+      skill_id: "x",
+      skill_name: "x",
+      tool: "mux",
+      path: "/h/.xum/skills/x",
+      status: "unfinished" as const,
+    };
+    const withUnfinished: RedeployReport = { ...first, journal: [...first.journal, unfinished] };
+    const again = mergeRedeployRetry(withUnfinished, { ...EMPTY, journal: [unfinished] });
+    expect(again.journal.filter((entry) => entry.entry_id === "e-x")).toEqual([unfinished]);
+    const done = mergeRedeployRetry(withUnfinished, { ...EMPTY, journal: [{ ...unfinished, status: "finished" }] });
+    expect(done.journal.filter((entry) => entry.entry_id === "e-x").map((entry) => entry.status)).toEqual(["finished"]);
+  });
+
   it("the merged report keeps the answers the retry refused as stale", () => {
     const refused = {
       path: "/h/.codex/skills/b",

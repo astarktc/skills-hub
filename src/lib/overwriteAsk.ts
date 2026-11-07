@@ -459,7 +459,8 @@ const moveKey = (move: Pick<RedeployMove, "skill_id" | "folder_key">) => `${move
  * One operator action's redeploy report, after the answered retry: each
  * asked move replaced by the retry's move for it; an edited copy the retry
  * settled no longer awaits, and its move reads `moved` once the copy was
- * deleted (`left_old` when it was left); everything else the retry found
+ * deleted (`left_old` when it was left); a journal entry the first run left
+ * unfinished reads as the retry settled it; everything else the retry found
  * (its journal, left-behind copies, lost disables, copies still awaiting,
  * answers it refused as stale) joins the report.
  */
@@ -480,9 +481,16 @@ export function mergeRedeployRetry(first: RedeployReport, retry: RedeployReport)
     return move;
   });
   const firstKeys = new Set(first.moves.map(moveKey));
+  // An entry the first run left unfinished is settled again by the retry: its outcome is the retry's.
+  const resettled = new Set(
+    retry.journal.filter((entry) => entry.status !== "awaiting_answer").map((entry) => entry.entry_id),
+  );
   return {
     moves: [...moves, ...retry.moves.filter((move) => !firstKeys.has(moveKey(move)))],
-    journal: [...first.journal, ...retry.journal.filter((entry) => entry.status !== "awaiting_answer")],
+    journal: [
+      ...first.journal.filter((entry) => !(entry.status === "unfinished" && resettled.has(entry.entry_id))),
+      ...retry.journal.filter((entry) => entry.status !== "awaiting_answer"),
+    ],
     left_behind: [...first.left_behind, ...retry.left_behind],
     edited_copies: retry.edited_copies,
     lost_disables: [...first.lost_disables, ...retry.lost_disables],
