@@ -5,6 +5,7 @@
 //! faked through `mark_installed_in`. Nothing touches the operator's home.
 
 use crate::core::environment::HostRoots;
+use crate::core::ownership::Deployed;
 use crate::core::removal_fence::central_repo_of;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -115,6 +116,7 @@ fn seed_row(f: &Fixture, target_path: &Path, mode: SyncMode) {
             status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(1),
+            content_hash: None,
         })
         .expect("seed target");
 }
@@ -203,7 +205,12 @@ fn a_legacy_copy_row_is_rematerialised_from_the_central_copy() {
     assert_eq!(Path::new(&row.target_path), f.current());
     // Augment consumes links, so the capability-aware engine links it.
     assert_eq!(row.mode, SyncMode::Symlink);
-    assert!(f.former().symlink_metadata().is_err(), "old copy removed");
+    // A pre-1.4.0 row recorded no identity for its copy, so the old copy is
+    // not provably the app's (ADR-0007): it is left where it is.
+    assert!(
+        f.former().symlink_metadata().is_ok(),
+        "an unrecorded old copy is left in place"
+    );
 }
 
 #[cfg(unix)]
@@ -349,6 +356,7 @@ fn relocation_leaves_a_row_that_owns_nothing_alone() {
             status: SyncStatus::Error,
             last_error: Some("target already exists".to_string()),
             synced_at: None,
+            content_hash: None,
         })
         .unwrap();
 
@@ -429,6 +437,7 @@ fn the_superseded_artifact_seam_refuses_anything_outside_a_former_dir() {
             &central_repo_of(&f.store),
             augment(),
             &path,
+            &Deployed::none(),
         )
         .expect_err("refused");
         assert!(

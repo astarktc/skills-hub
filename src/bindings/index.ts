@@ -76,6 +76,14 @@ export const commands = {
 	 */
 	syncSkillsToTools: (skills: BatchSyncSkillDto[], tools: string[], policy: BatchSyncPolicyDto, onProgress: Channel<SyncProgressDto>) => __TAURI_INVOKE<BatchTargetOutcome[]>("sync_skills_to_tools", { skills, tools, policy, onProgress }),
 	/**
+	 *  The overwrite ask's retry for Propagation's global rows (D12): each
+	 *  answer names the row and the path the ask showed, and is settled at that
+	 *  path only (`propagation::resolve_target_collisions`) — never through the
+	 *  sync batch, whose destination may be another folder. Per-row outcomes are
+	 *  report data.
+	 */
+	resolveTargetCollisions: (decisions: TargetDecision[]) => __TAURI_INVOKE<BatchTargetOutcome[]>("resolve_target_collisions", { decisions }),
+	/**
 	 *  Re-acquire Managed skills from their sources, finalize them, and
 	 *  propagate to every Sync target — one batch, one report. `skillIds` of
 	 *  `None` means every Managed skill (Refresh all); a single-skill Update is
@@ -278,22 +286,27 @@ export type AppSettings = {
  *  The operator's answer to the overwrite ask for one project assignment
  *  whose sync met a folder in the way (a `TARGET_EXISTS` report row of
  *  assign / resync / Enable / Propagation). Crosses the wire as itself.
+ *  `path` is the path the ask showed (the `TARGET_EXISTS` row's): the answer
+ *  applies to the assignment only while it still resolves there.
  */
 export type AssignmentDecision = {
 	project_id: string,
 	skill_id: string,
 	tool: string,
+	path: string,
 	decision: OverrideDecision,
 };
 
 /**
  *  The operator's answer to one pair's `TARGET_EXISTS` ask — overwrite the
- *  folder, or keep it (the pair is recorded `disabled`); applies to any
- *  target tool sharing the named tool's skills dir.
+ *  folder, or keep it (the pair is recorded `disabled`) — for the row keyed
+ *  `tool`, at the `path` the ask showed: the answer applies only while that
+ *  row's destination is still that path (`global_sync::BatchOverride`).
  */
 export type BatchSyncOverrideDto = {
 	skill_id: string,
 	tool: string,
+	path: string,
 	decision: OverrideDecision,
 };
 
@@ -1635,6 +1648,13 @@ export type RemovalTargetOutcome = {
 export type RemovalTargetStatus =
 /**  Removed, or already absent. */
 { status: "removed" } |
+/**
+ *  Something occupies the path that no attached row can show is the
+ *  artifact it deployed (ADR-0007): a folder put where the app's link
+ *  was, a copy edited in place, a copy a pre-1.4.0 row never recorded.
+ *  It was kept untouched, and the rows settled as their artifact gone.
+ */
+{ status: "left_in_place" } |
 /**  Every attached row was kept with status `error` and the original chain. */
 { status: "failed"; error: CommandError };
 
@@ -1994,6 +2014,23 @@ export type SyncStatus =
  *  `skill_disable::enable_targets` lifts it.
  */
 "disabled";
+
+/**
+ *  The operator's answer to the overwrite ask for one **global** row whose
+ *  Propagation met a folder it cannot prove its own (a `TARGET_EXISTS`
+ *  Propagation outcome, D12). It names the row (`skill_id`, `tool`: the
+ *  outcome's raw row key) **and the path the ask showed** (`path`: the
+ *  `TARGET_EXISTS` row's path, the row's recorded `target_path`), so the
+ *  answer applies to exactly the row and the folder it was asked about —
+ *  never to the global batch's destination for the skill, which may be
+ *  another folder. Crosses the wire as itself.
+ */
+export type TargetDecision = {
+	skill_id: string,
+	tool: string,
+	path: string,
+	decision: OverrideDecision,
+};
 
 /**
  *  Which way a toggle went, with the resulting view and that direction's

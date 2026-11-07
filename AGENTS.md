@@ -141,7 +141,7 @@ than re-tagging.
 - **Sync-target mutation**: every operation that materialises or removes a Sync target (global sync
   batch, Disable / Enable (`skill_disable::disable_targets` / `enable_targets`), delete,
   assign/unassign/toggle, resync (of one assignment via `resync_project_assignment`, one project, or every project),
-  `resolve_project_collisions`, configure project tools, remove project,
+  `resolve_project_collisions`, `resolve_target_collisions`, configure project tools, remove project,
   gitignore update, Refresh's apply phase, Onboarding import's apply phase, Move Library folder
   (`library_move::move_library` — the only writer of the Library folder setting — and `resume_library_move`, which
   startup runs to finish a move journaled at its switch)) wraps its **own** body in
@@ -377,8 +377,15 @@ than re-tagging.
     (observed where `sync_engine` raises the collision). The frontend raises **one** ask per operator action
     (`src/lib/overwriteAsk.ts` shapes the rows; `useSyncOrchestration` owns the ask) answered per row, and retries:
     global pairs through `sync_skills_to_tools` with per-pair overrides (the install batch's skills exist by then),
-    Enable's global pairs through `enable_skill_targets(scope, overrides)`, project assignments through
-    `resolve_project_collisions` (`Keep` → the row `disabled`, owning nothing, reported `declined`). A dismissed
+    Enable's global pairs through `enable_skill_targets(scope, overrides)`, Propagation's global rows through
+    `resolve_target_collisions` (each answer names the row **and the path the ask showed**, checked against the row's
+    recorded path before anything is touched and applied there only — never the batch's rebuilt destination, which
+    may be another folder), project assignments through
+    `resolve_project_collisions` (`Keep` → the row `disabled`, owning nothing, reported `declined`). **Every answer
+    names the path its ask showed** (`BatchSyncOverrideDto.path`, `AssignmentDecision.path`, `TargetDecision.path`):
+    the core resolves the row's destination now, under the guard, and a mismatch (the skill renamed, the project moved,
+    the stored name changed) is a stale answer — `NOT_FOUND` `target`, neither path touched; Enable restores a taken
+    row it recorded nothing for, under the id it had. A dismissed
     ask sends nothing. An operator action that settles several reports (a group's Deploy all, Retry over several
     Tools, a multi-skill project assignment) or a report of another shape (Refresh / Update / Restore / Re-point —
     Propagation — and Edit's Propagation) **collects every report first** (`collectSync`,
@@ -420,18 +427,23 @@ than re-tagging.
   from `skills_dir`.
 - **Artifact removal is one module.** `core/artifact_removal.rs` plans by scope (`Skill`, `SkillGlobal`,
   `SkillTool`, `Project`, `ProjectTool`, `ProjectSkill`, `ProjectSkillTool`, `EveryGlobalTarget`; a scope carries the
-  roots its planning needs), executes with one presence rule (`symlink_metadata`) and one settlement
+  roots its planning needs), executes with one occupant rule and one settlement
   rule — a row whose artifact could not be removed is **kept** with sync status `error`, rows are
   deleted only on success (`docs/adr/0002-keep-row-with-error-on-failed-artifact-removal.md`) — and
   reports per target. Disable (`skill_disable`) is the one caller that settles success differently
   (`execute_settling_unlocked(.., Settlement::Disable)`: rows kept `disabled`, never deleted; failure is
-  still `error`). **Ownership** is independent of status: only a row the app materialised
-  (`synced_at` set — `owns_artifact`) owns its path. A never-synced row (the pair marker, an assignment recorded for a
-  disabled skill, the same rows after a failed Enable turned them `error`) owns nothing: planning sets it aside, no path
-  is touched, and once the scope succeeds Delete clears the row alone (`RemovalReport.cleared_markers`) and Disable
-  flips it `disabled`; re-sync and Propagation never overwrite its path. Only a successful sync makes a row an owner;
-  Enable's admission (`AssignmentTransition::EnableAdmitted`) clears a `disabled` assignment's ownership (its Disable
-  removed the artifact), never an `error` row's. Callers (`project_ops`, `project_sync`, `skill_disable`, the delete command) build a scope
+  still `error`). **Ownership is evidence checked when acting** (ADR-0007): `core/ownership.rs::check(path, &Deployed)`
+  runs right before every removal (here) and every replacement (`sync_engine::Replace::if_ours` — resync,
+  Propagation, the global batch); the occupant is ours only as a link resolving by physical identity to the skill's
+  Library copy, or a copy whose Content identity equals the row's recorded `content_hash` (both tables; a global row
+  written before V12 has none). Any other occupant is kept: a removal reports it `left_in_place`, a write raises
+  `TARGET_EXISTS` for the ask. `synced_at` (`owns_artifact`) is only the row's **claim** — needed, never sufficient. A
+  row without one (never synced: the pair marker, an assignment recorded for a disabled skill, the same rows after a
+  failed Enable turned them `error`) has no evidence: planning sets it aside, no path is touched, and once the scope
+  succeeds Delete clears the row alone (`RemovalReport.cleared_markers`) and Disable flips it `disabled`. A successful
+  Disable (and a Keep answer) gives the claim up (`TargetTransition::Disabled` / `AssignmentTransition::Disabled`
+  clear `synced_at` + `content_hash`); a failed removal keeps it. Every success writer records the deployed
+  `content_hash` for a copy. Callers (`project_ops`, `project_sync`, `skill_disable`, the delete command) build a scope
   and read the report; they never delete a path themselves (project reconcile may probe one with `symlink_metadata`).
 - **Git bytes have two single entry points.** `git_cache::fetch_through_cache` is the only way into the
   clone cache (per-key locks, TTL as an `i64` value from `settings::git_cache_ttl_ms`, no DB handle in
@@ -500,7 +512,16 @@ than re-tagging.
   removal is admitted by **physical entry identity** (canonical parent; a link leaf never resolved, any other leaf
   resolved to its real spelling; compared by device + inode on Unix, never by spelling) against the library
   (`ProtectedLibrary::new(store, central_dir)`: the **configured central repo's whole subtree** plus every recorded
-  copy), an overwrite's source (`sparing`) and the caller's `Claim`, a directory refused when it is itself a mount point
+  copy), an overwrite's source (`sparing`) and the caller's `Claim` — `artifact_removal` claims each row's managed
+  skills folders (a global row's current and former registry dirs, `placement::managed_global_dirs`; an assignment's
+  project skills dir), and **every replacement** claims its destination's skills dir through `Replace::within` — a
+  stored path (Propagation's global rows, its ask's answer, Library move's relink) its managed dirs, a derived one
+  (the global batch, project sync / Propagation / Enable / collision retry, the project relink, Target relocation)
+  the dir it was derived in — so a malformed record outside them is refused, never removed. A name becomes a path
+  only through `placement::deployment_path`: a skill or stored assignment name that is not exactly one normal path
+  component is the typed `INVALID_PATH` `not_a_folder_name`, refused before the disk is touched (report data in a
+  fan-out) —
+  a directory refused when it is itself a mount point
   (`MountPoint`) or its subtree — walked, links unfollowed — would cross one (`ContainsMount`; on Linux an unreadable
   mount table fails closed, `MountTableUnreadable`), then removed at that physical location; a refusal
   is the typed `REMOVAL_REFUSED` (BACKLOG #107). So every removal entry point takes the configured `central_dir`,

@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::core::environment::HostRoots;
 // The refusal assertions are all in unix-only link tests.
 #[cfg(unix)]
 use crate::core::errors::{RevealPathFailure, SignalError};
@@ -384,7 +385,7 @@ fn a_central_request_through_an_outside_link_is_refused() {
     let reveal = |requested: &Path| {
         resolve_reveal_item(
             &store,
-            &home,
+            &HostRoots::under_home(&home),
             &central,
             &requested.to_string_lossy(),
             probe,
@@ -455,6 +456,7 @@ fn seed_kept_target(store: &SkillStore, skill: &SkillRecord, tool: &str, target:
             status: SyncStatus::Error,
             last_error: Some("permission denied".to_string()),
             synced_at: Some(1),
+            content_hash: None,
         })
         .expect("upsert target");
 }
@@ -509,13 +511,14 @@ fn a_reported_target_is_selected_and_a_vanished_one_selects_its_ancestor() {
         adapter_by_key("pi").unwrap(),
         "release-train",
     )
+    .unwrap()
     .expect("project dir");
     fs::create_dir_all(&assigned).unwrap();
     let probe = |p: &Path| p.symlink_metadata().is_ok();
     let reveal = |requested: &Path| {
         resolve_reveal_item(
             &store,
-            &home,
+            &HostRoots::under_home(&home),
             &central,
             &requested.to_string_lossy(),
             probe,
@@ -559,7 +562,7 @@ fn an_unrecorded_path_is_refused_and_a_vanished_volume_is_gone() {
         assert_eq!(
             refusal(resolve_reveal_item(
                 &store,
-                &home,
+                &HostRoots::under_home(&home),
                 &central,
                 &requested.to_string_lossy(),
                 probe,
@@ -572,7 +575,7 @@ fn an_unrecorded_path_is_refused_and_a_vanished_volume_is_gone() {
     assert_eq!(
         refusal(resolve_reveal_item(
             &store,
-            &home,
+            &HostRoots::under_home(&home),
             &central,
             &global.to_string_lossy(),
             |_| false,

@@ -237,7 +237,7 @@ fn remove_project_tool_rows(
         tool_key: tool_key.to_string(),
     };
     let mut reports = vec![RemovalReport {
-        scope: scope(tool),
+        scope: Some(scope(tool)),
         ..RemovalReport::merge([])
     }];
     for key in row_keys {

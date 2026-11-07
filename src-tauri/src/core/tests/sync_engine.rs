@@ -5,7 +5,7 @@ use crate::core::errors::CommandError;
 use crate::core::removal_fence::ProtectedLibrary;
 use crate::core::sync_engine::{
     copy_dir_recursive, remove_admitted, sync_dir_for_tool_with_overwrite, sync_dir_hybrid,
-    sync_dir_hybrid_with_overwrite, SyncMode,
+    sync_dir_hybrid_with_overwrite, Replace, SyncMode,
 };
 use crate::core::tool_adapters::adapter_by_key;
 
@@ -209,7 +209,7 @@ fn symlink_capable_tool_gets_a_link() {
         src_dir.path(),
         Source::Directory(src_dir.path()),
         &target,
-        false,
+        Replace::never(),
         &ProtectedLibrary::unrecorded(),
     )
     .unwrap();
@@ -236,7 +236,7 @@ fn deep_agents_code_is_deployed_by_copy() {
         src_dir.path(),
         Source::Directory(src_dir.path()),
         &target,
-        false,
+        Replace::never(),
         &ProtectedLibrary::unrecorded(),
     )
     .unwrap();
@@ -268,7 +268,7 @@ fn any_adapter_without_symlink_support_is_copied() {
         src_dir.path(),
         Source::Directory(src_dir.path()),
         &target,
-        false,
+        Replace::never(),
         &ProtectedLibrary::unrecorded(),
     )
     .unwrap();
@@ -390,7 +390,7 @@ fn overwrite_refuses_a_case_variant_of_its_source() {
             &source,
             Source::Directory(&source),
             &target,
-            true,
+            Replace::confirmed(),
             &ProtectedLibrary::unrecorded(),
         )
         .unwrap_err(),
@@ -559,7 +559,7 @@ fn sync_within_root_links_under_a_present_root() {
         src.path(),
         Source::Directory(src.path()),
         &target,
-        false,
+        Replace::never(),
         &root,
         &ProtectedLibrary::unrecorded(),
     )
@@ -595,7 +595,7 @@ fn copy_within_root_never_recreates_a_root_that_vanishes_mid_copy() {
         src.path(),
         Source::Directory(src.path()),
         &target,
-        false,
+        Replace::never(),
         &root,
         &ProtectedLibrary::unrecorded(),
     )
@@ -619,7 +619,7 @@ fn copy_within_root_never_recreates_a_root_that_vanishes_mid_copy() {
         src.path(),
         Source::Directory(src.path()),
         &target,
-        false,
+        Replace::never(),
         &root,
         &ProtectedLibrary::unrecorded(),
     )
@@ -651,7 +651,7 @@ fn global_sync_still_creates_missing_parents() {
             src.path(),
             Source::Directory(src.path()),
             &target,
-            true,
+            Replace::confirmed(),
             &ProtectedLibrary::unrecorded(),
         )
         .unwrap();
@@ -679,12 +679,20 @@ mod junction_leg {
         execute_settling_unlocked, execute_unlocked, plan, RemovalScope, Settlement,
     };
     use crate::core::content_identity::{self, Comparison, Source};
+    use crate::core::environment::HostRoots;
     use crate::core::removal_fence::{central_repo_of, Fence, ProtectedLibrary};
     use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord};
     use crate::core::sync_engine::{
         remove_path_any, sync_dir_hybrid_with_overwrite, try_junction, Occupant, SyncMode,
     };
     use crate::core::sync_status::SyncStatus;
+    use crate::core::tool_adapters::{adapter_by_key, skills_dir_in};
+
+    /// The host roots of a test based at `base`: `base/home`, whose Claude
+    /// Code skills dir holds the junction rows (their managed folder).
+    fn roots_at(base: &Path) -> HostRoots {
+        HostRoots::under_home(&base.join("home"))
+    }
 
     /// A central skill with a nested file, so "intact" covers more than one level.
     fn central_skill(base: &Path, name: &str) -> PathBuf {
@@ -711,10 +719,10 @@ mod junction_leg {
         );
     }
 
-    /// A junction at `<base>/tools/claude/skills/<name>` → `central`, made by
-    /// the engine's own junction leg.
+    /// A junction at Claude Code's skills dir under [`roots_at`] → `central`,
+    /// made by the engine's own junction leg.
     fn junction_target(base: &Path, central: &Path, name: &str) -> PathBuf {
-        let parent = base.join("tools").join("claude").join("skills");
+        let parent = skills_dir_in(&roots_at(base), adapter_by_key("claude_code").unwrap());
         fs::create_dir_all(&parent).unwrap();
         let target = parent.join(name);
         try_junction(central, &target).expect("junction leg");
@@ -761,6 +769,7 @@ mod junction_leg {
                 status: SyncStatus::Synced,
                 last_error: None,
                 synced_at: Some(1),
+                content_hash: None,
             })
             .unwrap();
         (store, skill)
@@ -949,6 +958,7 @@ mod junction_leg {
 
         let scope = RemovalScope::SkillGlobal {
             skill_id: skill.id.clone(),
+            roots: roots_at(tmp.path()),
         };
         let report = execute_unlocked(
             &store,
@@ -976,6 +986,7 @@ mod junction_leg {
 
         let scope = RemovalScope::SkillGlobal {
             skill_id: skill.id.clone(),
+            roots: roots_at(tmp.path()),
         };
         let report = execute_settling_unlocked(
             &store,
@@ -1069,12 +1080,7 @@ mod junction_leg {
 
         // Where this host may create a directory symlink (an elevated shell, a
         // CI runner), the two link kinds must read identically.
-        let link = tmp
-            .path()
-            .join("tools")
-            .join("claude")
-            .join("skills")
-            .join("via-symlink");
+        let link = target.parent().unwrap().join("via-symlink");
         if std::os::windows::fs::symlink_dir(&central, &link).is_ok() {
             assert_eq!(
                 content_identity::read(Source::Directory(&link)),

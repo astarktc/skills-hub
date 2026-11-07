@@ -21,6 +21,7 @@ import {
   compositeHeadline,
   deleteOutcome,
   deleteReportRows,
+  deleteReportView,
   HEADLINE_DONE_KEY,
   headlineTone,
   enableOutcome,
@@ -671,6 +672,98 @@ describe("removalOutcome", () => {
       }
     },
   );
+  it("a folder left in place (not what the app deployed) settles its Deployment and is named in a quiet line, never a failure", async () => {
+    const report: RemovalReport = {
+      targets: [
+        {
+          rows: [{ scope: "global_target", id: "t1", skill_id: "s1", tool: "claude", folder_key: "claude" }],
+          path: "/home/.claude/skills/alpha",
+          status: { status: "left_in_place" },
+        },
+        {
+          rows: [{ scope: "assignment", id: "a1", project_id: "p1", skill_id: "s1", tool: "pi", folder_key: "pi" }],
+          path: "/work/p1/.pi/skills/alpha",
+          status: { status: "removed" },
+        },
+      ],
+      central_removed: true,
+      record_deleted: true, cleared_markers: [], disabled_markers: [],
+    };
+    const line = t("outcome.leftInPlaceLine", { path: "/home/.claude/skills/alpha" });
+    const all = removalOutcome(report, { ...ctx, action: "all" });
+    expect(all.errors).toEqual([]);
+    expect(all.notes).toEqual([line]);
+    expect(all.toast).toEqual({
+      kind: "success", tone: "success", message: t("outcome.done.disabled", { count: 2 }), detail: line,
+    });
+    expect(all.completion.closeModal).toBe(true);
+    const unassigned = removalOutcome(report, { ...ctx, action: "bulkUnassign" });
+    expect(unassigned.toast?.message).toBe(t("projectsSurface.done.unassigned", { count: 2 }));
+    expect(unassigned.toast?.detail).toBe(line);
+    const project = projectRemovalOutcome(report, { ...ctx, action: "removeProject" });
+    expect(project.toast).toEqual({ kind: "success", tone: "success", message: "projects.removeComplete", detail: line });
+    const deleted = deleteOutcome([{ skillId: "s1", name: "alpha", report }], ctx);
+    expect(deleted.toast).toEqual({ kind: "success", tone: "success", message: "status.skillRemoved", detail: line });
+    expect(deleted.notes).toEqual([line]);
+    const batch = deleteOutcome(
+      [
+        { skillId: "s1", name: "alpha", report },
+        { skillId: "s2", name: "beta", report: { ...report, targets: [] } },
+      ],
+      ctx,
+    );
+    expect(batch.notes).toEqual([`alpha: ${line}`]);
+    const [row] = deleteReportRows([{ skillId: "s1", name: "alpha", report: { ...report, record_deleted: false } }], ctx);
+    expect(row.removedFrom).toEqual(["pi · p1"]);
+    expect(row.leftInPlace).toEqual([{ path: "/home/.claude/skills/alpha", tools: ["CLAUDE"] }]);
+    const i18n = i18next.createInstance();
+    await i18n.init({ resources, lng: "en", interpolation: { escapeValue: false } });
+    const en = i18n.t.bind(i18n) as unknown as typeof t;
+    expect(en("outcome.leftInPlaceLine", { path: "/x" })).toBe(
+      "Left /x in place: it isn't what Skills Hub put there",
+    );
+  });
+  // Round 20 t18 review, Sol 103: a bulk Remove's report shows the folders a
+  // *deleted* skill left in place too; Retry stays for the kept skills.
+  it("the Delete report view details a deleted skill's left-in-place folders and retries only kept skills", () => {
+    const row = (id: string, tool: string) => ({ scope: "global_target" as const, id, skill_id: id, tool, folder_key: tool });
+    const kept: RemovalReport = {
+      targets: [{ rows: [row("s1", "claude")], path: "/home/.claude/skills/alpha", status: { status: "failed", error: { code: "REMOVAL_PERMISSION_DENIED", path: "/home/.claude/skills/alpha", detail: "denied" } } }],
+      central_removed: false, record_deleted: false, cleared_markers: [], disabled_markers: [],
+    };
+    const deletedLeaving: RemovalReport = {
+      targets: [
+        { rows: [row("s2", "claude")], path: "/home/.claude/skills/beta", status: { status: "left_in_place" } },
+        { rows: [row("s2", "pi")], path: "/home/.pi/agent/skills/beta", status: { status: "removed" } },
+      ],
+      central_removed: true, record_deleted: true, cleared_markers: [], disabled_markers: [],
+    };
+    const deletedClean: RemovalReport = {
+      targets: [{ rows: [row("s3", "claude")], path: "/home/.claude/skills/gamma", status: { status: "removed" } }],
+      central_removed: true, record_deleted: true, cleared_markers: [], disabled_markers: [],
+    };
+    const rows = deleteReportRows(
+      [
+        { skillId: "s2", name: "beta", report: deletedLeaving },
+        { skillId: "s1", name: "alpha", report: kept },
+        { skillId: "s3", name: "gamma", report: deletedClean },
+        { skillId: "s4", name: "delta", error: { code: "CANCELLED" } },
+      ],
+      ctx,
+    );
+    // Delta threw before anything was planned and is no longer listed.
+    const view = deleteReportView(rows, (id) => id !== "s4");
+
+    expect(view.detailed.map((r) => r.name)).toEqual(["alpha", "delta", "beta"]);
+    const beta = view.detailed.find((r) => r.name === "beta")!;
+    expect(beta.deleted).toBe(true);
+    expect(beta.leftInPlace).toEqual([{ path: "/home/.claude/skills/beta", tools: ["CLAUDE"] }]);
+    expect(beta.removedFrom).toEqual(["pi"]);
+    expect(beta.kept).toEqual([]);
+    expect(view.removed.map((r) => r.name)).toEqual(["gamma"]);
+    expect(view.retryIds).toEqual(["s1"]);
+    expect(view.kept).toBe(2);
+  });
   it("a zero-target report warns instead of claiming an unsync happened", () => {
     const nothing: RemovalReport = { targets: [], central_removed: false, record_deleted: false, cleared_markers: [], disabled_markers: [] };
     for (const action of ["toggle", "bulkUnassign"] as const) {
@@ -2318,6 +2411,7 @@ describe("Delete over several skills (ticket 13, D16)", () => {
           message: "Permission denied",
         },
       ],
+      leftInPlace: [],
       failure: null,
     });
     expect(rows[1]).toMatchObject({ deleted: false, kept: [], failure: "store locked" });

@@ -192,6 +192,7 @@ fn retry(f: &Fixture, skill_id: &str, name: &str, decision: OverrideDecision) ->
                 skill_id: skill_id.to_string(),
                 tool_key: "claude_code".to_string(),
                 decision,
+                path: None,
             }],
         },
         2000,

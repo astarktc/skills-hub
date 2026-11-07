@@ -5,7 +5,8 @@ use anyhow::{Context, Result};
 
 use super::content_identity::{self, Source};
 use super::errors::SignalError;
-use super::removal_fence::{self, Entry, Fence, ProtectedLibrary};
+use super::ownership::{self, Deployed, Occupancy};
+use super::removal_fence::{self, Claim, Entry, Fence, ProtectedLibrary};
 use super::tool_adapters::ToolAdapter;
 
 /// Typed condition: the sync target already exists and overwrite was not
@@ -78,6 +79,96 @@ pub struct SyncOutcome {
     pub mode_used: SyncMode,
     pub target_path: PathBuf,
     pub replaced: bool,
+}
+
+/// When a sync may replace the folder already at its target — the write
+/// half of the occupant rule (ADR-0007). Decided **at the moment of
+/// replacement**, against what occupies the target then; an occupant the rule
+/// does not admit is the typed [`TargetExistsError`], the one overwrite ask
+/// (D12), never a silent replacement. A link at the target that already is
+/// the one this sync would write is left as it is, whatever the rule.
+///
+/// A caller writing at a **stored** path (Propagation's global rows, Library
+/// move's relink, the answer to a Propagation ask) also says where that path
+/// must lie ([`Replace::within`]): the occupant is then removed only when it
+/// physically lies inside one of those skills folders
+/// (`removal_fence::Claim::Within`), whatever the rule above admitted — a
+/// malformed record never makes the app replace a folder elsewhere.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Replace<'a> {
+    /// The operator answered Overwrite for this target (D12), or the caller
+    /// verified the occupant itself (Library move's relink).
+    confirmed: bool,
+    /// Replace an occupant the occupant check proves this row's own
+    /// (`ownership::check` against the row's evidence).
+    ours: Option<&'a Deployed>,
+    /// Replace an occupant whose content is identical to the skill's.
+    same_content: bool,
+    /// The managed skills folders a replaced occupant must lie in; `None`
+    /// for a target the registry derived (the batch's destination, a
+    /// project's skills dir).
+    within: Option<&'a [PathBuf]>,
+}
+
+impl<'a> Replace<'a> {
+    /// A first sync: any occupant is asked about.
+    pub(crate) fn never() -> Self {
+        Self {
+            confirmed: false,
+            ours: None,
+            same_content: false,
+            within: None,
+        }
+    }
+
+    /// Remove an occupant only inside one of `dirs` (a stored path's managed
+    /// skills folders, `placement::managed_global_dirs`).
+    pub(crate) fn within(self, dirs: &'a [PathBuf]) -> Self {
+        Self {
+            within: Some(dirs),
+            ..self
+        }
+    }
+
+    /// The operator's Overwrite answer, or an occupant the caller verified.
+    pub(crate) fn confirmed() -> Self {
+        Self {
+            confirmed: true,
+            ..Self::never()
+        }
+    }
+
+    /// Only an occupant `deployed` proves the row's own.
+    pub(crate) fn if_ours(deployed: &'a Deployed) -> Self {
+        Self {
+            ours: Some(deployed),
+            ..Self::never()
+        }
+    }
+
+    /// Also replace an occupant identical to the skill (`same` true).
+    pub(crate) fn or_same_content(self, same: bool) -> Self {
+        Self {
+            same_content: self.same_content || same,
+            ..self
+        }
+    }
+
+    /// Whether the occupant of `target` may be replaced now. An occupant the
+    /// check cannot read is not admitted (the ask decides).
+    fn admits(&self, identity: Source<'_>, target: &Path) -> bool {
+        if self.confirmed {
+            return true;
+        }
+        if let Some(deployed) = self.ours {
+            match ownership::check(target, deployed) {
+                Ok(Occupancy::Ours) => return true,
+                Ok(Occupancy::Absent | Occupancy::Foreign) => {}
+                Err(err) => log::warn!("occupant of {:?} not verified: {err:#}", target),
+            }
+        }
+        self.same_content && content_identity::same_content(identity, target)
+    }
 }
 
 /// Where a sync may create the directories a target needs.
@@ -165,7 +256,11 @@ pub fn sync_dir_hybrid_with_overwrite(
         source,
         identity,
         target,
-        overwrite,
+        if overwrite {
+            Replace::confirmed()
+        } else {
+            Replace::never()
+        },
         TargetParents::CreateMissing,
         &ProtectedLibrary::unrecorded(),
     )
@@ -175,7 +270,7 @@ fn hybrid_with_overwrite(
     source: &Path,
     identity: Source<'_>,
     target: &Path,
-    overwrite: bool,
+    replace: Replace<'_>,
     parents: TargetParents<'_>,
     library: &ProtectedLibrary<'_>,
 ) -> Result<SyncOutcome> {
@@ -197,8 +292,8 @@ fn hybrid_with_overwrite(
             });
         }
 
-        if overwrite {
-            replace_occupant(source, target, library)?;
+        if replace.admits(identity, target) {
+            replace_occupant(source, target, &replace, library)?;
             did_replace = true;
         } else {
             anyhow::bail!(TargetExistsError::at(identity, target));
@@ -224,7 +319,11 @@ pub fn sync_dir_copy_with_overwrite(
         source,
         identity,
         target,
-        overwrite,
+        if overwrite {
+            Replace::confirmed()
+        } else {
+            Replace::never()
+        },
         TargetParents::CreateMissing,
         &ProtectedLibrary::unrecorded(),
     )
@@ -234,14 +333,14 @@ fn copy_with_overwrite(
     source: &Path,
     identity: Source<'_>,
     target: &Path,
-    overwrite: bool,
+    replace: Replace<'_>,
     parents: TargetParents<'_>,
     library: &ProtectedLibrary<'_>,
 ) -> Result<SyncOutcome> {
     let mut did_replace = false;
     if std::fs::symlink_metadata(target).is_ok() {
-        if overwrite {
-            replace_occupant(source, target, library)?;
+        if replace.admits(identity, target) {
+            replace_occupant(source, target, &replace, library)?;
             did_replace = true;
         } else {
             anyhow::bail!(TargetExistsError::at(identity, target));
@@ -261,10 +360,20 @@ fn copy_with_overwrite(
 /// Remove the folder in an overwrite's way — admitted physically, so the
 /// occupant is never the source itself, inside it or around it, and never in
 /// the central `library` (a Tool's skills dir linked onto the central repo
-/// makes the "occupant" a central copy).
-fn replace_occupant(source: &Path, target: &Path, library: &ProtectedLibrary<'_>) -> Result<()> {
-    remove_path_any(target, &Fence::new(library).sparing(source))
-        .with_context(|| format!("remove existing target {:?}", target))
+/// makes the "occupant" a central copy) — and, for a stored path, only inside
+/// the managed skills folders `replace` names ([`Replace::within`]).
+fn replace_occupant(
+    source: &Path,
+    target: &Path,
+    replace: &Replace<'_>,
+    library: &ProtectedLibrary<'_>,
+) -> Result<()> {
+    let fence = Fence::new(library).sparing(source);
+    let fence = match replace.within {
+        Some(dirs) => fence.claiming(Claim::Within(dirs)),
+        None => fence,
+    };
+    remove_path_any(target, &fence).with_context(|| format!("remove existing target {:?}", target))
 }
 
 /// The tool-aware sync entry point: tools that cannot consume a symlinked
@@ -272,14 +381,17 @@ fn replace_occupant(source: &Path, target: &Path, library: &ProtectedLibrary<'_>
 /// the skills stay usable after sync; every other tool gets the hybrid
 /// symlink -> junction -> copy fallback. `identity` is the skill's content
 /// identity (`Source::Managed` for a Managed skill), read only to describe
-/// a folder in the way (`TargetExistsError::occupant`). An overwrite's
-/// replacement never reaches `library` or `source` ([`removal_fence`]).
+/// a folder in the way (`TargetExistsError::occupant`) and, under
+/// [`Replace::or_same_content`], to admit an identical one. Whether a folder
+/// in the way is replaced is `replace`'s rule, decided when it is met. An
+/// overwrite's replacement never reaches `library` or `source`
+/// ([`removal_fence`]).
 pub(crate) fn sync_dir_for_tool_with_overwrite(
     adapter: &ToolAdapter,
     source: &Path,
     identity: Source<'_>,
     target: &Path,
-    overwrite: bool,
+    replace: Replace<'_>,
     library: &ProtectedLibrary<'_>,
 ) -> Result<SyncOutcome> {
     sync_dir_for_tool(
@@ -287,7 +399,7 @@ pub(crate) fn sync_dir_for_tool_with_overwrite(
         source,
         identity,
         target,
-        overwrite,
+        replace,
         TargetParents::CreateMissing,
         library,
     )
@@ -304,7 +416,7 @@ pub(crate) fn sync_dir_for_tool_within_root(
     source: &Path,
     identity: Source<'_>,
     target: &Path,
-    overwrite: bool,
+    replace: Replace<'_>,
     root: &Path,
     library: &ProtectedLibrary<'_>,
 ) -> Result<SyncOutcome> {
@@ -313,7 +425,7 @@ pub(crate) fn sync_dir_for_tool_within_root(
         source,
         identity,
         target,
-        overwrite,
+        replace,
         TargetParents::WithinRoot(root),
         library,
     )
@@ -324,14 +436,14 @@ fn sync_dir_for_tool(
     source: &Path,
     identity: Source<'_>,
     target: &Path,
-    overwrite: bool,
+    replace: Replace<'_>,
     parents: TargetParents<'_>,
     library: &ProtectedLibrary<'_>,
 ) -> Result<SyncOutcome> {
     if !adapter.supports_symlink {
-        return copy_with_overwrite(source, identity, target, overwrite, parents, library);
+        return copy_with_overwrite(source, identity, target, replace, parents, library);
     }
-    hybrid_with_overwrite(source, identity, target, overwrite, parents, library)
+    hybrid_with_overwrite(source, identity, target, replace, parents, library)
 }
 
 fn ensure_parent_dir(path: &Path, parents: TargetParents<'_>) -> Result<()> {
@@ -471,17 +583,22 @@ fn remove_admitted(path: &Path, admitted: Result<Entry>) -> Result<()> {
         }) => remove_entry(&physical, file_type),
         Err(err) => Err(err),
     };
-    removed.map_err(|err| {
-        if is_permission_denied(&err) {
-            let detail = format!("{err:#}");
-            err.context(SignalError::RemovalPermissionDenied {
-                path: path.to_string_lossy().into_owned(),
-                detail,
-            })
-        } else {
-            err
-        }
-    })
+    removed.map_err(|err| typed_removal_failure(path, err))
+}
+
+/// A removal of `path` that failed — in the removal itself, its admission, or
+/// the occupant check before it — typed as `RemovalPermissionDenied` when the
+/// OS refused for lack of permission; any other failure as it is.
+pub(crate) fn typed_removal_failure(path: &Path, err: anyhow::Error) -> anyhow::Error {
+    if is_permission_denied(&err) {
+        let detail = format!("{err:#}");
+        err.context(SignalError::RemovalPermissionDenied {
+            path: path.to_string_lossy().into_owned(),
+            detail,
+        })
+    } else {
+        err
+    }
 }
 
 /// Remove an admitted entry at its physical location, by its own (never

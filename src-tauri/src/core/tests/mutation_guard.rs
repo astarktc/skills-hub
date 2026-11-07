@@ -296,7 +296,8 @@ fn deleting_a_managed_skill_is_serialized() {
     let store = f.store.clone();
     let skill_id = f.skill.id.clone();
     assert_serialized("remove_skill", move || {
-        artifact_removal::remove_skill(&store, &central_repo_of(&store), &skill_id)
+        let roots = HostRoots::under_home(&store.db_path().with_file_name("home"));
+        artifact_removal::remove_skill(&store, &central_repo_of(&store), &roots, &skill_id)
             .expect("remove skill");
     });
 }

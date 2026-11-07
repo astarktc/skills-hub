@@ -7,13 +7,14 @@ use crate::core::{
     artifact_removal, content_identity,
     errors::{CommandError, SignalError},
     mutation_guard,
+    ownership::{self, Deployed, Occupancy},
     placement::{self, row_folder, PlacementSettings, ScopeKind},
     project_ops,
     removal_fence::ProtectedLibrary,
     skill_store::{
         AssignmentTransition, ProjectRecord, ProjectSkillAssignmentRecord, SkillRecord, SkillStore,
     },
-    sync_engine,
+    sync_engine::{self, Replace},
     sync_status::{next_status, Observation, SyncMode, SyncStatus},
     tool_adapters::{self, ToolAdapter},
 };
@@ -24,12 +25,18 @@ use crate::core::{
 /// (`ToolAdapter::project_skills_dir`) is chosen here and callers cannot reach for
 /// the global `skills_dir` by mistake — that mix-up has shipped more
 /// than once (see `gitignore.rs` and the Artifact removal callers in `project_ops.rs`).
+/// The name is joined through `placement::deployment_path`: a name that is not
+/// one folder name is the typed refusal (`INVALID_PATH` `not_a_folder_name`),
+/// so a derived project path never leaves the project skills dir. `Ok(None)`
+/// when the Tool reads no project skills dir.
 pub(crate) fn resolve_project_sync_target(
     project_path: &Path,
     adapter: &ToolAdapter,
     skill_name: &str,
-) -> Option<PathBuf> {
-    tool_adapters::project_skills_dir_in(project_path, adapter).map(|dir| dir.join(skill_name))
+) -> Result<Option<PathBuf>> {
+    tool_adapters::project_skills_dir_in(project_path, adapter)
+        .map(|dir| placement::deployment_path(&dir, skill_name))
+        .transpose()
 }
 
 /// Which name locates a Project assignment's artifact on disk.
@@ -64,15 +71,20 @@ pub(crate) fn assignment_artifact_name(
 /// The path of a Project assignment's artifact: the project's Tool skills
 /// dir joined with [`assignment_artifact_name`] (`live_name` is its
 /// fallback supplier). `None` when the name cannot be resolved, or the Tool
-/// reads no project skills dir.
+/// reads no project skills dir. A stored name that is not one folder name
+/// (`../../Documents/alpha`) is the typed refusal ([`resolve_project_sync_target`];
+/// `placement::refused_place` reads where it pointed): nothing may be read,
+/// written or removed for it.
 pub(crate) fn resolve_assignment_artifact(
     project_path: &Path,
     adapter: &ToolAdapter,
     assignment: &ProjectSkillAssignmentRecord,
     live_name: impl FnOnce() -> Result<Option<String>>,
 ) -> Result<Option<PathBuf>> {
-    Ok(assignment_artifact_name(assignment, live_name)?
-        .and_then(|name| resolve_project_sync_target(project_path, adapter, &name)))
+    match assignment_artifact_name(assignment, live_name)? {
+        Some(name) => resolve_project_sync_target(project_path, adapter, &name),
+        None => Ok(None),
+    }
 }
 
 /// What one Project assignment's sync needs and its caller has already
@@ -88,7 +100,9 @@ pub(crate) struct AssignmentSyncContext<'a> {
     pub project_path: &'a Path,
     pub adapter: &'static ToolAdapter,
     pub skill: &'a SkillRecord,
-    pub overwrite: bool,
+    /// When a folder met at the target may be replaced (the occupant rule,
+    /// decided when it is met).
+    pub replace: Replace<'a>,
     pub now: i64,
 }
 
@@ -141,12 +155,18 @@ pub(crate) fn sync_assignment_target(
         store: ctx.store,
         skill_id: &ctx.skill.id,
     };
+    // The occupant is replaced only physically inside the project's skills
+    // dir for this folder (`Replace::within`), whatever the rule admitted:
+    // the target is derived, and a derivation is checked where it is used.
+    let managed: Vec<PathBuf> = tool_adapters::project_skills_dir_in(ctx.project_path, ctx.adapter)
+        .into_iter()
+        .collect();
     let outcome = sync_engine::sync_dir_for_tool_within_root(
         ctx.adapter,
         source,
         identity,
         &target,
-        ctx.overwrite,
+        ctx.replace.within(&managed),
         ctx.project_path,
         &ProtectedLibrary::new(ctx.store, ctx.central_dir),
     )?;
@@ -272,6 +292,13 @@ fn assign_and_settle(
         Ok(adapter) => adapter,
         Err(refusal) => return Ok(AssignAttempt::Refused(refusal)),
     };
+    // So is a skill whose name is not one folder name: its project path would
+    // leave the project skills dir.
+    if let Err(refusal) =
+        resolve_project_sync_target(Path::new(&project.path), adapter, &skill.name)
+    {
+        return Ok(AssignAttempt::Refused(refusal));
+    }
 
     let record = ProjectSkillAssignmentRecord {
         id: uuid::Uuid::new_v4().to_string(),
@@ -294,7 +321,7 @@ fn assign_and_settle(
         project_path: Path::new(&project.path),
         adapter,
         skill,
-        overwrite: false,
+        replace: Replace::never(),
         now,
     };
     match sync_assignment_target(&ctx, &record, || {
@@ -715,12 +742,24 @@ pub(crate) fn assign_skill_to_project_tool_unlocked(
     Ok(report)
 }
 
+/// When an existing assignment's sync may replace the folder at its path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReplaceRule {
+    /// A first sync (Enable): any folder in the way is asked about.
+    Never,
+    /// A re-sync: only a folder the row's own evidence proves its own
+    /// (`core::ownership`), checked when it is met.
+    IfOurs,
+    /// The operator answered Overwrite for this assignment (D12).
+    Confirmed,
+}
+
 pub(crate) fn sync_single_assignment(
     store: &SkillStore,
     central_dir: &Path,
     project: &ProjectRecord,
     assignment: &ProjectSkillAssignmentRecord,
-    overwrite: bool,
+    rule: ReplaceRule,
     now: i64,
 ) -> Result<()> {
     let skill = store
@@ -731,13 +770,18 @@ pub(crate) fn sync_single_assignment(
                 id: assignment.skill_id.clone(),
             })
         })?;
+    let deployed = Deployed::of_assignment(assignment, Some(&skill));
     let ctx = AssignmentSyncContext {
         store,
         central_dir,
         project_path: Path::new(&project.path),
         adapter: deploy_adapter(&assignment.tool)?,
         skill: &skill,
-        overwrite,
+        replace: match rule {
+            ReplaceRule::Never => Replace::never(),
+            ReplaceRule::IfOurs => Replace::if_ours(&deployed),
+            ReplaceRule::Confirmed => Replace::confirmed(),
+        },
         now,
     };
     sync_assignment_target(&ctx, assignment, || {
@@ -781,10 +825,10 @@ pub(crate) fn resync_project_unlocked(
 /// names, and every stored row describing it is re-synced by itself
 /// ([`folder_assignments`]: one row, or several a pre-1.4.0 app wrote once per
 /// shared-dir sibling), so whatever state the cell's fold shows, this settles.
-/// The project re-sync's rule for each row: a disabled row is skipped, only a
-/// row that owns its path replaces what is there (otherwise a folder in the
-/// way is `TARGET_EXISTS` report data), and a missing project folder is
-/// skipped whole. A cell with no row is the typed `NotFound`.
+/// The project re-sync's rule for each row: a disabled row is skipped, a row
+/// replaces only what its evidence shows is its own artifact (otherwise a
+/// folder in the way is `TARGET_EXISTS` report data, `core::ownership`), and a
+/// missing project folder is skipped whole. A cell with no row is the typed `NotFound`.
 ///
 /// Mutation entry point: serialised against every other Sync-target mutation.
 pub fn resync_assignment(
@@ -855,32 +899,39 @@ fn resync_assignments_unlocked(
             });
             continue;
         }
-        // Re-sync replaces only an artifact of ours: a row that never
-        // materialised (a failed first sync or Enable met someone else's
-        // folder) is a first sync again, so that folder stays and the
-        // collision is `TARGET_EXISTS` report data (`owns_artifact`).
-        let overwrite = assignment.owns_artifact();
-        let status =
-            match sync_single_assignment(store, central_dir, project, assignment, overwrite, now) {
-                Ok(()) => ProjectSyncOutcomeStatus::Synced,
-                Err(e) => {
-                    let err_msg = format!("{:#}", e);
-                    store
-                        .transition_assignment(
-                            &assignment.id,
-                            AssignmentTransition::SyncFailed { error: &err_msg },
+        // Re-sync replaces only an artifact of ours, verified when it is met
+        // (`core::ownership`): a link still resolving to the Library copy, or
+        // a copy still holding what the row deployed. A folder the operator
+        // put there, a copy edited in place, or anything a row that never
+        // materialised meets stays, and the collision is `TARGET_EXISTS`
+        // report data for the overwrite ask.
+        let status = match sync_single_assignment(
+            store,
+            central_dir,
+            project,
+            assignment,
+            ReplaceRule::IfOurs,
+            now,
+        ) {
+            Ok(()) => ProjectSyncOutcomeStatus::Synced,
+            Err(e) => {
+                let err_msg = format!("{:#}", e);
+                store
+                    .transition_assignment(
+                        &assignment.id,
+                        AssignmentTransition::SyncFailed { error: &err_msg },
+                    )
+                    .with_context(|| {
+                        format!(
+                            "settle assignment {} as error after its re-sync failed: {err_msg}",
+                            assignment.id
                         )
-                        .with_context(|| {
-                            format!(
-                                "settle assignment {} as error after its re-sync failed: {err_msg}",
-                                assignment.id
-                            )
-                        })?;
-                    ProjectSyncOutcomeStatus::Failed {
-                        error: CommandError::from_anyhow(e),
-                    }
+                    })?;
+                ProjectSyncOutcomeStatus::Failed {
+                    error: CommandError::from_anyhow(e),
                 }
-            };
+            }
+        };
         report.items.push(ProjectSyncOutcome {
             assignment_id: Some(assignment.id.clone()),
             project_id: assignment.project_id.clone(),
@@ -902,9 +953,9 @@ fn resync_assignments_unlocked(
 /// the whole operation. The caller has already decided these rows may be
 /// materialised (their skill is not disabled), so their stored status is not
 /// consulted here — except to admit a `disabled` row: a successful Disable
-/// removed its artifact, so its ownership is cleared first
-/// (`EnableAdmitted`) and a collision leaves a non-owner the overwrite ask
-/// can settle (Keep → `disabled`, Overwrite → synced and owning again).
+/// gave its claim up already (`EnableAdmitted` clears one an older app left),
+/// so a collision leaves a non-owner the overwrite ask can settle (Keep →
+/// `disabled`, Overwrite → synced and owning again).
 ///
 /// A row of a project whose folder is missing is left exactly as it is (not
 /// admitted, not synced) and its project answers one `folder_missing` skip:
@@ -930,7 +981,14 @@ pub(crate) fn first_sync_assignments_unlocked(
             store.transition_assignment(&assignment.id, AssignmentTransition::EnableAdmitted)?;
         }
         let result = project.and_then(|project| {
-            sync_single_assignment(store, central_dir, &project, assignment, false, now)
+            sync_single_assignment(
+                store,
+                central_dir,
+                &project,
+                assignment,
+                ReplaceRule::Never,
+                now,
+            )
         });
         let status = match result {
             Ok(()) => ProjectSyncOutcomeStatus::Synced,
@@ -968,11 +1026,14 @@ pub(crate) fn first_sync_assignments_unlocked(
 /// The operator's answer to the overwrite ask for one project assignment
 /// whose sync met a folder in the way (a `TARGET_EXISTS` report row of
 /// assign / resync / Enable / Propagation). Crosses the wire as itself.
+/// `path` is the path the ask showed (the `TARGET_EXISTS` row's): the answer
+/// applies to the assignment only while it still resolves there.
 #[derive(Clone, Debug, serde::Deserialize, specta::Type)]
 pub struct AssignmentDecision {
     pub project_id: String,
     pub skill_id: String,
     pub tool: String,
+    pub path: String,
     pub decision: crate::core::global_sync::OverrideDecision,
 }
 
@@ -980,11 +1041,21 @@ pub struct AssignmentDecision {
 /// retry half of every project path that produced `TARGET_EXISTS` rows.
 /// `Overwrite` re-syncs the assignment replacing the folder (settling
 /// `synced`, or `error` with its chain); `Keep` leaves the folder and keeps
-/// the row `disabled` — owning nothing, so no removal touches the folder
+/// the row `disabled` — giving its path up, so no removal touches the folder
 /// and no pass re-materialises it until the skill is enabled — reported
-/// `Declined`. A row that is gone, disabled, of a disabled skill, or that
-/// already owns its artifact is not a collision any more and answers as the
-/// assignment listing would (`Failed NotFound`, `Skipped`, `AlreadyAssigned`).
+/// `Declined`. Each answer is bound to the path the ask showed: the
+/// assignment's destination is resolved now, under the guard (its project's
+/// root, its folder's project skills dir, its stored name), and an answer for
+/// another path — the project moved, the stored name changed since the ask —
+/// is stale: `Failed` `NotFound` (`target`, the asked path), nothing touched
+/// at either path, the row unchanged (a name that is not one folder name is
+/// its `INVALID_PATH` refusal instead). A row that is gone, disabled, of a
+/// disabled skill, or whose
+/// path holds its own artifact again (verified now, `core::ownership`) is not
+/// a collision any more and answers as the assignment listing would (`Failed
+/// NotFound`, `Skipped`, `AlreadyAssigned`). A row that still claims its path
+/// but met another folder there (a resync or Propagation collision) is
+/// answered like any other.
 /// A collision in a project whose folder has since gone is not answered at
 /// all — the row stays as it is and the project is one `folder_missing` skip.
 /// Store failures fail the whole call.
@@ -1040,12 +1111,29 @@ fn resolve_collisions_unlocked(
         };
         let name = reported_skill_name(store, &assignment);
         let id = Some(assignment.id.clone());
+        let stale = match assignment_destination(store, &assignment) {
+            Ok(Some(current)) if current == Path::new(&decision.path) => None,
+            Ok(_) => Some(CommandError::from(SignalError::NotFound {
+                kind: "target".to_string(),
+                id: decision.path.clone(),
+            })),
+            Err(err) if placement::refused_place(&err).is_some() => {
+                Some(CommandError::from_anyhow(err))
+            }
+            Err(err) => return Err(err),
+        };
+        if let Some(error) = stale {
+            report
+                .items
+                .push(item(id, name, ProjectSyncOutcomeStatus::Failed { error }));
+            continue;
+        }
         let skill_disabled = store.skill_disabled_at(&assignment.skill_id)?.is_some();
         let status = if assignment.status == SyncStatus::Disabled || skill_disabled {
             ProjectSyncOutcomeStatus::Skipped {
                 reason: ProjectSyncSkip::Disabled,
             }
-        } else if assignment.owns_artifact() {
+        } else if occupied_by_own_artifact(store, &assignment)? {
             ProjectSyncOutcomeStatus::AlreadyAssigned
         } else if store
             .get_project_by_id(&assignment.project_id)?
@@ -1067,7 +1155,7 @@ fn resolve_collisions_unlocked(
                                 central_dir,
                                 &project,
                                 &assignment,
-                                true,
+                                ReplaceRule::Confirmed,
                                 now,
                             )
                         });
@@ -1097,6 +1185,64 @@ fn resolve_collisions_unlocked(
         report.items.push(item(id, name, status));
     }
     Ok(report)
+}
+
+/// Whether the folder at `assignment`'s path is, right now, the artifact the
+/// row deployed (`core::ownership::check`) — then a collision answer has
+/// nothing left to settle. A row whose claim stands but whose path another
+/// folder took is a collision like any other: the answer applies to it.
+fn occupied_by_own_artifact(
+    store: &SkillStore,
+    assignment: &ProjectSkillAssignmentRecord,
+) -> Result<bool> {
+    if !assignment.owns_artifact() {
+        return Ok(false);
+    }
+    let (Some(project), Some(skill)) = (
+        store.get_project_by_id(&assignment.project_id)?,
+        store.get_skill_by_id(&assignment.skill_id)?,
+    ) else {
+        return Ok(false);
+    };
+    let Ok(adapter) = deploy_adapter(&assignment.tool) else {
+        return Ok(false);
+    };
+    // A stored name that is not one folder name locates nothing of ours.
+    let Ok(Some(path)) =
+        resolve_assignment_artifact(Path::new(&project.path), adapter, assignment, || {
+            Ok(Some(skill.name.clone()))
+        })
+    else {
+        return Ok(false);
+    };
+    let deployed = Deployed::of_assignment(assignment, Some(&skill));
+    Ok(matches!(
+        ownership::check(&path, &deployed),
+        Ok(Occupancy::Ours)
+    ))
+}
+
+/// Where `assignment`'s artifact belongs now: its project's root, the project
+/// skills dir of the folder it describes ([`deploy_adapter`]) and its stored
+/// name ([`resolve_assignment_artifact`]) — the destination a sync of it
+/// writes. `None` when its project, its folder or its name is gone; the typed
+/// refusal for a name that is not one folder name; a store failure is an `Err`
+/// too.
+fn assignment_destination(
+    store: &SkillStore,
+    assignment: &ProjectSkillAssignmentRecord,
+) -> Result<Option<PathBuf>> {
+    let Some(project) = store.get_project_by_id(&assignment.project_id)? else {
+        return Ok(None);
+    };
+    let Ok(adapter) = deploy_adapter(&assignment.tool) else {
+        return Ok(None);
+    };
+    resolve_assignment_artifact(Path::new(&project.path), adapter, assignment, || {
+        Ok(store
+            .get_skill_by_id(&assignment.skill_id)?
+            .map(|skill| skill.name))
+    })
 }
 
 /// The name a report shows for an assignment: the stored name the artifact
@@ -1216,21 +1362,15 @@ fn reconcile_assignment(
     if decided == assignment.status {
         return (assignment, false);
     }
-    let confirmed_hash = if decided == SyncStatus::Synced && assignment.mode.can_drift() {
-        observed.source_hash.as_deref()
-    } else {
-        None
-    };
+    // The deployed identity stays: a stale copy is still the copy the row
+    // deployed (the evidence Propagation replaces it on), and a copy back in
+    // line already records the source's identity (`next_status`).
     let _ = store.transition_assignment(
         &assignment.id,
-        AssignmentTransition::Reconciled {
-            status: decided,
-            content_hash: confirmed_hash,
-        },
+        AssignmentTransition::Reconciled { status: decided },
     );
     assignment.status = decided;
     assignment.last_error = None;
-    assignment.content_hash = confirmed_hash.map(str::to_string);
     (assignment, true)
 }
 

@@ -361,6 +361,12 @@ describe("describeCommandError", () => {
     ).toBe('errors.invalidPathNotADirectory {"path":"/f.txt"}');
     expect(
       describeCommandError(
+        { code: "INVALID_PATH", path: "/skills/../../Documents/alpha", reason: "not_a_folder_name" },
+        t,
+      ),
+    ).toBe('errors.invalidPathNotAFolderName {"path":"/skills/../../Documents/alpha"}');
+    expect(
+      describeCommandError(
         { code: "INVALID_PATH", path: "/x", reason: "martian" },
         t,
       ),

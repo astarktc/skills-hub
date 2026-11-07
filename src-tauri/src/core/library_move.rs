@@ -73,11 +73,12 @@ use super::artifact_removal::{
     remove_former_central_copy_unlocked, remove_staged_library_copy_unlocked, RowRef,
 };
 use super::content_identity::{self, Source};
+use super::environment::HostRoots;
 use super::errors::{CommandError, LibraryDestinationRefusal, SignalError};
 use super::git_cache;
 use super::installer::InstallerPaths;
 use super::mutation_guard;
-use super::placement::{row_folder, ScopeKind};
+use super::placement::{self, row_folder, ScopeKind};
 use super::project_ops;
 use super::project_sync::resolve_assignment_artifact;
 use super::removal_fence::{EntryId, Place, ProtectedLibrary};
@@ -86,7 +87,7 @@ use super::skill_store::{
     AssignmentTransition, SkillRecord, SkillStore, SkillTargetRecord, TargetTransition,
 };
 use super::sync_engine::{
-    sync_dir_for_tool_with_overwrite, sync_dir_for_tool_within_root, SyncOutcome,
+    sync_dir_for_tool_with_overwrite, sync_dir_for_tool_within_root, Replace, SyncOutcome,
 };
 use super::sync_status::{SyncMode, SyncStatus};
 use super::tool_adapters::{
@@ -379,7 +380,13 @@ pub fn move_library(
     mut on_progress: impl FnMut(LibraryMoveProgress),
 ) -> Result<LibraryMoveReport> {
     mutation_guard::serialized(|| {
-        if let Some(resumed) = resume_unlocked(store, &paths.central_dir, now, &mut on_progress)? {
+        if let Some(resumed) = resume_unlocked(
+            store,
+            &paths.central_dir,
+            &paths.roots,
+            now,
+            &mut on_progress,
+        )? {
             log_resumed(&resumed);
         }
         let skills = store.list_skills()?;
@@ -417,6 +424,7 @@ pub fn move_library(
 
         let mut report = settle(
             store,
+            &paths.roots,
             &paths.central_dir,
             dest,
             &moved,
@@ -466,9 +474,10 @@ pub fn move_library(
 pub fn resume_library_move(
     store: &SkillStore,
     central_dir: &Path,
+    roots: &HostRoots,
     now: i64,
 ) -> Result<Option<LibraryMoveReport>> {
-    mutation_guard::serialized(|| resume_unlocked(store, central_dir, now, &mut |_| {}))
+    mutation_guard::serialized(|| resume_unlocked(store, central_dir, roots, now, &mut |_| {}))
 }
 
 /// The report of the last interrupted move a resume finished, handed out
@@ -555,6 +564,7 @@ struct JournaledMove {
 fn resume_unlocked(
     store: &SkillStore,
     central_dir: &Path,
+    roots: &HostRoots,
     now: i64,
     on_progress: &mut impl FnMut(LibraryMoveProgress),
 ) -> Result<Option<LibraryMoveReport>> {
@@ -666,6 +676,7 @@ fn resume_unlocked(
     }
     settle(
         store,
+        roots,
         &from,
         &to,
         &moved,
@@ -704,6 +715,7 @@ fn finish(store: &SkillStore, report: &LibraryMoveReport, by: Settler) -> Result
 #[allow(clippy::too_many_arguments)]
 fn settle(
     store: &SkillStore,
+    roots: &HostRoots,
     old_root: &Path,
     new_root: &Path,
     moved: &[Moved],
@@ -712,7 +724,7 @@ fn settle(
     by: Settler,
     on_progress: &mut impl FnMut(LibraryMoveProgress),
 ) -> Result<LibraryMoveReport> {
-    let deployments = relink_phase(store, new_root, moved, now, on_progress)?;
+    let deployments = relink_phase(store, roots, new_root, moved, now, on_progress)?;
     let left_behind = clean_phase(store, old_root, new_root, moved, left, on_progress)?;
     let report = LibraryMoveReport {
         from: old_root.to_string_lossy().into_owned(),
@@ -2021,6 +2033,7 @@ enum Rows {
 
 fn relink_phase(
     store: &SkillStore,
+    roots: &HostRoots,
     dest: &Path,
     moved: &[Moved],
     now: i64,
@@ -2072,6 +2085,7 @@ fn relink_phase(
             } else {
                 relink_one(
                     store,
+                    roots,
                     &library,
                     m,
                     &new_record,
@@ -2127,10 +2141,18 @@ fn deployments_of(store: &SkillStore, skill: &SkillRecord) -> Result<Vec<(PathBu
             continue;
         };
         let root = PathBuf::from(&project.path);
-        let Some(path) =
-            resolve_assignment_artifact(&root, adapter, &row, || Ok(Some(skill.name.clone())))?
-        else {
-            continue;
+        // A stored name that is not one folder name is listed at the place it
+        // names, for its report row only: the relink refuses it before
+        // anything there is read (`relink_one`).
+        let path = match resolve_assignment_artifact(&root, adapter, &row, || {
+            Ok(Some(skill.name.clone()))
+        }) {
+            Ok(Some(path)) => path,
+            Ok(None) => continue,
+            Err(err) => match placement::refused_place(&err) {
+                Some(place) => place,
+                None => return Err(err),
+            },
         };
         match out.iter_mut().find(|(p, rows)| {
             p == &path
@@ -2152,6 +2174,7 @@ fn deployments_of(store: &SkillStore, skill: &SkillRecord) -> Result<Vec<(PathBu
 #[allow(clippy::too_many_arguments)]
 fn relink_one(
     store: &SkillStore,
+    roots: &HostRoots,
     library: &ProtectedLibrary<'_>,
     m: &Moved,
     new_record: &SkillRecord,
@@ -2161,6 +2184,18 @@ fn relink_one(
     now: i64,
 ) -> Result<RelinkStatus> {
     let attempt = (|| -> Result<Option<SyncOutcome>> {
+        // A project row's path is derived from its stored name: a name that is
+        // not one folder name is refused (`INVALID_PATH`) before anything at
+        // the path it names is read or written.
+        if let Rows::Assignment { project_root, rows } = rows {
+            if let Some(adapter) = adapter_by_key(tool) {
+                for row in rows {
+                    resolve_assignment_artifact(project_root, adapter, row, || {
+                        Ok(Some(m.skill.name.clone()))
+                    })?;
+                }
+            }
+        }
         match occupant(path, &m.old_place, &Place::of(&m.new)?)? {
             Occupant::Copy => return Ok(None),
             Occupant::NotOurs => anyhow::bail!(NotOurs),
@@ -2175,19 +2210,38 @@ fn relink_one(
             store,
             skill_id: &new_record.id,
         };
+        // The occupant was verified ours just above (a link to the old or
+        // new copy), so its replacement is the relink's own decision — but
+        // only physically inside a skills folder the row is managed in: a
+        // global row's stored path inside its harness's and folder's
+        // (`placement::managed_global_dirs`), a project row's derived path
+        // inside its project's skills dir for that folder.
         let outcome = match rows {
             Rows::Global(_) => {
-                sync_dir_for_tool_with_overwrite(adapter, &m.new, identity, path, true, library)?
+                let managed = placement::managed_global_dirs(roots, tool);
+                sync_dir_for_tool_with_overwrite(
+                    adapter,
+                    &m.new,
+                    identity,
+                    path,
+                    Replace::confirmed().within(&managed),
+                    library,
+                )?
             }
-            Rows::Assignment { project_root, .. } => sync_dir_for_tool_within_root(
-                adapter,
-                &m.new,
-                identity,
-                path,
-                true,
-                project_root,
-                library,
-            )?,
+            Rows::Assignment { project_root, .. } => {
+                let managed: Vec<PathBuf> = project_skills_dir_in(project_root, adapter)
+                    .into_iter()
+                    .collect();
+                sync_dir_for_tool_within_root(
+                    adapter,
+                    &m.new,
+                    identity,
+                    path,
+                    Replace::confirmed().within(&managed),
+                    project_root,
+                    library,
+                )?
+            }
         };
         Ok(Some(outcome))
     })();
@@ -2198,6 +2252,13 @@ fn relink_one(
         }),
         Ok(Some(outcome)) => {
             let target_path = path.to_string_lossy();
+            // A relink that fell back to a copy records the identity it
+            // deployed, the evidence a later removal checks it against.
+            let hash = outcome
+                .mode_used
+                .can_drift()
+                .then(|| content_identity::read(Source::Directory(&m.new)))
+                .flatten();
             match rows {
                 Rows::Global(rows) => {
                     for row in rows {
@@ -2207,16 +2268,12 @@ fn relink_one(
                                 mode: outcome.mode_used,
                                 target_path: &target_path,
                                 synced_at: now,
+                                content_hash: hash.as_deref(),
                             },
                         )?;
                     }
                 }
                 Rows::Assignment { rows, .. } => {
-                    let hash = outcome
-                        .mode_used
-                        .can_drift()
-                        .then(|| content_identity::read(Source::Directory(&m.new)))
-                        .flatten();
                     for row in rows {
                         store.transition_assignment(
                             &row.id,
@@ -2713,12 +2770,17 @@ fn deployment_places(store: &SkillStore) -> Result<Vec<Place>> {
                 continue;
             };
             let name = skill.name.clone();
-            if let Some(path) =
-                resolve_assignment_artifact(Path::new(&project.path), adapter, &row, || {
-                    Ok(Some(name))
-                })?
-            {
-                paths.push(path);
+            // A stored name that is not one folder name still names a place a
+            // link may reach from: kept in the set, the cautious side.
+            match resolve_assignment_artifact(Path::new(&project.path), adapter, &row, || {
+                Ok(Some(name))
+            }) {
+                Ok(Some(path)) => paths.push(path),
+                Ok(None) => {}
+                Err(err) => match placement::refused_place(&err) {
+                    Some(place) => paths.push(place),
+                    None => return Err(err),
+                },
             }
         }
     }

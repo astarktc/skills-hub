@@ -302,6 +302,7 @@ fn row(id: &str, skill: &str, tool: &str, status: SyncStatus) -> SkillTargetReco
         status,
         last_error: None,
         synced_at: Some(1),
+        content_hash: None,
     }
 }
 
@@ -486,5 +487,46 @@ fn a_row_recording_another_path_still_folds_into_its_folder() {
             folded[0].status
         ),
         ("2", "amp", SyncStatus::Error)
+    );
+}
+
+/// A name becomes a Deployment's path only when it is exactly one folder name
+/// (round 20 t18 review round 2, Astra 11): every other spelling is the typed
+/// refusal, naming the place it would have reached.
+#[test]
+fn only_a_single_folder_name_becomes_a_deployment_path() {
+    use super::{deployment_path, is_folder_name, refused_place};
+    for good in ["alpha", "alpha-beta", "a.b", ".hidden", "with space", "ünï"] {
+        assert!(is_folder_name(good), "{good:?}");
+    }
+    for bad in [
+        "",
+        ".",
+        "..",
+        "../alpha",
+        "../../Documents/alpha",
+        "a/b",
+        "alpha/",
+        "./alpha",
+        "a\\b",
+        "..\\alpha",
+        "/abs",
+        "a\0b",
+    ] {
+        assert!(!is_folder_name(bad), "{bad:?}");
+        let err = deployment_path(Path::new("/skills"), bad).expect_err(bad);
+        assert_eq!(
+            refused_place(&err),
+            Some(Path::new("/skills").join(bad)),
+            "{bad:?}"
+        );
+    }
+    #[cfg(windows)]
+    for bad in ["C:\\abs", "C:rel", "\\\\server\\share"] {
+        assert!(!is_folder_name(bad), "{bad:?}");
+    }
+    assert_eq!(
+        deployment_path(Path::new("/skills"), "alpha").unwrap(),
+        Path::new("/skills").join("alpha")
     );
 }

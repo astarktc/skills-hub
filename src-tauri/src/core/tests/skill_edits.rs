@@ -78,6 +78,7 @@ fn edit_returns_a_failed_copy_target_in_its_propagation_report() {
             status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(1),
+            content_hash: None,
         })
         .unwrap();
     let outcome =
@@ -340,6 +341,10 @@ fn set_propagates_to_copy_fallback_target() {
             status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(1),
+            // What the row deployed: the copy written above.
+            content_hash: crate::core::content_identity::read(
+                crate::core::content_identity::Source::Directory(&target),
+            ),
         })
         .unwrap();
     f.set(Some(InvocationMode::Neither)).unwrap();

@@ -9,6 +9,7 @@ import {
   type SkillRefreshStatus,
   type SyncProgressDto,
   type ProjectViewDto,
+  type RefreshReport,
   type SyncMode,
   type SyncStatus,
   type ToolStatusDto,
@@ -227,7 +228,7 @@ describe("rich", () => {
     const retry = await handlers.syncSkillsToTools(
       batch,
       ["cursor"],
-      { overrides: [{ skill_id: zod.id, tool: "cursor", decision: "overwrite" }] },
+      { overrides: [{ skill_id: zod.id, tool: "cursor", path: "/Users/alex/.cursor/skills/zod-schema-first", decision: "overwrite" }] },
       sink().channel
     );
     expect(retry[0].status).toMatchObject({ status: "synced", outcome: { replaced: true } });
@@ -839,7 +840,7 @@ describe("one folder, one row: a shared skills dir records no sibling on any wri
     await handlers.syncSkillsToTools(
       [{ skill_id: skill.dto.id, name: skill.dto.name, source_path: skill.dto.central_path }],
       ["amp"],
-      { overwrite_if_same_content: true, overrides: [{ skill_id: skill.dto.id, tool: "amp", decision: "overwrite" }] },
+      { overwrite_if_same_content: true, overrides: [{ skill_id: skill.dto.id, tool: "amp", path: `${globalRoot("amp")}/${skill.dto.name}`, decision: "overwrite" }] },
       sink<SyncProgressDto>().channel,
     );
     expect(await tools()).toEqual(["amp"]);
@@ -1495,7 +1496,7 @@ describe("D9: Skill health and the failed / declined first sync (ticket 02)", ()
     const kept = await handlers.syncSkillsToTools(
       batch,
       ["cursor"],
-      { overwrite_if_same_content: true, overrides: [{ skill_id: zod.dto.id, tool: "cursor", decision: "keep" }] },
+      { overwrite_if_same_content: true, overrides: [{ skill_id: zod.dto.id, tool: "cursor", path: `${globalRoot("cursor")}/${zod.dto.name}`, decision: "keep" }] },
       sink().channel,
     );
     expect(kept[0].status).toEqual({ status: "declined" });
@@ -1663,8 +1664,8 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
         overwrite: false,
         overwrite_if_same_content: true,
         overrides: [
-          { skill_id: lint.id, tool: "claude_code", decision: "overwrite" },
-          { skill_id: changelog.id, tool: "claude_code", decision: "keep" },
+          { skill_id: lint.id, tool: "claude_code", path: `${globalRoot("claude_code")}/${lint.name}`, decision: "overwrite" },
+          { skill_id: changelog.id, tool: "claude_code", path: `${globalRoot("claude_code")}/${changelog.name}`, decision: "keep" },
         ],
       },
       sink().channel,
@@ -1730,10 +1731,58 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
     expect(statusOf(await byName(handlers, "zod-schema-first"), "cursor")).toBe("disabled");
 
     const retried = await handlers.enableSkillTargets(scope, [
-      { skill_id: zod.id, tool: "cursor", decision: "overwrite" },
+      { skill_id: zod.id, tool: "cursor", path: `${globalRoot("cursor")}/${zod.name}`, decision: "overwrite" },
     ]);
     expect(retried.global.map((o) => o.status.status)).toEqual(["synced"]);
     expect(state.foreign.some((f) => f.tool === "cursor" && f.name === "zod-schema-first")).toBe(false);
+  });
+
+  it("an Enable answer applies only at the path its ask showed: the skill renamed since, it touches nothing", async () => {
+    for (const decision of ["overwrite", "keep"] as const) {
+      const { handlers, state } = backendFor("rich");
+      const zod = state.skills.find((s) => s.dto.name === "zod-schema-first")!;
+      const scope = { kind: "skill_tool" as const, skill_id: zod.dto.id, tool: "cursor" };
+      await handlers.disableSkillTargets(scope);
+      const first = await handlers.enableSkillTargets(scope, []);
+      const asked = `${globalRoot("cursor")}/zod-schema-first`;
+      expect(first.global[0].status).toMatchObject({ status: "failed", error: { code: "TARGET_EXISTS", path: asked } });
+
+      zod.dto.name = "zod-renamed";
+      const retried = await handlers.enableSkillTargets(scope, [
+        { skill_id: zod.dto.id, tool: "cursor", path: asked, decision },
+      ]);
+
+      expect(retried.global[0].status).toEqual({ status: "failed", error: { code: "NOT_FOUND", kind: "target", id: asked } });
+      // The taken row is restored as it was: still disabled at the asked path.
+      expect(zod.dto.targets.filter((t) => t.tool === "cursor")).toEqual([
+        expect.objectContaining({ status: "disabled", target_path: asked, synced_at: null }),
+      ]);
+      expect(state.foreign.some((f) => f.tool === "cursor" && f.name === "zod-schema-first")).toBe(true);
+    }
+  });
+
+  it("a project answer applies only at the path its ask showed: the project moved since, it touches nothing", async () => {
+    for (const decision of ["overwrite", "keep"] as const) {
+      const { handlers, state } = backendFor("failures");
+      const project = state.projects.find((p) => p.id === "prj-quartermaster")!;
+      const prisma = await byName(handlers, "prisma-review");
+      const path = `${project.path}/.claude/skills/prisma-review`;
+      state.projectOccupants.push(path);
+      const toggled = await handlers.toggleProjectSkillAssignment(project.id, prisma.id, "claude_code");
+      if (toggled.kind !== "assigned") throw new Error(toggled.kind);
+      expect(toggled.report.items[0].status).toMatchObject({ status: "failed", error: { code: "TARGET_EXISTS", path } });
+      const row = project.assignments.find((a) => a.skill_id === prisma.id && a.tool === "claude_code")!;
+      const before = { ...row };
+
+      project.path = `${project.path}-moved`;
+      const resolved = await handlers.resolveProjectCollisions([
+        { project_id: project.id, skill_id: prisma.id, tool: "claude_code", path, decision },
+      ]);
+
+      expect(resolved.items[0].status).toEqual({ status: "failed", error: { code: "NOT_FOUND", kind: "target", id: path } });
+      expect(row).toEqual(before);
+      expect(state.projectOccupants).toContain(path);
+    }
   });
 
   it("a project collision resolves: Overwrite syncs, Keep records the row disabled (declined)", async () => {
@@ -1751,7 +1800,7 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
       });
 
       const resolved = await handlers.resolveProjectCollisions([
-        { project_id: project.id, skill_id: prisma.id, tool: "claude_code", decision },
+        { project_id: project.id, skill_id: prisma.id, tool: "claude_code", path, decision },
       ]);
       const row = project.assignments.find((a) => a.skill_id === prisma.id && a.tool === "claude_code")!;
       if (decision === "overwrite") {
@@ -1788,7 +1837,7 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
       expect(row().synced_at).toBeNull();
 
       const resolved = await handlers.resolveProjectCollisions([
-        { project_id: project.id, skill_id: zod.id, tool: "claude_code", decision },
+        { project_id: project.id, skill_id: zod.id, tool: "claude_code", path, decision },
       ]);
       if (decision === "overwrite") {
         expect(resolved.items[0].status).toEqual({ status: "synced" });
@@ -1802,6 +1851,183 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
         expect(state.projectOccupants).toContain(path);
       }
     }
+  });
+});
+
+describe("ticket 18: ownership means the current occupant (ADR-0007)", () => {
+  it("a folder that took an owned assignment's path is asked about on resync and left in place by Delete", async () => {
+    const { handlers, state } = backendFor("rich");
+    const zod = await byName(handlers, "zod-schema-first");
+    const { project } = await handlers.registerProject("/Users/alex/Projects/occupant-probe");
+    await handlers.configureProjectTools(project.id, ["claude_code"], null);
+    await handlers.bulkAssignSkill(project.id, zod.id);
+    const path = `${project.path}/.claude/skills/${zod.name}`;
+    state.projectOccupants.push(path);
+
+    const resync = await handlers.resyncProject(project.id);
+    expect(resync.report.items[0].status).toMatchObject({ status: "failed", error: { code: "TARGET_EXISTS" } });
+    expect(state.projectOccupants).toContain(path);
+
+    const deleted = await handlers.deleteManagedSkill(zod.id);
+    const left = deleted.targets.find((target) => target.path === path);
+    expect(left?.status).toEqual({ status: "left_in_place" });
+    expect(deleted.record_deleted).toBe(true);
+    expect(state.projectOccupants, "the operator's folder survives").toContain(path);
+  });
+
+  it("a successful Disable gives the path up: a folder appearing later is never Delete's", async () => {
+    const { handlers, state } = backendFor("rich");
+    const zod = await byName(handlers, "zod-schema-first");
+    const { project } = await handlers.registerProject("/Users/alex/Projects/disable-probe");
+    await handlers.configureProjectTools(project.id, ["claude_code"], null);
+    await handlers.bulkAssignSkill(project.id, zod.id);
+    await handlers.disableSkillTargets({ kind: "skill", skill_id: zod.id });
+    const row = state.projects
+      .find((p) => p.id === project.id)!
+      .assignments.find((a) => a.skill_id === zod.id)!;
+    expect(row.synced_at).toBeNull();
+    const path = `${project.path}/.claude/skills/${zod.name}`;
+    state.projectOccupants.push(path);
+
+    const deleted = await handlers.deleteManagedSkill(zod.id);
+
+    expect(deleted.targets.some((target) => target.path === path)).toBe(false);
+    expect(state.projectOccupants).toContain(path);
+  });
+
+  // Round 20 t18 review: the fixture mirrors the core's evidence model (Sol
+  // 104), the link shortcut after the occupant check (Astra 1 = Sol 102) and
+  // the path-bound answer to a Propagation ask (Sol 101).
+
+  /** The stored global row of `skillId` keyed `tool` (internal evidence included). */
+  const storedRow = (state: FixtureState, skillId: string, tool: string) =>
+    state.skills.find((s) => s.dto.id === skillId)!.dto.targets.find((t) => t.tool === tool)!;
+  const globalOutcome = (report: RefreshReport, tool: string) => {
+    const status = report.skills[0].status;
+    if (status.status !== "refreshed") throw new Error(`not refreshed: ${JSON.stringify(status)}`);
+    return status.targets.find((o) => o.scope.scope === "global" && o.scope.tool === tool)?.status;
+  };
+  /** Deep Agents Code (copy-only) installed, with a copy of `skill` the app deployed there. */
+  const withDeployedCopy = (state: FixtureState, skillId: string) => {
+    state.installedTools.push("deep_agents_code");
+    const skill = state.skills.find((s) => s.dto.id === skillId)!;
+    const path = `${globalRoot("deep_agents_code")}/${skill.dto.name}`;
+    skill.dto.targets.push({
+      tool: "deep_agents_code",
+      mode: "copy",
+      status: "synced",
+      target_path: path,
+      synced_at: NOW - 1000,
+      deployed_hash: skill.contentHash,
+    });
+    return path;
+  };
+
+  it("the evidence a row deployed never reaches the wire", async () => {
+    const { handlers, state } = backendFor("rich");
+    const zod = await byName(handlers, "zod-schema-first");
+    withDeployedCopy(state, zod.id);
+    const listed = (await byName(handlers, "zod-schema-first")).targets;
+    expect(listed.some((t) => "deployed_hash" in t)).toBe(false);
+  });
+
+  it("a hashless global copy (recorded before 1.4.0) is left in place by Delete and by Disable", async () => {
+    for (const verb of ["delete", "disable"] as const) {
+      const { handlers, state } = backendFor("rich");
+      const zod = await byName(handlers, "zod-schema-first");
+      const path = withDeployedCopy(state, zod.id);
+      storedRow(state, zod.id, "deep_agents_code").deployed_hash = null;
+
+      const report =
+        verb === "delete"
+          ? await handlers.deleteManagedSkill(zod.id)
+          : await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: zod.id, tool: "deep_agents_code" });
+
+      expect(report.targets.find((t) => t.path === path)?.status, verb).toEqual({ status: "left_in_place" });
+      // The folder stays where it was: from now on it is a folder in the way.
+      expect(state.foreign.some((f) => `${globalRoot(f.tool)}/${f.name}` === path), verb).toBe(true);
+      if (verb === "disable") {
+        const row = storedRow(state, zod.id, "deep_agents_code");
+        expect(row).toMatchObject({ status: "disabled", synced_at: null, deployed_hash: null });
+      }
+    }
+  });
+
+  it("a copy edited in place is asked about by Propagation; Overwrite records evidence and the next Propagation does not ask", async () => {
+    const { handlers, state } = backendFor("rich");
+    const zod = await byName(handlers, "zod-schema-first");
+    const path = withDeployedCopy(state, zod.id);
+    state.copyIdentities[path] = "the operator's edits";
+
+    const first = (await handlers.updateManagedSkill(zod.id, sink().channel)).report;
+    expect(globalOutcome(first, "deep_agents_code")).toMatchObject({
+      status: "failed",
+      error: { code: "TARGET_EXISTS", path, sameContent: false },
+    });
+    expect(state.copyIdentities[path]).toBe("the operator's edits");
+
+    const answer = await handlers.resolveTargetCollisions([
+      { skill_id: zod.id, tool: "deep_agents_code", path, decision: "overwrite" },
+    ]);
+    expect(answer[0].status).toMatchObject({ status: "synced", outcome: { mode_used: "copy", target_path: path } });
+    const skill = state.skills.find((s) => s.dto.id === zod.id)!;
+    expect(storedRow(state, zod.id, "deep_agents_code")).toMatchObject({ mode: "copy", deployed_hash: skill.contentHash });
+    expect(state.copyIdentities[path]).toBeUndefined();
+
+    const again = (await handlers.updateManagedSkill(zod.id, sink().channel)).report;
+    expect(globalOutcome(again, "deep_agents_code")).toEqual({ status: "synced", mode_used: "copy" });
+  });
+
+  it("an owned link replaced by a folder is asked about on Update, never followed as the source", async () => {
+    const { handlers, state } = backendFor("rich");
+    const zod = await byName(handlers, "zod-schema-first");
+    const path = `${globalRoot("claude_code")}/${zod.name}`;
+    state.foreign.push({ tool: "claude_code", name: zod.name, fingerprint: "the operator's folder", linkTarget: null });
+
+    const { report } = await handlers.updateManagedSkill(zod.id, sink().channel);
+
+    expect(globalOutcome(report, "claude_code")).toMatchObject({
+      status: "failed",
+      error: { code: "TARGET_EXISTS", path },
+      first_deploy: false,
+    });
+    // Its untouched siblings still follow the source.
+    expect(globalOutcome(report, "codex")).toEqual({ status: "skipped", reason: { reason: "link_follows_source" } });
+  });
+
+  it("a Propagation answer applies at the asked path only; an answer for a path the row no longer records touches nothing", async () => {
+    const { handlers, state } = backendFor("rich");
+    const zod = await byName(handlers, "zod-schema-first");
+    const row = storedRow(state, zod.id, "claude_code");
+    // The row records an older name; the operator's folders sit there and at
+    // the skill's place now.
+    const recorded = `${globalRoot("claude_code")}/zod-old-name`;
+    const destination = `${globalRoot("claude_code")}/${zod.name}`;
+    row.target_path = recorded;
+    state.foreign.push(
+      { tool: "claude_code", name: "zod-old-name", fingerprint: "old", linkTarget: null },
+      { tool: "claude_code", name: zod.name, fingerprint: "new", linkTarget: null },
+    );
+
+    const stale = await handlers.resolveTargetCollisions([
+      { skill_id: zod.id, tool: "claude_code", path: destination, decision: "overwrite" },
+    ]);
+    expect(stale[0].status).toEqual({ status: "failed", error: { code: "NOT_FOUND", kind: "target", id: destination } });
+
+    const answered = await handlers.resolveTargetCollisions([
+      { skill_id: zod.id, tool: "claude_code", path: recorded, decision: "overwrite" },
+    ]);
+    expect(answered[0].status).toMatchObject({ status: "synced", outcome: { target_path: recorded } });
+    const left = state.foreign.map((f) => `${globalRoot(f.tool)}/${f.name}`);
+    expect(left).toContain(destination);
+    expect(left).not.toContain(recorded);
+    expect(storedRow(state, zod.id, "claude_code").target_path).toBe(recorded);
+
+    const kept = await handlers.resolveTargetCollisions([
+      { skill_id: zod.id, tool: "codex", path: `${globalRoot("codex")}/${zod.name}`, decision: "keep" },
+    ]);
+    // The codex row's own link is still there: nothing to answer, it is brought into line.
+    expect(kept[0].status).toMatchObject({ status: "synced" });
   });
 });
 
@@ -1847,7 +2073,7 @@ describe("ticket 17: Projects — a missing folder, Sync this, the kept row, a s
     const asked = JSON.stringify(archived.assignments);
     for (const decision of ["overwrite", "keep"] as const) {
       const resolved = await handlers.resolveProjectCollisions([
-        { project_id: "prj-archived-app", skill_id: row.skill_id, tool: "claude_code", decision },
+        { project_id: "prj-archived-app", skill_id: row.skill_id, tool: "claude_code", path: `${archived.path}/.claude/skills/pr-review`, decision },
       ]);
       expect(resolved).toEqual({ items: [], skipped_projects: skip });
       expect(JSON.stringify(archived.assignments)).toBe(asked);
@@ -1991,7 +2217,7 @@ describe("fixture parity with Rust (#90)", () => {
   it("resolveProjectCollisions answers a missing project as a per-decision NOT_FOUND row, never a throw", async () => {
     const { handlers } = backendFor("rich");
     const report = await handlers.resolveProjectCollisions([
-      { project_id: "prj-gone", skill_id: "s-any", tool: "claude_code", decision: "overwrite" },
+      { project_id: "prj-gone", skill_id: "s-any", tool: "claude_code", path: "/gone/.claude/skills/s-any", decision: "overwrite" },
     ]);
     expect(report).toEqual({
       skipped_projects: [],

@@ -13,14 +13,15 @@ use uuid::Uuid;
 use crate::core::{
     content_identity::{self, Source},
     environment::HostRoots,
-    errors::CommandError,
+    errors::{CommandError, SignalError},
     mutation_guard,
+    ownership::Deployed,
     placement::{
         self, is_folder_row, row_folder, InstalledSet, PlacementScope, PlacementSettings, ScopeKind,
     },
     removal_fence::ProtectedLibrary,
-    skill_store::{SkillStore, SkillTargetRecord, TargetTransition},
-    sync_engine::{self, SyncOutcome},
+    skill_store::{SkillRecord, SkillStore, SkillTargetRecord, TargetTransition},
+    sync_engine::{self, Replace, SyncOutcome},
     sync_status::{SyncMode, SyncStatus},
     tool_adapters::{adapter_by_key, installed_set_in, ToolAdapter},
 };
@@ -82,24 +83,20 @@ impl From<anyhow::Error> for GlobalSyncError {
     }
 }
 
-/// How an existing sync target may be replaced.
+/// How an existing sync target may be replaced, beside the occupant rule
+/// every row follows (an occupant the row's evidence proves its own is
+/// replaced; ADR-0007).
 pub struct OverwritePolicy {
-    /// Replace the target unconditionally.
+    /// Replace the target unconditionally: the operator's Overwrite (D12).
     pub overwrite: bool,
-    /// Replace the target only when its content hash matches the source
-    /// (safe refresh, e.g. re-linking an identical copy).
+    /// Also replace a target whose content is identical to the skill's
+    /// (safe refresh, e.g. re-linking an identical copy), decided when the
+    /// target is met.
     pub overwrite_if_same_content: bool,
 }
 
-/// Deterministic single-row sync: probe writability of `tool_root`, apply
-/// the overwrite policy, sync `tool_root/skill_name`, and record the `Synced`
-/// row keyed `key` through [`TargetTransition::Recorded`] — the row's own key,
-/// or the folder key for a folder's new row (one folder, one new row; never a
-/// row per harness sharing it). `adapter` is the registry entry whose
-/// capability governs the folder (`placement::capability_entry`). The batch
-/// engine ([`sync_skills_to_planned_tools`]) drives this per row; tests drive
-/// it directly. Unlocked internal seam — callers reach it through an
-/// entry point that has already taken the mutation guard.
+/// Test door to [`sync_into_root`] for a row with no prior identity.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sync_skill_into_root(
     store: &SkillStore,
@@ -110,9 +107,76 @@ pub(crate) fn sync_skill_into_root(
     skill_id: &str,
     skill_name: &str,
     policy: &OverwritePolicy,
+    deployed: &Deployed,
     key: &str,
     now: i64,
 ) -> Result<SyncOutcome, GlobalSyncError> {
+    sync_into_root(
+        store,
+        central_dir,
+        adapter,
+        tool_root,
+        source,
+        skill_id,
+        skill_name,
+        policy,
+        deployed,
+        RowIdentity { key, id: None },
+        now,
+    )
+}
+
+/// Which row a sync records: its key, and — for a row Enable took out of the
+/// store to re-record it (`FirstSyncRow`) — the id it had, so the row keeps
+/// its identity across the re-record. A stored row keeps its own id whatever
+/// `id` says (the record updates it in place); a new row with no `id` gets a
+/// fresh one.
+#[derive(Clone, Copy)]
+struct RowIdentity<'a> {
+    key: &'a str,
+    id: Option<&'a str>,
+}
+
+impl RowIdentity<'_> {
+    fn id_for_insert(&self) -> String {
+        self.id
+            .map(str::to_string)
+            .unwrap_or_else(|| Uuid::new_v4().to_string())
+    }
+}
+
+/// Deterministic single-row sync: refuse a `skill_name` that is not one
+/// folder name, probe writability of `tool_root`, apply the overwrite policy
+/// and the occupant rule (`deployed`: what the row keyed `row.key` recorded at
+/// this destination, [`Deployed::none`] for a new row) when a folder is met —
+/// replacing it only physically inside `tool_root` — sync
+/// `tool_root/skill_name`, and record the `Synced` row keyed `row.key` — with
+/// the identity a copy deployed — through [`TargetTransition::Recorded`]: the
+/// row's own key, or the folder key for a folder's new row (one folder, one
+/// new row; never a row per harness sharing it). `adapter` is the registry
+/// entry whose capability governs the folder (`placement::capability_entry`).
+/// The batch engine ([`sync_skills_to_planned_tools`]) drives this per row;
+/// tests drive it through `sync_skill_into_root`. Unlocked internal seam —
+/// callers reach it through an entry point that has already taken the
+/// mutation guard.
+#[allow(clippy::too_many_arguments)]
+fn sync_into_root(
+    store: &SkillStore,
+    central_dir: &Path,
+    adapter: &ToolAdapter,
+    tool_root: &Path,
+    source: &Path,
+    skill_id: &str,
+    skill_name: &str,
+    policy: &OverwritePolicy,
+    deployed: &Deployed,
+    row: RowIdentity<'_>,
+    now: i64,
+) -> Result<SyncOutcome, GlobalSyncError> {
+    // The skill's place in the folder, refused before anything touches the
+    // disk when its name is not one folder name (`placement::deployment_path`).
+    let target = placement::deployment_path(tool_root, skill_name)?;
+
     // Pre-check: ensure the skills directory is writable (fixes #20 — Windows OS error 5).
     if let Err(err) = std::fs::create_dir_all(tool_root) {
         if err.kind() == std::io::ErrorKind::PermissionDenied {
@@ -128,32 +192,44 @@ pub(crate) fn sync_skill_into_root(
         )));
     }
 
-    let target = tool_root.join(skill_name);
-    let overwrite = policy.overwrite
-        || (policy.overwrite_if_same_content
-            && content_identity::same_content(Source::Managed { store, skill_id }, &target));
+    let replace = if policy.overwrite {
+        Replace::confirmed()
+    } else {
+        Replace::if_ours(deployed).or_same_content(policy.overwrite_if_same_content)
+    };
+    // Whatever the rule admitted, an occupant is replaced only physically
+    // inside the planned registry skills dir the destination was derived in.
+    let managed = [tool_root.to_path_buf()];
 
     let outcome = sync_engine::sync_dir_for_tool_with_overwrite(
         adapter,
         source,
         Source::Managed { store, skill_id },
         &target,
-        overwrite,
+        replace.within(&managed),
         &ProtectedLibrary::new(store, central_dir),
     )
     .map_err(|err| classify_sync_error(err, adapter, tool_root, &target))?;
 
     // This row alone settles: harnesses sharing its folder read it through
-    // their folder key, never through a row of their own.
+    // their folder key, never through a row of their own. A copy records the
+    // identity it deployed (the skill's stored one, ADR-0005): the evidence a
+    // later removal or replacement checks the copy against.
+    let content_hash = outcome
+        .mode_used
+        .can_drift()
+        .then(|| content_identity::read(Source::Managed { store, skill_id }))
+        .flatten();
     let target_path = outcome.target_path.to_string_lossy();
     store.transition_skill_target(
-        &Uuid::new_v4().to_string(),
+        &row.id_for_insert(),
         TargetTransition::Recorded {
             skill_id,
-            tool: key,
+            tool: row.key,
             mode: outcome.mode_used,
             target_path: &target_path,
             synced_at: now,
+            content_hash: content_hash.as_deref(),
         },
     )?;
 
@@ -246,12 +322,17 @@ pub enum OverrideDecision {
 
 /// The operator's decision for one (skill, row) pair: `tool_key` is the key
 /// of the row the ask was raised for (the report row's `tool_key`), and the
-/// answer applies to that row alone (`answer_for`).
+/// answer applies to that row alone (`answer_for`). `path` is the path the ask
+/// showed (the `TARGET_EXISTS` row's): the answer applies only while the row's
+/// destination is still that path, else it is stale and nothing is touched.
+/// `None` only for a decision taken before any ask (the Add flow's
+/// pre-install overrides).
 #[derive(Debug, Clone)]
 pub struct BatchOverride {
     pub skill_id: String,
     pub tool_key: String,
     pub decision: OverrideDecision,
+    pub path: Option<PathBuf>,
 }
 
 /// Batch-level default policy plus per-(skill, tool) overrides.
@@ -374,6 +455,9 @@ pub fn plan_batch_tool_targets(
 pub(crate) struct FirstSyncRow {
     pub skill_id: String,
     pub key: String,
+    /// The id the taken row had: the row is re-recorded under it, so it
+    /// keeps its identity across Enable's delete and re-record.
+    pub id: String,
 }
 
 /// Which Enable a first-sync plan comes from: what it re-materialises beside
@@ -398,10 +482,21 @@ enum RowSelection<'a> {
     FirstSync(&'a [FirstSyncRow], FirstSyncGrain),
 }
 
-/// One row a batch acts on: an existing row's key, a planned row's key, or
-/// the folder key of the folder's row-to-be.
+/// One row a batch acts on: an existing row's key, a planned row's key (with
+/// the id it is re-recorded under), or the folder key of the folder's
+/// row-to-be.
 struct BatchRow {
     key: String,
+    id: Option<String>,
+}
+
+impl BatchRow {
+    fn identity(&self) -> RowIdentity<'_> {
+        RowIdentity {
+            key: &self.key,
+            id: self.id.as_deref(),
+        }
+    }
 }
 
 /// A row is acted on only where its own reach holds: a folder row through
@@ -438,12 +533,14 @@ fn batch_rows(
                 .filter(|row| acts_on(target, &row.tool))
                 .map(|row| BatchRow {
                     key: row.tool.clone(),
+                    id: None,
                 })
                 .collect();
             if acted.is_empty() {
                 (
                     vec![BatchRow {
                         key: target.folder_key.clone(),
+                        id: None,
                     }],
                     Vec::new(),
                 )
@@ -460,6 +557,7 @@ fn batch_rows(
                 })
                 .map(|row| BatchRow {
                     key: row.key.clone(),
+                    id: Some(row.id.clone()),
                 })
                 .partition(|row| acts_on(target, &row.key));
             match grain {
@@ -467,6 +565,7 @@ fn batch_rows(
                 FirstSyncGrain::Pair if acted.is_empty() => (
                     vec![BatchRow {
                         key: target.folder_key.clone(),
+                        id: None,
                     }],
                     Vec::new(),
                 ),
@@ -577,6 +676,9 @@ fn run_planned(
     let mut index = 0usize;
     for skill in skills {
         let rows = store.list_skill_targets(&skill.skill_id);
+        // The record a row's evidence names (its Library copy); a read
+        // failure leaves the evidence without one (nothing is proved ours).
+        let record = store.get_skill_by_id(&skill.skill_id).ok().flatten();
         let skill_disabled = store
             .skill_disabled_at(&skill.skill_id)
             .map(|at| at.is_some());
@@ -628,7 +730,21 @@ fn run_planned(
                         }),
                     }
                 } else {
-                    sync_row(store, central_dir, target, skill, row, &acted, policy, now)
+                    let deployed = match &rows {
+                        Ok(stored) => row_evidence(stored, target, skill, row, record.as_ref()),
+                        Err(_) => Deployed::none(),
+                    };
+                    sync_row(
+                        store,
+                        central_dir,
+                        target,
+                        skill,
+                        row,
+                        &acted,
+                        policy,
+                        &deployed,
+                        now,
+                    )
                 };
                 outcomes.push(BatchTargetOutcome {
                     skill_id: skill.skill_id.clone(),
@@ -644,10 +760,30 @@ fn run_planned(
     outcomes
 }
 
+/// What the stored row keyed `row.key` recorded **at the skill's place in
+/// the folder** ([`destination`]) — the only path its evidence speaks for. A
+/// row recorded at another path (a skill renamed since), or no row yet, has
+/// none there.
+fn row_evidence(
+    stored: &[SkillTargetRecord],
+    target: &PlannedToolTarget,
+    skill: &BatchSkill,
+    row: &BatchRow,
+    record: Option<&SkillRecord>,
+) -> Deployed {
+    let destination = destination(target, skill);
+    stored
+        .iter()
+        .find(|stored| stored.tool == row.key && Path::new(&stored.target_path) == destination)
+        .map(|stored| Deployed::of_target(stored, record))
+        .unwrap_or_default()
+}
+
 /// One row of an attempted folder: apply the operator's answer for exactly
-/// this row ([`answer_for`]), else the batch policy, sync at the skill's
-/// place in the folder (the registry root plus its current name) and settle
-/// the row under its own key.
+/// this row ([`answer_for`]), else the batch policy and the occupant rule
+/// over the row's own evidence (`deployed`), sync at the skill's place in the
+/// folder (the registry root plus its current name) and settle the row under
+/// its own key.
 #[allow(clippy::too_many_arguments)]
 fn sync_row(
     store: &SkillStore,
@@ -657,9 +793,31 @@ fn sync_row(
     row: &BatchRow,
     rows: &[BatchRow],
     policy: &BatchPolicy,
+    deployed: &Deployed,
     now: i64,
 ) -> BatchTargetStatus {
+    // A name that is not one folder name has no place in the folder: refused
+    // before anything is touched or recorded (`placement::deployment_path`).
+    if let Err(refusal) = placement::deployment_path(&target.root, &skill.skill_name) {
+        return BatchTargetStatus::Failed {
+            error: CommandError::from_anyhow(refusal),
+        };
+    }
     let answer = answer_for(policy, skill, target, row, rows);
+    // An answer applies to the path its ask showed, and only there: a
+    // destination that moved since (the skill renamed, the folder relocated)
+    // makes it stale — nothing at either path is touched, nothing recorded.
+    if let Some(asked) = answer.and_then(|answer| answer.path.as_deref()) {
+        if asked != destination(target, skill) {
+            return BatchTargetStatus::Failed {
+                error: CommandError::from(SignalError::NotFound {
+                    kind: "target".to_string(),
+                    id: asked.to_string_lossy().into_owned(),
+                }),
+            };
+        }
+    }
+    let answer = answer.map(|answer| answer.decision);
     if answer == Some(OverrideDecision::Keep) {
         return record_kept(store, target, skill, row);
     }
@@ -667,7 +825,7 @@ fn sync_row(
         overwrite: policy.overwrite || answer == Some(OverrideDecision::Overwrite),
         overwrite_if_same_content: policy.overwrite_if_same_content,
     };
-    match sync_skill_into_root(
+    match sync_into_root(
         store,
         central_dir,
         target.adapter,
@@ -676,7 +834,8 @@ fn sync_row(
         &skill.skill_id,
         &skill.skill_name,
         &pair_policy,
-        &row.key,
+        deployed,
+        row.identity(),
         now,
     ) {
         Ok(outcome) => BatchTargetStatus::Synced { outcome },
@@ -700,7 +859,9 @@ fn sync_row(
 }
 
 /// Where the skill belongs in `target`'s folder now: the registry root plus
-/// its current name — what every row of the folder is written and recorded at.
+/// its current name — what every row of the folder is written and recorded at
+/// (a name that is not one folder name is refused before a write or record,
+/// [`sync_row`]).
 fn destination(target: &PlannedToolTarget, skill: &BatchSkill) -> PathBuf {
     target.root.join(&skill.skill_name)
 }
@@ -711,13 +872,13 @@ fn destination(target: &PlannedToolTarget, skill: &BatchSkill) -> PathBuf {
 /// another key of the same folder (a harness rather than the folder key)
 /// applies only where that cannot be ambiguous: the folder has a single row
 /// and no override names it exactly.
-fn answer_for(
-    policy: &BatchPolicy,
+fn answer_for<'p>(
+    policy: &'p BatchPolicy,
     skill: &BatchSkill,
     target: &PlannedToolTarget,
     row: &BatchRow,
     rows: &[BatchRow],
-) -> Option<OverrideDecision> {
+) -> Option<&'p BatchOverride> {
     let for_skill = || {
         policy
             .overrides
@@ -725,14 +886,12 @@ fn answer_for(
             .filter(|o| o.skill_id == skill.skill_id)
     };
     if let Some(exact) = for_skill().find(|o| o.tool_key == row.key) {
-        return Some(exact.decision);
+        return Some(exact);
     }
     if rows.len() != 1 {
         return None;
     }
-    for_skill()
-        .find(|o| row_folder(ScopeKind::Global, &o.tool_key) == target.folder_key)
-        .map(|o| o.decision)
+    for_skill().find(|o| row_folder(ScopeKind::Global, &o.tool_key) == target.folder_key)
 }
 
 /// The mode a sync of `target`'s folder tries first — what a row that never
@@ -760,7 +919,7 @@ fn record_failed(
 ) {
     let detail = error.to_string();
     if let Err(err) = store.transition_skill_target(
-        &Uuid::new_v4().to_string(),
+        &row.identity().id_for_insert(),
         TargetTransition::FailedRecorded {
             skill_id: &skill.skill_id,
             tool: &row.key,
@@ -789,7 +948,7 @@ fn record_kept(
     row: &BatchRow,
 ) -> BatchTargetStatus {
     match store.transition_skill_target(
-        &Uuid::new_v4().to_string(),
+        &row.identity().id_for_insert(),
         TargetTransition::DisabledRecorded {
             skill_id: &skill.skill_id,
             tool: &row.key,

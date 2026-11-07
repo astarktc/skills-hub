@@ -98,6 +98,7 @@ impl Fixture {
                 status: SyncStatus::Synced,
                 last_error: None,
                 synced_at: Some(1),
+                content_hash: None,
             })
             .unwrap();
     }

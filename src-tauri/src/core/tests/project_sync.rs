@@ -1000,6 +1000,7 @@ fn global_and_project_sync_independent() {
         status: SyncStatus::Synced,
         last_error: None,
         synced_at: Some(2000),
+        content_hash: None,
     };
     store.upsert_skill_target(&global_target).unwrap();
 
@@ -1646,6 +1647,7 @@ fn project_fanout_uses_persisted_project_tools() {
     let pi = crate::core::tool_adapters::adapter_by_key("pi").unwrap();
     assert!(
         project_sync::resolve_project_sync_target(&project_dir, pi, "pt-skill")
+            .unwrap()
             .expect("project dir")
             .symlink_metadata()
             .is_ok()
@@ -1835,8 +1837,9 @@ fn toggle_assigns_then_unassigns_from_the_stored_state() {
         &skill_dir.to_string_lossy(),
     );
     let adapter = crate::core::tool_adapters::adapter_by_key("claude_code").expect("adapter");
-    let target =
-        resolve_project_sync_target(&project_dir, adapter, "toggle-skill").expect("project dir");
+    let target = resolve_project_sync_target(&project_dir, adapter, "toggle-skill")
+        .unwrap()
+        .expect("project dir");
 
     let first = toggle_skill_assignment(
         &store,
@@ -1939,6 +1942,7 @@ fn assign_copy_then_rename_skill(
     assert_eq!(record.status, SyncStatus::Synced);
     let adapter = crate::core::tool_adapters::adapter_by_key(tool).expect("adapter");
     let target = project_sync::resolve_project_sync_target(&project_dir, adapter, "named-skill")
+        .unwrap()
         .expect("project dir");
     assert!(target.join("SKILL.md").exists(), "assignment materialised");
 
@@ -2101,6 +2105,7 @@ fn unassign_skill_from_project_clears_every_tool_of_that_skill_only() {
     for tool in ["claude_code", "cursor"] {
         let adapter = crate::core::tool_adapters::adapter_by_key(tool).unwrap();
         let target = project_sync::resolve_project_sync_target(&project_dir, adapter, "bulk-off")
+            .unwrap()
             .expect("project dir");
         assert!(
             target.symlink_metadata().is_err(),
@@ -2315,6 +2320,7 @@ fn collision_answers_into_a_missing_project_folder_skip_the_project() {
                 project_id: project.id.clone(),
                 skill_id: skill.id.clone(),
                 tool: "claude_code".into(),
+                path: asked_path(&store, &project.id, &skill.id, "claude_code"),
                 decision,
             }],
             3000,
@@ -2327,7 +2333,29 @@ fn collision_answers_into_a_missing_project_folder_skip_the_project() {
     }
 }
 
-/// One answer for one (project, skill, claude_code) pair.
+/// The path an ask about the assignment `(project_id, skill_id, tool)` shows:
+/// its destination as the store places it now (empty when there is no row).
+fn asked_path(store: &SkillStore, project_id: &str, skill_id: &str, tool: &str) -> String {
+    let Some(row) = store
+        .get_project_skill_assignment(project_id, skill_id, tool)
+        .unwrap()
+    else {
+        return String::new();
+    };
+    let project = store.get_project_by_id(project_id).unwrap().unwrap();
+    project_sync::resolve_assignment_artifact(
+        Path::new(&project.path),
+        project_sync::deploy_adapter(tool).unwrap(),
+        &row,
+        || Ok(None),
+    )
+    .unwrap()
+    .map(|path| path.to_string_lossy().into_owned())
+    .unwrap_or_default()
+}
+
+/// One answer for one (project, skill, claude_code) pair, at the path the
+/// ask showed.
 fn answer(
     store: &SkillStore,
     project: &ProjectRecord,
@@ -2341,6 +2369,7 @@ fn answer(
             project_id: project.id.clone(),
             skill_id: skill_id.to_string(),
             tool: "claude_code".into(),
+            path: asked_path(store, &project.id, skill_id, "claude_code"),
             decision,
         }],
         3000,
@@ -2565,7 +2594,7 @@ fn the_target_write_seam_refuses_a_missing_project_root() {
         &central_repo_of(&store),
         &project,
         &row,
-        true,
+        project_sync::ReplaceRule::Confirmed,
         3000,
     )
     .expect_err("refused");
@@ -2982,6 +3011,11 @@ fn dropping_a_harness_removes_its_legacy_assignment_and_keeps_the_folders_row() 
             id: "legacy-trae-cn".to_string(),
             tool: "trae_cn".to_string(),
             skill_name: "previous-name".to_string(),
+            // The copy it deployed under the old name, and its identity.
+            mode: SyncMode::Copy,
+            content_hash: crate::core::content_identity::read(
+                crate::core::content_identity::Source::Directory(&old),
+            ),
             ..folder_row.clone()
         })
         .unwrap();
@@ -3166,13 +3200,10 @@ fn our_link(skill: &SkillRecord, path: &Path) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     #[cfg(unix)]
     std::os::unix::fs::symlink(&skill.central_path, path).unwrap();
-    #[cfg(not(unix))]
-    {
-        // No unprivileged symlink on Windows CI: stand in with a folder.
-        let _ = &skill.central_path;
-        fs::create_dir_all(path).unwrap();
-        fs::write(path.join("SKILL.md"), "ours").unwrap();
-    }
+    // No unprivileged symlink on Windows CI: a junction is the link the
+    // engine falls back to there, and resolves to the copy just the same.
+    #[cfg(windows)]
+    junction::create(&skill.central_path, path).unwrap();
 }
 
 fn row_of(
@@ -3389,6 +3420,20 @@ fn siblings_recording_the_same_path_settle_each_by_its_own_sync() {
     let artifact = trae_dir(&project).join("trae-skill");
     fs::create_dir_all(&artifact).unwrap();
     fs::write(artifact.join("SKILL.md"), "stale copy of ours").unwrap();
+    // The owner deployed that copy and recorded its identity.
+    store
+        .transition_assignment(
+            "pa-trae_cn",
+            crate::core::skill_store::AssignmentTransition::SyncCompleted {
+                mode: SyncMode::Copy,
+                synced_at: 1500,
+                content_hash: crate::core::content_identity::read(
+                    crate::core::content_identity::Source::Directory(&artifact),
+                )
+                .as_deref(),
+            },
+        )
+        .unwrap();
 
     let report =
         project_sync::resync_project(&store, &central_repo_of(&store), &project.id, 3000).unwrap();
@@ -3460,6 +3505,7 @@ fn a_collision_answer_leaves_a_sibling_naming_another_artifact_alone() {
             project_id: project.id.clone(),
             skill_id: skill.id.clone(),
             tool: "trae".to_string(),
+            path: asked_path(&store, &project.id, &skill.id, "trae"),
             decision: OverrideDecision::Keep,
         }],
         3000,
@@ -3538,6 +3584,7 @@ fn an_overwrite_answer_reaches_only_the_asked_row_and_path() {
             project_id: asked.project_id.clone(),
             skill_id: asked.skill_id.clone(),
             tool: asked.tool.clone(),
+            path: path.clone(),
             decision: OverrideDecision::Overwrite,
         }],
         3100,

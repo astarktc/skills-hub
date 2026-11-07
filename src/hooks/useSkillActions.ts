@@ -400,10 +400,8 @@ export function useSkillActions({
     };
 
     /** A Refresh / Update report's collisions (Propagation's first sync of a row that owns nothing), asked once. */
-    const settleRefresh = async (action: ActionHandle, report: RefreshReport, catalogNow: readonly ManagedSkill[]) => {
-      const { parts: [part], retried } = await settleParts(action, [
-        { kind: "refresh", report, skills: catalogNow.map(toSyncItem) },
-      ] as const);
+    const settleRefresh = async (action: ActionHandle, report: RefreshReport) => {
+      const { parts: [part], retried } = await settleParts(action, [{ kind: "refresh", report }] as const);
       return { report: part.report, declined: part.declined, retried };
     };
 
@@ -412,7 +410,7 @@ export function useSkillActions({
         const response = await request(action);
         if (response instanceof ActionExit) return response;
         replaceCatalog(response.skills);
-        const { report, declined } = await settleRefresh(action, response.report, response.skills);
+        const { report, declined } = await settleRefresh(action, response.report);
         return applyOutcome(
           refreshOutcome(report, {
             ...foldContext,
@@ -554,7 +552,7 @@ export function useSkillActions({
             all ? null : skills.map((skill) => skill.id),
             await newRefreshProgressChannel(),
           );
-          const { report, declined, retried } = await settleRefresh(action, settled, managedSkills);
+          const { report, declined, retried } = await settleRefresh(action, settled);
           // A retry already re-read the catalog.
           await applyOutcome(refreshOutcome(report, { ...foldContext, declined }), {
             reload: retried ? undefined : reload,

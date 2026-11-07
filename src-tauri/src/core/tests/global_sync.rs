@@ -7,6 +7,7 @@
 //! touches the operator's real home directory or installed tools.
 
 use crate::core::environment::HostRoots;
+use crate::core::ownership::Deployed;
 use crate::core::removal_fence::central_repo_of;
 use crate::core::sync_status::{SyncMode, SyncStatus};
 use std::fs;
@@ -88,6 +89,7 @@ fn sync_creates_target_and_records_one_row_for_the_folder() {
         "skill-1",
         "my-skill",
         &no_overwrite(),
+        &Deployed::none(),
         "amp",
         1000,
     )
@@ -135,6 +137,7 @@ fn sync_without_overwrite_fails_with_target_exists() {
         "skill-1",
         "my-skill",
         &no_overwrite(),
+        &Deployed::none(),
         adapter.key(),
         1000,
     )
@@ -182,6 +185,7 @@ fn sync_with_overwrite_replaces_existing_target() {
             overwrite: true,
             overwrite_if_same_content: false,
         },
+        &Deployed::none(),
         adapter.key(),
         1000,
     )
@@ -231,6 +235,7 @@ fn overwrite_if_same_content_only_replaces_identical_targets() {
         "skill-1",
         "my-skill",
         &policy,
+        &Deployed::none(),
         adapter.key(),
         1000,
     )
@@ -247,6 +252,7 @@ fn overwrite_if_same_content_only_replaces_identical_targets() {
         "skill-2",
         "other-skill",
         &policy,
+        &Deployed::none(),
         adapter.key(),
         1000,
     )
@@ -288,6 +294,7 @@ fn the_collision_fact_reads_the_stored_identity_like_the_policy() {
         "skill-1",
         "my-skill",
         &same_content_policy,
+        &Deployed::none(),
         adapter.key(),
         1000,
     )
@@ -315,6 +322,7 @@ fn the_collision_fact_reads_the_stored_identity_like_the_policy() {
         "no-such-skill",
         "ghost",
         &same_content_policy,
+        &Deployed::none(),
         adapter.key(),
         1000,
     )
@@ -336,6 +344,7 @@ fn the_collision_fact_reads_the_stored_identity_like_the_policy() {
         "skill-1",
         "same",
         &same_content_policy,
+        &Deployed::none(),
         adapter.key(),
         1000,
     )
@@ -365,6 +374,7 @@ fn copy_only_capability_gets_copy_mode() {
         "skill-1",
         "my-skill",
         &no_overwrite(),
+        &Deployed::none(),
         cursor.key(),
         1000,
     )
@@ -600,6 +610,7 @@ fn batch_override_applies_to_the_folder_its_key_names() {
             skill_id: "skill-1".to_string(),
             tool_key: "amp".to_string(),
             decision: OverrideDecision::Overwrite,
+            path: None,
         }],
     };
     let skills = vec![batch_skill("skill-1", "my-skill", &source)];
@@ -638,6 +649,7 @@ fn batch_override_applies_to_the_folder_its_key_names() {
                 skill_id: "skill-1".to_string(),
                 tool_key: kimi.key().to_string(),
                 decision: OverrideDecision::Overwrite,
+                path: None,
             }],
         };
         let outcomes = sync_skills_to_planned_tools(
@@ -677,6 +689,7 @@ fn batch_direct_override_forces_overwrite_for_that_skill_only() {
             skill_id: "skill-1".to_string(),
             tool_key: "claude_code".to_string(),
             decision: OverrideDecision::Overwrite,
+            path: None,
         }],
     };
     let skills = vec![
@@ -926,6 +939,7 @@ fn an_overwrite_never_removes_a_folder_inside_the_central_library() {
             overwrite: true,
             overwrite_if_same_content: false,
         },
+        &Deployed::none(),
         adapter.key(),
         1000,
     )
@@ -984,6 +998,7 @@ fn an_overwrite_never_removes_an_unrecorded_folder_of_the_configured_repo() {
             overwrite: true,
             overwrite_if_same_content: false,
         },
+        &Deployed::none(),
         adapter.key(),
         1000,
     )
@@ -1037,6 +1052,7 @@ fn an_overwrite_blocked_by_permission_keeps_the_typed_removal_failure() {
             overwrite: true,
             overwrite_if_same_content: false,
         },
+        &Deployed::none(),
         adapter.key(),
         1000,
     );
@@ -1174,6 +1190,7 @@ fn every_row_writes_the_skills_place_and_an_answer_reaches_the_row_it_names() {
                 status: SyncStatus::Error,
                 last_error: Some("an earlier first sync failed".to_string()),
                 synced_at: None,
+                content_hash: None,
             })
             .expect("seed row");
     }
@@ -1185,6 +1202,7 @@ fn every_row_writes_the_skills_place_and_an_answer_reaches_the_row_it_names() {
             skill_id: "skill-1".to_string(),
             tool_key: tool.to_string(),
             decision,
+            path: None,
         }],
     };
     let row = |tool: &str| {
@@ -1292,6 +1310,7 @@ fn a_stale_recorded_path_is_never_a_destination() {
             status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(1),
+            content_hash: None,
         })
         .expect("seed row");
 
@@ -1361,6 +1380,7 @@ fn a_legacy_row_of_an_uninstalled_harness_is_left_as_it_was() {
         status: SyncStatus::Error,
         last_error: Some("an earlier sync failed".to_string()),
         synced_at: None,
+        content_hash: None,
     };
     store.upsert_skill_target(&legacy).expect("seed row");
 

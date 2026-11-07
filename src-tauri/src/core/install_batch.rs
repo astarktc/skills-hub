@@ -296,6 +296,8 @@ fn settle_unlocked(
                     skill_id: skill.skill_id.clone(),
                     tool_key: o.tool.clone(),
                     decision: o.decision,
+                    // Taken before any ask: no path was shown.
+                    path: None,
                 })
                 .collect(),
         };

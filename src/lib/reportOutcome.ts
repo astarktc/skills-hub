@@ -399,19 +399,21 @@ function deploymentOf(row: RowRef): string {
 }
 
 /** Which way a Deployment settled when its rows settled differently: a kept row wins. */
-const REMOVAL_RANK = { failed: 3, removed: 2, cleared: 1, flipped: 0 } as const;
+const REMOVAL_RANK = { failed: 4, removed: 3, left_in_place: 2, cleared: 1, flipped: 0 } as const;
 type RemovalKind = keyof typeof REMOVAL_RANK;
 
 /**
  * Counts **Deployments**, one per (skill, folder) — per project for an
  * assignment — however many rows describe it (`deploymentOf`), each counted
- * once by its strongest settlement (failed › removed › cleared › flipped).
- * `removed` / `failed` count the Deployments of removed / kept targets;
- * `cleared` counts those settled without touching any path (`cleared_markers`:
- * rows that owned no artifact), so an unassignment that only cleared such a
- * row still counts as one without claiming an artifact was removed. `flipped`
- * counts the markers a Disable recorded `disabled` (`disabled_markers`, #95):
- * intent recorded, nothing removed.
+ * once by its strongest settlement (failed › removed › left in place ›
+ * cleared › flipped). `removed` / `failed` count the Deployments of removed /
+ * kept targets; `left_in_place` those settled while the folder at their path,
+ * not what the app put there, was kept (ADR-0007); `cleared` counts those
+ * settled without touching any path (`cleared_markers`: rows that owned no
+ * artifact), so an unassignment that only cleared such a row still counts as
+ * one without claiming an artifact was removed. `flipped` counts the markers
+ * a Disable recorded `disabled` (`disabled_markers`, #95): intent recorded,
+ * nothing removed.
  */
 function removalCounts(report: RemovalReport) {
   const settled = new Map<string, RemovalKind>();
@@ -423,9 +425,21 @@ function removalCounts(report: RemovalReport) {
   for (const target of report.targets) for (const row of target.rows) note(row, target.status.status);
   for (const row of report.cleared_markers) note(row, "cleared");
   for (const row of report.disabled_markers) note(row, "flipped");
-  const counts = { removed: 0, failed: 0, cleared: 0, flipped: 0 };
+  const counts = { removed: 0, failed: 0, left_in_place: 0, cleared: 0, flipped: 0 };
   for (const kind of settled.values()) counts[kind]++;
   return counts;
+}
+
+/**
+ * The quiet lines of a removal's left-in-place folders (ADR-0007): one per
+ * path, each a folder the removal kept because it is not what the app put
+ * there (the operator's own folder, a copy edited in place). Not a failure —
+ * the Deployment settled — and nothing to answer, but never silent.
+ */
+function leftInPlaceNotes(report: RemovalReport, ctx: ReportContext): string[] {
+  return report.targets
+    .filter((target) => target.status.status === "left_in_place")
+    .map((target) => ctx.t("outcome.leftInPlaceLine", { path: target.path }));
 }
 
 /**
@@ -832,6 +846,8 @@ export function removalOutcome(
   const out = empty();
   const counts = removalCounts(report);
   const failed = collectRemovalFailures(out, report, ctx, "errors.unsyncFailedTitle");
+  out.notes.push(...leftInPlaceNotes(report, ctx));
+  const detail = detailOf(out.notes);
   // A skill-grain Disable (`skill` / `all`) always records the skill
   // disabled, so it is never "nothing planned" — even with nothing deployed.
   const skillGrain = ctx.action === "skill" || ctx.action === "all";
@@ -859,10 +875,15 @@ export function removalOutcome(
   // A Disable over several skills (the bulk rail, D8) reads as the count
   // line over its Sync targets: "412 disabled · 3 failed" (D10).
   if (ctx.action === "all")
-    out.toast = headlineToast(ctx.t, "disabled", {
-      done: counts.removed + counts.cleared + counts.flipped,
-      failed: counts.failed,
-    });
+    out.toast = headlineToast(
+      ctx.t,
+      "disabled",
+      {
+        done: counts.removed + counts.left_in_place + counts.cleared + counts.flipped,
+        failed: counts.failed,
+      },
+      { detail },
+    );
   // A pair Disable that only recorded its marker removed nothing: it says
   // the pair stays off (#95) rather than that deploying was disabled.
   const [flipped] = report.disabled_markers;
@@ -876,11 +897,17 @@ export function removalOutcome(
               tool: label(ctx, flipped.folder_key),
             }),
           )
-        : toast("success", ctx.t("status.syncDisabled"));
+        : toast("success", ctx.t("status.syncDisabled"), detail);
+  // Whatever the toast, the left-in-place lines reach the run's notes.
   // One skill off a project's Tools: the count line over its assignments
   // ("2 unassigned · 1 failed"); a kept row stays in the matrix, failed.
   if (ctx.action === "bulkUnassign")
-    out.toast = headlineToast(ctx.t, "unassigned", { done: counts.removed + counts.cleared, failed: counts.failed });
+    out.toast = headlineToast(
+      ctx.t,
+      "unassigned",
+      { done: counts.removed + counts.left_in_place + counts.cleared, failed: counts.failed },
+      { detail },
+    );
   return out;
 }
 
@@ -1038,6 +1065,9 @@ export function projectRemovalOutcome(
     ctx,
     "errors.projectRemovalFailedTitle",
   );
+  out.notes.push(...leftInPlaceNotes(report, ctx));
+  const detail = detailOf(out.notes);
+  const done = counts.removed + counts.left_in_place + counts.cleared;
   // Removing a project closes its dialog either way: a row whose artifact
   // stayed keeps the project listed with that cell failed (ADR-0002), which
   // the dialog said before it ran. A tool configuration that kept a row
@@ -1045,13 +1075,17 @@ export function projectRemovalOutcome(
   out.completion.closeModal = ctx.action === "removeProject" || !failed;
   if (ctx.action === "removeProject")
     out.toast = failed
-      ? toast("failure", [
-          ctx.t("projectsSurface.removeKept"),
-          compositeHeadline(ctx.t, "removed", { done: counts.removed + counts.cleared, failed: counts.failed }),
-        ].join(HEADLINE_SEPARATOR))
-      : toast("success", ctx.t("projects.removeComplete"));
+      ? toast(
+          "failure",
+          [
+            ctx.t("projectsSurface.removeKept"),
+            compositeHeadline(ctx.t, "removed", { done, failed: counts.failed }),
+          ].join(HEADLINE_SEPARATOR),
+          detail,
+        )
+      : toast("success", ctx.t("projects.removeComplete"), detail);
   if (ctx.action === "configureTools" && failed)
-    out.toast = headlineToast(ctx.t, "removed", { done: counts.removed + counts.cleared, failed: counts.failed });
+    out.toast = headlineToast(ctx.t, "removed", { done, failed: counts.failed }, { detail });
   return out;
 }
 
@@ -1605,6 +1639,8 @@ export function deleteOutcome(
     collectRemovalFailures(part, settlement.report, ctx, "errors.deleteKeptTargetTitle", {
       [settlement.skillId]: settlement.name,
     });
+    const left = leftInPlaceNotes(settlement.report, ctx);
+    out.notes.push(...(batch ? left.map((line) => `${settlement.name}: ${line}`) : left));
     keptTargets += removalCounts(settlement.report).failed;
     // A kept target is finished by removing the skill again (the Delete
     // dialog, D16), never by a sync.
@@ -1616,8 +1652,9 @@ export function deleteOutcome(
   const removed = settled.filter(deleted).length;
   const cancelled = settled.filter(cancelledDelete).length;
   const failed = settled.length - removed - cancelled;
+  const detail = detailOf(out.notes);
   out.completion.closeModal = failed === 0;
-  if (batch) out.toast = headlineToast(ctx.t, "removed", { done: removed, failed, cancelled });
+  if (batch) out.toast = headlineToast(ctx.t, "removed", { done: removed, failed, cancelled }, { detail });
   else if (cancelled) out.toast = toast("neutral", ctx.t("deleteCancel.single", { name: settled[0].name }));
   else if (failed)
     // A kept target names the count; a skill that threw before anything was
@@ -1626,7 +1663,7 @@ export function deleteOutcome(
       keptTargets > 0
         ? toast("failure", ctx.t("status.skillDeleteKept", { failed: keptTargets }))
         : toast("failure", ctx.t("deleteReport.failedTitle", { name: settled[0].name }));
-  else out.toast = toast("success", ctx.t("status.skillRemoved"));
+  else out.toast = toast("success", ctx.t("status.skillRemoved"), detail);
   return out;
 }
 
@@ -1648,6 +1685,11 @@ export type DeleteReportRow = {
   /** Where it was removed from: Tool labels (project rows "Tool · project"). */
   removedFrom: string[];
   kept: DeleteKeptTarget[];
+  /**
+   * Folders the Delete left where they were because they are not what Skills
+   * Hub put there (ADR-0007): their Deployments settled, the folders stayed.
+   */
+  leftInPlace: { path: string; tools: string[] }[];
   /** A whole-command failure for this skill (nothing was planned), in words. */
   failure: string | null;
 };
@@ -1677,6 +1719,7 @@ export function deleteReportRows(
         deleted: false,
         removedFrom: [],
         kept: [],
+        leftInPlace: [],
         failure: errorMessage(ctx, settlement.error),
       };
     const { report } = settlement;
@@ -1699,10 +1742,46 @@ export function deleteReportRows(
             ]
           : [],
       ),
+      leftInPlace: report.targets.flatMap((target) =>
+        target.status.status === "left_in_place"
+          ? [{ path: target.path, tools: unique(target.rows.map(rowLabel)) }]
+          : [],
+      ),
       failure: null,
     };
   });
   return [...rows.filter((row) => !row.deleted), ...rows.filter((row) => row.deleted)];
+}
+
+/**
+ * What the Delete dialog's report state shows, decided here so the dialog
+ * only renders it (D16). `detailed`: every kept skill, and every deleted
+ * skill whose Delete left a folder in place (ADR-0007) — its section says
+ * where it was removed from and names each folder left where it was, so a
+ * bulk Remove never hides one behind "Removed" (round 20 t18 review, Sol
+ * 103). `removed`: deleted skills with nothing more to say, for the one
+ * summary line. `retryIds`: the kept skills still in the catalog — the only
+ * ones Retry offers; a deleted skill is never retried. `kept`: how many were
+ * not deleted, for the title.
+ */
+export type DeleteReportView = {
+  detailed: DeleteReportRow[];
+  removed: DeleteReportRow[];
+  retryIds: string[];
+  kept: number;
+};
+
+export function deleteReportView(
+  rows: readonly DeleteReportRow[],
+  inCatalog: (skillId: string) => boolean,
+): DeleteReportView {
+  const kept = rows.filter((row) => !row.deleted);
+  return {
+    detailed: rows.filter((row) => !row.deleted || row.leftInPlace.length > 0),
+    removed: rows.filter((row) => row.deleted && row.leftInPlace.length === 0),
+    retryIds: kept.map((row) => row.skillId).filter(inCatalog),
+    kept: kept.length,
+  };
 }
 
 /** D10's precedence as a rank: the strongest tone of several parts wins. */

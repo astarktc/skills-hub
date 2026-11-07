@@ -36,9 +36,11 @@
 //! row by itself, with its own ownership and settlement.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::ffi::OsStr;
+use std::path::{Component, Path, PathBuf};
 
 use super::environment::HostRoots;
+use super::errors::SignalError;
 use super::skill_store::{
     ProjectSkillAssignmentRecord, SkillProjectDeploymentRecord, SkillTargetRecord,
 };
@@ -47,7 +49,8 @@ use super::tool_adapters::reads::{
     ReadFacts, SharedRead, AGENTS_PROJECT_DIR, AGENTS_SKILLS, CLAUDE_PROJECT_DIR, CLAUDE_SKILLS,
 };
 use super::tool_adapters::{
-    adapter_by_key, catalog_rows, project_skills_dir_in, reader_only_harnesses, ToolAdapter, ToolId,
+    adapter_by_key, catalog_rows, deletable_skills_dirs_in, former_skills_dirs_in,
+    project_skills_dir_in, reader_only_harnesses, skills_dir_in, ToolAdapter, ToolId,
 };
 
 /// The two deployment scopes, without their roots (folder identity needs none).
@@ -321,6 +324,85 @@ pub fn row_folder(scope: ScopeKind, key: &str) -> String {
     own_folder(scope, key)
         .map(str::to_string)
         .unwrap_or_else(|| key.to_string())
+}
+
+/// The skills folders a global row keyed `key` may lie in — the only places
+/// the app removes or replaces its folder (ADR-0007: "only inside a skills
+/// folder it manages"): the current and former registry skills dirs of the
+/// row's own harness and of the folder it describes ([`row_folder`]). A key
+/// the registry no longer knows names no folder of its own, so its row may
+/// lie in any registry skills dir (`tool_adapters::deletable_skills_dirs_in`,
+/// the registry's deletion rule). The removal and replacement fences claim
+/// these physically (`removal_fence::Claim::Within`).
+pub fn managed_global_dirs(roots: &HostRoots, key: &str) -> Vec<PathBuf> {
+    let folder = row_folder(ScopeKind::Global, key);
+    let entries: Vec<&ToolAdapter> = [adapter_by_key(key), adapter_by_key(&folder)]
+        .into_iter()
+        .flatten()
+        .collect();
+    if entries.is_empty() {
+        return deletable_skills_dirs_in(roots);
+    }
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for entry in entries {
+        for dir in
+            std::iter::once(skills_dir_in(roots, entry)).chain(former_skills_dirs_in(roots, entry))
+        {
+            if !dirs.contains(&dir) {
+                dirs.push(dir);
+            }
+        }
+    }
+    dirs
+}
+
+/// The `INVALID_PATH` reason [`deployment_path`] refuses a name with.
+pub(crate) const NOT_A_FOLDER_NAME: &str = "not_a_folder_name";
+
+/// Whether `name` can name a Deployment's folder: exactly one normal path
+/// component, spelled as itself — not empty, not `.` or `..`, not absolute or
+/// drive-relative, and with no separator of any platform (`/`, `\`) or NUL.
+pub(crate) fn is_folder_name(name: &str) -> bool {
+    if name.contains(['/', '\\', '\0']) {
+        return false;
+    }
+    let mut components = Path::new(name).components();
+    matches!(
+        (components.next(), components.next()),
+        (Some(Component::Normal(only)), None) if only == OsStr::new(name)
+    )
+}
+
+/// Where the skill (or project assignment) named `name` lives in the skills
+/// folder `skills_dir`: the one place a name becomes a Deployment's path, so a
+/// derived destination is always a direct child of the folder it was derived
+/// in (ADR-0007: "only inside a skills folder it manages"). A name that is not
+/// one folder name ([`is_folder_name`] — `../../Documents/alpha`, an absolute
+/// path) is refused before anything touches the disk: the typed
+/// `InvalidPath { reason: "not_a_folder_name" }`, whose `path` is the place
+/// the name would have reached, joined lexically for the report only
+/// ([`refused_place`]) — never a destination.
+pub(crate) fn deployment_path(skills_dir: &Path, name: &str) -> anyhow::Result<PathBuf> {
+    if is_folder_name(name) {
+        return Ok(skills_dir.join(name));
+    }
+    anyhow::bail!(SignalError::InvalidPath {
+        path: skills_dir.join(name).to_string_lossy().into_owned(),
+        reason: NOT_A_FOLDER_NAME.to_string(),
+    })
+}
+
+/// The place a [`deployment_path`] refusal names, when `err` is one: what a
+/// report shows for the refused row, and what a protection set ("keep what
+/// this reaches") may include to stay cautious. Never a write or removal
+/// destination.
+pub(crate) fn refused_place(err: &anyhow::Error) -> Option<PathBuf> {
+    match err.downcast_ref::<SignalError>() {
+        Some(SignalError::InvalidPath { path, reason }) if reason == NOT_A_FOLDER_NAME => {
+            Some(PathBuf::from(path))
+        }
+        _ => None,
+    }
 }
 
 /// The registry entry whose capability governs how `folder_key`'s folder is

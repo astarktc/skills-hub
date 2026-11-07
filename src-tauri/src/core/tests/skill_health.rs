@@ -468,7 +468,12 @@ fn an_edit_replay_conflict_records_edit_conflict_and_an_edit_save_clears_it() {
 fn a_kept_delete_records_delete_incomplete_with_the_failed_targets_error() {
     use std::os::unix::fs::PermissionsExt;
     let f = fixture();
-    let target = f.dir.path().join("tools").join("alpha");
+    // Where Claude Code's row lies: its managed skills folder.
+    let target = crate::core::tool_adapters::skills_dir_in(
+        &f.paths.roots,
+        adapter_by_key("claude_code").unwrap(),
+    )
+    .join("alpha");
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("SKILL.md"), "# synced\n").unwrap();
     f.store
@@ -481,6 +486,10 @@ fn a_kept_delete_records_delete_incomplete_with_the_failed_targets_error() {
             status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(1),
+            // What the row deployed: the copy written above.
+            content_hash: crate::core::content_identity::read(
+                crate::core::content_identity::Source::Directory(&target),
+            ),
         })
         .unwrap();
     fs::set_permissions(&target, fs::Permissions::from_mode(0o555)).unwrap();
@@ -488,7 +497,7 @@ fn a_kept_delete_records_delete_incomplete_with_the_failed_targets_error() {
         return; // permissions not enforced (root)
     }
 
-    let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.id).unwrap();
+    let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.paths.roots, &f.id).unwrap();
     fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(!report.record_deleted);
     let RemovalTargetStatus::Failed { error } = &report.targets[0].status else {
@@ -499,7 +508,7 @@ fn a_kept_delete_records_delete_incomplete_with_the_failed_targets_error() {
     assert_eq!(json(&health.error), json(error));
 
     // The retried Delete completes: the row, and its health, are gone.
-    let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.id).unwrap();
+    let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.paths.roots, &f.id).unwrap();
     assert!(report.record_deleted);
     assert!(f.health().is_none());
 }
@@ -558,7 +567,7 @@ fn a_failed_first_sync_records_an_error_row_that_owns_nothing() {
         ),
         "{propagation:?}"
     );
-    let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.id).unwrap();
+    let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.paths.roots, &f.id).unwrap();
     assert!(report.record_deleted);
     assert_eq!(report.cleared_markers.len(), 1);
     assert_eq!(
@@ -601,6 +610,7 @@ fn a_target_exists_with_no_decision_records_no_row_and_a_kept_one_records_disabl
         skill_id: f.id.clone(),
         tool_key: "claude_code".into(),
         decision: OverrideDecision::Keep,
+        path: None,
     }];
     let outcomes = sync_skills_to_planned_tools(
         &f.store,
@@ -646,7 +656,7 @@ fn a_target_exists_with_no_decision_records_no_row_and_a_kept_one_records_disabl
         }
     ));
     // Delete never takes the kept folder.
-    remove_skill(&f.store, &central_repo_of(&f.store), &f.id).unwrap();
+    remove_skill(&f.store, &central_repo_of(&f.store), &f.paths.roots, &f.id).unwrap();
     assert!(root.join("alpha").join("SKILL.md").exists());
 }
 
@@ -660,6 +670,7 @@ fn an_overwrite_decision_still_replaces_the_folder() {
         skill_id: f.id.clone(),
         tool_key: "claude_code".into(),
         decision: OverrideDecision::Overwrite,
+        path: None,
     }];
     let outcomes = sync_skills_to_planned_tools(
         &f.store,
@@ -772,6 +783,7 @@ fn a_project_first_sync_collision_is_typed_target_exists() {
         .unwrap();
     let target =
         crate::core::project_sync::resolve_project_sync_target(&project_dir, claude(), "alpha")
+            .unwrap()
             .expect("project dir");
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("SKILL.md"), "foreign").unwrap();
@@ -809,6 +821,7 @@ fn onboarding_discovery_sees_past_a_row_that_owns_nothing() {
         skill_id: f.id.clone(),
         tool_key: "claude_code".into(),
         decision: OverrideDecision::Keep,
+        path: None,
     }];
     sync_skills_to_planned_tools(
         &f.store,

@@ -272,8 +272,10 @@ fn every_byte_adapter_settles_and_reports_propagation() {
         adapter.supports_symlink = false;
         let adapter = tool_adapters::test_overrides::shadow(adapter);
         crate::core::tool_adapters::mark_installed_in(&paths.roots, adapter);
-        let target = paths.roots.home.join("target");
-        fs::create_dir(&target).unwrap();
+        // In Cursor's skills dir: the managed folder a replacement is
+        // claimed in (`placement::managed_global_dirs`).
+        let target = tool_adapters::skills_dir_in(&paths.roots, adapter).join("target");
+        fs::create_dir_all(&target).unwrap();
         fs::write(target.join("SKILL.md"), "old").unwrap();
         store
             .upsert_skill_target(&SkillTargetRecord {
@@ -285,6 +287,10 @@ fn every_byte_adapter_settles_and_reports_propagation() {
                 status: SyncStatus::Synced,
                 last_error: None,
                 synced_at: Some(1),
+                // What the row deployed: the copy written above.
+                content_hash: crate::core::content_identity::read(
+                    crate::core::content_identity::Source::Directory(&target),
+                ),
             })
             .unwrap();
         let mut request = staged_request(&paths, &record);
@@ -532,6 +538,7 @@ fn git_restore_rebuilds_the_central_copy_and_its_dangling_link() {
             status: crate::core::sync_status::SyncStatus::Synced,
             last_error: None,
             synced_at: Some(1),
+            content_hash: None,
         })
         .unwrap();
     fs::remove_dir_all(&record.central_path).unwrap();
@@ -596,8 +603,8 @@ fn a_refresh_keeps_an_executable_script_executable_in_the_central_copy_and_a_cop
     adapter.supports_symlink = false;
     let adapter = tool_adapters::test_overrides::shadow(adapter);
     tool_adapters::mark_installed_in(&paths.roots, adapter);
-    let target = paths.roots.home.join("copy-target");
-    fs::create_dir(&target).unwrap();
+    let target = tool_adapters::skills_dir_in(&paths.roots, adapter).join("copy-target");
+    fs::create_dir_all(&target).unwrap();
     fs::write(target.join("SKILL.md"), "old").unwrap();
     store
         .upsert_skill_target(&SkillTargetRecord {
@@ -609,6 +616,10 @@ fn a_refresh_keeps_an_executable_script_executable_in_the_central_copy_and_a_cop
             status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(1),
+            // What the row deployed: the copy written above.
+            content_hash: crate::core::content_identity::read(
+                crate::core::content_identity::Source::Directory(&target),
+            ),
         })
         .unwrap();
     let api = StubApi {

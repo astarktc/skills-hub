@@ -68,6 +68,7 @@ import type {
   SkillRefreshStatus,
   SyncMode,
   SyncProgressDto,
+  TargetDecision,
   ToolInfoDto,
   ToolStatusDto,
 } from "../bindings";
@@ -96,6 +97,7 @@ import {
   type FixtureProject,
   type FixtureSkill,
   type StoredAssignment,
+  type StoredTarget,
   type FixtureState,
 } from "./model";
 import { DUPLICATE_READS, READER_REGISTRY, TOOL_REGISTRY, VIRTUAL_GROUP_KEY } from "./registry";
@@ -205,9 +207,18 @@ export function createFixtureBackend(
       for (const entry of list) entry.deployments = foldFolderRows(entry.deployments, projectFolderOf);
     return state.skills.map((s) => {
       const dto = clone(s.dto);
+      // The wire row's own fields only: what a row deployed is internal
+      // evidence, never on the wire.
+      const wire = dto.targets.map(({ tool, mode, status, target_path, synced_at }) => ({
+        tool,
+        mode,
+        status,
+        target_path,
+        synced_at,
+      }));
       return {
         ...dto,
-        targets: foldFolderRows(dto.targets, globalFolderOf),
+        targets: foldFolderRows(wire, globalFolderOf),
         projects: bySkill.get(s.dto.id) ?? [],
       };
     });
@@ -342,19 +353,73 @@ export function createFixtureBackend(
   };
 
   /** Record (or refresh) one row, under its own key at its own path (Rust `sync_skill_into_root`). */
-  const recordTargets = (skill: FixtureSkill, row: BatchRow) => {
-    const at = now();
-    artifacts.set(row.path, true);
-    const stored = skill.dto.targets.find((t) => t.tool === row.key);
-    if (stored) {
-      stored.status = "synced";
-      stored.mode = "symlink";
-      stored.synced_at = at;
-      stored.target_path = row.path;
-    } else {
-      skill.dto.targets.push({ tool: row.key, mode: "symlink", status: "synced", target_path: row.path, synced_at: at });
+  const recordTargets = (skill: FixtureSkill, row: BatchRow): SyncMode => {
+    let stored = skill.dto.targets.find((t) => t.tool === row.key);
+    if (!stored) {
+      stored = { tool: row.key, mode: "symlink", status: "synced", target_path: row.path, synced_at: null, deployed_hash: null };
+      skill.dto.targets.push(stored);
     }
+    return deployGlobal(skill, stored, row.path);
+  };
+
+  /**
+   * Rust `placement::capability_entry`: a folder some copy-only harness
+   * shares is deployed by copy (Deep Agents Code), every other by link.
+   */
+  const globalCopyOnly = (folder: string) =>
+    globalSharers(folder).some((key) => toolByKey(key)?.supportsSymlink === false);
+
+  /**
+   * One global row's successful write at `path` (Rust `TargetTransition::
+   * SyncCompleted` / `Recorded`): the mode its folder's capability gives, and
+   * — a copy — the identity it deployed, the evidence a later removal or
+   * replacement checks the folder against (ADR-0007).
+   */
+  const deployGlobal = (skill: FixtureSkill, row: StoredTarget, path: string): SyncMode => {
+    const at = now();
+    const mode: SyncMode = globalCopyOnly(globalFolderOf(row.tool)) ? "copy" : "symlink";
+    artifacts.set(path, true);
+    delete state.copyIdentities[path];
+    row.status = "synced";
+    row.mode = mode;
+    row.synced_at = at;
+    row.target_path = path;
+    row.deployed_hash = mode === "copy" ? skill.contentHash : null;
     skill.dto.last_sync_at = at;
+    return mode;
+  };
+
+  const foreignAt = (path: string) => state.foreign.findIndex((f) => `${globalRoot(f.tool)}/${f.name}` === path);
+
+  /**
+   * Rust `ownership::check` for one global row, at its recorded path, now:
+   * `ours` only when the folder there is what the row wrote — its link, or a
+   * copy still holding the identity it recorded. An operator's folder
+   * (`foreign`), a copy edited since (`copyIdentities`), a copy whose row
+   * recorded no identity (pre-1.4.0), or any row without a claim is not.
+   * `implied` is the presence a path this backend never wrote assumes.
+   */
+  const globalOccupant = (row: StoredTarget, implied = ownsArtifact(row)): "absent" | "ours" | "foreign" => {
+    const path = row.target_path;
+    if (foreignAt(path) >= 0) return "foreign";
+    if (!presentAt(path, implied)) return "absent";
+    if (!ownsArtifact(row)) return "foreign";
+    if (row.mode !== "copy") return "ours";
+    const recorded = row.deployed_hash ?? null;
+    return recorded !== null && (state.copyIdentities[path] ?? recorded) === recorded ? "ours" : "foreign";
+  };
+
+  /**
+   * A folder a removal left where it was (`left_in_place`) is the operator's
+   * from now on: a later sync meets it as a folder in the way, and the
+   * onboarding scan lists it (Rust: the folder is simply still there).
+   */
+  const leaveInPlace = (path: string, folder: string, identity: string | null) => {
+    if (foreignAt(path) >= 0) return;
+    const root = globalRoot(folder);
+    if (!path.startsWith(`${root}/`)) return;
+    state.foreign.push({ tool: folder, name: path.slice(root.length + 1), fingerprint: identity ?? "unrecorded", linkTarget: null });
+    delete state.copyIdentities[path];
   };
 
   /**
@@ -377,14 +442,20 @@ export function createFixtureBackend(
    */
   const recordKept = (skill: FixtureSkill, row: BatchRow): BatchTargetStatus => {
     const stored = skill.dto.targets.find((t) => t.tool === row.key);
-    if (stored) stored.status = "disabled";
-    else
+    if (stored) {
+      // The folder in its way is not its own: the row gives its path up
+      // (ADR-0007).
+      stored.status = "disabled";
+      stored.synced_at = null;
+      stored.deployed_hash = null;
+    } else
       skill.dto.targets.push({
         tool: row.key,
         mode: "symlink",
         status: "disabled",
         target_path: row.path,
         synced_at: null,
+        deployed_hash: null,
       });
     // The report row says what the operator did (Rust `record_kept`).
     return { status: "declined" };
@@ -407,24 +478,38 @@ export function createFixtureBackend(
       recordFailedTargets(skill, row);
       return { status: "failed", error: { code: "CENTRAL_PATH_MISSING", path: skill.dto.central_path } };
     }
-    const occupantIndex = state.foreign.findIndex((f) => `${globalRoot(f.tool)}/${f.name}` === row.path);
+    const occupantIndex = foreignAt(row.path);
+    // Rust `global_sync::row_evidence`: the row's own copy at the skill's
+    // place is replaced only while it holds what the row deployed.
+    const own = skill.dto.targets.find((t) => t.tool === row.key && t.target_path === row.path);
+    const ownCopyChanged = occupantIndex < 0 && own !== undefined && own.mode === "copy" && globalOccupant(own) === "foreign";
     let replaced = false;
-    if (occupantIndex >= 0) {
-      const same = state.foreign[occupantIndex].fingerprint === skill.contentHash;
+    if (occupantIndex >= 0 || ownCopyChanged) {
+      const identity = occupantIndex >= 0 ? state.foreign[occupantIndex].fingerprint : state.copyIdentities[row.path];
+      const same = identity === skill.contentHash;
       if (!(overwrite || (same && overwriteIfSameContent))) {
         return { status: "failed", error: targetExists(row.path, same) };
       }
-      state.foreign.splice(occupantIndex, 1);
+      if (occupantIndex >= 0) state.foreign.splice(occupantIndex, 1);
       replaced = true;
     }
-    recordTargets(skill, row);
-    return { status: "synced", outcome: { mode_used: "symlink", target_path: row.path, replaced } };
+    const mode = recordTargets(skill, row);
+    return { status: "synced", outcome: { mode_used: mode, target_path: row.path, replaced } };
+  };
+
+  /**
+   * A batch policy as the core holds it (Rust `BatchPolicy`): an answer from
+   * the wire names the path its ask showed; the Add flow's pre-install
+   * decisions name none (`path: None`).
+   */
+  type FixtureBatchPolicy = Omit<BatchSyncPolicyDto, "overrides"> & {
+    overrides?: (Omit<BatchSyncOverrideDto, "path"> & { path: string | null })[];
   };
 
   const syncBatch = async (
     skills: BatchSyncSkillDto[],
     tools: string[],
-    policy: BatchSyncPolicyDto,
+    policy: FixtureBatchPolicy,
     onProgress: ProgressSink<SyncProgressDto> | null,
     plan: FirstSyncPlan | null = null,
   ): Promise<BatchTargetOutcome[]> => {
@@ -498,9 +583,17 @@ export function createFixtureBackend(
           // Rust `global_sync::answer_for`: the answer naming this row's own
           // key; another key of the folder only when the folder has one row.
           const forSkill = (policy.overrides ?? []).filter((o) => o.skill_id === s.skill_id);
-          const answer =
-            forSkill.find((o) => o.tool === row.key)?.decision ??
-            (rows.length === 1 ? forSkill.find((o) => globalFolderOf(o.tool) === key)?.decision : undefined);
+          const answered =
+            forSkill.find((o) => o.tool === row.key) ??
+            (rows.length === 1 ? forSkill.find((o) => globalFolderOf(o.tool) === key) : undefined);
+          // Rust `sync_row`: an answer applies to the path its ask showed; a
+          // destination that moved since (the skill renamed) makes it stale —
+          // nothing touched, nothing recorded.
+          if (answered?.path != null && answered.path !== row.path) {
+            outcomes.push(outcome({ status: "failed", error: { code: "NOT_FOUND", kind: "target", id: answered.path } }));
+            continue;
+          }
+          const answer = answered?.decision;
           if (answer === "keep") {
             outcomes.push(outcome(recordKept(skill, row)));
             continue;
@@ -543,11 +636,14 @@ export function createFixtureBackend(
   // `disabled`; an assignment's when it was deployed (`synced`/`stale`) in an
   // existing folder.
   //
-  // Ownership (Rust `owns_artifact`), independent of the row's status: only a
-  // row the app materialised (`synced_at !== null`) owns its path. A row that
-  // never did (a `disabled` marker, or one a failed Enable turned `error`) is
-  // a marker: removal never plans its path, and re-sync / Propagation never
-  // overwrite it. Once the whole scope succeeded, Delete clears the row alone
+  // Ownership (Rust `core::ownership`, ADR-0007), independent of the row's
+  // status: a row claims its path once the app materialised it
+  // (`synced_at !== null`) until a successful Disable or a Keep answer gives
+  // it up — and even a claim never reaches a folder the app did not put there
+  // (`foreign`, `projectOccupants`): that is left in place, or asked about. A
+  // row with no claim (a `disabled` marker, or one a failed Enable turned
+  // `error`) is a marker: removal never plans its path, and re-sync /
+  // Propagation never overwrite it. Once the whole scope succeeded, Delete clears the row alone
   // and Disable records it `disabled`; until then it keeps status and
   // `last_error`.
 
@@ -626,7 +722,29 @@ export function createFixtureBackend(
     for (const [path, rowTools] of byPath) {
       const rows = rowTools.map((tool) => globalRowRef(skill.dto.id, tool));
       const described = skill.dto.targets.filter((t) => rowTools.includes(t.tool));
-      const present = presentAt(path, described.some((t) => t.status !== "disabled"));
+      // Rust `ownership::check`, right before the removal: only a folder one
+      // of the rows proves its own (its link, or a copy still holding what it
+      // deployed) is removed. Anything else — an operator's folder, a copy
+      // edited since, a copy a pre-1.4.0 row recorded no identity for — is
+      // left in place, and the rows settle.
+      const implied = described.some((t) => t.status !== "disabled");
+      const verdicts = described.map((t) => globalOccupant(t, implied));
+      if (verdicts.includes("foreign") && !verdicts.includes("ours")) {
+        const identity = state.copyIdentities[path] ?? described.find((t) => t.mode === "copy")?.deployed_hash ?? null;
+        if (settle === "disable") {
+          for (const row of described) {
+            row.status = "disabled";
+            row.synced_at = null;
+            row.deployed_hash = null;
+          }
+        } else {
+          skill.dto.targets = skill.dto.targets.filter((t) => !rowTools.includes(t.tool));
+        }
+        leaveInPlace(path, globalFolderOf(rowTools[0]), identity);
+        targets.push({ path, rows, status: { status: "left_in_place" } });
+        continue;
+      }
+      const present = presentAt(path, implied);
       const stuck = state.lockedPaths.includes(path) || rowTools.some((tool) => state.unwritableTools.includes(tool));
       if (present && stuck) {
         artifacts.set(path, true);
@@ -634,8 +752,14 @@ export function createFixtureBackend(
         targets.push({ path, rows, status: { status: "failed", error: PERMISSION_DENIED(path) } });
       } else {
         artifacts.set(path, false);
+        delete state.copyIdentities[path];
         if (settle === "disable") {
-          for (const row of described) row.status = "disabled";
+          // A successful Disable gives the path up (ADR-0007).
+          for (const row of described) {
+            row.status = "disabled";
+            row.synced_at = null;
+            row.deployed_hash = null;
+          }
         } else {
           skill.dto.targets = skill.dto.targets.filter((t) => !rowTools.includes(t.tool));
         }
@@ -678,6 +802,19 @@ export function createFixtureBackend(
         continue;
       }
       const path = assignmentPath(project, a);
+      // Rust `ownership::check`: a folder in `projectOccupants` is never the
+      // app's, so it is left in place and the row settles (ADR-0007).
+      if (state.projectOccupants.includes(path)) {
+        if (settle === "disable") {
+          a.status = "disabled";
+          a.last_error = null;
+          a.synced_at = null;
+          a.content_hash = null;
+          remaining.push(a);
+        }
+        targets.push({ path, rows, status: { status: "left_in_place" } });
+        continue;
+      }
       const present = project.path_exists && presentAt(path, a.status === "synced" || a.status === "stale");
       const stuck =
         state.lockedPaths.includes(path) || state.unwritableProjectTools.includes(`${project.id}:${a.tool}`);
@@ -689,11 +826,11 @@ export function createFixtureBackend(
         targets.push({ path, rows, status: { status: "failed", error: PERMISSION_DENIED(path) } });
       } else {
         artifacts.set(path, false);
-        // Whatever sat at a path this row owns is removed with it.
-        state.projectOccupants = state.projectOccupants.filter((p) => p !== path);
         if (settle === "disable") {
+          // A successful Disable gives the path up (ADR-0007).
           a.status = "disabled";
           a.last_error = null;
+          a.synced_at = null;
           a.content_hash = null;
           remaining.push(a);
         }
@@ -801,11 +938,11 @@ export function createFixtureBackend(
 
   /**
    * One assignment through Rust `project_sync::sync_assignment_target`.
-   * `overwrite` is the caller's policy: off for a first sync (assign, Enable),
-   * and for a re-sync / Propagation only a row that owns its path may replace
-   * what is there (Rust `owns_artifact`). Someone else's folder in the way
-   * of a sync without overwrite is refused as `TARGET_EXISTS`, the global
-   * batch's code.
+   * `overwrite` is the operator's Overwrite answer (D12) and nothing else: a
+   * folder in `projectOccupants` is never what the app put there, so a
+   * re-sync or Propagation meets it as `TARGET_EXISTS` too (Rust
+   * `ownership::check`, ADR-0007), the global batch's code. The app's own
+   * artifact is modelled as no occupant, and is replaced as before.
    */
   const syncAssignment = (
     project: FixtureProject,
@@ -838,7 +975,6 @@ export function createFixtureBackend(
         // recovers `sync_engine::TargetExistsError`); `last_error` keeps the chain.
         a.status = "error";
         a.last_error = `target already exists: "${path}"`;
-        a.content_hash = null;
         return { status: "failed", error: targetExists(path) };
       }
       state.projectOccupants = state.projectOccupants.filter((p) => p !== path);
@@ -915,11 +1051,11 @@ export function createFixtureBackend(
     (state.skills.find((s) => s.dto.id === a.skill_id)?.dto.disabled_at ?? null) !== null;
 
   /**
-   * Project re-sync: a disabled assignment is skipped (see above); only a row
-   * that owns its path replaces what is there, any other is a first sync.
+   * Project re-sync: a disabled assignment is skipped (see above); only the
+   * app's own artifact is replaced, a folder in the way is asked about.
    */
   const resyncOne = (project: FixtureProject, a: StoredAssignment): ProjectSyncOutcomeStatus =>
-    isDisabledAssignment(a) ? skippedDisabled : syncAssignment(project, a, ownsArtifact(a));
+    isDisabledAssignment(a) ? skippedDisabled : syncAssignment(project, a, false);
 
   /**
    * Rust `ProjectSyncReport::folder_missing`: every project sync (assign,
@@ -1003,6 +1139,7 @@ export function createFixtureBackend(
     folders: string[],
     overrides: BatchSyncOverrideDto[],
     plan: FirstSyncPlan | null,
+    taken: readonly StoredTarget[] = [],
   ) => {
     const outcomes = await syncBatch(
       [{ skill_id: skill.dto.id, name: skill.dto.name, source_path: skill.dto.central_path }],
@@ -1016,9 +1153,15 @@ export function createFixtureBackend(
       plan,
     );
     for (const o of outcomes) {
-      if (o.status.status === "failed" && o.status.error.code === "TARGET_EXISTS") {
+      if (o.status.status !== "failed") continue;
+      if (o.status.error.code === "TARGET_EXISTS") {
         recordKept(skill, { key: o.tool_key, path: o.status.error.path });
+        continue;
       }
+      // A taken row the batch recorded nothing for (a stale answer) is
+      // restored exactly as it was taken: still `disabled`.
+      const row = taken.find((t) => t.tool === o.tool_key);
+      if (row && !skill.dto.targets.some((t) => t.tool === row.tool)) skill.dto.targets.push(row);
     }
     return outcomes;
   };
@@ -1029,10 +1172,13 @@ export function createFixtureBackend(
    * batch records it afresh, as Enable always did), and the in-memory plan
    * carries each one's key to the batch — no other row is touched.
    */
-  const takeDisabled = (skill: FixtureSkill, wanted: (folder: string) => boolean): FirstSyncRow[] => {
+  const takeDisabled = (
+    skill: FixtureSkill,
+    wanted: (folder: string) => boolean,
+  ): { plan: FirstSyncRow[]; taken: StoredTarget[] } => {
     const taken = skill.dto.targets.filter((t) => t.status === "disabled" && wanted(globalFolderOf(t.tool)));
     skill.dto.targets = skill.dto.targets.filter((t) => !taken.includes(t));
-    return taken.map((t) => ({ skillId: skill.dto.id, key: t.tool }));
+    return { plan: taken.map((t) => ({ skillId: skill.dto.id, key: t.tool })), taken };
   };
 
   /** Only a skill-grain Enable lifts a skill-grain Disable. */
@@ -1048,9 +1194,9 @@ export function createFixtureBackend(
         projects: { skipped_projects: [], items: [] },
       };
     }
-    const plan = takeDisabled(skill, (f) => f === folder);
+    const { plan, taken } = takeDisabled(skill, (f) => f === folder);
     return {
-      global: await firstSync(skill, [folder], overrides, plan.length > 0 ? { rows: plan, grain: "pair" } : null),
+      global: await firstSync(skill, [folder], overrides, plan.length > 0 ? { rows: plan, grain: "pair" } : null, taken),
       projects: { skipped_projects: [], items: [] },
     };
   };
@@ -1064,7 +1210,7 @@ export function createFixtureBackend(
    */
   const enableSkill = async (skill: FixtureSkill, overrides: BatchSyncOverrideDto[]): Promise<EnableReport> => {
     skill.dto.disabled_at = null;
-    const plan = takeDisabled(skill, () => true);
+    const { plan, taken } = takeDisabled(skill, () => true);
     const folders = [...new Set(plan.map((r) => globalFolderOf(r.key)))];
     const projects: ProjectSyncReport = { items: [], skipped_projects: [] };
     for (const project of state.projects) {
@@ -1082,7 +1228,7 @@ export function createFixtureBackend(
       }
     }
     return {
-      global: plan.length ? await firstSync(skill, folders, overrides, { rows: plan, grain: "skill" }) : [],
+      global: plan.length ? await firstSync(skill, folders, overrides, { rows: plan, grain: "skill" }, taken) : [],
       projects,
     };
   };
@@ -1198,16 +1344,20 @@ export function createFixtureBackend(
         skippedGlobal(row.tool, { reason: "tool_not_installed", tool: row.tool });
         continue;
       }
-      // Only a link of ours follows the source: a row that never materialised
-      // (a failed first sync's `error` row) gets a first sync.
+      // Only the link the row wrote, verified now, follows the source (Rust
+      // `propagation::link_follows_source`): a folder that took its place, or
+      // a link gone, takes the occupant decision below; a row that never
+      // materialised (a failed first sync's `error` row) gets a first sync.
       const owned = ownsArtifact(row);
-      if (owned && !needsNewBytes(row.mode)) {
+      const occupant = globalOccupant(row);
+      if (!needsNewBytes(row.mode) && occupant === "ours") {
         skippedGlobal(row.tool, { reason: "link_follows_source" });
         continue;
       }
-      // A first sync (the row owns nothing) meets a foreign folder as
-      // TARGET_EXISTS; an owner replaces it.
-      const occupied = !owned && state.foreign.some((f) => `${globalRoot(f.tool)}/${f.name}` === row.target_path);
+      // Only what the row's evidence proves its own is replaced (Rust
+      // `ownership::check`, ADR-0007): anything else is TARGET_EXISTS for the
+      // ask, at the row's recorded path.
+      const occupied = occupant === "foreign";
       // An unwritable dir refuses the replacement's removal of the existing
       // copy: the typed removal-permission failure (not the batch's
       // TOOL_NOT_WRITABLE).
@@ -1216,20 +1366,15 @@ export function createFixtureBackend(
         : state.unwritableTools.includes(row.tool)
           ? PERMISSION_DENIED(row.target_path)
           : occupied
-            ? targetExists(row.target_path)
+            ? targetExists(row.target_path, occupiedIdentity(row) === skill.contentHash)
             : null;
+      const scope = { scope: "global" as const, tool: row.tool };
       if (error) {
         row.status = "error";
+        push(scope, { status: "failed", error, first_deploy: !owned });
       } else {
-        row.status = "synced";
-        row.mode = "symlink";
-        row.synced_at = now();
+        push(scope, { status: "synced", mode_used: deployGlobal(skill, row, row.target_path) });
       }
-      const scope = { scope: "global" as const, tool: row.tool };
-      push(
-        scope,
-        error ? { status: "failed", error, first_deploy: !owned } : { status: "synced", mode_used: "symlink" },
-      );
     }
     for (const project of state.projects) {
       for (const a of project.assignments.filter((x) => x.skill_id === skill.dto.id)) {
@@ -1241,7 +1386,15 @@ export function createFixtureBackend(
           skip({ reason: "unknown_tool", tool: a.tool });
         } else if (!project.path_exists) {
           skip({ reason: "project_unavailable", project_id: project.id });
-        } else if (ownsArtifact(a) && !needsNewBytes(a.mode)) {
+        } else if (
+          ownsArtifact(a) &&
+          !needsNewBytes(a.mode) &&
+          // Only the link the row wrote, verified now: a folder in its place
+          // takes the occupant decision (TARGET_EXISTS), an absent one is
+          // written again.
+          !state.projectOccupants.includes(assignmentPath(project, a)) &&
+          presentAt(assignmentPath(project, a), true)
+        ) {
           skip({ reason: "link_follows_source" });
         } else if (centralMissing) {
           a.status = "error";
@@ -1249,7 +1402,7 @@ export function createFixtureBackend(
           push(scope, { status: "failed", error: missingSource(skill), first_deploy: !ownsArtifact(a) });
         } else {
           const owned = ownsArtifact(a);
-          const result = syncAssignment(project, a, owned);
+          const result = syncAssignment(project, a, false);
           push(
             scope,
             result.status === "failed"
@@ -1260,6 +1413,60 @@ export function createFixtureBackend(
       }
     }
     return out;
+  };
+
+  /** The identity of the folder in a global row's way, for the ask's `sameContent`. */
+  const occupiedIdentity = (row: StoredTarget): string | null => {
+    const index = foreignAt(row.target_path);
+    return index >= 0 ? state.foreign[index].fingerprint : (state.copyIdentities[row.target_path] ?? null);
+  };
+
+  /**
+   * Rust `propagation::resolve_target_collisions`: Propagation's global ask
+   * answered at exactly the row and the path it named. A row gone, or no
+   * longer recording that path, is `NOT_FOUND` (nothing touched); a disabled
+   * folder or skill is a skip; a path holding the row's own artifact again
+   * is brought into line whatever the answer; Keep disables the row where it
+   * is (its claim given up); Overwrite replaces the folder at that path only
+   * and records what it deployed there.
+   */
+  const resolveTargetCollision = (decision: TargetDecision): BatchTargetOutcome => {
+    const skill = state.skills.find((s) => s.dto.id === decision.skill_id);
+    const outcome = (status: BatchTargetStatus): BatchTargetOutcome => ({
+      skill_id: decision.skill_id,
+      skill_name: skill?.dto.name ?? "",
+      tool_key: decision.tool,
+      folder_key: globalFolderOf(decision.tool),
+      status,
+    });
+    const row = skill?.dto.targets.find((t) => t.tool === decision.tool && t.target_path === decision.path);
+    if (!skill || !row)
+      return outcome({ status: "failed", error: { code: "NOT_FOUND", kind: "target", id: decision.path } });
+    if (isDisabledFor(skill, globalFolderOf(row.tool)))
+      return outcome({ status: "skipped", error: { code: "TARGET_DISABLED", tool: row.tool } });
+    if (!toolByKey(globalFolderOf(row.tool)))
+      return outcome({ status: "failed", error: { code: "UNKNOWN_TOOL", tool: row.tool } });
+    const ours = globalOccupant(row) === "ours";
+    if (!ours && decision.decision === "keep") {
+      row.status = "disabled";
+      row.synced_at = null;
+      row.deployed_hash = null;
+      return outcome({ status: "declined" });
+    }
+    const error: CommandError | null =
+      skill.files.length === 0
+        ? missingSource(skill)
+        : state.unwritableTools.includes(row.tool)
+          ? PERMISSION_DENIED(row.target_path)
+          : null;
+    if (error) {
+      row.status = "error";
+      return outcome({ status: "failed", error });
+    }
+    const index = foreignAt(row.target_path);
+    if (index >= 0) state.foreign.splice(index, 1);
+    const mode = deployGlobal(skill, row, row.target_path);
+    return outcome({ status: "synced", outcome: { mode_used: mode, target_path: row.target_path, replaced: true } });
   };
 
   /** Rebuild the central copy from the (fake) source; a new revision when upstream moved. */
@@ -2013,7 +2220,7 @@ export function createFixtureBackend(
                   overwrite_if_same_content: request.overwrite_if_same_content,
                   overrides: request.overrides
                     .filter((o) => o.skill_name === skill.dto.name)
-                    .map((o) => ({ skill_id: skill.dto.id, tool: o.tool, decision: o.decision })),
+                    .map((o) => ({ skill_id: skill.dto.id, tool: o.tool, path: null, decision: o.decision })),
                 },
                 null,
               )
@@ -2049,12 +2256,22 @@ export function createFixtureBackend(
         status: { status: "failed", error: { code: "NOT_FOUND", kind: "assignment", id: `${decision.project_id}/${decision.skill_id}/${decision.tool}` } },
       };
     }
+    // Rust `resolve_collisions_unlocked`: the answer applies to the path its
+    // ask showed — a row that resolves elsewhere now (the project moved, the
+    // stored name changed) is a stale answer, nothing touched.
+    if (assignmentPath(project, a) !== decision.path)
+      return outcomeOf(project, a, { status: "failed", error: { code: "NOT_FOUND", kind: "target", id: decision.path } });
     if (isDisabledAssignment(a)) return outcomeOf(project, a, skippedDisabled);
-    if (a.synced_at !== null) return outcomeOf(project, a, { status: "already_assigned" });
+    // Only a row whose path holds its own artifact again has nothing left to
+    // answer; a claiming row another folder took the path of is answered.
+    if (a.synced_at !== null && !state.projectOccupants.includes(assignmentPath(project, a)))
+      return outcomeOf(project, a, { status: "already_assigned" });
     if (!project.path_exists) return null;
     if (decision.decision === "keep") {
       a.status = "disabled";
       a.last_error = null;
+      a.synced_at = null;
+      a.content_hash = null;
       return outcomeOf(project, a, { status: "declined" });
     }
     return outcomeOf(project, a, syncAssignment(project, a, true));
@@ -2130,6 +2347,10 @@ export function createFixtureBackend(
     syncSkillsToTools: async (skills, tools, policy, onProgress) => {
       await pause(120);
       return syncBatch(skills, tools, policy, onProgress);
+    },
+    resolveTargetCollisions: async (decisions) => {
+      await pause(160);
+      return decisions.map(resolveTargetCollision);
     },
     installSelection: async (request, onProgress) => installBatch(request, onProgress),
     refreshManagedSkills: async (skillIds, onProgress) => refreshBatch(skillIds, onProgress),

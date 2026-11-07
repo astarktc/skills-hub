@@ -280,6 +280,7 @@ function baseState(scenario: ScenarioName, now: number): FixtureState {
     unreconciledViews: [],
     revealed: [],
     projectOccupants: [],
+    copyIdentities: {},
     dialogPicks: [`${HOME}/Projects/team-skills`, `${HOME}/Projects/new-service`],
     gitCacheEntries: 6,
     gitCacheEntriesInUse: 0,

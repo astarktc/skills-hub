@@ -324,6 +324,8 @@ export const resources = {
         unknownTool: "Unknown harness: {{tool}}",
         invalidPathMissing: "Path not found: {{path}}",
         invalidPathNotADirectory: "Path is not a directory: {{path}}",
+        invalidPathNotAFolderName:
+          "The skill's name isn't a single folder name, so it would land outside its skills folder. Nothing was written or removed there: {{path}}",
         invalidPath: "Path cannot be used ({{reason}}): {{path}}",
         importKeptDivergentTitle: "Kept a different copy: {{name}} -> {{tool}}",
         importKeptDivergentMessage:
@@ -591,6 +593,7 @@ export const resources = {
         refreshCancelled: "Update all cancelled — nothing was changed",
         updateCancelled: "{{name}}: update cancelled — nothing was changed",
         declinedLine: "{{name}}: kept your existing {{tool}} folder",
+        leftInPlaceLine: "Left {{path}} in place: it isn't what Skills Hub put there",
         keptDifferentLine_one: "{{name}}: {{count}} different copy kept in {{harnesses}}",
         keptDifferentLine_other: "{{name}}: {{count}} different copies kept in {{harnesses}}",
       },
@@ -1083,7 +1086,9 @@ export const resources = {
           removedFrom: "Removed from {{tools}}.",
           removedNothing: "Nothing was removed.",
           stillIn: "Still in {{tools}}:",
+          leftInPlace: "Left in place in {{tools}}, because it isn't what Skills Hub put there:",
           deleted: "Removed: {{names}}.",
+          deletedSkill: "Deleted from Skills Hub.",
           reveal: "Reveal in Finder",
           revealLabel: "Reveal {{path}} in Finder",
           retry: "Retry",

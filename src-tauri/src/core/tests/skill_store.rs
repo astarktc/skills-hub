@@ -300,6 +300,7 @@ fn disabled_target_transitions_flip_or_record_the_row() {
                 mode: SyncMode::Symlink,
                 target_path: "/home/.claude/skills/alpha",
                 synced_at: 5,
+                content_hash: None,
             },
         )
         .unwrap();
@@ -403,6 +404,7 @@ fn skill_targets_upsert_unique_constraint_and_list_order() {
         status: SyncStatus::Synced,
         last_error: None,
         synced_at: None,
+        content_hash: None,
     };
     store.upsert_skill_target(&t1).unwrap();
     assert_eq!(
@@ -441,6 +443,7 @@ fn skill_targets_upsert_unique_constraint_and_list_order() {
         status: SyncStatus::Synced,
         last_error: None,
         synced_at: None,
+        content_hash: None,
     };
     store.upsert_skill_target(&t2).unwrap();
 
@@ -470,6 +473,7 @@ fn recorded_transition_inserts_a_synced_row_then_settles_the_existing_one() {
                 mode: SyncMode::Symlink,
                 target_path: "/target/1",
                 synced_at: 10,
+                content_hash: None,
             },
         )
         .unwrap();
@@ -494,6 +498,7 @@ fn recorded_transition_inserts_a_synced_row_then_settles_the_existing_one() {
                 mode: SyncMode::Copy,
                 target_path: "/target/2",
                 synced_at: 20,
+                content_hash: None,
             },
         )
         .unwrap();
@@ -528,6 +533,7 @@ fn deleting_skill_cascades_targets() {
         status: SyncStatus::Synced,
         last_error: None,
         synced_at: None,
+        content_hash: None,
     };
     store.upsert_skill_target(&t).unwrap();
     assert_eq!(store.list_skill_targets("s1").unwrap().len(), 1);
@@ -649,6 +655,7 @@ fn v4_migration_preserves_existing_data() {
         status: SyncStatus::Synced,
         last_error: None,
         synced_at: None,
+        content_hash: None,
     };
     store.upsert_skill_target(&target).unwrap();
 
@@ -1835,7 +1842,7 @@ fn reconciled_transition_writes_status_and_hash_only() {
             status: SyncStatus::Error,
             last_error: Some("boom".to_string()),
             synced_at: Some(7),
-            content_hash: None,
+            content_hash: Some("h1".to_string()),
             created_at: 1,
         })
         .unwrap();
@@ -1844,7 +1851,6 @@ fn reconciled_transition_writes_status_and_hash_only() {
             "a1",
             AssignmentTransition::Reconciled {
                 status: SyncStatus::Synced,
-                content_hash: Some("h1"),
             },
         )
         .unwrap();
@@ -1857,7 +1863,11 @@ fn reconciled_transition_writes_status_and_hash_only() {
         got.last_error, None,
         "a reconcile clears the stale diagnostic"
     );
-    assert_eq!(got.content_hash.as_deref(), Some("h1"));
+    assert_eq!(
+        got.content_hash.as_deref(),
+        Some("h1"),
+        "the deployed identity is evidence, kept by a reconcile"
+    );
     assert_eq!(
         got.synced_at,
         Some(7),
@@ -2288,5 +2298,245 @@ fn a_failed_backup_never_splits_a_database_from_its_wal() {
             .unwrap()
             .as_deref(),
         Some("yes")
+    );
+}
+
+/// A database exactly as 1.3.4 left it (schema version 11).
+fn open_v11_database(db: &std::path::Path) {
+    open_v8_database(db);
+    let conn = rusqlite::Connection::open(db).expect("open");
+    conn.execute_batch("ALTER TABLE skills ADD COLUMN imported_from_tool TEXT NULL;")
+        .expect("v9");
+    conn.execute_batch("ALTER TABLE skills ADD COLUMN disabled_at INTEGER NULL;")
+        .expect("v10");
+    conn.execute_batch(super::MIGRATION_V11).expect("v11");
+    conn.pragma_update(None, "user_version", 11).expect("v11");
+}
+
+/// V12 (ADR-0007): global rows gain the deployed identity column, recorded
+/// as unknown for every existing row (a pre-V12 copy is not provably ours);
+/// every already-disabled row — global or project — gives its path up, so
+/// none of them can let Delete remove a later occupant. A live owner keeps
+/// its claim (and an assignment its recorded identity). The step is
+/// idempotent and completes a partially applied upgrade.
+#[test]
+fn v12_migration_records_identity_and_gives_up_disabled_claims() {
+    for column_already_there in [false, true] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = dir.path().join("test.db");
+        open_v11_database(&db);
+        {
+            let conn = rusqlite::Connection::open(&db).expect("open");
+            if column_already_there {
+                conn.execute_batch(super::MIGRATION_V12_COLUMN)
+                    .expect("partial v12");
+            }
+            conn.execute_batch(
+                "INSERT INTO skills (id, name, source_type, central_path,
+                                     created_at, updated_at, last_seen_at, status)
+                 VALUES ('s1', 'alpha', 'local', '/central/alpha', 1, 1, 1, 'ok');
+                 INSERT INTO skill_targets (id, skill_id, tool, target_path, mode, status,
+                                            last_error, synced_at)
+                 VALUES ('t-live', 's1', 'claude_code', '/h/.claude/skills/alpha', 'copy',
+                         'synced', NULL, 5),
+                        ('t-off', 's1', 'codex', '/h/.codex/skills/alpha', 'symlink',
+                         'disabled', NULL, 5);
+                 INSERT INTO projects (id, path, created_at, updated_at)
+                 VALUES ('p1', '/proj', 1, 1);
+                 INSERT INTO project_skill_assignments (id, project_id, skill_id, skill_name,
+                     tool, mode, status, last_error, synced_at, content_hash, created_at)
+                 VALUES ('a-live', 'p1', 's1', 'alpha', 'claude_code', 'copy', 'synced',
+                         NULL, 5, 'h-live', 1),
+                        ('a-off', 'p1', 's1', 'alpha', 'cursor', 'copy', 'disabled',
+                         NULL, 5, 'h-off', 1);",
+            )
+            .expect("seed v11 rows");
+        }
+
+        let store = SkillStore::new(db.clone());
+        store.ensure_schema().expect("upgrade");
+        store.ensure_schema().expect("idempotent");
+
+        let version: i32 = rusqlite::Connection::open(&db)
+            .expect("open")
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .expect("user_version");
+        assert_eq!(version, super::SCHEMA_VERSION);
+        let live = store
+            .get_skill_target("s1", "claude_code")
+            .unwrap()
+            .unwrap();
+        assert_eq!(live.synced_at, Some(5), "a live owner keeps its claim");
+        assert_eq!(live.content_hash, None, "no identity was ever recorded");
+        let off = store.get_skill_target("s1", "codex").unwrap().unwrap();
+        assert_eq!(off.status, SyncStatus::Disabled);
+        assert!(!off.owns_artifact(), "a disabled row gives its path up");
+        let live = store
+            .get_project_skill_assignment("p1", "s1", "claude_code")
+            .unwrap()
+            .unwrap();
+        assert_eq!(live.synced_at, Some(5));
+        assert_eq!(live.content_hash.as_deref(), Some("h-live"));
+        let off = store
+            .get_project_skill_assignment("p1", "s1", "cursor")
+            .unwrap()
+            .unwrap();
+        assert!(!off.owns_artifact());
+        assert_eq!(off.content_hash, None);
+    }
+}
+
+/// The claim columns through every transition (ADR-0007): a successful
+/// write records the claim and the deployed identity; a failure keeps both
+/// (ADR-0002); Disable — and a Keep answer over an existing row — gives both
+/// up; a reconcile touches neither.
+#[test]
+fn transitions_record_keep_and_give_up_the_claim() {
+    let (_dir, store) = make_store();
+    store
+        .upsert_skill(&make_skill("s1", "alpha", "/central/alpha", 1))
+        .unwrap();
+    let target = |store: &SkillStore| store.get_skill_target("s1", "cursor").unwrap().unwrap();
+    store
+        .transition_skill_target(
+            "t1",
+            TargetTransition::Recorded {
+                skill_id: "s1",
+                tool: "cursor",
+                mode: SyncMode::Copy,
+                target_path: "/h/.cursor/skills/alpha",
+                synced_at: 5,
+                content_hash: Some("h1"),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            target(&store).synced_at,
+            target(&store).content_hash.as_deref()
+        ),
+        (Some(5), Some("h1"))
+    );
+    store
+        .transition_skill_target("t1", TargetTransition::SyncFailed { error: "boom" })
+        .unwrap();
+    assert_eq!(
+        (
+            target(&store).synced_at,
+            target(&store).content_hash.as_deref()
+        ),
+        (Some(5), Some("h1")),
+        "a failure keeps the claim and the evidence"
+    );
+    store
+        .transition_skill_target(
+            "t1",
+            TargetTransition::SyncCompleted {
+                mode: SyncMode::Copy,
+                target_path: "/h/.cursor/skills/alpha",
+                synced_at: 6,
+                content_hash: Some("h2"),
+            },
+        )
+        .unwrap();
+    assert_eq!(target(&store).content_hash.as_deref(), Some("h2"));
+    store
+        .transition_skill_target("t1", TargetTransition::Disabled)
+        .unwrap();
+    assert_eq!(
+        (target(&store).synced_at, target(&store).content_hash),
+        (None, None),
+        "Disable gives the path up"
+    );
+    store
+        .transition_skill_target(
+            "t1",
+            TargetTransition::SyncCompleted {
+                mode: SyncMode::Copy,
+                target_path: "/h/.cursor/skills/alpha",
+                synced_at: 7,
+                content_hash: Some("h3"),
+            },
+        )
+        .unwrap();
+    store
+        .transition_skill_target(
+            "ignored",
+            TargetTransition::DisabledRecorded {
+                skill_id: "s1",
+                tool: "cursor",
+                mode: SyncMode::Copy,
+                target_path: "/h/.cursor/skills/alpha",
+            },
+        )
+        .unwrap();
+    assert_eq!(target(&store).status, SyncStatus::Disabled);
+    assert_eq!(
+        (target(&store).synced_at, target(&store).content_hash),
+        (None, None),
+        "a Keep answer over an existing row gives its path up"
+    );
+
+    store
+        .register_project(&ProjectRecord {
+            id: "p1".into(),
+            path: "/proj".into(),
+            created_at: 1,
+            updated_at: 1,
+        })
+        .unwrap();
+    store
+        .add_project_skill_assignment(&ProjectSkillAssignmentRecord {
+            id: "a1".into(),
+            project_id: "p1".into(),
+            skill_id: "s1".into(),
+            skill_name: "alpha".into(),
+            tool: "cursor".into(),
+            mode: SyncMode::Copy,
+            status: SyncStatus::Synced,
+            last_error: None,
+            synced_at: Some(5),
+            content_hash: Some("h1".into()),
+            created_at: 1,
+        })
+        .unwrap();
+    let assignment = |store: &SkillStore| {
+        store
+            .get_project_skill_assignment("p1", "s1", "cursor")
+            .unwrap()
+            .unwrap()
+    };
+    store
+        .transition_assignment("a1", AssignmentTransition::SyncFailed { error: "boom" })
+        .unwrap();
+    assert_eq!(
+        (
+            assignment(&store).synced_at,
+            assignment(&store).content_hash.as_deref()
+        ),
+        (Some(5), Some("h1"))
+    );
+    store
+        .transition_assignment(
+            "a1",
+            AssignmentTransition::Reconciled {
+                status: SyncStatus::Stale,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        assignment(&store).content_hash.as_deref(),
+        Some("h1"),
+        "a stale copy is still the copy the row deployed"
+    );
+    store
+        .transition_assignment("a1", AssignmentTransition::Disabled)
+        .unwrap();
+    assert_eq!(
+        (
+            assignment(&store).synced_at,
+            assignment(&store).content_hash
+        ),
+        (None, None)
     );
 }
