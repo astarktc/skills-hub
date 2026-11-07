@@ -126,6 +126,7 @@ fn global_group_installedness_is_its_own_detect_dir() {
 
 #[test]
 fn global_catalog_groups_shared_skills_dirs_and_resolves_paths_under_home() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let home = tempfile::tempdir().unwrap();
     let entries = global_tool_entries(&HostRoots::under_home(home.path()));
 
@@ -426,9 +427,11 @@ fn cursor_with_claude_code_and_codex_installed_sees_both() {
     );
 }
 
-/// Kimi Code reads `~/.agents/skills`, but its own deploy dir and its
-/// `~/.claude` / `~/.codex` reads are legacy `kimi-cli`'s only: no pair.
-/// Codex, which reads `~/.agents/skills` and its own folder by default, does.
+/// Kimi Code's `~/.claude` / `~/.codex` / `~/.config/agents` reads are
+/// legacy `kimi-cli`'s only: no pair with Claude Code or Codex. Since #108
+/// it deploys to its own `~/.kimi-code/skills` and reads `~/.agents/skills`
+/// by default, so the AGENTS folder pairs with it. Codex, which reads
+/// `~/.agents/skills` and its own folder by default, pairs with it too.
 #[test]
 fn kimis_legacy_only_reads_make_no_pair() {
     let home = tempfile::tempdir().unwrap();
@@ -437,7 +440,13 @@ fn kimis_legacy_only_reads_make_no_pair() {
         install(home.path(), key);
     }
 
-    assert_eq!(duplicate_readers_of(&roots, "kimi_cli"), None);
+    assert_eq!(
+        duplicate_readers_of(&roots, "kimi_cli"),
+        Some(DuplicateReads {
+            keys: vec!["agents_skills"],
+            behaviour: DuplicateBehaviour::Unknown,
+        })
+    );
     assert_eq!(
         duplicate_readers_of(&roots, "codex"),
         Some(DuplicateReads {
@@ -477,6 +486,7 @@ fn an_uninstalled_reader_carries_no_pair() {
 /// not a pair. Crush reads the same folder beside its own: a pair with both.
 #[test]
 fn shared_dir_siblings_are_not_a_pair() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let home = tempfile::tempdir().unwrap();
     let roots = HostRoots::under_home(home.path());
     for key in ["amp", "kimi_cli"] {
@@ -692,7 +702,8 @@ fn every_catalog_entry_carries_its_folder_key() {
     let roots = HostRoots::under_home(home.path());
 
     let global = global_tool_entries(&roots);
-    assert_eq!(entry(&global, "kimi_cli").folder_key, "amp");
+    // Kimi Code left Amp's folder (#108): each is its own folder.
+    assert_eq!(entry(&global, "kimi_cli").folder_key, "kimi_cli");
     assert_eq!(entry(&global, "amp").folder_key, "amp");
     assert_eq!(entry(&global, "cursor").folder_key, "cursor");
     assert_eq!(entry(&global, "agents_skills").folder_key, "agents_skills");

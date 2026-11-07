@@ -47,6 +47,14 @@ export type {
   LibraryMoveResultDto,
   CloudSync,
 } from "../../bindings";
+export type {
+  RedeployAnswer,
+  RedeployLaunchCheck,
+  RedeployPreview,
+  RedeployProgress,
+  RedeployReport,
+  RedeployResultDto,
+} from "../../bindings";
 export type { FeaturedSkillDto } from "../../bindings";
 export type { OnlineSkillDto } from "../../bindings";
 export type { SkillFileEntry } from "../../bindings";

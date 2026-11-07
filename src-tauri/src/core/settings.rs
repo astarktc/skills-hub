@@ -59,6 +59,9 @@ mod keys {
     /// The report of the last interrupted Library move a resume finished,
     /// until the frontend takes it (`core::library_move` owns its format).
     pub const LIBRARY_MOVE_RESUMED: &str = "library_move_resumed_report";
+    /// The report of the redeploy journal finish the launch check ran, until
+    /// the frontend takes it (`core::redeploy` owns its format).
+    pub const REDEPLOY_FINISHED: &str = "redeploy_finished_report";
 }
 
 /// Default central repo dir name under `fallback_root`.
@@ -611,6 +614,18 @@ pub(crate) fn finish_library_move(store: &SkillStore, resumed: Option<&str>) -> 
 /// taken — read and removed in one transaction — if one is stored.
 pub(crate) fn take_resumed_library_move(store: &SkillStore) -> Result<Option<String>> {
     store.take_setting(keys::LIBRARY_MOVE_RESUMED)
+}
+
+/// Record the report of the redeploy journal finish the launch check ran
+/// (`core::redeploy::finish_journal`), replacing an earlier one nobody took.
+pub(crate) fn record_redeploy_report(store: &SkillStore, report: &str) -> Result<()> {
+    store.write_settings(&[], &[(keys::REDEPLOY_FINISHED, report)])
+}
+
+/// The recorded launch-check report (see [`record_redeploy_report`]), taken —
+/// read and removed in one transaction — if one is stored.
+pub(crate) fn take_redeploy_report(store: &SkillStore) -> Result<Option<String>> {
+    store.take_setting(keys::REDEPLOY_FINISHED)
 }
 
 /// Test seam: overwrite a pending Library move's journal with `raw`, as an

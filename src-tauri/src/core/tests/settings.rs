@@ -358,6 +358,7 @@ fn effective_global_tool_targets_refuses_a_corrupt_selection() {
 /// harness it serves was selected — Kimi Code alone turns on Amp's folder.
 #[test]
 fn the_old_harness_selection_translates_to_folders() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let (dir, store) = make_store();
     let home = dir.path().join("home");
     raw(
@@ -456,6 +457,7 @@ fn a_corrupt_old_selection_stays_a_refusal_until_saved() {
 /// row refuses under its own key; an unknown folder key is pruned on read.
 #[test]
 fn the_folder_selection_is_saved_as_folder_keys() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let (dir, store) = make_store();
     let home = dir.path().join("home");
     apply_setting(

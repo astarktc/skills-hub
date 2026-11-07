@@ -3,7 +3,12 @@
 // src/bindings/index.ts). All user-facing error copy is composed here
 // via i18n; nothing else in the frontend should inspect command failures.
 
-import type { CommandError, LibraryDestinationRefusal, RemovalRefusal } from "./bindings";
+import type {
+  CommandError,
+  DestinationRefusal,
+  LibraryDestinationRefusal,
+  RemovalRefusal,
+} from "./bindings";
 import { INVOCATION_LABEL_KEY, toolLabel } from "./lib/skillPresentation";
 
 type TranslateFn = (key: string, opts?: Record<string, unknown>) => string;
@@ -15,6 +20,7 @@ type TranslateFn = (key: string, opts?: Record<string, unknown>) => string;
 const COMMAND_ERROR_CODE_MAP = {
   TOOL_NOT_INSTALLED: true,
   TARGET_DISABLED: true,
+  REDEPLOY_PENDING: true,
   TARGET_EXISTS: true,
   TOOL_NOT_WRITABLE: true,
   SKILL_INVALID: true,
@@ -50,6 +56,7 @@ const COMMAND_ERROR_CODE_MAP = {
   REMOVAL_PERMISSION_DENIED: true,
   LIBRARY_DESTINATION_REFUSED: true,
   LIBRARY_COPY_FAILED: true,
+  DESTINATION_REFUSED: true,
   EDIT_CONFLICT: true,
   OTHER: true,
 } as const satisfies Record<CommandError["code"], true>;
@@ -98,6 +105,15 @@ const REMOVAL_REFUSAL_KEYS: Record<RemovalRefusal, string> = {
 
 // Exhaustive over the generated reason union: a new refusal fails the build
 // until it has copy.
+const DESTINATION_REFUSAL_KEYS: Record<DestinationRefusal, string> = {
+  inLibrary: "errors.destinationRefused.inLibrary",
+  outsideSkillsFolder: "errors.destinationRefused.outsideSkillsFolder",
+  overlapsDeployment: "errors.destinationRefused.overlapsDeployment",
+  cannotReplaceSafely: "errors.destinationRefused.cannotReplaceSafely",
+};
+
+// Exhaustive over the generated reason union: a new refusal fails the build
+// until it has copy.
 const LIBRARY_DESTINATION_KEYS: Record<LibraryDestinationRefusal, string> = {
   notAbsolute: "errors.libraryDestination.notAbsolute",
   overlapsLibrary: "errors.libraryDestination.overlapsLibrary",
@@ -136,6 +152,10 @@ export function describeCommandError(
       // A skip reason, not a failure: the pair (or the whole skill) is
       // Disabled and only Enable brings it back.
       return t("errors.targetDisabled", { tool: toolLabel(t, e.tool) });
+    case "REDEPLOY_PENDING":
+      // A skip reason, not a failure: the Deployment waits for Move
+      // Deployments, which moves it without orphaning its old folder.
+      return t("errors.redeployPending", { tool: toolLabel(t, e.tool), path: e.path });
     case "TARGET_EXISTS":
       return t("errors.targetExists");
     case "TOOL_NOT_WRITABLE":
@@ -193,6 +213,12 @@ export function describeCommandError(
       // alias (the copy says where the path really leads), or a folder
       // inside it is a mount (the copy names it).
       return t(REMOVAL_REFUSAL_KEYS[e.reason], { path: e.path, resolved: e.resolved });
+    case "DESTINATION_REFUSED":
+      // Refused before anything was written: the folder resolves into the
+      // Library, outside the folder Skills Hub manages for the row, or into
+      // (or around) another Deployment — or (the redeploy) the folder at the
+      // new place could not be replaced without a moment the skill is missing.
+      return t(DESTINATION_REFUSAL_KEYS[e.reason], { path: e.path, resolved: e.resolved });
     case "REMOVAL_PERMISSION_DENIED":
       // The OS refused for lack of permission: say what to check and that a
       // retry fails the same way; the I/O chain stays in `detail` for the log.

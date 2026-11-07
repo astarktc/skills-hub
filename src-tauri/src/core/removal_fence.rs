@@ -194,6 +194,21 @@ impl<'a> ProtectedLibrary<'a> {
         }
         Ok(self.roots.get_or_init(|| roots))
     }
+
+    /// Whether the folder `dir` — resolved through every alias, as far as it
+    /// exists — is, or lies inside, the library: the configured central repo
+    /// or a recorded central copy. A write's admission
+    /// (`sync_engine::sync_dir_for_tool`), never a removal's: a Deployment is
+    /// never written into the Library through an aliased harness folder.
+    pub(crate) fn holds_dir(&self, dir: &Path) -> Result<bool> {
+        let lineage = Lineage::of(dir)?;
+        let roots = self.roots()?;
+        Ok(roots
+            .configured
+            .iter()
+            .chain(roots.copies.iter().map(|(_, copy)| copy))
+            .any(|root| root.head().is_some_and(|head| lineage.ids.contains(head))))
+    }
 }
 
 /// A directory the app creates and owns, reached from a trusted boundary

@@ -496,6 +496,72 @@ fn reads_folder(
     }
 }
 
+/// The detected harnesses that read the global folder `dir` by default
+/// (`ReadFacts::reads_by_default`, each against the folder serving it): who
+/// sees a skill left there. `dir` is found among the registry's own folders —
+/// a current, former or also-read skills dir, resolved under `roots`; a dir
+/// the registry does not name has no known readers. Registry order, adapters
+/// before reader-only harnesses. What the redeploy's report names for a
+/// duplicate it leaves behind.
+pub fn readers_of_global_dir(
+    roots: &HostRoots,
+    installed: &InstalledSet,
+    dir: &Path,
+) -> Vec<&'static str> {
+    let rows = scope_rows(ScopeKind::Global);
+    let readers = reader_only_harnesses();
+    let candidates = rows
+        .iter()
+        .flat_map(|a| {
+            std::iter::once(a.skills_dir)
+                .chain(a.former_skills_dirs.iter().copied())
+                .chain(a.reads.also_reads.iter().map(|read| read.dir))
+        })
+        .chain(
+            readers
+                .iter()
+                .flat_map(|r| r.reads.also_reads.iter().map(|read| read.dir)),
+        )
+        .chain([AGENTS_SKILLS, CLAUDE_SKILLS]);
+    let mut registry_dir = None;
+    for candidate in candidates {
+        if candidate.resolve(roots) == dir {
+            registry_dir = Some(candidate);
+            break;
+        }
+    }
+    let Some(dir) = registry_dir else {
+        return Vec::new();
+    };
+    let own_dir = |key: &str| {
+        serving_folder(ScopeKind::Global, key, &PlacementSettings::default())
+            .and_then(adapter_by_key)
+            .map(|entry| entry.skills_dir)
+    };
+    let mut keys: Vec<&'static str> = Vec::new();
+    for adapter in &rows {
+        if !installed.contains(adapter.key()) {
+            continue;
+        }
+        if let Some(own) = own_dir(adapter.key()) {
+            if adapter.reads.reads_by_default(&dir, &own) {
+                keys.push(adapter.key());
+            }
+        }
+    }
+    for reader in &readers {
+        if !installed.contains(reader.key) {
+            continue;
+        }
+        if let Some(own) = own_dir(reader.group.entry_id().as_key()) {
+            if reader.reads.reads_by_default(&dir, &own) {
+                keys.push(reader.key);
+            }
+        }
+    }
+    keys
+}
+
 // ---------------------------------------------------------------------------
 // Folder rows and legacy rows — the one rule mutations read
 // ---------------------------------------------------------------------------

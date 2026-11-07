@@ -51,3 +51,11 @@ export const inspectorTargetsViewPreference = unionPreference(
   ["list", "grid"] as const,
   "list",
 );
+
+/**
+ * The launch offer to move Deployments (round 20 #108) the operator declined,
+ * as the work it described (`redeployOfferSignature`): the offer is not raised
+ * again for the same work; the Harnesses pane's "Move N" line keeps it. New
+ * in round 20 (ticket 10).
+ */
+export const redeployOfferDeclinedPreference = stringPreference("skills-redeploy-offer-declined");

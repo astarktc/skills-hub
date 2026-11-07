@@ -27,6 +27,7 @@ import {
   makeSkill,
   type FixtureLocalFolder,
   type FixtureRepo,
+  type FixtureRedeployMove,
   type FixtureRepoCandidate,
   type FixtureState,
   type ForeignDir,
@@ -286,6 +287,7 @@ function baseState(scenario: ScenarioName, now: number): FixtureState {
     gitCacheEntriesInUse: 0,
     nextId: Math.floor(now / 1000) % 100_000,
     cancelRequested: false,
+    redeploy: { moves: [], awaiting: [] },
   };
 }
 
@@ -448,6 +450,52 @@ function registry(now: number): FixtureState {
   state.installedTools = [...DETECTED_TOOLS, "agents_skills", "opencode", "workbuddy", "codewhale"];
   state.seenTools = [...state.installedTools];
   state.settings = defaultSettings([...ALL, "opencode", "workbuddy", "codewhale", "goose"]);
+  return state;
+}
+
+// ---------------------------------------------------------------------------
+// redeploy — the first 1.4.0 launch (round 20 #108)
+// ---------------------------------------------------------------------------
+
+/**
+ * The rich library on the first launch after the registry corrections, with
+ * Kilo Code installed and selected: every Kilo Deployment still sits in
+ * `~/.kilocode/skills`, Kilo's legacy folder — its folder is `~/.kilo/skills`
+ * now. The launch offers to move them. One move meets a different folder at
+ * the new place (the overwrite ask), and one old copy was edited in place (the
+ * edited-copy question, a row of the same ask).
+ */
+function redeploy(now: number): FixtureState {
+  const state: FixtureState = { ...rich(now), scenario: "redeploy" };
+  state.installedTools = [...state.installedTools, "kilo_code"];
+  state.seenTools = [...state.installedTools];
+  state.settings = defaultSettings([...ALL, "kilo_code"]);
+  const moves: FixtureRedeployMove[] = [];
+  for (const skill of state.skills) {
+    const claude = skill.dto.targets.find((target) => target.tool === "claude_code" && target.status === "synced");
+    if (!claude) continue;
+    const name = skill.dto.name;
+    const edited = name === "handoff";
+    const from = `${HOME}/.kilocode/skills/${name}`;
+    skill.dto.targets.push({
+      tool: "kilo_code",
+      mode: edited ? "copy" : "symlink",
+      status: "synced",
+      target_path: from,
+      synced_at: claude.synced_at,
+      deployed_hash: edited ? skill.contentHash : null,
+    });
+    moves.push({
+      skillId: skill.dto.id,
+      tool: "kilo_code",
+      from,
+      folderKey: "kilo_code",
+      to: `${HOME}/.kilo/skills/${name}`,
+      ...(name === "zod-schema-first" ? { occupied: true } : {}),
+      ...(edited ? { edited: true } : {}),
+    });
+  }
+  state.redeploy = { moves, awaiting: [] };
   return state;
 }
 
@@ -695,6 +743,7 @@ const BUILDERS: Record<ScenarioName, (now: number) => FixtureState> = {
   "first-run": firstRun,
   failures,
   registry,
+  redeploy,
 };
 
 export function buildScenario(name: ScenarioName, now = Date.now()): FixtureState {

@@ -47,6 +47,8 @@ type SettingsDialogProps = {
   labelOf: (toolId: string) => string;
   /** The lifecycle's refusal in words (D19), or null. */
   blockedReason: string | null;
+  /** The redeploy's "Move N Deployments" line (Harnesses pane). */
+  redeploy: { pendingCount: number; onRun: () => void };
   /** The header progress, at the foot while a deploy this dialog started runs. */
   progress: ReactNode;
   isTauri: boolean;
@@ -69,6 +71,7 @@ const SettingsDialog = ({
   toolStatus,
   labelOf,
   blockedReason,
+  redeploy,
   progress,
   isTauri,
   t,
@@ -100,6 +103,7 @@ const SettingsDialog = ({
         onScanSelectedOnlyChange={deploy.onScanSelectedOnlyChange}
         onOpenGeneral={() => onPaneChange("general")}
         blockedReason={blockedReason}
+        redeploy={redeploy}
         t={t}
       />
     ),

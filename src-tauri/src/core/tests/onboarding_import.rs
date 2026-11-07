@@ -211,6 +211,7 @@ fn import_of_a_variant_installed_by_npx_skills_add_records_its_upstream_as_git()
 
 #[test]
 fn auto_sync_on_overwrites_the_source_tool_in_place_in_its_shared_folder() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     // amp and kimi_cli share `.config/agents/skills` (one detect dir, one
     // artifact): the source variant's own path IS one of the sync targets.
     let f = fixture();
@@ -1595,6 +1596,7 @@ fn remove_divergent_never_follows_a_link_into_the_central_repo() {
 /// the same row (audit F6).
 #[test]
 fn remove_divergent_settles_a_shared_dir_once_and_reports_every_harness() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture();
     install_tool(&f, "claude_code");
     install_tool(&f, "amp");

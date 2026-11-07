@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { RepointKind } from "../lib/skillPresentation";
 import type { OverwriteChoice, OverwriteRow } from "../lib/overwriteAsk";
 import type { DeleteSettlement } from "../lib/reportOutcome";
-import type { LibraryMovePreview } from "../components/skills/types";
+import type { LibraryMovePreview, RedeployPreview } from "../components/skills/types";
 import type { DuplicatePair } from "../lib/harnessPresentation";
 import {
   legacySettingsLink,
@@ -93,6 +93,12 @@ export type DialogState =
   | { kind: "assignProject"; skillIds: readonly string[] }
   // Tools + sync world
   | { kind: "newTools" }
+  /**
+   * The launch check's offer (round 20 #108): Deployments are in folders
+   * their harnesses no longer read — move them now? Offered once per launch
+   * when there is new work; the preview states the counts.
+   */
+  | { kind: "redeployOffer"; preview: RedeployPreview }
   // App shell
   /**
    * Settings (D37): one dialog, its pane the dialog's state (never the

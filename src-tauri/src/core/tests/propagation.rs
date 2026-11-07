@@ -24,6 +24,7 @@ use crate::core::tool_adapters::{adapter_by_key, mark_installed_in, RegistryPath
 
 #[test]
 fn shared_edit_update_report_preserves_classified_failure_on_the_wire() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     use crate::core::errors::{CommandError, SignalError};
     let target = PropagationOutcome::new(
         PropagationScope::Global {
@@ -331,6 +332,7 @@ fn an_uninstalled_tool_is_skipped() {
 /// per folder.
 #[test]
 fn legacy_sibling_rows_each_sync_and_settle_by_themselves() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture();
     let amp = adapter_by_key("amp").expect("amp adapter");
     let kimi = adapter_by_key("kimi_cli").expect("kimi_cli adapter");
@@ -811,6 +813,7 @@ fn amp_and_kimi() -> (&'static ToolAdapter, &'static ToolAdapter) {
 
 #[test]
 fn a_first_sync_into_a_shared_folder_records_only_the_folders_row() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture();
     let (amp, kimi) = amp_and_kimi();
     install_tool(&f, amp);
@@ -849,6 +852,7 @@ fn a_first_sync_into_a_shared_folder_records_only_the_folders_row() {
 
 #[test]
 fn a_first_sync_records_no_sharer_that_is_not_installed() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture();
     let (amp, _) = amp_and_kimi();
     install_tool(&f, amp);
@@ -867,6 +871,7 @@ fn a_first_sync_records_no_sharer_that_is_not_installed() {
 
 #[test]
 fn an_update_of_an_owned_artifact_records_no_new_sharer() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture();
     let (amp, kimi) = amp_and_kimi();
     install_tool(&f, amp);
@@ -892,6 +897,7 @@ fn an_update_of_an_owned_artifact_records_no_new_sharer() {
 /// the way.
 #[test]
 fn a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_propagation() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     use crate::core::errors::CommandError;
     use crate::core::global_sync::{
         sync_skills_to_tools_unlocked, BatchOverride, BatchPolicy, BatchSkill, BatchTargetStatus,
@@ -968,6 +974,7 @@ fn a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_prop
 
 #[test]
 fn a_failed_first_sync_settles_the_folders_row_error_as_the_batch_does() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     use crate::core::errors::CommandError;
 
     let f = fixture();
@@ -996,6 +1003,7 @@ fn a_failed_first_sync_settles_the_folders_row_error_as_the_batch_does() {
 
 #[test]
 fn a_disabled_member_mints_no_sharer_and_skips_the_group() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture();
     let (amp, kimi) = amp_and_kimi();
     install_tool(&f, amp);
@@ -1222,6 +1230,7 @@ fn a_project_sibling_naming_another_artifact_lends_no_ownership() {
 /// authorised by Kimi's ownership nor settled by Kimi's write.
 #[test]
 fn a_global_sibling_naming_another_artifact_lends_no_ownership() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture();
     let (amp, kimi) = amp_and_kimi();
     install_tool(&f, amp);
@@ -1279,6 +1288,7 @@ fn a_global_sibling_naming_another_artifact_lends_no_ownership() {
 /// link there and settles it by its own sync.
 #[test]
 fn global_siblings_recording_the_same_path_settle_each_by_its_own_sync() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture();
     let (amp, kimi) = amp_and_kimi();
     install_tool(&f, amp);
@@ -1337,6 +1347,7 @@ fn global_siblings_recording_the_same_path_settle_each_by_its_own_sync() {
 /// row is reported for itself.
 #[test]
 fn a_disabled_row_keeps_its_folders_other_rows_unwritten() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture();
     let (amp, kimi) = amp_and_kimi();
     install_tool(&f, amp);
@@ -1382,6 +1393,7 @@ fn a_disabled_row_keeps_its_folders_other_rows_unwritten() {
 #[cfg(unix)]
 #[test]
 fn a_slot_reached_by_two_spellings_lends_nothing() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture();
     let (amp, kimi) = amp_and_kimi();
     install_tool(&f, amp);
@@ -1426,6 +1438,7 @@ fn a_slot_reached_by_two_spellings_lends_nothing() {
 /// because a sibling harness of its folder is installed.
 #[test]
 fn a_legacy_row_of_an_uninstalled_harness_is_skipped_whatever_its_folder_serves() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture();
     let (amp, _) = amp_and_kimi();
     install_tool(&f, amp);
@@ -1461,6 +1474,7 @@ fn a_legacy_row_of_an_uninstalled_harness_is_skipped_whatever_its_folder_serves(
 /// folder serves: Amp's row is refreshed with only Kimi Code installed.
 #[test]
 fn a_folder_row_is_reached_through_any_harness_its_folder_serves() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture();
     let (_, kimi) = amp_and_kimi();
     install_tool(&f, kimi);

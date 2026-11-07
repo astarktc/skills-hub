@@ -46,6 +46,8 @@ import { useSyncOrchestration } from "./hooks/useSyncOrchestration";
 import { useToolCatalog } from "./hooks/useToolCatalog";
 import { useHarnessSelection } from "./hooks/useHarnessSelection";
 import { useNewHarnessesDeploy } from "./hooks/useNewHarnessesDeploy";
+import { useRedeploy } from "./hooks/useRedeploy";
+import RedeployOfferDialog from "./components/settings/RedeployOfferDialog";
 import { useAppUpdate } from "./hooks/useAppUpdate";
 import { useListLens } from "./hooks/useListLens";
 import { SHELL_WIDE_QUERY, useMediaQuery } from "./hooks/useMediaQuery";
@@ -564,6 +566,14 @@ function App() {
   // targets (sync) and push every managed skill (library) — so the binder
   // composes it. An explicit Deploy always deploys, whatever Auto-deploy says (D34).
   const handleSyncAllNewTools = useNewHarnessesDeploy({ sync, surface, reporter, actions, t });
+  // The redeploy (round 20 #108): the launch check's offer, the run and the
+  // Harnesses pane's "Move N Deployments" line.
+  const redeploy = useRedeploy({ t, reporter, surface, library, toolLabelById });
+  const { pendingCount: redeployPending, run: runRedeploy } = redeploy;
+  const redeployLine = useMemo(
+    () => ({ pendingCount: redeployPending, onRun: () => void runRedeploy() }),
+    [redeployPending, runRedeploy],
+  );
 
   // The two asks render from the surface stack and answer through it.
   const sharedDirAsk = surface.pendingAsk("sharedDir");
@@ -825,8 +835,17 @@ function App() {
         toolStatus={catalog.toolStatus}
         labelOf={labelOfTool}
         blockedReason={blockedReason}
+        redeploy={redeployLine}
         progress={dialogProgress}
         isTauri={isTauri}
+        t={t}
+      />
+
+      <RedeployOfferDialog
+        layer={surface.layer("redeployOffer")}
+        labelOf={labelOfTool}
+        onAccept={() => void redeploy.acceptOffer()}
+        onDecline={redeploy.declineOffer}
         t={t}
       />
 

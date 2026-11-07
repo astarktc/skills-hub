@@ -27,6 +27,8 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::preview_library_move,
             commands::move_library,
             commands::take_resumed_library_move,
+            commands::get_redeploy_launch_check,
+            commands::redeploy_deployments,
             commands::get_tool_status,
             commands::get_project_tool_status,
             commands::clear_git_cache_now,
@@ -214,13 +216,31 @@ pub fn run() {
                 }
                 Err(err) => log::warn!("failed to resolve central repo path: {}", err),
             }
-            // The launch-time Target relocation pass
-            // (`core::target_relocation::relocate_former_global_targets`) is
-            // deliberately not run (1.3.2, BACKLOG #89): it compares paths
-            // lexically, so a Tool skills root that is a directory alias can
-            // make it delete central skill bytes. It returns with the
-            // relocation redesign (BACKLOG #108), which reuses the module and
-            // the registry's `former_skills_dirs`.
+            // The launch check (round 20 #108), first step: finish every
+            // redeploy journal entry a crash left — remove-or-report, acting
+            // only while each entry's row and both identities still match —
+            // before any other action can run. Nothing else moves at launch:
+            // the frontend reads the preview (`get_redeploy_launch_check`)
+            // and offers the moves; the operator runs them.
+            match commands::resolve_central_repo_path_for_app(app.handle(), &store).and_then(
+                |central| {
+                    core::redeploy::finish_journal(
+                        &store,
+                        &core::environment::HostRoots::resolve()?,
+                        &central,
+                        core::clock::now_ms(),
+                    )
+                },
+            ) {
+                Ok(None) => {}
+                // Its report is recorded for the frontend, which takes it once.
+                Ok(Some(_)) => log::info!("finished an interrupted redeploy's journal"),
+                Err(err) => log::warn!(
+                    "finishing the redeploy journal failed; retried next launch \
+                     or by the next redeploy: {:#}",
+                    err
+                ),
+            }
             app.manage(store.clone());
             app.manage(Arc::new(CancelToken::new()));
 

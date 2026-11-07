@@ -491,6 +491,7 @@ fn a_failing_project_query_fails_the_catalog() {
 /// the folder; a lone sibling row comes out keyed by its folder too.
 #[test]
 fn the_catalog_reads_sibling_rows_as_one_folder() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
     let central = tmp.path().join("central");
@@ -522,6 +523,7 @@ fn the_catalog_reads_sibling_rows_as_one_folder() {
 /// folder reaches every one of them.
 #[test]
 fn the_catalog_shows_a_folders_state_folded_over_every_row() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
     let central = tmp.path().join("central");
@@ -557,6 +559,7 @@ fn the_catalog_shows_a_folders_state_folded_over_every_row() {
 /// the failed one, with its own timestamp.
 #[test]
 fn the_catalog_carries_a_partially_disabled_folders_facts() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
     let central = tmp.path().join("central");

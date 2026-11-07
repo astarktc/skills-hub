@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 use std::fs;
 
-use super::{HeldDir, RenameError};
+use super::{ExchangeError, HeldDir, RenameError};
 
 fn held() -> (tempfile::TempDir, HeldDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -108,4 +108,43 @@ fn the_reservation_fallback_refuses_occupants_and_publishes_otherwise() {
         Err(RenameError::Failed(_))
     ));
     assert!(!dir.path().join("again").exists());
+}
+
+/// An exchange swaps a folder and a link in one step where the OS offers it
+/// (macOS and Linux on their usual file systems), and says so elsewhere —
+/// Windows always — touching nothing.
+#[test]
+fn exchanges_two_entries_or_says_it_cannot() {
+    let (dir, held) = held();
+    fs::create_dir(dir.path().join("other")).unwrap();
+    fs::write(dir.path().join("other/g"), b"theirs").unwrap();
+    match held.exchange(OsStr::new("from"), OsStr::new("other")) {
+        Ok(()) => {
+            assert_eq!(fs::read(dir.path().join("other/f")).unwrap(), b"ours");
+            assert_eq!(fs::read(dir.path().join("from/g")).unwrap(), b"theirs");
+        }
+        Err(ExchangeError::Unsupported) => {
+            if cfg!(target_vendor = "apple") {
+                panic!("macOS exchanges");
+            }
+            assert_eq!(fs::read(dir.path().join("from/f")).unwrap(), b"ours");
+            assert_eq!(fs::read(dir.path().join("other/g")).unwrap(), b"theirs");
+        }
+        Err(err) => panic!("{err:?}"),
+    }
+}
+
+/// An exchange with a name that is absent changes nothing.
+#[test]
+fn an_exchange_with_an_absent_name_changes_nothing() {
+    let (dir, held) = held();
+    let err = held
+        .exchange(OsStr::new("from"), OsStr::new("absent"))
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        ExchangeError::Failed(_) | ExchangeError::Unsupported
+    ));
+    assert_eq!(fs::read(dir.path().join("from/f")).unwrap(), b"ours");
+    assert!(!dir.path().join("absent").exists());
 }

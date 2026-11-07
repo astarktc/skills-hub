@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use super::content_identity::{self, Source};
-use super::errors::SignalError;
+use super::errors::{DestinationRefusal, SignalError};
 use super::ownership::{self, Deployed, Occupancy};
-use super::removal_fence::{self, Claim, Entry, Fence, ProtectedLibrary};
+use super::removal_fence::{self, Claim, Entry, Fence, Place, ProtectedLibrary};
 use super::tool_adapters::ToolAdapter;
 
 /// Typed condition: the sync target already exists and overwrite was not
@@ -440,10 +440,60 @@ fn sync_dir_for_tool(
     parents: TargetParents<'_>,
     library: &ProtectedLibrary<'_>,
 ) -> Result<SyncOutcome> {
+    admit_destination(target, &replace, library)?;
     if !adapter.supports_symlink {
         return copy_with_overwrite(source, identity, target, replace, parents, library);
     }
     hybrid_with_overwrite(source, identity, target, replace, parents, library)
+}
+
+/// Admit a write at `target` before anything is written — a first write as
+/// much as a replacement (ADR-0007: "only inside a skills folder it
+/// manages"). The folder it writes into (`target`'s parent, resolved through
+/// every alias as far as it exists) must not be, or lie inside, the central
+/// `library` — an aliased harness folder would make the Deployment a write
+/// into the Library itself (audit 3 F15) — and, for a stored path
+/// ([`Replace::within`]), must be one of the managed skills folders, spelled
+/// as it or physically inside it. A refusal is the typed
+/// `DestinationRefused`; nothing is touched. Also the redeploy's admission
+/// of a place it adopts without writing (`core::redeploy`).
+pub(crate) fn admit_destination(
+    target: &Path,
+    replace: &Replace<'_>,
+    library: &ProtectedLibrary<'_>,
+) -> Result<()> {
+    let Some(folder) = target.parent() else {
+        return Ok(());
+    };
+    let refuse = |reason| {
+        let resolved = folder
+            .canonicalize()
+            .unwrap_or_else(|_| folder.to_path_buf());
+        anyhow::anyhow!(SignalError::DestinationRefused {
+            path: target.to_string_lossy().into_owned(),
+            resolved: resolved.to_string_lossy().into_owned(),
+            reason,
+        })
+    };
+    if library.holds_dir(folder)? {
+        return Err(refuse(DestinationRefusal::InLibrary));
+    }
+    if let Some(dirs) = replace.within {
+        let mut inside = dirs.iter().any(|dir| dir == folder);
+        if !inside {
+            let place = Place::of(folder)?;
+            for dir in dirs {
+                if place.within(&Place::of(dir)?) {
+                    inside = true;
+                    break;
+                }
+            }
+        }
+        if !inside {
+            return Err(refuse(DestinationRefusal::OutsideSkillsFolder));
+        }
+    }
+    Ok(())
 }
 
 fn ensure_parent_dir(path: &Path, parents: TargetParents<'_>) -> Result<()> {

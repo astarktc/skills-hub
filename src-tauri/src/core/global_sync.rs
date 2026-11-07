@@ -37,6 +37,13 @@ pub enum GlobalSyncError {
     TargetDisabled {
         tool_key: String,
     },
+    /// The row owns an artifact at another place than the one it would be
+    /// written at now (`path`, as recorded): its move is the redeploy's
+    /// (`core::redeploy`) — a skip, never attempted.
+    RedeployPending {
+        tool_key: String,
+        path: PathBuf,
+    },
     TargetExists {
         target_path: PathBuf,
         /// The folder in the way, as the overwrite ask shows it (D12).
@@ -57,6 +64,9 @@ impl fmt::Display for GlobalSyncError {
             }
             GlobalSyncError::TargetDisabled { tool_key } => {
                 write!(f, "target disabled: {}", tool_key)
+            }
+            GlobalSyncError::RedeployPending { tool_key, path } => {
+                write!(f, "redeploy pending: {} at {}", tool_key, path.display())
             }
             GlobalSyncError::TargetExists { target_path, .. } => {
                 write!(f, "target already exists: {}", target_path.display())
@@ -729,6 +739,17 @@ fn run_planned(
                             tool_key: row.key.clone(),
                         }),
                     }
+                } else if let Some(recorded) = rows
+                    .as_ref()
+                    .ok()
+                    .and_then(|stored| moved_elsewhere(stored, target, skill, row))
+                {
+                    BatchTargetStatus::Skipped {
+                        error: CommandError::from(GlobalSyncError::RedeployPending {
+                            tool_key: row.key.clone(),
+                            path: recorded,
+                        }),
+                    }
                 } else {
                     let deployed = match &rows {
                         Ok(stored) => row_evidence(stored, target, skill, row, record.as_ref()),
@@ -758,6 +779,27 @@ fn run_planned(
     }
 
     outcomes
+}
+
+/// Where the stored row keyed `row.key` owns an artifact still on disk, when
+/// that is not the skill's place in the folder now ([`destination`]): its
+/// Deployment moved (a corrected folder, a renamed skill), and writing the
+/// new place here would re-record the row and orphan that artifact. That
+/// move is the redeploy's (`core::redeploy`, ADR-0007 rule 2); the batch
+/// skips the row. A recorded path with nothing there orphans nothing: the
+/// row is written at its place now, as before.
+fn moved_elsewhere(
+    stored: &[SkillTargetRecord],
+    target: &PlannedToolTarget,
+    skill: &BatchSkill,
+    row: &BatchRow,
+) -> Option<PathBuf> {
+    let destination = destination(target, skill);
+    stored
+        .iter()
+        .find(|stored| stored.tool == row.key && stored.owns_artifact())
+        .map(|stored| PathBuf::from(&stored.target_path))
+        .filter(|recorded| *recorded != destination && recorded.symlink_metadata().is_ok())
 }
 
 /// What the stored row keyed `row.key` recorded **at the skill's place in

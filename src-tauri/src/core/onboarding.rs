@@ -13,8 +13,7 @@ use super::skill_discovery::InvalidManifestReason;
 use super::skill_files::is_ignored;
 use super::skill_store::SkillStore;
 use super::tool_adapters::{
-    default_tool_adapters, is_installed_in, scan_tool_dir, skills_dir_in, DetectedSkill,
-    ToolAdapter,
+    catalog_rows, is_installed_in, scan_tool_dir, skills_dir_in, DetectedSkill, ToolAdapter,
 };
 
 #[derive(Clone, Debug, Serialize, Type)]
@@ -186,7 +185,8 @@ fn build_onboarding_plan_in_home(
     exclude_managed_targets: Option<&std::collections::HashSet<String>>,
     managed_names: &HashMap<String, String>,
 ) -> Result<OnboardingPlan> {
-    let adapters = default_tool_adapters();
+    // The registry rows (shadow-aware in tests, like every catalog).
+    let adapters: Vec<&'static ToolAdapter> = catalog_rows().collect();
     let mut all_detected: Vec<DetectedSkill> = Vec::new();
     let mut invalid: Vec<OnboardingInvalidEntry> = Vec::new();
     let mut scanned = 0usize;

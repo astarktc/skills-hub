@@ -18,13 +18,18 @@ import type {
   ProjectSyncOutcome,
   ProjectSyncReport,
   PropagationOutcome,
+  RedeployAnswer,
+  RedeployMove,
+  RedeployReport,
   RefreshReport,
 } from "../bindings";
 
 /** Where an asked row's retry goes. */
 export type OverwriteScope =
   | { kind: "global" }
-  | { kind: "project"; projectId: string };
+  | { kind: "project"; projectId: string }
+  /** A redeploy's row, answered through the next redeploy run. */
+  | { kind: "redeploy" };
 
 /** One occupied sync target the operator decides about. */
 export type OverwriteRow = {
@@ -39,6 +44,21 @@ export type OverwriteRow = {
   /** The folder is byte-identical to the skill (the backend's answer). */
   sameContent: boolean;
   scope: OverwriteScope;
+  /**
+   * What is asked (redeploy only): `occupied` — a folder in a move's way
+   * (Overwrite / Keep); `editedCopy` — an old copy edited after Skills Hub
+   * wrote it (Delete = `overwrite`, Leave = `keep`). Absent: occupied.
+   */
+  question?: "occupied" | "editedCopy";
+  /**
+   * Which question it is (redeploy only), as the backend asked it and an
+   * answer must name it back: an occupied move's rows (`RedeployMove.rows`
+   * ids), an edited copy's journal entry (`EditedCopy.entry_id`).
+   */
+  rowIds?: readonly string[];
+  entryId?: string;
+  /** The harnesses that show a left edited copy twice (labels). */
+  readers?: string[];
 };
 
 /** The operator's per-row decision. */
@@ -48,7 +68,11 @@ export type OverwriteChoice = "overwrite" | "keep";
 export const overwriteRowKey = (row: OverwriteRow): string =>
   row.scope.kind === "project"
     ? `project\n${row.scope.projectId}\n${row.skillId}\n${row.toolKey}`
-    : `global\n${row.skillId}\n${row.toolKey}`;
+    : row.scope.kind === "redeploy"
+      ? row.question === "editedCopy"
+        ? `redeploy\neditedCopy\n${row.entryId ?? ""}`
+        : `redeploy\noccupied\n${row.skillId}\n${row.toolKey}\n${row.path}`
+      : `global\n${row.skillId}\n${row.toolKey}`;
 
 type Labels = Readonly<Record<string, string>>;
 type TargetExists = Extract<CommandError, { code: "TARGET_EXISTS" }>;
@@ -346,4 +370,130 @@ export function mergeRefreshRetry(
     return { ...skill, status: { ...skill.status, targets: merged.targets } };
   });
   return { report: { skills }, declined };
+}
+
+// ---------------------------------------------------------------------------
+// Redeploy (round 20 #108): folders in a move's way and edited old copies,
+// one ask
+// ---------------------------------------------------------------------------
+
+/**
+ * The askable rows of a redeploy report: every move a different folder
+ * stands in the way of (`TARGET_EXISTS`, keyed by the move's folder) and
+ * every edited old copy awaiting its answer (keyed by its row's key) — one
+ * ask, answered per row.
+ */
+export function redeployAskRows(report: RedeployReport, toolLabelById: Labels): OverwriteRow[] {
+  const label = (key: string) => toolLabelById[key] ?? key;
+  const rows: OverwriteRow[] = [];
+  for (const move of report.moves) {
+    if (move.status.status !== "failed") continue;
+    const error = targetExists(move.status.error);
+    if (!error) continue;
+    rows.push({
+      skillId: move.skill_id,
+      skillName: move.skill_name,
+      toolKey: move.folder_key,
+      toolLabel: label(move.folder_key),
+      ...facts(error),
+      scope: { kind: "redeploy" },
+      question: "occupied",
+      rowIds: move.rows.map((row) => row.id),
+    });
+  }
+  for (const copy of report.edited_copies) {
+    rows.push({
+      skillId: copy.skill_id,
+      skillName: copy.skill_name,
+      toolKey: copy.tool,
+      toolLabel: label(copy.tool),
+      path: copy.path,
+      modifiedAt: copy.modified_at,
+      sameContent: false,
+      scope: { kind: "redeploy" },
+      question: "editedCopy",
+      entryId: copy.entry_id,
+      readers: copy.readers.map(label),
+    });
+  }
+  return rows;
+}
+
+/**
+ * The answers for the asked redeploy rows, each naming exactly the question
+ * it answers — the move's rows or the edited copy's journal entry — and the
+ * path it showed; the backend refuses one whose question changed since.
+ */
+export function redeployAnswers(
+  rows: readonly OverwriteRow[],
+  choices: readonly OverwriteChoice[],
+): RedeployAnswer[] {
+  return rows.flatMap((row, index): RedeployAnswer[] => {
+    if (row.scope.kind !== "redeploy") return [];
+    const choice = choices[index];
+    return row.question === "editedCopy"
+      ? [
+          {
+            question: "edited_copy",
+            entry_id: row.entryId ?? "",
+            path: row.path,
+            decision: choice === "overwrite" ? "delete" : "leave",
+          },
+        ]
+      : [
+          {
+            question: "occupied",
+            skill_id: row.skillId,
+            folder_key: row.toolKey,
+            row_ids: [...(row.rowIds ?? [])],
+            path: row.path,
+            decision: choice,
+          },
+        ];
+  });
+}
+
+const moveKey = (move: Pick<RedeployMove, "skill_id" | "folder_key">) => `${move.skill_id}\n${move.folder_key}`;
+
+/**
+ * One operator action's redeploy report, after the answered retry: each
+ * asked move replaced by the retry's move for it; an edited copy the retry
+ * settled no longer awaits, and its move reads `moved` once the copy was
+ * deleted (`left_old` when it was left); a journal entry the first run left
+ * unfinished reads as the retry settled it; everything else the retry found
+ * (its journal, left-behind copies, lost disables, copies still awaiting,
+ * answers it refused as stale) joins the report.
+ */
+export function mergeRedeployRetry(first: RedeployReport, retry: RedeployReport): RedeployReport {
+  const retried = new Map(retry.moves.map((move) => [moveKey(move), move]));
+  const settled = new Map(
+    retry.journal.map((entry) => [`${entry.skill_id}\n${entry.tool}\n${entry.path}`, entry.status]),
+  );
+  const moves = first.moves.map((move) => {
+    const again = retried.get(moveKey(move));
+    if (again) return again;
+    if (move.status.status !== "left_old") return move;
+    const outcomes = move.rows
+      .map((row) => settled.get(`${move.skill_id}\n${row.tool}\n${row.from}`))
+      .filter((status) => status !== undefined);
+    if (outcomes.length > 0 && outcomes.every((status) => status === "finished" || status === "retained"))
+      return { ...move, status: { status: "moved" as const } };
+    return move;
+  });
+  const firstKeys = new Set(first.moves.map(moveKey));
+  // An entry the first run left unfinished is settled again by the retry: its outcome is the retry's.
+  const resettled = new Set(
+    retry.journal.filter((entry) => entry.status !== "awaiting_answer").map((entry) => entry.entry_id),
+  );
+  return {
+    moves: [...moves, ...retry.moves.filter((move) => !firstKeys.has(moveKey(move)))],
+    journal: [
+      ...first.journal.filter((entry) => !(entry.status === "unfinished" && resettled.has(entry.entry_id))),
+      ...retry.journal.filter((entry) => entry.status !== "awaiting_answer"),
+    ],
+    left_behind: [...first.left_behind, ...retry.left_behind],
+    edited_copies: retry.edited_copies,
+    lost_disables: [...first.lost_disables, ...retry.lost_disables],
+    refused_answers: [...first.refused_answers, ...retry.refused_answers],
+  };
 }

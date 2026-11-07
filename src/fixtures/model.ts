@@ -126,14 +126,39 @@ export type FixtureLocalFolder = {
   candidates: LocalSkillCandidate[];
 };
 
-export type ScenarioName = "rich" | "empty" | "first-run" | "failures" | "registry";
+export type ScenarioName = "rich" | "empty" | "first-run" | "failures" | "registry" | "redeploy";
 export const SCENARIOS: readonly ScenarioName[] = [
   "rich",
   "empty",
   "first-run",
   "failures",
   "registry",
+  "redeploy",
 ];
+
+/**
+ * One global Deployment a redeploy moves (Rust `core::redeploy`): the row
+ * (its key and old path) and the folder placement gives it now.
+ */
+export type FixtureRedeployMove = {
+  skillId: string;
+  tool: string;
+  from: string;
+  folderKey: string;
+  to: string;
+  /** A different folder stands at the new place: the first run asks. */
+  occupied?: boolean;
+  /** The old copy was edited after Skills Hub wrote it: asked, never removed silently. */
+  edited?: boolean;
+  /** The journal entry that asks about the edited old copy, once the move journaled it. */
+  entryId?: string;
+};
+
+/** The redeploy's pending work: moves still to make, edited copies awaiting an answer. */
+export type FixtureRedeploy = {
+  moves: FixtureRedeployMove[];
+  awaiting: FixtureRedeployMove[];
+};
 
 export type FixtureState = {
   scenario: ScenarioName;
@@ -183,6 +208,8 @@ export type FixtureState = {
   /** Monotonic id source. */
   nextId: number;
   cancelRequested: boolean;
+  /** Global Deployments in folders their harnesses no longer read (round 20 #108). */
+  redeploy: FixtureRedeploy;
 };
 
 // ---------------------------------------------------------------------------
