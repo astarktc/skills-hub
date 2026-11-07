@@ -47,7 +47,9 @@ tauri-specta = { version = "=2.0.0-rc.25", features = ["typescript"] }
 # Move Library folder's relocation fidelity (core/library_move.rs): extended
 # attributes on Unix (`libc` for the ENOTSUP of a volume without them), and a
 # file's physical identity (volume serial + file index, link count) on
-# Windows. All three were already in the lock file.
+# Windows. All three were already in the lock file. Also the no-replace rename
+# that publishes a new Library copy (core/no_replace.rs): `renameat2` /
+# `renameatx_np` through `libc`, `MoveFileExW` through `windows-sys`.
 [target.'cfg(unix)'.dependencies]
 xattr = "1.6"
 libc = "0.2"

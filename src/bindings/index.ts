@@ -423,7 +423,14 @@ tool: string } |
  */
 { code: "TARGET_EXISTS"; path: string; modifiedAt: number | null; sameContent: boolean } | { code: "TOOL_NOT_WRITABLE"; tool: string; path: string } | { code: "SKILL_INVALID"; reason: string } | { code: "MULTI_SKILLS" } | { code: "SKILL_EXISTS";
 /**  Name of the skill directory already present in the central repo. */
-name: string } | { code: "FINALIZE_ROLLBACK_FAILED"; central: string; backup: string | null;
+name: string } |
+/**
+ *  The name a skill would have is not one folder name — empty, `.` or
+ *  `..`, absolute or drive-relative, or holding a separator or NUL — so
+ *  its Library copy could land outside the Library. Nothing was acquired
+ *  or written.
+ */
+{ code: "SKILL_NAME_INVALID"; name: string } | { code: "FINALIZE_ROLLBACK_FAILED"; central: string; backup: string | null;
 /**  Original failure and rollback error chain, diagnostics only. */
 detail: string } | { code: "DUPLICATE_PROJECT"; path: string } | { code: "ASSIGNMENT_EXISTS"; project: string; skill: string; tool: string } | { code: "NOT_FOUND"; kind: string; id: string } | { code: "UNKNOWN_TOOL";
 /**  Registry key that matched no tool adapter. */
@@ -1101,8 +1108,9 @@ export type ManagedSkillDto = {
 	 *  Which recorded path the app can no longer find, if any (see
 	 *  **Unlocatable skill** in `CONTEXT.md`): `source_missing` offers
 	 *  Re-point / Detach (when `detachable`) / Remove, `central_missing`
-	 *  offers Restore (when `refreshable`) / Remove. Computed at list time,
-	 *  never stored.
+	 *  offers Restore (when `refreshable`) / Remove, `not_a_folder_name` (a
+	 *  name that cannot be a Library folder) offers Remove. Computed at list
+	 *  time, never stored.
 	 */
 	unlocatable: UnlocatableState | null,
 	/**
@@ -2111,8 +2119,14 @@ export type ToolStatusDto = {
 	newly_installed: string[],
 };
 
-/**  Which of a skill's recorded paths is gone. */
+/**  Which of a skill's recorded paths is gone — or cannot be a Library copy. */
 export type UnlocatableState =
+/**
+ *  The skill's name is not one folder name, so its central copy is not a
+ *  folder of the Library (it may lie outside it): never deployed from,
+ *  never updated.
+ */
+"not_a_folder_name" |
 /**  A `local` skill's source folder is not there. */
 "source_missing" |
 /**  The central copy is not there. */

@@ -158,6 +158,9 @@ export const resources = {
         centralMissing: "Central copy missing",
         centralMissingTooltip:
           "The copy in Skills Hub's Library is gone, so every harness's link to it is dangling. Restore it from its source, or remove it.",
+        notAFolderName: "Name isn\u2019t a folder name",
+        notAFolderNameTooltip:
+          "This skill's name isn't a single folder name, so its copy may lie outside Skills Hub's Library. It can't be deployed or updated. Remove it, then add it again under a plain name.",
         repoint: "Re-point",
         detach: "Detach",
         restore: "Restore",
@@ -194,6 +197,8 @@ export const resources = {
           "Current environment is not Tauri. Please run `npm run tauri dev`.",
         skillExistsInHubNamed:
           '"{{name}}" already exists in Hub. Go to My Skills to update it.',
+        skillNameInvalid:
+          '"{{name}}" can\u2019t be a skill\u2019s name: a name becomes a folder, so it must be one folder name \u2014 not empty, not "." or "..", with no "/" or "\\". Nothing was downloaded or written.',
         targetExists: "Target folder already exists and was left in place.",
         toolNotInstalled:
           "The selected harness is not installed. Check that it is installed, then retry.",
@@ -340,6 +345,8 @@ export const resources = {
           "Its source folder is missing. Re-point, detach or remove it from its card.",
         refreshSkippedCentralMissing:
           "Its central copy is missing. Restore or remove it from its card.",
+        refreshSkippedNotAFolderName:
+          "Its name isn\u2019t a single folder name, so its copy may lie outside the Library. Remove it from its card.",
         targetDisabled:
           "{{tool}} is disabled for this skill. Enable it to deploy there again.",
         syncSkippedDisabledTitle: "Not deployed: {{name}} -> {{tool}}",

@@ -10,6 +10,7 @@ use super::{
     clock::now_ms,
     content_identity,
     errors::SignalError,
+    install_finalize::ensure_folder_name,
     installer::InstallerPaths,
     manifest::{self, InvocationLines, InvocationMode},
     mutation_guard,
@@ -98,6 +99,10 @@ pub fn set_invocation_override(
                 id: skill_id.into()
             })
         })?;
+        // A record whose name is not one folder name (written before ticket
+        // 19, its copy possibly outside the Library) is quarantined: no Edit
+        // row is persisted for it and its manifest is never written.
+        ensure_folder_name(&record.name)?;
         let path = manifest(&record)?;
         let existing = store.get_skill_edit(skill_id, SkillEditKind::InvocationMode)?;
         if let Some(mode) = mode {

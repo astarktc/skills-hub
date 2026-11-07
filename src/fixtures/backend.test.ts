@@ -1078,6 +1078,11 @@ describe("S6: Git Add honours the operator's name", () => {
       status: "failed",
       error: { code: "SKILL_EXISTS", name: "My-Custom-Name" },
     });
+    // Round 20 t19: a name is one folder name.
+    expect((await add("../x")).candidates[0].status).toEqual({
+      status: "failed",
+      error: { code: "SKILL_NAME_INVALID", name: "../x" },
+    });
     expect((await add(null)).candidates[0].name).toBe("changelog-writer");
   });
 });

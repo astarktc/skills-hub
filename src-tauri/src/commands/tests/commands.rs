@@ -199,6 +199,18 @@ fn command_error_wire_shape_is_internally_tagged() {
         serde_json::json!({ "code": "SKILL_EXISTS", "name": "react-best-practices" })
     );
 
+    let json = serde_json::to_value(CommandError::from_anyhow(
+        anyhow::anyhow!(SignalError::SkillNameInvalid {
+            name: "../x".to_string()
+        })
+        .context("stage the selection"),
+    ))
+    .unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({ "code": "SKILL_NAME_INVALID", "name": "../x" })
+    );
+
     let json = serde_json::to_value(CommandError::from(SignalError::PathOutsideToolDirs {
         path: "/home/user/Documents".to_string(),
     }))

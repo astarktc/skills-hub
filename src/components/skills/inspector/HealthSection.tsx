@@ -8,6 +8,7 @@ import {
   HEALTH_REPAIR_LABEL_KEY,
   HEALTH_ROW_LABEL_KEY,
   UNLOCATABLE_TOOLTIP_KEY,
+  isUnlocatableKind,
   formatRelativeTime,
   healthRowPlaces,
   type HealthRepair,
@@ -44,7 +45,7 @@ export default function HealthSection({ skill, health, labelOf, actions, blocked
     if (row.error) {
       const described = describeCommandError(row.error, t);
       if (described) parts.push(described);
-    } else if (row.kind === "central_missing" || row.kind === "source_missing") {
+    } else if (isUnlocatableKind(row.kind)) {
       parts.push(t(UNLOCATABLE_TOOLTIP_KEY[row.kind]));
     }
     parts.push(...healthRowPlaces(row, { t, labelOf }));

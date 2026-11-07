@@ -161,3 +161,140 @@ fn only_a_local_skill_can_be_detached() {
         Some(SignalError::NotFound { .. })
     ));
 }
+
+/// Round 20 ticket 19: a record written before install checked names, whose
+/// name is not one folder name (`../evil`) and whose central copy therefore
+/// lies outside the Library. It reads Unlocatable (`not_a_folder_name`),
+/// Refresh (all) skips it, an explicit Update is refused before anything is
+/// acquired or landed, and no Deployment is ever made from it.
+#[test]
+fn a_record_whose_name_is_not_one_folder_name_is_never_deployed_from() {
+    use crate::core::errors::CommandError;
+    use crate::core::global_sync::{
+        sync_skills_to_tools, BatchPolicy, BatchSkill, BatchTargetStatus,
+    };
+    use crate::core::tool_adapters::{adapter_by_key, mark_installed_in, skills_dir_in};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let paths = InstallerPaths {
+        roots: HostRoots::under_home(&dir.path().join("home")),
+        central_dir: dir.path().join("central"),
+        cache_dir: dir.path().join("cache"),
+    };
+    fs::create_dir_all(&paths.roots.home).unwrap();
+    let claude = adapter_by_key("claude_code").unwrap();
+    mark_installed_in(&paths.roots, claude);
+    let store = SkillStore::new(dir.path().join("test.db"));
+    store.ensure_schema().unwrap();
+    let source = dir.path().join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("SKILL.md"), "---\nname: evil\n---\n").unwrap();
+    fs::write(source.join("a.txt"), "v1").unwrap();
+    let installed = install_local_skill(&paths, &store, &source, Some("evil".into())).unwrap();
+
+    // What an install of `name: ../evil` wrote before ticket 19: the record's
+    // name, and a copy joined from it — lexically under the central repo,
+    // physically beside it.
+    let outside = dir.path().join("evil");
+    fs::rename(&installed.central_path, &outside).unwrap();
+    let mut record = store.get_skill_by_id(&installed.skill_id).unwrap().unwrap();
+    record.name = "../evil".into();
+    record.central_path = paths
+        .central_dir
+        .join("../evil")
+        .to_string_lossy()
+        .into_owned();
+    store.upsert_skill(&record).unwrap();
+    fs::write(source.join("a.txt"), "v2").unwrap();
+
+    assert_eq!(
+        unlocatable_state(&record),
+        Some(UnlocatableState::NotAFolderName)
+    );
+    let catalog = crate::core::skill_catalog::managed_skill_catalog(&store).unwrap();
+    assert_eq!(
+        catalog[0].unlocatable,
+        Some(UnlocatableState::NotAFolderName)
+    );
+
+    let refresh = |selection| {
+        refresh_managed_skills(
+            &paths,
+            &store,
+            &crate::core::credentials::MemoryStore::new(),
+            selection,
+            None,
+            |_| {},
+        )
+        .expect("refresh")
+    };
+    let all = refresh(RefreshSelection::All);
+    assert!(
+        matches!(
+            all.skills.as_slice(),
+            [o] if matches!(
+                &o.status,
+                SkillRefreshStatus::Skipped {
+                    reason: crate::core::refresh::RefreshSkipReason::Unlocatable {
+                        state: UnlocatableState::NotAFolderName
+                    }
+                }
+            )
+        ),
+        "{all:?}"
+    );
+    let named = refresh(RefreshSelection::Ids(vec![record.id.clone()]));
+    assert!(
+        matches!(
+            named.skills.as_slice(),
+            [o] if matches!(
+                &o.status,
+                SkillRefreshStatus::Failed { error: CommandError::SkillNameInvalid { name } }
+                    if name == "../evil"
+            )
+        ),
+        "{named:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(outside.join("a.txt")).unwrap(),
+        "v1",
+        "no source bytes landed outside the Library"
+    );
+
+    let outcomes = sync_skills_to_tools(
+        &paths.roots,
+        &store,
+        &paths.central_dir,
+        &[BatchSkill {
+            skill_id: record.id.clone(),
+            skill_name: record.name.clone(),
+            source_path: PathBuf::from(&record.central_path),
+        }],
+        &["claude_code".to_string()],
+        &BatchPolicy {
+            overwrite: false,
+            overwrite_if_same_content: true,
+            overrides: Vec::new(),
+        },
+        1000,
+        |_| {},
+    );
+    assert!(
+        matches!(
+            outcomes.as_slice(),
+            [o] if matches!(
+                &o.status,
+                BatchTargetStatus::Failed { error: CommandError::InvalidPath { reason, .. } }
+                    if reason == "not_a_folder_name"
+            )
+        ),
+        "{outcomes:?}"
+    );
+    let skills_dir = skills_dir_in(&paths.roots, claude);
+    assert!(
+        !skills_dir.exists() || fs::read_dir(&skills_dir).unwrap().count() == 0,
+        "no Deployment in the harness"
+    );
+    assert!(fs::symlink_metadata(skills_dir.join("../evil")).is_err());
+    assert!(store.list_skill_targets(&record.id).unwrap().is_empty());
+}

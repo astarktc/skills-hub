@@ -362,6 +362,8 @@ pub(crate) const NOT_A_FOLDER_NAME: &str = "not_a_folder_name";
 /// Whether `name` can name a Deployment's folder: exactly one normal path
 /// component, spelled as itself — not empty, not `.` or `..`, not absolute or
 /// drive-relative, and with no separator of any platform (`/`, `\`) or NUL.
+/// The one skill-name rule: the Library applies it too, from install onward
+/// (`install_finalize::library_path`, `unlocatable::unlocatable_state`).
 pub(crate) fn is_folder_name(name: &str) -> bool {
     if name.contains(['/', '\\', '\0']) {
         return false;

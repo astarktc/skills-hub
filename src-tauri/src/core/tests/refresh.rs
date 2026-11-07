@@ -510,6 +510,7 @@ fn refresh_all_reports_delete_incomplete_before_unlocatable_and_never_for_a_non_
             UnlocatableState::CentralMissing => {
                 fs::remove_dir_all(&skill.central_path).expect("remove central copy")
             }
+            UnlocatableState::NotAFolderName => unreachable!("not in this table"),
         }
         // Premise: without the health the skill is reported Unlocatable.
         let (report, acquired) = refresh_all_counting(&f.paths, &f.store);

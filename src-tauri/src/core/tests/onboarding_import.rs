@@ -1690,3 +1690,32 @@ fn an_original_inside_the_central_library_through_an_aliased_tool_dir_is_refused
     );
     assert!(!chosen.exists(), "the chosen original is still removed");
 }
+
+/// Round 20 ticket 19: a name the operator gives an imported group that is
+/// not one folder name is that group's typed refusal; nothing is copied and
+/// the original is left alone.
+#[test]
+fn an_import_renamed_to_a_name_that_is_not_one_folder_name_is_refused() {
+    let f = fixture();
+    install_tool(&f, "claude_code");
+    let original = seed_skill_dir(&f, "claude_code", "alpha", "v1");
+    let renamed = ImportSelection {
+        name: Some("../alpha".to_string()),
+        ..selection("alpha", &original)
+    };
+
+    let report = run(&f, &[renamed], policy_off(true));
+
+    assert!(
+        matches!(
+            imported(&report, "alpha"),
+            ImportGroupStatus::Failed {
+                error: crate::core::errors::CommandError::SkillNameInvalid { name }
+            } if name == "../alpha"
+        ),
+        "{report:?}"
+    );
+    assert!(original.exists(), "the original is left alone");
+    assert!(!f.paths.central_dir.join("../alpha").exists());
+    assert!(f.store.list_skills().unwrap().is_empty());
+}

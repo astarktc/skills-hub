@@ -17,6 +17,7 @@ pub use super::install_finalize::InstallResult;
 use super::install_finalize::{
     ensure_name_available, finalize_install, NameIntent, SkillProvenance, StagingDir,
 };
+use super::placement::is_folder_name;
 use super::removal_fence::ProtectedLibrary;
 use super::skill_discovery::{
     discover_skills, find_skill_md, is_skill_dir, parse_skill_md, parse_skill_md_with_reason,
@@ -199,14 +200,16 @@ fn name_intent(name: Option<String>, derive: impl FnOnce() -> String) -> NameInt
     }
 }
 
-/// Last path segment of `subpath`, or the repo name when the subpath is absent
-/// or the repo root (`.`).
+/// Last path segment of `subpath`, or the repo name when the subpath is absent,
+/// the repo root (`.`), or its last segment is not one folder name
+/// (`placement::is_folder_name`: `..`, a `\`) — a derived name is never a path.
 fn derive_name_from_subpath(clone_url: &str, subpath: Option<&str>) -> String {
     match subpath {
         Some(".") | None => derive_name_from_repo_url(clone_url),
         Some(subpath) => subpath
             .rsplit('/')
             .next()
+            .filter(|leaf| is_folder_name(leaf))
             .map(|s| s.to_string())
             .unwrap_or_else(|| derive_name_from_repo_url(clone_url)),
     }
@@ -528,12 +531,16 @@ pub(crate) fn stage_local_selection(
         })
     })?;
 
-    let display_name = name.unwrap_or(parsed_name);
+    // The operator's name is honoured as given (a name that is not one
+    // folder name is refused typed, before any copy); SKILL.md's name is
+    // untrusted input and stands only when it is one folder name — otherwise
+    // the folder's own name is the skill's, as for an unnamed local install.
+    let display_name = name.or_else(|| is_folder_name(&parsed_name).then_some(parsed_name));
 
     if let Some(holder) = tool_holding_path(&paths.roots, &selected_dir) {
         anyhow::bail!(local_source_inside_tool_dir(&selected_dir, holder));
     }
-    stage_from_dir(paths, &selected_dir, Some(display_name), || {
+    stage_from_dir(paths, &selected_dir, display_name, || {
         SkillProvenance::local(&selected_dir)
     })
 }

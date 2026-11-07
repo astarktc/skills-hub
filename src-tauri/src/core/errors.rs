@@ -26,6 +26,10 @@ pub enum SignalError {
     MultiSkills,
     /// A skill directory with this name already exists in the central repo.
     SkillExists { name: String },
+    /// A skill's name is not one folder name (`placement::is_folder_name`), so
+    /// it cannot name its Library copy: refused before anything is acquired
+    /// or written.
+    SkillNameInvalid { name: String },
     /// Update recovery failed; any backup still holds the previous central bytes.
     FinalizeRollbackFailed {
         central: String,
@@ -185,6 +189,9 @@ impl fmt::Display for SignalError {
             }
             SignalError::SkillExists { name } => {
                 write!(f, "skill already installed in central repo: {name}")
+            }
+            SignalError::SkillNameInvalid { name } => {
+                write!(f, "skill name is not one folder name: {name:?}")
             }
             SignalError::FinalizeRollbackFailed { central, backup } => {
                 write!(
@@ -425,6 +432,13 @@ pub enum CommandError {
     MultiSkills,
     SkillExists {
         /// Name of the skill directory already present in the central repo.
+        name: String,
+    },
+    /// The name a skill would have is not one folder name — empty, `.` or
+    /// `..`, absolute or drive-relative, or holding a separator or NUL — so
+    /// its Library copy could land outside the Library. Nothing was acquired
+    /// or written.
+    SkillNameInvalid {
         name: String,
     },
     FinalizeRollbackFailed {
@@ -704,6 +718,7 @@ impl From<SignalError> for CommandError {
             SignalError::SkillInvalid { reason } => CommandError::SkillInvalid { reason },
             SignalError::MultiSkills => CommandError::MultiSkills,
             SignalError::SkillExists { name } => CommandError::SkillExists { name },
+            SignalError::SkillNameInvalid { name } => CommandError::SkillNameInvalid { name },
             SignalError::FinalizeRollbackFailed { central, backup } => {
                 CommandError::FinalizeRollbackFailed {
                     central,

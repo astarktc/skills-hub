@@ -1166,8 +1166,9 @@ pub struct ManagedSkillDto {
     /// Which recorded path the app can no longer find, if any (see
     /// **Unlocatable skill** in `CONTEXT.md`): `source_missing` offers
     /// Re-point / Detach (when `detachable`) / Remove, `central_missing`
-    /// offers Restore (when `refreshable`) / Remove. Computed at list time,
-    /// never stored.
+    /// offers Restore (when `refreshable`) / Remove, `not_a_folder_name` (a
+    /// name that cannot be a Library folder) offers Remove. Computed at list
+    /// time, never stored.
     pub unlocatable: Option<UnlocatableState>,
     /// Whether Detach would be accepted (backend-owned rule: a `local` skill
     /// whose central copy is present); the UI offers Detach only when `true`.
