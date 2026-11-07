@@ -1006,3 +1006,15 @@ who sees it.
   given the principle: delete only what is provably a duplicate, at the moment of deletion, only inside the folder
   you own.
 - A worktree child has no `.pi/` skills. The orchestrator runs the copy pass (`impeccable`) at merge.
+
+### Release split (operator 2026-11-06, late)
+
+- **1.3.5 ships first.** It contains tickets 09, 18 and 19, and ticket 10 minus its moves into `~/.agents/skills`:
+  - The moves that ship are those to a harness's own folder: Antigravity, Kimi, Kilo, Xum and Devin.
+  - Held for 1.4.0, with ticket 12: Codex, Goose, OpenHands and Zencoder, moving to `~/.agents/skills`.
+- **Why the four moves wait.** Without the shared-folder preference, a harness that reads both `.agents` and its own
+  folder (Pi) would list every moved skill twice. On the operator's machine that is Codex's 33 skills, the hazard that
+  first motivated Q1.
+- **Release tickets.** The 1.3.5 release is ticket 20. 1.4.0 (ticket 17) carries the rest of Wave B, and its smoke
+  check (`ls -la` over the operator's real first-launch move) stays there. 1.3.5 moves nothing on the operator's
+  machine, so its redeploy is proven by tests and the fixture.

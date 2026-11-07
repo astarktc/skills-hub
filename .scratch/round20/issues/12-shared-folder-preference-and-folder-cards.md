@@ -65,3 +65,12 @@ previews "would move N" and runs as one redeploy action with a report.
 - Copy goes through `en` only. The orchestrator runs the copy pass with `impeccable` at merge (a worktree child has no
   `.pi/` skills).
 - Verify in the fixture with a browser (`npm run dev:fixture`, never `tauri:dev`).
+
+## Comments
+
+- 2026-11-06 (orchestrator): **release split.** This ticket now also carries the moves of Codex (`.codex/skills`),
+  Goose (`.config/goose/skills`), OpenHands (`.openhands/skills`) and Zencoder (`.zencoder/skills`) into
+  `~/.agents/skills`, taken from ticket 10's Q12 table. Each old dir goes into `former_skills_dirs`, and the redeploy
+  (ticket 10) moves their Deployments. They land together with the serving rule, so no harness reading both folders
+  (Pi) ever lists them twice. This ticket's tests cover the operator's machine: Codex and Pi are both served from
+  `.agents` with no duplicate.

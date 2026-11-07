@@ -103,3 +103,7 @@ duplicate of ours.
     - give it a recovery route: forget the record, or redeploy to the canonical folder, or tell the operator to move
       the stray folder aside;
     - replace the misleading "probably a link" copy.
+- 2026-11-06 (orchestrator): **release split.** This ticket ships in 1.3.5 *without* the moves of Codex, Goose,
+  OpenHands and Zencoder into `~/.agents/skills`. Those move to ticket 12, so they land with the shared-folder
+  preference. If the implementation already includes them, the review's fix pass splits them out: their registry rows,
+  README cells and brief-snapshot/table tests revert to `main`. Everything else in the Q12 table stays here.
