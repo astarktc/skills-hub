@@ -19,7 +19,7 @@ the code that day (`archive/round19/closure/extract-{A..G}.md`).
    `round20/issues/01`–`08`). **Wave B = 1.4.0** (`round20/spec.md` § Wave B, grilled and specced 2026-11-06) absorbed
    #108 → tickets 10 + 11, #87 → 11, #109 → 12 + 15, #116 → 12, #84 → 14 + 15, #70 → 16 (`round20/issues/09`–`17`).
    **Release split (operator 2026-11-06): 1.3.5** = tickets 09, 18, 19 and 10 (minus the `.agents` moves) → ticket 20;
-   **1.4.0** = 11–16 → ticket 17.
+   **released 2026-11-07** (`28252e75`, tag `v1.3.5`). **1.4.0** = 11–16 → ticket 17; next.
 3. **After 1.4.0:** #85/#86, #93.
 
 Harness research behind #92 and #108–#110: `docs/design-inputs/2026-11-05-harness-candidates-and-shared-dir-reads.md` and

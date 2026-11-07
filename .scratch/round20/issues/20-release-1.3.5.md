@@ -1,6 +1,6 @@
 # 20: Release 1.3.5
 
-Status: ready-for-agent
+Status: done — 28252e75 (v1.3.5)
 
 **Blocked by:** 09 (done), 18 (done), 19, 10.
 
@@ -15,7 +15,7 @@ Status: ready-for-agent
 
 ## Acceptance criteria
 
-- [ ] **Final release review** of the whole diff since `v1.3.4`. Astra and Sol review in parallel, each briefed with
+- [x] **Final release review** of the whole diff since `v1.3.4`. Astra and Sol review in parallel, each briefed with
       the principle only:
   - the app removes or replaces a folder only when it can show, at the moment it acts, that the folder is what it
     wrote, and only inside a skills folder it manages;
@@ -23,8 +23,8 @@ Status: ready-for-agent
   - an answer applies to exactly the path that was asked about.
 
   The findings are disposed of and recorded under `.scratch/reviews/`.
-- [ ] **Copy pass** over every new string (`impeccable`, by the orchestrator).
-- [ ] **CHANGELOG `[1.3.5]`**, in plain words:
+- [x] **Copy pass** over every new string (`impeccable`, by the orchestrator).
+- [x] **CHANGELOG `[1.3.5]`**, in plain words:
   - **Ownership:** folders the operator replaced by hand are now asked about, never overwritten or deleted
     silently. Delete reports "left in place".
   - **Names:** a repo can't place files outside the Library.
@@ -33,13 +33,26 @@ Status: ready-for-agent
     them.
   - **Old copy-mode Deployments** (Deep Agents Code, and Windows without links) are left in place or asked about,
     once.
-- [ ] **Smoke list** for the operator:
+- [x] **Smoke list** for the operator:
   - **Nothing moves:** install over 1.3.4 and confirm no launch offer appears. Nothing on this machine is in a
     corrected folder.
   - **My Skills is unchanged:** confirm with `ls -la ~/.claude/skills ~/.codex/skills ~/.pi/agent/skills
     ~/.agents/skills` before and after.
   - **Delete leaves foreign folders:** Delete a throwaway skill after replacing one of its links by hand. The folder
     is left in place, and the report says so.
-- [ ] `npm run version:set 1.3.5`, then `npm run version:check && npm run check`, then `git fetch && git rebase
+- [x] `npm run version:set 1.3.5`, then `npm run version:check && npm run check`, then `git fetch && git rebase
       origin/main`, then push `main`. The push is the release.
-- [ ] **After publishing:** the BACKLOG order line, the spec's Status, and a handoff. The effort stays open for 1.4.0.
+- [x] **After publishing:** the BACKLOG order line, the spec's Status, and a handoff. The effort stays open for 1.4.0.
+
+## Comments
+
+- 2026-11-07 (orchestrator): **released.** `release: 1.3.5` is `28252e75`; auto-tag created `v1.3.5` and dispatched
+  `release.yml`.
+  - **Final review:** Astra and Sol (`.scratch/reviews/release-1.3.5-review.md`).
+    - Astra's P1 (disabling Kimi before the redeploy removed Amp's link) was fixed in PR #25 (`773120cd`). It was
+      verified by rerunning Astra's own probe against a database with the v1.3.4 schema: 4 of 4 pass.
+    - Astra's P2 (the glossary) was fixed in the same PR.
+  - **Copy pass:** about 30 strings, following Sol's list (`impeccable` → clarify).
+  - **Gate on the release commit:** `npm run version:check && npm run check` exit 0 (1,473 frontend tests; 1,213 Rust
+    tests, 1 ignored).
+  - **The operator's smoke list** is in CHANGELOG `[1.3.5]`.

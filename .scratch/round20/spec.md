@@ -388,6 +388,8 @@ The operator keeps one skill Library and deploys it to many harnesses. Three thi
 - Final review blocked (OpenAI usage limit); release held. The CHANGELOG is committed. Handoff `handoffs/2026-11-06-1.3.4-ready-awaiting-final-review.md`.
 - **Wave A released as v1.3.4** (`ed8e442`, 2026-11-06). Next: the Wave B grill in this effort.
 - 2026-11-06: Wave B grilled (below, Q1–Q31), prototype verdict C, spec body written, tickets 09–17 opened.
+- 2026-11-07: **1.3.5 released** (`28252e75`). It contains tickets 09, 18, 19 and 10, and the final-review fix (PR #25).
+  Next: 1.4.0, which is tickets 11–16, then 17.
 
 # Wave B — redeploy, shared folders, link vs copy (grilled 2026-11-06)
 

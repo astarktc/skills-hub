@@ -71,3 +71,11 @@ match is the same recorded path or the same physical entry.
 - **The operator's upgrade:** no launch offer, no change to any skill folder or link at first launch, and the catalog
   is unchanged. Startup still writes the database (schema, selection key); that is not a skill-folder change.
 - **Copy-pass list and CHANGELOG draft:** in the child thread, and used by the orchestrator for ticket 20.
+
+## Disposition: released (orchestrator, 2026-11-07)
+
+- **Astra 1:** fixed in PR #25 (`773120cd`). The probe against a database with the v1.3.4 schema now passes.
+- **Astra 2 = Sol 102:** fixed in the same PR (CONTEXT.md, AGENTS.md).
+- **Sol 101:** moved to ticket 12.
+- **Copy pass:** applied, following Sol's list.
+- **Released** as `28252e75` (`v1.3.5`).
