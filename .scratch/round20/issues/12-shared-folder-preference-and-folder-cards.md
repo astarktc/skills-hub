@@ -89,3 +89,7 @@ previews "would move N" and runs as one redeploy action with a report.
   - **Sol 113:** a replacement undone at startup reads "discarded an unfinished replacement; still pending", not "old
     copy removed".
   - **Astra:** the fixture uses stable row-instance ids, not `${skillId}:${tool}`.
+- 2026-11-07 (orchestrator): carried over from the ticket 10 review, round 3, finding 10. A recovery refusal at
+  startup (`cannotReplaceSafely` from the journal finish) gets its own copy. It names the staged replacement and the
+  set-aside occupant, and says that completing the move failed. It must not tell the operator to move an absent
+  destination aside.

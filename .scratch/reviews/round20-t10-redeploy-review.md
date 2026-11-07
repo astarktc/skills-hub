@@ -165,3 +165,48 @@ Fix pass 2 takes findings 7 and 8 as narrowly as possible. A destination is repl
 
 Otherwise the move is refused and stays pending, with an actionable reason: move the folder at the new place aside,
 then Move again. The reservation fallback is never used inside redeploy.
+
+---
+
+# Round 3 (Astra): fix pass 2 (`d65f9962`, delta from `ca7fc957`)
+
+- **Verdict:** **BLOCK** (finding 9).
+- **Finding 8: fixed.** All four renames in redeploy use `strict_rename`, which never reserves a name. Install still
+  uses the unchanged `rename_no_replace`.
+- **Finding 7:** fixed except for finding 9. These all hold:
+  - the atomic exchange is tried first;
+  - a missing, changed or unproven old copy can't authorise the fallback;
+  - the crash point after staging is safe;
+  - the Deep Agents refusal on Windows is acceptable, and its message is clear.
+
+## 9. P1, blocking: an "intact" old Deployment can depend on the destination for its resolution
+
+`IntactOld::find` / `holds` checks entry identity, ownership and ancestry (`redeploy.rs:1535–1590`, used at
+`:1434–1437`), but not whether resolving the old Deployment passes through the destination.
+
+Reproduced on Mux → Xum:
+1. The old link `~/.mux/skills/alpha` points to `~/.xum/skills/alpha/../../../../central/alpha`. It resolves to the
+   Library, so `ownership::check` accepts it.
+2. The first fallback rename moves the destination aside, and the old link dangles: neither place serves the skill.
+3. If startup's strict rename is also unsupported, the journal entry is dropped as `LeftBehind`.
+
+**Fix:** establish that the old copy's resolution path is independent of the destination, or refuse before the first
+rename.
+
+## 10. P2 → ticket 12: a recovery refusal at startup asks the operator to move a destination that is absent
+
+`redeploy.rs:1911–1917` and `:1497–1504` give recovery the initial refusal's copy, so it names the destination even
+though the occupant is already at `.old` and the replacement is staged. Recovery should get its own copy.
+
+**Gate:** passed, 1,468 frontend tests and 1,200 Rust tests. CI is green. Two probes fail; both demonstrate finding 9.
+
+## Disposition (orchestrator, 2026-11-07)
+
+Fix pass 3 makes the fallback's witness match what the app writes. An old Deployment counts as independent only when
+it is one of these:
+
+- **a copy**: a real directory, not a link, that isn't nested with the destination either way;
+- **a link** whose `read_link` text is exactly the absolute recorded Library copy path, which is what the app writes.
+
+Anything else (a relative link, any `..` component, an intermediate link) is not a witness, and the move is refused.
+Finding 10 goes to ticket 12.
