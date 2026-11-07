@@ -1,7 +1,8 @@
 # 1.3.5 final release review (`v1.3.4..1e9ebbb5`)
 
 - **Astra (GPT-6 Astra, high), 2026-11-07:** **FIX-THEN-RELEASE.**
-- **Sol:** pending.
+- **Sol (GPT-6.1 Sol, high), 2026-11-07:** **RELEASE**, after the copy pass, the CHANGELOG and the version bump. No new
+  blocking findings.
 
 ## Astra
 
@@ -50,3 +51,23 @@ match is the same recorded path or the same physical entry.
   "kept: still used by {harness}".
 - **Why it's consistent:** it matches the redeploy cleanup's rule, and it lends no ownership.
 - **Finding 2:** the glossary is corrected in the same pass, because the docs should match what ships.
+
+## Sol
+
+- **101. P3 → ticket 12:** a launch offer for journal-only work asks "Move 1 Deployment…" and shows an empty harness
+  list (`redeploy.rs:394–417`, `RedeployOfferDialog.tsx:25–49`). Give it its own copy: "Finish an interrupted move?"
+- **102. P3:** the same as Astra's finding 2, the stale passages in CONTEXT.md. Fixed in the release fix pass.
+- **Fixture walk** (`rich`, `failures`, `registry`, `redeploy`; screenshots are in `.scratch/release-review/evidence/`):
+  - Disable and Enable at pair and skill grain both behave correctly.
+  - Add raises the ask, and Keep is honoured.
+  - A name containing a slash is refused with `SKILL_NAME_INVALID`.
+  - Update on a replaced link raises the ask.
+  - Delete leaves a replaced folder in place and names it.
+  - The project matrix and totals are coherent.
+  - The redeploy offer, "Move N", the Keep/Leave report and the retry all work.
+
+  The fixture still has the pre-correction registry (Sol 106 → ticket 12), so the walk proves the flows, not the
+  corrected folder paths. Rust tests prove those.
+- **The operator's upgrade:** no launch offer, no change to any skill folder or link at first launch, and the catalog
+  is unchanged. Startup still writes the database (schema, selection key); that is not a skill-folder change.
+- **Copy-pass list and CHANGELOG draft:** in the child thread, and used by the orchestrator for ticket 20.

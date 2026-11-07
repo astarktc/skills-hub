@@ -104,3 +104,6 @@ previews "would move N" and runs as one redeploy action with a report.
   - **Finding 16:** staged Library links should be built from the verified physical Library location, so an alias
     that passes through the destination can't become a link to itself. Retained entries that can't progress need an
     actionable recovery.
+- 2026-11-07 (orchestrator): carried over from the 1.3.5 final review, Sol finding 101. A launch offer for work that
+  exists only in the journal gets its own title and body: "Finish an interrupted move?", saying that the skill has
+  already moved and an old copy needs a decision. It never shows an empty harness clause.
