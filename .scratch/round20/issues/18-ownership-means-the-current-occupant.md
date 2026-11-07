@@ -1,6 +1,6 @@
 # 18: Deployment ownership means the current occupant
 
-Status: ready-for-agent
+Status: done — fcf08cbd
 
 **Blocked by:** 09.
 
@@ -24,17 +24,17 @@ its Consequences.
 
 ## Acceptance criteria
 
-- [ ] **Each row records what it deployed.** Global Deployment rows gain the deployed Content identity
+- [x] **Each row records what it deployed.** Global Deployment rows gain the deployed Content identity
       (`content_hash`), which project assignments already carry. It is written at every successful write and
       re-materialisation (sync, Propagation, Enable, collision Overwrite). Schema migration through
       `migrate_legacy_db_if_needed`. An existing row with no recorded evidence owns only a link resolving to its
       Library copy; an unrecorded copy is not provably ours.
 
-- [ ] **Disable gives up ownership when it succeeds.** When Disable removes the artifact, or confirms it is already
+- [x] **Disable gives up ownership when it succeeds.** When Disable removes the artifact, or confirms it is already
       absent, the row stops owning its path (at both scopes). A failed removal keeps ownership, as ADR-0002 requires.
       Existing disabled rows that still carry ownership are handled conservatively on upgrade: none of them may give
       Delete the right to remove a later occupant.
-- [ ] **One occupant check, used at every destructive seam.**
+- [x] **One occupant check, used at every destructive seam.**
   - A path counts as ours only when one of these holds:
     - it is a link resolving, by physical identity, to its skill's Library copy;
     - it is a copy whose Content identity matches the row's recorded deployed identity.
@@ -43,12 +43,12 @@ its Consequences.
     over from.
   - It lives beside the removal fence (`removal_fence` / `artifact_removal`), so the redeploy (10) and every other
     caller use the one check.
-- [ ] **Delete, unassign, project removal and Disable** only remove an occupant that passes the check. Any other
+- [x] **Delete, unassign, project removal and Disable** only remove an occupant that passes the check. Any other
       occupant is kept and reported as left in place; it is never deleted silently.
-- [ ] **Resync, Propagation, Enable's first sync and the global batch** silently replace only an occupant that passes
+- [x] **Resync, Propagation, Enable's first sync and the global batch** silently replace only an occupant that passes
       the check, or identical content (the existing rule). A different occupant is a `TARGET_EXISTS` row for the
       overwrite ask, never a silent replacement and never a Synced report.
-- [ ] **Tests** (core integration, both scopes):
+- [x] **Tests** (core integration, both scopes):
   - Disable, then a foreign folder appears, then Delete: the folder survives.
   - An owned link replaced by a foreign folder, then resync: an ask, not a replacement.
   - The same through Propagation.
@@ -58,9 +58,9 @@ its Consequences.
   - The upgrade path for already-disabled owners.
   - The test `an_owned_disabled_target_is_still_removed_by_delete` is replaced, not deleted silently: its replacement
     pins the new rule.
-- [ ] **CONTEXT.md:** the Artifact removal and Disabled entries state the rule. Ownership is "the app wrote this row's
+- [x] **CONTEXT.md:** the Artifact removal and Disabled entries state the rule. Ownership is "the app wrote this row's
       path, and what is there now is still that".
-- [ ] `npm run version:check && npm run check` is green.
+- [x] `npm run version:check && npm run check` is green.
 
 ## Notes
 
@@ -68,3 +68,24 @@ its Consequences.
   folder only when it can show that folder is its own duplicate, at the moment it acts, and only inside a skills folder
   it manages.
 - Prior art: `library_move.rs` (physical identity, verification over compared facets), the `artifact_removal` fence tests.
+
+## Comments
+
+- 2026-11-06 (orchestrator): **done — merged as `fcf08cbd` (PR #22)**, after three review rounds with Astra and Sol
+  (`.scratch/reviews/round20-t18-ownership-review.md`).
+  - **What shipped:**
+    - `core/ownership.rs`, whose `check` returns `Absent`, `Ours` or `Foreign` against a row's `Deployed` evidence;
+    - schema V12 `skill_targets.content_hash`, and the V12 clearing of disabled claims;
+    - a successful Disable or a Keep answer gives up the claim;
+    - `LeftInPlace` removal settlement;
+    - `Replace` evaluated at the occupant, with a managed-dir claim on every replacement and removal;
+    - one name rule (`placement::deployment_path`);
+    - overwrite answers bound to the asked path on every route (`resolve_target_collisions` and the path-carrying
+      `AssignmentDecision` / `BatchSyncOverrideDto`).
+  - **Gate on the merged main:** `npm run version:check && npm run check` exit 0 (1,432 frontend tests; 1,126 Rust
+    tests, 1 ignored).
+  - **Follow-ups:**
+    - ticket 10: first-write admission, and recovery from an out-of-bounds refusal;
+    - ticket 16: Notifications repair provenance, and the stale-answer copy;
+    - ticket 19: install-time names.
+  - The children's per-pass Comments entries stayed uncommitted in their worktrees; this entry stands in for them.
