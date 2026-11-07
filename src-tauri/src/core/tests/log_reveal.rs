@@ -1,9 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::core::environment::HostRoots;
 // The refusal assertions are all in unix-only link tests.
 #[cfg(unix)]
-use crate::core::environment::HostRoots;
 use crate::core::errors::{RevealPathFailure, SignalError};
 use crate::core::log_reveal::{
     admit_reveal_path, log_reveal_target, path_reveal_item, resolve_reveal_item, LogRevealTarget,
