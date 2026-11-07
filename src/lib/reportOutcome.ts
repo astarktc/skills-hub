@@ -1753,6 +1753,37 @@ export function deleteReportRows(
   return [...rows.filter((row) => !row.deleted), ...rows.filter((row) => row.deleted)];
 }
 
+/**
+ * What the Delete dialog's report state shows, decided here so the dialog
+ * only renders it (D16). `detailed`: every kept skill, and every deleted
+ * skill whose Delete left a folder in place (ADR-0007) — its section says
+ * where it was removed from and names each folder left where it was, so a
+ * bulk Remove never hides one behind "Removed" (round 20 t18 review, Sol
+ * 103). `removed`: deleted skills with nothing more to say, for the one
+ * summary line. `retryIds`: the kept skills still in the catalog — the only
+ * ones Retry offers; a deleted skill is never retried. `kept`: how many were
+ * not deleted, for the title.
+ */
+export type DeleteReportView = {
+  detailed: DeleteReportRow[];
+  removed: DeleteReportRow[];
+  retryIds: string[];
+  kept: number;
+};
+
+export function deleteReportView(
+  rows: readonly DeleteReportRow[],
+  inCatalog: (skillId: string) => boolean,
+): DeleteReportView {
+  const kept = rows.filter((row) => !row.deleted);
+  return {
+    detailed: rows.filter((row) => !row.deleted || row.leftInPlace.length > 0),
+    removed: rows.filter((row) => row.deleted && row.leftInPlace.length === 0),
+    retryIds: kept.map((row) => row.skillId).filter(inCatalog),
+    kept: kept.length,
+  };
+}
+
 /** D10's precedence as a rank: the strongest tone of several parts wins. */
 const TONE_RANK: Record<OutcomeTone, number> = {
   failure: 5,

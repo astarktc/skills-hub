@@ -386,14 +386,14 @@ pub async fn reveal_path(
     path: String,
 ) -> Result<(), CommandError> {
     let store = store.inner().clone();
-    let home = home_dir().map_err(CommandError::from_anyhow)?;
+    let roots = HostRoots::resolve().map_err(CommandError::from_anyhow)?;
     let central_repo =
         resolve_central_repo_path_for_app(&app, &store).map_err(CommandError::from_anyhow)?;
     let reported = path.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let item = resolve_reveal_item(
             &store,
-            &home,
+            &roots,
             &central_repo,
             &path,
             |p| p.symlink_metadata().is_ok(),
@@ -727,6 +727,28 @@ pub async fn sync_skills_to_tools(
         );
 
         Ok::<_, anyhow::Error>(outcomes)
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
+/// The overwrite ask's retry for Propagation's global rows (D12): each
+/// answer names the row and the path the ask showed, and is settled at that
+/// path only (`propagation::resolve_target_collisions`) — never through the
+/// sync batch, whose destination may be another folder. Per-row outcomes are
+/// report data.
+#[tauri::command]
+#[specta::specta]
+pub async fn resolve_target_collisions(
+    app: tauri::AppHandle,
+    store: State<'_, SkillStore>,
+    decisions: Vec<crate::core::propagation::TargetDecision>,
+) -> Result<Vec<BatchTargetOutcome>, CommandError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let paths = installer_paths(&app, &store)?;
+        crate::core::propagation::resolve_target_collisions(&store, &paths, &decisions, now_ms())
     })
     .await
     .map_err(CommandError::internal)?
@@ -1269,8 +1291,13 @@ pub async fn delete_managed_skill(
 ) -> Result<RemovalReport, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let central_dir = resolve_central_repo_path_for_app(&app, &store)?;
-        let report = crate::core::artifact_removal::remove_skill(&store, &central_dir, &skillId)?;
+        let paths = installer_paths(&app, &store)?;
+        let report = crate::core::artifact_removal::remove_skill(
+            &store,
+            &paths.central_dir,
+            &paths.roots,
+            &skillId,
+        )?;
         log::debug!("[delete_managed_skill] {}", report);
         Ok::<_, anyhow::Error>(report)
     })

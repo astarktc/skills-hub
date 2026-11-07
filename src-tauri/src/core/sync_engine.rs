@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use super::content_identity::{self, Source};
 use super::errors::SignalError;
 use super::ownership::{self, Deployed, Occupancy};
-use super::removal_fence::{self, Entry, Fence, ProtectedLibrary};
+use super::removal_fence::{self, Claim, Entry, Fence, ProtectedLibrary};
 use super::tool_adapters::ToolAdapter;
 
 /// Typed condition: the sync target already exists and overwrite was not
@@ -87,6 +87,13 @@ pub struct SyncOutcome {
 /// does not admit is the typed [`TargetExistsError`], the one overwrite ask
 /// (D12), never a silent replacement. A link at the target that already is
 /// the one this sync would write is left as it is, whatever the rule.
+///
+/// A caller writing at a **stored** path (Propagation's global rows, Library
+/// move's relink, the answer to a Propagation ask) also says where that path
+/// must lie ([`Replace::within`]): the occupant is then removed only when it
+/// physically lies inside one of those skills folders
+/// (`removal_fence::Claim::Within`), whatever the rule above admitted — a
+/// malformed record never makes the app replace a folder elsewhere.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Replace<'a> {
     /// The operator answered Overwrite for this target (D12), or the caller
@@ -97,6 +104,10 @@ pub(crate) struct Replace<'a> {
     ours: Option<&'a Deployed>,
     /// Replace an occupant whose content is identical to the skill's.
     same_content: bool,
+    /// The managed skills folders a replaced occupant must lie in; `None`
+    /// for a target the registry derived (the batch's destination, a
+    /// project's skills dir).
+    within: Option<&'a [PathBuf]>,
 }
 
 impl<'a> Replace<'a> {
@@ -106,6 +117,16 @@ impl<'a> Replace<'a> {
             confirmed: false,
             ours: None,
             same_content: false,
+            within: None,
+        }
+    }
+
+    /// Remove an occupant only inside one of `dirs` (a stored path's managed
+    /// skills folders, `placement::managed_global_dirs`).
+    pub(crate) fn within(self, dirs: &'a [PathBuf]) -> Self {
+        Self {
+            within: Some(dirs),
+            ..self
         }
     }
 
@@ -272,7 +293,7 @@ fn hybrid_with_overwrite(
         }
 
         if replace.admits(identity, target) {
-            replace_occupant(source, target, library)?;
+            replace_occupant(source, target, &replace, library)?;
             did_replace = true;
         } else {
             anyhow::bail!(TargetExistsError::at(identity, target));
@@ -319,7 +340,7 @@ fn copy_with_overwrite(
     let mut did_replace = false;
     if std::fs::symlink_metadata(target).is_ok() {
         if replace.admits(identity, target) {
-            replace_occupant(source, target, library)?;
+            replace_occupant(source, target, &replace, library)?;
             did_replace = true;
         } else {
             anyhow::bail!(TargetExistsError::at(identity, target));
@@ -339,10 +360,20 @@ fn copy_with_overwrite(
 /// Remove the folder in an overwrite's way — admitted physically, so the
 /// occupant is never the source itself, inside it or around it, and never in
 /// the central `library` (a Tool's skills dir linked onto the central repo
-/// makes the "occupant" a central copy).
-fn replace_occupant(source: &Path, target: &Path, library: &ProtectedLibrary<'_>) -> Result<()> {
-    remove_path_any(target, &Fence::new(library).sparing(source))
-        .with_context(|| format!("remove existing target {:?}", target))
+/// makes the "occupant" a central copy) — and, for a stored path, only inside
+/// the managed skills folders `replace` names ([`Replace::within`]).
+fn replace_occupant(
+    source: &Path,
+    target: &Path,
+    replace: &Replace<'_>,
+    library: &ProtectedLibrary<'_>,
+) -> Result<()> {
+    let fence = Fence::new(library).sparing(source);
+    let fence = match replace.within {
+        Some(dirs) => fence.claiming(Claim::Within(dirs)),
+        None => fence,
+    };
+    remove_path_any(target, &fence).with_context(|| format!("remove existing target {:?}", target))
 }
 
 /// The tool-aware sync entry point: tools that cannot consume a symlinked

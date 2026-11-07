@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 // The refusal assertions are all in unix-only link tests.
 #[cfg(unix)]
+use crate::core::environment::HostRoots;
 use crate::core::errors::{RevealPathFailure, SignalError};
 use crate::core::log_reveal::{
     admit_reveal_path, log_reveal_target, path_reveal_item, resolve_reveal_item, LogRevealTarget,
@@ -384,7 +385,7 @@ fn a_central_request_through_an_outside_link_is_refused() {
     let reveal = |requested: &Path| {
         resolve_reveal_item(
             &store,
-            &home,
+            &HostRoots::under_home(&home),
             &central,
             &requested.to_string_lossy(),
             probe,
@@ -516,7 +517,7 @@ fn a_reported_target_is_selected_and_a_vanished_one_selects_its_ancestor() {
     let reveal = |requested: &Path| {
         resolve_reveal_item(
             &store,
-            &home,
+            &HostRoots::under_home(&home),
             &central,
             &requested.to_string_lossy(),
             probe,
@@ -560,7 +561,7 @@ fn an_unrecorded_path_is_refused_and_a_vanished_volume_is_gone() {
         assert_eq!(
             refusal(resolve_reveal_item(
                 &store,
-                &home,
+                &HostRoots::under_home(&home),
                 &central,
                 &requested.to_string_lossy(),
                 probe,
@@ -573,7 +574,7 @@ fn an_unrecorded_path_is_refused_and_a_vanished_volume_is_gone() {
     assert_eq!(
         refusal(resolve_reveal_item(
             &store,
-            &home,
+            &HostRoots::under_home(&home),
             &central,
             &global.to_string_lossy(),
             |_| false,

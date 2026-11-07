@@ -760,6 +760,59 @@ fn a_failed_relink_keeps_the_old_copy_it_reaches() {
     assert_eq!(row.status, SyncStatus::Error);
 }
 
+/// Round 20 t18 review, Astra 2: a global link row recorded outside every
+/// skills folder its harness is managed in (a malformed stored path) is never
+/// replaced by the relink, even though the link there reaches the old copy:
+/// the relink is refused (`ResolvesElsewhere`), the link and the old copy it
+/// reaches are kept, and the row is kept `error`.
+#[test]
+fn a_relink_never_replaces_a_link_recorded_outside_the_managed_folders() {
+    use crate::core::errors::{CommandError, RemovalRefusal};
+    let mut f = fixture(&["claude_code"]);
+    let alpha = f.install("alpha");
+    f.sync(&alpha, &["claude_code"]);
+    let old = f.central(&alpha);
+    let deployed = f.home().join(".claude/skills/alpha");
+    let stray = f.home().join("Documents/alpha");
+    fs::create_dir_all(stray.parent().unwrap()).unwrap();
+    fs::rename(&deployed, &stray).unwrap();
+    let mut row = f
+        .store
+        .get_skill_target(&alpha, "claude_code")
+        .unwrap()
+        .unwrap();
+    row.target_path = stray.to_string_lossy().into_owned();
+    f.store.upsert_skill_target(&row).unwrap();
+
+    let report = f.run();
+
+    assert!(
+        matches!(
+            &report.deployments[0].status,
+            RelinkStatus::Failed {
+                error: CommandError::RemovalRefused {
+                    reason: RemovalRefusal::ResolvesElsewhere,
+                    ..
+                }
+            }
+        ),
+        "{:?}",
+        report.deployments
+    );
+    assert!(is_link(&stray), "the link stays");
+    assert!(resolves_to(&stray, &old), "still reaching the old copy");
+    assert!(
+        old.join("SKILL.md").is_file(),
+        "the old copy it reaches stays"
+    );
+    let row = f
+        .store
+        .get_skill_target(&alpha, "claude_code")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.status, SyncStatus::Error);
+}
+
 /// The move is one Sync-target mutation: it waits for one in flight.
 #[test]
 fn the_move_is_serialized_with_other_mutations() {
@@ -1178,9 +1231,14 @@ fn a_crash_after_the_switch_is_finished_by_the_resume_at_every_boundary() {
             assert!(f.central(id).starts_with(f.dest()), "{boundary}: switched");
         }
 
-        let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
-            .expect("resume")
-            .unwrap_or_else(|| panic!("{boundary}: a move is pending"));
+        let report = resume_library_move(
+            &f.store,
+            &paths_now(&f).central_dir,
+            &f.paths.roots,
+            NOW + 2,
+        )
+        .expect("resume")
+        .unwrap_or_else(|| panic!("{boundary}: a move is pending"));
 
         for d in &report.deployments {
             assert!(
@@ -1202,9 +1260,14 @@ fn a_crash_after_the_switch_is_finished_by_the_resume_at_every_boundary() {
             &f.central(&skills[0].0)
         ));
         assert!(
-            resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 3)
-                .unwrap()
-                .is_none(),
+            resume_library_move(
+                &f.store,
+                &paths_now(&f).central_dir,
+                &f.paths.roots,
+                NOW + 3
+            )
+            .unwrap()
+            .is_none(),
             "{boundary}: the journal was dropped"
         );
     }
@@ -1219,11 +1282,14 @@ fn a_crash_before_the_switch_leaves_the_library_as_it_was() {
     let setting = resolve_central_repo_path(&f.store, f.home()).unwrap();
     assert!(crash_move(&f, &f.dest(), LibraryMovePhase::Copying, 1));
 
-    assert!(
-        resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
-            .unwrap()
-            .is_none()
-    );
+    assert!(resume_library_move(
+        &f.store,
+        &paths_now(&f).central_dir,
+        &f.paths.roots,
+        NOW + 2
+    )
+    .unwrap()
+    .is_none());
     for (id, old, link) in &skills {
         assert_eq!(&f.central(id), old);
         assert!(resolves_to(link, old));
@@ -1316,9 +1382,14 @@ fn resume_missing_destination_preserves_last_copy() {
     let (alpha, alpha_old, _) = &skills[0];
     fs::remove_dir_all(f.central(alpha)).unwrap();
 
-    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
-        .expect("resume")
-        .expect("a move is pending");
+    let report = resume_library_move(
+        &f.store,
+        &paths_now(&f).central_dir,
+        &f.paths.roots,
+        NOW + 2,
+    )
+    .expect("resume")
+    .expect("a move is pending");
 
     assert!(
         alpha_old.join("SKILL.md").is_file(),
@@ -1377,9 +1448,14 @@ fn metadata_added_after_the_copy_is_never_deleted() {
         return; // this volume holds none
     }
 
-    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
-        .expect("resume")
-        .expect("a journal to finish");
+    let report = resume_library_move(
+        &f.store,
+        &paths_now(&f).central_dir,
+        &f.paths.roots,
+        NOW + 2,
+    )
+    .expect("resume")
+    .expect("a journal to finish");
 
     assert!(marked.is_file(), "the old copy carrying it survives");
     assert!(
@@ -1418,9 +1494,14 @@ fn stale_journal_does_not_remove_replacement_directory() {
     fs::create_dir_all(alpha_old).unwrap();
     fs::write(alpha_old.join("mine.txt"), "the operator's").unwrap();
 
-    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
-        .expect("resume")
-        .expect("a move is pending");
+    let report = resume_library_move(
+        &f.store,
+        &paths_now(&f).central_dir,
+        &f.paths.roots,
+        NOW + 2,
+    )
+    .expect("resume")
+    .expect("a move is pending");
 
     assert_eq!(
         fs::read_to_string(alpha_old.join("mine.txt")).unwrap(),
@@ -1451,9 +1532,14 @@ fn journal_cannot_authorize_unrelated_removal() {
     journal["moves"][0]["old"] = precious.to_string_lossy().into_owned().into();
     write_journal(&f, &journal);
 
-    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
-        .expect("resume")
-        .expect("a move is pending");
+    let report = resume_library_move(
+        &f.store,
+        &paths_now(&f).central_dir,
+        &f.paths.roots,
+        NOW + 2,
+    )
+    .expect("resume")
+    .expect("a move is pending");
 
     assert_eq!(
         fs::read_to_string(precious.join("taxes.pdf")).unwrap(),
@@ -1482,9 +1568,14 @@ fn a_journal_for_another_library_removes_nothing() {
         .into();
     write_journal(&f, &journal);
 
-    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
-        .expect("resume")
-        .expect("a move was pending");
+    let report = resume_library_move(
+        &f.store,
+        &paths_now(&f).central_dir,
+        &f.paths.roots,
+        NOW + 2,
+    )
+    .expect("resume")
+    .expect("a move was pending");
 
     for (_, old, _) in &skills {
         assert!(old.join("SKILL.md").is_file(), "{old:?} survives");
@@ -1513,9 +1604,14 @@ fn a_record_changed_since_the_switch_is_not_cleaned() {
     record.central_path = alpha_old.to_string_lossy().into_owned();
     f.store.upsert_skill(&record).unwrap();
 
-    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
-        .expect("resume")
-        .expect("a move is pending");
+    let report = resume_library_move(
+        &f.store,
+        &paths_now(&f).central_dir,
+        &f.paths.roots,
+        NOW + 2,
+    )
+    .expect("resume")
+    .expect("a move is pending");
 
     assert!(
         alpha_old.join("SKILL.md").is_file(),
@@ -1548,9 +1644,14 @@ fn a_crash_after_an_old_copy_was_set_aside_is_settled_by_the_resume() {
         .collect();
     assert_eq!(set_aside.len(), 1, "the crash left one copy set aside");
 
-    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
-        .expect("resume")
-        .expect("a move is pending");
+    let report = resume_library_move(
+        &f.store,
+        &paths_now(&f).central_dir,
+        &f.paths.roots,
+        NOW + 2,
+    )
+    .expect("resume")
+    .expect("a move is pending");
 
     for (id, old, link) in &skills {
         assert!(!old.exists(), "{old:?} cleaned");
@@ -1633,7 +1734,12 @@ fn a_malformed_journal_is_cleared_and_removes_nothing() {
     assert!(crash_move(&f, &f.dest(), LibraryMovePhase::Cleaning, 0));
     crate::core::settings::overwrite_library_move_journal(&f.store, "{not json").unwrap();
 
-    let resumed = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2);
+    let resumed = resume_library_move(
+        &f.store,
+        &paths_now(&f).central_dir,
+        &f.paths.roots,
+        NOW + 2,
+    );
 
     assert!(
         resumed.is_ok(),
@@ -1936,9 +2042,14 @@ fn review_aside_missing_destination_restores_last_copy() {
     let (id, old) = crash_after_set_aside(&f, &skills);
     fs::remove_dir_all(f.central(&id)).unwrap();
 
-    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
-        .expect("resume")
-        .expect("a move is pending");
+    let report = resume_library_move(
+        &f.store,
+        &paths_now(&f).central_dir,
+        &f.paths.roots,
+        NOW + 2,
+    )
+    .expect("resume")
+    .expect("a move is pending");
 
     assert!(
         old.join("SKILL.md").is_file(),
@@ -1975,9 +2086,14 @@ fn review_aside_replaced_old_is_reported_with_skill_identity() {
     fs::create_dir_all(&old).unwrap();
     fs::write(old.join("mine.txt"), "the operator's").unwrap();
 
-    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
-        .expect("resume")
-        .expect("a move is pending");
+    let report = resume_library_move(
+        &f.store,
+        &paths_now(&f).central_dir,
+        &f.paths.roots,
+        NOW + 2,
+    )
+    .expect("resume")
+    .expect("a move is pending");
 
     assert_eq!(
         fs::read_to_string(old.join("mine.txt")).unwrap(),
@@ -2017,9 +2133,14 @@ fn a_stale_journal_puts_a_set_aside_copy_back() {
         .into();
     write_journal(&f, &journal);
 
-    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
-        .expect("resume")
-        .expect("a move was pending");
+    let report = resume_library_move(
+        &f.store,
+        &paths_now(&f).central_dir,
+        &f.paths.roots,
+        NOW + 2,
+    )
+    .expect("resume")
+    .expect("a move was pending");
 
     assert!(old.join("SKILL.md").is_file(), "put back at its own path");
     assert_no_set_aside_left(&f.paths.central_dir);
@@ -2046,9 +2167,14 @@ fn a_resumed_moves_report_is_persisted_and_handed_out_once() {
     );
     assert!(crash_move(&f, &f.dest(), LibraryMovePhase::Cleaning, 0));
 
-    let report = resume_library_move(&f.store, &paths_now(&f).central_dir, NOW + 2)
-        .expect("resume")
-        .expect("a move is pending");
+    let report = resume_library_move(
+        &f.store,
+        &paths_now(&f).central_dir,
+        &f.paths.roots,
+        NOW + 2,
+    )
+    .expect("resume")
+    .expect("a move is pending");
 
     let taken = take_resumed_library_move(&f.store)
         .expect("take")

@@ -47,7 +47,8 @@ use super::tool_adapters::reads::{
     ReadFacts, SharedRead, AGENTS_PROJECT_DIR, AGENTS_SKILLS, CLAUDE_PROJECT_DIR, CLAUDE_SKILLS,
 };
 use super::tool_adapters::{
-    adapter_by_key, catalog_rows, project_skills_dir_in, reader_only_harnesses, ToolAdapter, ToolId,
+    adapter_by_key, catalog_rows, deletable_skills_dirs_in, former_skills_dirs_in,
+    project_skills_dir_in, reader_only_harnesses, skills_dir_in, ToolAdapter, ToolId,
 };
 
 /// The two deployment scopes, without their roots (folder identity needs none).
@@ -321,6 +322,36 @@ pub fn row_folder(scope: ScopeKind, key: &str) -> String {
     own_folder(scope, key)
         .map(str::to_string)
         .unwrap_or_else(|| key.to_string())
+}
+
+/// The skills folders a global row keyed `key` may lie in — the only places
+/// the app removes or replaces its folder (ADR-0007: "only inside a skills
+/// folder it manages"): the current and former registry skills dirs of the
+/// row's own harness and of the folder it describes ([`row_folder`]). A key
+/// the registry no longer knows names no folder of its own, so its row may
+/// lie in any registry skills dir (`tool_adapters::deletable_skills_dirs_in`,
+/// the registry's deletion rule). The removal and replacement fences claim
+/// these physically (`removal_fence::Claim::Within`).
+pub fn managed_global_dirs(roots: &HostRoots, key: &str) -> Vec<PathBuf> {
+    let folder = row_folder(ScopeKind::Global, key);
+    let entries: Vec<&ToolAdapter> = [adapter_by_key(key), adapter_by_key(&folder)]
+        .into_iter()
+        .flatten()
+        .collect();
+    if entries.is_empty() {
+        return deletable_skills_dirs_in(roots);
+    }
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for entry in entries {
+        for dir in
+            std::iter::once(skills_dir_in(roots, entry)).chain(former_skills_dirs_in(roots, entry))
+        {
+            if !dirs.contains(&dir) {
+                dirs.push(dir);
+            }
+        }
+    }
+    dirs
 }
 
 /// The registry entry whose capability governs how `folder_key`'s folder is

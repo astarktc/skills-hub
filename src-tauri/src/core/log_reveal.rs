@@ -29,7 +29,7 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::Result;
 
 use crate::core::artifact_removal::recorded_target_paths;
-use crate::core::environment::expand_home_path_in;
+use crate::core::environment::{expand_home_path_in, HostRoots};
 use crate::core::errors::{RevealPathFailure, SignalError};
 use crate::core::skill_store::SkillStore;
 
@@ -146,12 +146,12 @@ pub fn path_reveal_item(path: &Path, exists: impl Fn(&Path) -> bool) -> Option<P
 /// The item Reveal selects for `requested`, admitted against every artifact
 /// path the store records (`artifact_removal::recorded_target_paths`, the
 /// identity a Delete report carries) and the central repo — a central item
-/// only once `central_contains` holds; the command resolves `home` /
+/// only once `central_contains` holds; the command resolves `roots` /
 /// `central_repo` once and holds the opener. A refusal is
 /// `RevealPathFailed { reason: NotManaged }`, nothing on the way `Gone`.
 pub fn resolve_reveal_item(
     store: &SkillStore,
-    home: &Path,
+    roots: &HostRoots,
     central_repo: &Path,
     requested: &str,
     exists: impl Fn(&Path) -> bool,
@@ -162,8 +162,9 @@ pub fn resolve_reveal_item(
         reason,
         detail,
     };
-    let known = recorded_target_paths(store)?;
-    let Some((path, admission)) = admit_reveal_path(requested, home, central_repo, &known) else {
+    let known = recorded_target_paths(store, roots)?;
+    let Some((path, admission)) = admit_reveal_path(requested, &roots.home, central_repo, &known)
+    else {
         return Err(failed(
             RevealPathFailure::NotManaged,
             "not a Sync target the app records, nor inside the central repo".to_string(),
@@ -177,7 +178,7 @@ pub fn resolve_reveal_item(
         )
     })?;
     if admission == RevealAdmission::CentralRepo {
-        let central: PathBuf = expand_home_path_in(home, &central_repo.to_string_lossy())?
+        let central: PathBuf = expand_home_path_in(&roots.home, &central_repo.to_string_lossy())?
             .components()
             .collect();
         match central_contains(&central, &item, canonical) {

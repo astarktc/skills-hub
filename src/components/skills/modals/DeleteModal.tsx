@@ -13,7 +13,7 @@ import {
 import type { FocusFallback } from "@/components/ui/dialog";
 import { mainLandmarkFocus } from "@/components/ui/focus-fallback";
 import { deleteScope, deleteTotals, type AssignmentsOf } from "../../../lib/bulkCounts";
-import { deleteReportRows, type DeleteSettlement } from "../../../lib/reportOutcome";
+import { deleteReportRows, deleteReportView, type DeleteSettlement } from "../../../lib/reportOutcome";
 import type { ManagedSkill } from "../types";
 
 /** How many skill names a bulk confirmation lists before "and N more". */
@@ -57,8 +57,9 @@ type DeleteModalProps = {
  * and, for a skill with no external source, that Skills Hub's copy is the
  * only one; several skills read as counts. **Report**: when a Delete left
  * anything behind, the same dialog says what went and what stayed, each kept
- * path with its reason and Reveal in Finder, and offers Retry for the kept
- * skills. Focus never leaves the dialog while the Delete runs (the pressed
+ * path with its reason and Reveal in Finder, each folder a deleted skill left
+ * in place, and offers Retry for the kept skills (`deleteReportView` decides
+ * which). Focus never leaves the dialog while the Delete runs (the pressed
  * Remove keeps it, `pending`), and moves to the report's heading when the
  * dialog turns into the report.
  */
@@ -98,16 +99,15 @@ export default function DeleteModal({
 
   const scopes = skills.map((skill) => deleteScope(skill, assignmentsOf, labelOf));
   const rows = report ? deleteReportRows(report, { t, toolLabelById, projectLabelById }) : [];
-  const kept = rows.filter((row) => !row.deleted);
-  const removed = rows.filter((row) => row.deleted);
   // Retry only what is still there to retry.
-  const retryIds = kept.map((row) => row.skillId).filter((id) => skills.some((skill) => skill.id === id));
+  const view = deleteReportView(rows, (id) => skills.some((skill) => skill.id === id));
+  const { retryIds } = view;
   const many = report ? rows.length > 1 : skills.length > 1;
 
   const title = report
     ? many
-      ? t("deleteDialog.report.titleMany", { count: kept.length, total: rows.length })
-      : t("deleteDialog.report.titleOne", { name: kept[0]?.name ?? rows[0]?.name ?? "" })
+      ? t("deleteDialog.report.titleMany", { count: view.kept, total: rows.length })
+      : t("deleteDialog.report.titleOne", { name: rows.find((row) => !row.deleted)?.name ?? rows[0]?.name ?? "" })
     : many
       ? t("deleteDialog.titleMany", { count: skills.length })
       : t("deleteDialog.title", { name: skills[0]?.name ?? "" });
@@ -173,9 +173,10 @@ export default function DeleteModal({
 
   const reportBody = () => (
     <div className="flex flex-col gap-4 text-sm">
-      {kept.map((row) => (
+      {view.detailed.map((row) => (
         <section key={row.skillId} className="flex flex-col gap-1.5" aria-label={many ? row.name : undefined}>
           {many ? <h3 className="m-0 text-sm font-semibold text-foreground">{row.name}</h3> : null}
+          {row.deleted ? <p className="m-0 text-foreground">{t("deleteDialog.report.deletedSkill")}</p> : null}
           {row.failure ? (
             <p className="m-0 text-failed">{row.failure}</p>
           ) : (
@@ -212,9 +213,9 @@ export default function DeleteModal({
           ))}
         </section>
       ))}
-      {removed.length > 0 ? (
+      {view.removed.length > 0 ? (
         <p className="m-0 text-muted-foreground">
-          {t("deleteDialog.report.deleted", { names: removed.map((row) => row.name).join(", ") })}
+          {t("deleteDialog.report.deleted", { names: view.removed.map((row) => row.name).join(", ") })}
         </p>
       ) : null}
     </div>

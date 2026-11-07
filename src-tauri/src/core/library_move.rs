@@ -73,11 +73,12 @@ use super::artifact_removal::{
     remove_former_central_copy_unlocked, remove_staged_library_copy_unlocked, RowRef,
 };
 use super::content_identity::{self, Source};
+use super::environment::HostRoots;
 use super::errors::{CommandError, LibraryDestinationRefusal, SignalError};
 use super::git_cache;
 use super::installer::InstallerPaths;
 use super::mutation_guard;
-use super::placement::{row_folder, ScopeKind};
+use super::placement::{self, row_folder, ScopeKind};
 use super::project_ops;
 use super::project_sync::resolve_assignment_artifact;
 use super::removal_fence::{EntryId, Place, ProtectedLibrary};
@@ -379,7 +380,13 @@ pub fn move_library(
     mut on_progress: impl FnMut(LibraryMoveProgress),
 ) -> Result<LibraryMoveReport> {
     mutation_guard::serialized(|| {
-        if let Some(resumed) = resume_unlocked(store, &paths.central_dir, now, &mut on_progress)? {
+        if let Some(resumed) = resume_unlocked(
+            store,
+            &paths.central_dir,
+            &paths.roots,
+            now,
+            &mut on_progress,
+        )? {
             log_resumed(&resumed);
         }
         let skills = store.list_skills()?;
@@ -417,6 +424,7 @@ pub fn move_library(
 
         let mut report = settle(
             store,
+            &paths.roots,
             &paths.central_dir,
             dest,
             &moved,
@@ -466,9 +474,10 @@ pub fn move_library(
 pub fn resume_library_move(
     store: &SkillStore,
     central_dir: &Path,
+    roots: &HostRoots,
     now: i64,
 ) -> Result<Option<LibraryMoveReport>> {
-    mutation_guard::serialized(|| resume_unlocked(store, central_dir, now, &mut |_| {}))
+    mutation_guard::serialized(|| resume_unlocked(store, central_dir, roots, now, &mut |_| {}))
 }
 
 /// The report of the last interrupted move a resume finished, handed out
@@ -555,6 +564,7 @@ struct JournaledMove {
 fn resume_unlocked(
     store: &SkillStore,
     central_dir: &Path,
+    roots: &HostRoots,
     now: i64,
     on_progress: &mut impl FnMut(LibraryMoveProgress),
 ) -> Result<Option<LibraryMoveReport>> {
@@ -666,6 +676,7 @@ fn resume_unlocked(
     }
     settle(
         store,
+        roots,
         &from,
         &to,
         &moved,
@@ -704,6 +715,7 @@ fn finish(store: &SkillStore, report: &LibraryMoveReport, by: Settler) -> Result
 #[allow(clippy::too_many_arguments)]
 fn settle(
     store: &SkillStore,
+    roots: &HostRoots,
     old_root: &Path,
     new_root: &Path,
     moved: &[Moved],
@@ -712,7 +724,7 @@ fn settle(
     by: Settler,
     on_progress: &mut impl FnMut(LibraryMoveProgress),
 ) -> Result<LibraryMoveReport> {
-    let deployments = relink_phase(store, new_root, moved, now, on_progress)?;
+    let deployments = relink_phase(store, roots, new_root, moved, now, on_progress)?;
     let left_behind = clean_phase(store, old_root, new_root, moved, left, on_progress)?;
     let report = LibraryMoveReport {
         from: old_root.to_string_lossy().into_owned(),
@@ -2021,6 +2033,7 @@ enum Rows {
 
 fn relink_phase(
     store: &SkillStore,
+    roots: &HostRoots,
     dest: &Path,
     moved: &[Moved],
     now: i64,
@@ -2072,6 +2085,7 @@ fn relink_phase(
             } else {
                 relink_one(
                     store,
+                    roots,
                     &library,
                     m,
                     &new_record,
@@ -2152,6 +2166,7 @@ fn deployments_of(store: &SkillStore, skill: &SkillRecord) -> Result<Vec<(PathBu
 #[allow(clippy::too_many_arguments)]
 fn relink_one(
     store: &SkillStore,
+    roots: &HostRoots,
     library: &ProtectedLibrary<'_>,
     m: &Moved,
     new_record: &SkillRecord,
@@ -2176,16 +2191,23 @@ fn relink_one(
             skill_id: &new_record.id,
         };
         // The occupant was verified ours just above (a link to the old or
-        // new copy), so its replacement is the relink's own decision.
+        // new copy), so its replacement is the relink's own decision — but a
+        // global row's path is a stored one, so it is replaced only inside the
+        // skills folders its harness and folder are managed in
+        // (`placement::managed_global_dirs`; a project row's path is derived
+        // under its root).
         let outcome = match rows {
-            Rows::Global(_) => sync_dir_for_tool_with_overwrite(
-                adapter,
-                &m.new,
-                identity,
-                path,
-                Replace::confirmed(),
-                library,
-            )?,
+            Rows::Global(_) => {
+                let managed = placement::managed_global_dirs(roots, tool);
+                sync_dir_for_tool_with_overwrite(
+                    adapter,
+                    &m.new,
+                    identity,
+                    path,
+                    Replace::confirmed().within(&managed),
+                    library,
+                )?
+            }
             Rows::Assignment { project_root, .. } => sync_dir_for_tool_within_root(
                 adapter,
                 &m.new,

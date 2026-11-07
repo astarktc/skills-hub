@@ -1080,7 +1080,13 @@ fn intent_only_marker_delete_preserves_unmanaged_bytes() {
         let path = f.global_path(".claude/skills");
         arrange(&f, &path);
 
-        let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
+        let report = remove_skill(
+            &f.store,
+            &central_repo_of(&f.store),
+            &f.paths.roots,
+            &f.skill_id,
+        )
+        .unwrap();
 
         assert!(report.record_deleted, "{label}: the skill is deleted");
         assert!(
@@ -1304,7 +1310,13 @@ fn failed_project_enable_never_makes_a_foreign_folder_ours() {
             },
         ),
         ("Delete the skill", |f, _, _| {
-            let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
+            let report = remove_skill(
+                &f.store,
+                &central_repo_of(&f.store),
+                &f.paths.roots,
+                &f.skill_id,
+            )
+            .unwrap();
             assert!(report.record_deleted, "{report}");
             assert!(report.targets.is_empty(), "{report}");
             assert_eq!(report.cleared_markers.len(), 1);
@@ -1425,7 +1437,13 @@ fn a_folder_that_appears_after_a_pair_disable_survives_delete() {
     let path = f.global_path(".claude/skills");
     foreign_folder(&path);
 
-    let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
+    let report = remove_skill(
+        &f.store,
+        &central_repo_of(&f.store),
+        &f.paths.roots,
+        &f.skill_id,
+    )
+    .unwrap();
 
     assert!(report.record_deleted, "{report}");
     assert!(report.targets.is_empty(), "no path planned: {report}");
@@ -1471,7 +1489,13 @@ fn a_folder_that_appears_after_a_skill_disable_survives_delete_at_both_scopes() 
     foreign_folder(&global);
     foreign_folder(&assigned);
 
-    let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
+    let report = remove_skill(
+        &f.store,
+        &central_repo_of(&f.store),
+        &f.paths.roots,
+        &f.skill_id,
+    )
+    .unwrap();
 
     assert!(report.record_deleted, "{report}");
     assert!(report.targets.is_empty(), "no path planned: {report}");
@@ -1574,7 +1598,13 @@ fn delete_disabled_skill_settles_rows_and_cascade() {
     if !lock_dir(&parent) {
         return;
     }
-    let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
+    let report = remove_skill(
+        &f.store,
+        &central_repo_of(&f.store),
+        &f.paths.roots,
+        &f.skill_id,
+    )
+    .unwrap();
     unlock_dir(&parent);
 
     assert!(report.record_deleted && report.central_removed, "{report}");
@@ -2116,8 +2146,13 @@ fn a_project_collision_resolves_with_overwrite_or_keep() {
                     assert_eq!(row.status, SyncStatus::Synced, "{label}");
                     assert_eq!(row.synced_at, Some(NOW + 5), "{label}: owns anew");
                     // The new artifact is ours: Delete removes it.
-                    let report =
-                        remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
+                    let report = remove_skill(
+                        &f.store,
+                        &central_repo_of(&f.store),
+                        &f.paths.roots,
+                        &f.skill_id,
+                    )
+                    .unwrap();
                     assert!(report.record_deleted, "{label}: {report}");
                     assert!(!exists_any(&path), "{label}: the owned artifact is removed");
                 }
@@ -2151,8 +2186,13 @@ fn a_project_collision_resolves_with_overwrite_or_keep() {
                         "{label}: {propagated:?}"
                     );
                     assert!(foreign_bytes_survive(&path), "{label}: Propagation kept it");
-                    let report =
-                        remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
+                    let report = remove_skill(
+                        &f.store,
+                        &central_repo_of(&f.store),
+                        &f.paths.roots,
+                        &f.skill_id,
+                    )
+                    .unwrap();
                     assert!(report.record_deleted, "{label}: {report}");
                     assert!(
                         report.targets.is_empty(),
@@ -2614,7 +2654,13 @@ fn delete_removes_legacy_sibling_rows_with_their_one_artifact() {
     f.sync(&["amp"]);
     seed_legacy_sibling(&f);
 
-    let report = remove_skill(&f.store, &central_repo_of(&f.store), &f.skill_id).unwrap();
+    let report = remove_skill(
+        &f.store,
+        &central_repo_of(&f.store),
+        &f.paths.roots,
+        &f.skill_id,
+    )
+    .unwrap();
 
     assert!(report.failures().is_empty(), "{report}");
     assert_eq!(report.targets.len(), 1, "one artifact: {report}");

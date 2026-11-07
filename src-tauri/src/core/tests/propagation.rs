@@ -1114,7 +1114,10 @@ fn is_first_deploy_collision(status: &PropagationStatus) -> bool {
 /// Review repro 3: the `trae` row records a link, the `trae_cn` row records a
 /// copy of the same artifact, and that artifact is a real copy with old bytes.
 /// The copy row's own Propagation refreshes it — no representative row's
-/// link can skip it.
+/// link can skip it. The link row's own evidence cannot vouch for a real
+/// folder (round 20 t18 review: Astra 1 = Sol 102), so it is asked about,
+/// never skipped as following the source; its answer then finds the row's
+/// own link there (`resolve_collisions`: already assigned).
 #[test]
 fn a_project_copy_recorded_by_any_row_of_its_artifact_gets_new_bytes() {
     let f = fixture();
@@ -1136,11 +1139,12 @@ fn a_project_copy_recorded_by_any_row_of_its_artifact_gets_new_bytes() {
     assert!(
         matches!(
             outcome_for(&outcomes, &trae_scope("trae")),
-            PropagationStatus::Skipped {
-                reason: PropagationSkip::LinkFollowsSource
+            PropagationStatus::Failed {
+                error: crate::core::errors::CommandError::TargetExists { .. },
+                first_deploy: false,
             }
         ),
-        "{outcomes:?}"
+        "the link row met a real folder: {outcomes:?}"
     );
     assert_eq!(
         fs::read_to_string(target.join("a.txt")).expect("read target"),

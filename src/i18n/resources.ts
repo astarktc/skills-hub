@@ -1086,6 +1086,7 @@ export const resources = {
           stillIn: "Still in {{tools}}:",
           leftInPlace: "Left in place in {{tools}}, because it isn't what Skills Hub put there:",
           deleted: "Removed: {{names}}.",
+          deletedSkill: "Deleted from Skills Hub.",
           reveal: "Reveal in Finder",
           revealLabel: "Reveal {{path}} in Finder",
           retry: "Retry",

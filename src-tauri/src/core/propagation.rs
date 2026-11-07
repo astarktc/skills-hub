@@ -39,10 +39,12 @@ use anyhow::Result;
 
 use super::environment::HostRoots;
 use super::errors::{CommandError, SignalError};
+use super::global_sync::{BatchTargetOutcome, BatchTargetStatus, OverrideDecision};
 use super::installer::InstallerPaths;
-use super::ownership::Deployed;
+use super::mutation_guard;
+use super::ownership::{self, Deployed, Occupancy};
 use super::placement::{self, row_folder, ScopeKind};
-use super::project_sync::{deploy_adapter, AssignmentSyncContext};
+use super::project_sync::{deploy_adapter, resolve_assignment_artifact, AssignmentSyncContext};
 use super::removal_fence::ProtectedLibrary;
 use super::skill_store::{
     AssignmentTransition, ProjectSkillAssignmentRecord, SkillRecord, SkillStore, TargetTransition,
@@ -136,6 +138,26 @@ pub struct PropagationReport {
 /// when its Sync mode can drift (a copy) or its Tool cannot consume a link.
 pub(crate) fn needs_new_bytes(mode: SyncMode, adapter: &ToolAdapter) -> bool {
     mode.can_drift() || !adapter.supports_symlink
+}
+
+/// Whether a row's target needs nothing because it is the link the row wrote:
+/// its mode cannot drift on a Tool that consumes links, and the occupant check
+/// (`core::ownership::check`, now) proves the entry at `path` is that link,
+/// resolving to the skill's Library copy. A row without a claim, an absent
+/// link, a folder put in its place, or an occupant that cannot be read is not
+/// — it goes through the occupant decision instead, which writes an absent
+/// link and asks about anything else (ADR-0007).
+fn link_follows_source(
+    mode: SyncMode,
+    adapter: &ToolAdapter,
+    path: &Path,
+    deployed: &Deployed,
+) -> bool {
+    if needs_new_bytes(mode, adapter) {
+        return false;
+    }
+    let is_link = std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink());
+    is_link && matches!(ownership::check(path, deployed), Ok(Occupancy::Ours))
 }
 
 /// Re-materialise every Sync target of `skill_id` from its central copy.
@@ -269,17 +291,24 @@ fn propagate_global_rows(
             continue;
         }
 
-        // A link already follows the central copy — but only a link of ours:
-        // a row that never materialised (a failed first sync's `error` row,
-        // `owns_artifact` false) has no link yet, so it gets a first sync,
-        // and foreign bytes there are `TARGET_EXISTS`. Whatever occupies the
-        // path is replaced only when the row's evidence proves it the row's
-        // own when it is met (`core::ownership`): our stale copy, still
-        // holding what the row deployed, is; a copy edited in place or a
-        // folder put where our link was is asked about.
+        // A link already follows the central copy — but only the link the
+        // row wrote, verified now (`link_follows_source`): a link row whose
+        // path another folder took, or whose link went, takes the occupant
+        // decision below like any other row. A row that never materialised (a
+        // failed first sync's `error` row, `owns_artifact` false) has no link
+        // yet, so it gets a first sync, and foreign bytes there are
+        // `TARGET_EXISTS`. Whatever occupies the path is replaced only when
+        // the row's evidence proves it the row's own when it is met
+        // (`core::ownership`): our stale copy, still holding what the row
+        // deployed, is; a copy edited in place or a folder put where our link
+        // was is asked about. The path is the row's stored one, so a
+        // replacement is also claimed inside the row's managed skills folders
+        // (`placement::managed_global_dirs`): a malformed record never makes
+        // Propagation replace a folder elsewhere.
         let owned = row.owns_artifact();
         let deployed = Deployed::of_target(row, Some(skill));
-        if owned && !needs_new_bytes(row.mode, adapter) {
+        let target_path = Path::new(&row.target_path);
+        if link_follows_source(row.mode, adapter, target_path, &deployed) {
             report.targets.push(skipped_global(
                 &row.tool,
                 PropagationSkip::LinkFollowsSource,
@@ -287,6 +316,7 @@ fn propagate_global_rows(
             continue;
         }
 
+        let managed = placement::managed_global_dirs(roots, &row.tool);
         let source_missing = !central_path.is_dir();
         let result = if source_missing {
             Err(missing_source(central_path))
@@ -295,8 +325,8 @@ fn propagate_global_rows(
                 adapter,
                 central_path,
                 super::content_identity::Source::Managed { store, skill_id },
-                Path::new(&row.target_path),
-                Replace::if_ours(&deployed),
+                target_path,
+                Replace::if_ours(&deployed).within(&managed),
                 &ProtectedLibrary::new(store, central_dir),
             )
         };
@@ -344,6 +374,172 @@ fn propagate_global_rows(
         ));
     }
     Ok(())
+}
+
+/// The operator's answer to the overwrite ask for one **global** row whose
+/// Propagation met a folder it cannot prove its own (a `TARGET_EXISTS`
+/// Propagation outcome, D12). It names the row (`skill_id`, `tool`: the
+/// outcome's raw row key) **and the path the ask showed** (`path`: the
+/// `TARGET_EXISTS` row's path, the row's recorded `target_path`), so the
+/// answer applies to exactly the row and the folder it was asked about —
+/// never to the global batch's destination for the skill, which may be
+/// another folder. Crosses the wire as itself.
+#[derive(Clone, Debug, serde::Deserialize, specta::Type)]
+pub struct TargetDecision {
+    pub skill_id: String,
+    pub tool: String,
+    pub path: String,
+    pub decision: OverrideDecision,
+}
+
+/// Settle the overwrite ask's answers for Propagation's global rows (D12):
+/// the retry half of Refresh / Update / Restore / Re-point / Edit for a
+/// global Deployment. Each answer is checked against its row **now**:
+///
+/// - the row is gone, or no longer records the asked path (it moved since the
+///   ask), or its skill is gone: `Failed` `NotFound` (`target`, the asked
+///   path) — nothing is touched;
+/// - the row (or a row of its folder) is `disabled`, or the skill is:
+///   `Skipped` `TARGET_DISABLED`;
+/// - the asked path holds the row's own artifact again (`core::ownership`):
+///   no answer is needed — it is brought into line as Propagation would
+///   (`Replace::if_ours`), whatever the answer;
+/// - `Keep`: the folder stays; the row stays at its recorded path, `disabled`,
+///   its claim given up (ADR-0007) — reported `Declined`;
+/// - `Overwrite`: the folder at the asked path is replaced — at that path
+///   only, admitted inside the row's managed skills folders
+///   (`placement::managed_global_dirs`) — and the row records what it
+///   deployed there (`SyncCompleted`, the identity of a copy), so the next
+///   Propagation finds it its own. A failure settles the row `error`.
+///
+/// One outcome per decision, in the batch's shape (`BatchTargetOutcome`,
+/// `tool_key` the row's key). Store failures fail the whole call.
+///
+/// Mutation entry point: serialised against every other Sync-target mutation.
+pub fn resolve_target_collisions(
+    store: &SkillStore,
+    paths: &InstallerPaths,
+    decisions: &[TargetDecision],
+    now: i64,
+) -> Result<Vec<BatchTargetOutcome>> {
+    mutation_guard::serialized(|| {
+        decisions
+            .iter()
+            .map(|decision| resolve_target_collision(store, paths, decision, now))
+            .collect()
+    })
+}
+
+fn resolve_target_collision(
+    store: &SkillStore,
+    paths: &InstallerPaths,
+    decision: &TargetDecision,
+    now: i64,
+) -> Result<BatchTargetOutcome> {
+    let skill = store.get_skill_by_id(&decision.skill_id)?;
+    let outcome = |status| BatchTargetOutcome {
+        skill_id: decision.skill_id.clone(),
+        skill_name: skill.as_ref().map(|s| s.name.clone()).unwrap_or_default(),
+        tool_key: decision.tool.clone(),
+        folder_key: row_folder(ScopeKind::Global, &decision.tool),
+        status,
+    };
+    let asked = Path::new(&decision.path);
+    let row = store
+        .get_skill_target(&decision.skill_id, &decision.tool)?
+        .filter(|row| Path::new(&row.target_path) == asked);
+    let (Some(row), Some(skill)) = (row, skill.clone()) else {
+        return Ok(outcome(BatchTargetStatus::Failed {
+            error: CommandError::from(SignalError::NotFound {
+                kind: "target".to_string(),
+                id: decision.path.clone(),
+            }),
+        }));
+    };
+
+    let folder = row_folder(ScopeKind::Global, &row.tool);
+    let folder_disabled = store.list_skill_targets(&skill.id)?.iter().any(|other| {
+        other.status == SyncStatus::Disabled && row_folder(ScopeKind::Global, &other.tool) == folder
+    });
+    if folder_disabled || store.skill_disabled_at(&skill.id)?.is_some() {
+        return Ok(outcome(BatchTargetStatus::Skipped {
+            error: CommandError::TargetDisabled {
+                tool: row.tool.clone(),
+            },
+        }));
+    }
+    let Some(adapter) = placement::capability_entry(ScopeKind::Global, &folder) else {
+        return Ok(outcome(BatchTargetStatus::Failed {
+            error: CommandError::from(SignalError::UnknownTool {
+                tool: row.tool.clone(),
+            }),
+        }));
+    };
+
+    let deployed = Deployed::of_target(&row, Some(&skill));
+    let ours = matches!(ownership::check(asked, &deployed), Ok(Occupancy::Ours));
+    if !ours && decision.decision == OverrideDecision::Keep {
+        store.transition_skill_target(&row.id, TargetTransition::Disabled)?;
+        return Ok(outcome(BatchTargetStatus::Declined));
+    }
+
+    let managed = placement::managed_global_dirs(&paths.roots, &row.tool);
+    let replace = if ours {
+        Replace::if_ours(&deployed)
+    } else {
+        Replace::confirmed()
+    }
+    .within(&managed);
+    let central_path = Path::new(&skill.central_path);
+    let result = if central_path.is_dir() {
+        sync_engine::sync_dir_for_tool_with_overwrite(
+            adapter,
+            central_path,
+            super::content_identity::Source::Managed {
+                store,
+                skill_id: &skill.id,
+            },
+            asked,
+            replace,
+            &ProtectedLibrary::new(store, &paths.central_dir),
+        )
+    } else {
+        Err(missing_source(central_path))
+    };
+    match result {
+        Ok(synced) => {
+            let content_hash = synced
+                .mode_used
+                .can_drift()
+                .then(|| {
+                    super::content_identity::read(super::content_identity::Source::Managed {
+                        store,
+                        skill_id: &skill.id,
+                    })
+                })
+                .flatten();
+            store.transition_skill_target(
+                &row.id,
+                TargetTransition::SyncCompleted {
+                    mode: synced.mode_used,
+                    target_path: &row.target_path,
+                    synced_at: now,
+                    content_hash: content_hash.as_deref(),
+                },
+            )?;
+            Ok(outcome(BatchTargetStatus::Synced { outcome: synced }))
+        }
+        Err(error) => {
+            let detail = format!("{:#}", error);
+            store.transition_skill_target(
+                &row.id,
+                TargetTransition::SyncFailed { error: &detail },
+            )?;
+            Ok(outcome(BatchTargetStatus::Failed {
+                error: CommandError::from_anyhow(error),
+            }))
+        }
+    }
 }
 
 fn skipped_global(tool: &str, reason: PropagationSkip) -> PropagationOutcome {
@@ -419,9 +615,17 @@ fn propagate_one_assignment(
             reason: unavailable,
         });
     }
-    // Only a link of ours follows the source; a row that never materialised
-    // gets a first sync (see the global arm).
-    if assignment.owns_artifact() && !needs_new_bytes(assignment.mode, adapter) {
+    // Only the link the row wrote, verified now, follows the source; any
+    // other occupant takes the occupant decision, and a row that never
+    // materialised gets a first sync (see the global arm).
+    let deployed = Deployed::of_assignment(assignment, Some(skill));
+    let artifact = resolve_assignment_artifact(&project_path, adapter, assignment, || {
+        Ok(Some(skill.name.clone()))
+    })?;
+    if artifact
+        .as_deref()
+        .is_some_and(|path| link_follows_source(assignment.mode, adapter, path, &deployed))
+    {
         return Ok(PropagationStatus::Skipped {
             reason: PropagationSkip::LinkFollowsSource,
         });
@@ -430,7 +634,6 @@ fn propagate_one_assignment(
     // The freshly finalized central hash is the supplier: computed once for
     // every target, and absent only when hashing the central copy failed.
     let central_path = Path::new(&skill.central_path);
-    let deployed = Deployed::of_assignment(assignment, Some(skill));
     let result = if central_path.is_dir() {
         let ctx = AssignmentSyncContext {
             store,

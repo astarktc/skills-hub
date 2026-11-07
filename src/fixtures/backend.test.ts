@@ -9,6 +9,7 @@ import {
   type SkillRefreshStatus,
   type SyncProgressDto,
   type ProjectViewDto,
+  type RefreshReport,
   type SyncMode,
   type SyncStatus,
   type ToolStatusDto,
@@ -1844,6 +1845,141 @@ describe("ticket 18: ownership means the current occupant (ADR-0007)", () => {
 
     expect(deleted.targets.some((target) => target.path === path)).toBe(false);
     expect(state.projectOccupants).toContain(path);
+  });
+
+  // Round 20 t18 review: the fixture mirrors the core's evidence model (Sol
+  // 104), the link shortcut after the occupant check (Astra 1 = Sol 102) and
+  // the path-bound answer to a Propagation ask (Sol 101).
+
+  /** The stored global row of `skillId` keyed `tool` (internal evidence included). */
+  const storedRow = (state: FixtureState, skillId: string, tool: string) =>
+    state.skills.find((s) => s.dto.id === skillId)!.dto.targets.find((t) => t.tool === tool)!;
+  const globalOutcome = (report: RefreshReport, tool: string) => {
+    const status = report.skills[0].status;
+    if (status.status !== "refreshed") throw new Error(`not refreshed: ${JSON.stringify(status)}`);
+    return status.targets.find((o) => o.scope.scope === "global" && o.scope.tool === tool)?.status;
+  };
+  /** Deep Agents Code (copy-only) installed, with a copy of `skill` the app deployed there. */
+  const withDeployedCopy = (state: FixtureState, skillId: string) => {
+    state.installedTools.push("deep_agents_code");
+    const skill = state.skills.find((s) => s.dto.id === skillId)!;
+    const path = `${globalRoot("deep_agents_code")}/${skill.dto.name}`;
+    skill.dto.targets.push({
+      tool: "deep_agents_code",
+      mode: "copy",
+      status: "synced",
+      target_path: path,
+      synced_at: NOW - 1000,
+      deployed_hash: skill.contentHash,
+    });
+    return path;
+  };
+
+  it("the evidence a row deployed never reaches the wire", async () => {
+    const { handlers, state } = backendFor("rich");
+    const zod = await byName(handlers, "zod-schema-first");
+    withDeployedCopy(state, zod.id);
+    const listed = (await byName(handlers, "zod-schema-first")).targets;
+    expect(listed.some((t) => "deployed_hash" in t)).toBe(false);
+  });
+
+  it("a hashless global copy (recorded before 1.4.0) is left in place by Delete and by Disable", async () => {
+    for (const verb of ["delete", "disable"] as const) {
+      const { handlers, state } = backendFor("rich");
+      const zod = await byName(handlers, "zod-schema-first");
+      const path = withDeployedCopy(state, zod.id);
+      storedRow(state, zod.id, "deep_agents_code").deployed_hash = null;
+
+      const report =
+        verb === "delete"
+          ? await handlers.deleteManagedSkill(zod.id)
+          : await handlers.disableSkillTargets({ kind: "skill_tool", skill_id: zod.id, tool: "deep_agents_code" });
+
+      expect(report.targets.find((t) => t.path === path)?.status, verb).toEqual({ status: "left_in_place" });
+      // The folder stays where it was: from now on it is a folder in the way.
+      expect(state.foreign.some((f) => `${globalRoot(f.tool)}/${f.name}` === path), verb).toBe(true);
+      if (verb === "disable") {
+        const row = storedRow(state, zod.id, "deep_agents_code");
+        expect(row).toMatchObject({ status: "disabled", synced_at: null, deployed_hash: null });
+      }
+    }
+  });
+
+  it("a copy edited in place is asked about by Propagation; Overwrite records evidence and the next Propagation does not ask", async () => {
+    const { handlers, state } = backendFor("rich");
+    const zod = await byName(handlers, "zod-schema-first");
+    const path = withDeployedCopy(state, zod.id);
+    state.copyIdentities[path] = "the operator's edits";
+
+    const first = (await handlers.updateManagedSkill(zod.id, sink().channel)).report;
+    expect(globalOutcome(first, "deep_agents_code")).toMatchObject({
+      status: "failed",
+      error: { code: "TARGET_EXISTS", path, sameContent: false },
+    });
+    expect(state.copyIdentities[path]).toBe("the operator's edits");
+
+    const answer = await handlers.resolveTargetCollisions([
+      { skill_id: zod.id, tool: "deep_agents_code", path, decision: "overwrite" },
+    ]);
+    expect(answer[0].status).toMatchObject({ status: "synced", outcome: { mode_used: "copy", target_path: path } });
+    const skill = state.skills.find((s) => s.dto.id === zod.id)!;
+    expect(storedRow(state, zod.id, "deep_agents_code")).toMatchObject({ mode: "copy", deployed_hash: skill.contentHash });
+    expect(state.copyIdentities[path]).toBeUndefined();
+
+    const again = (await handlers.updateManagedSkill(zod.id, sink().channel)).report;
+    expect(globalOutcome(again, "deep_agents_code")).toEqual({ status: "synced", mode_used: "copy" });
+  });
+
+  it("an owned link replaced by a folder is asked about on Update, never followed as the source", async () => {
+    const { handlers, state } = backendFor("rich");
+    const zod = await byName(handlers, "zod-schema-first");
+    const path = `${globalRoot("claude_code")}/${zod.name}`;
+    state.foreign.push({ tool: "claude_code", name: zod.name, fingerprint: "the operator's folder", linkTarget: null });
+
+    const { report } = await handlers.updateManagedSkill(zod.id, sink().channel);
+
+    expect(globalOutcome(report, "claude_code")).toMatchObject({
+      status: "failed",
+      error: { code: "TARGET_EXISTS", path },
+      first_deploy: false,
+    });
+    // Its untouched siblings still follow the source.
+    expect(globalOutcome(report, "codex")).toEqual({ status: "skipped", reason: { reason: "link_follows_source" } });
+  });
+
+  it("a Propagation answer applies at the asked path only; an answer for a path the row no longer records touches nothing", async () => {
+    const { handlers, state } = backendFor("rich");
+    const zod = await byName(handlers, "zod-schema-first");
+    const row = storedRow(state, zod.id, "claude_code");
+    // The row records an older name; the operator's folders sit there and at
+    // the skill's place now.
+    const recorded = `${globalRoot("claude_code")}/zod-old-name`;
+    const destination = `${globalRoot("claude_code")}/${zod.name}`;
+    row.target_path = recorded;
+    state.foreign.push(
+      { tool: "claude_code", name: "zod-old-name", fingerprint: "old", linkTarget: null },
+      { tool: "claude_code", name: zod.name, fingerprint: "new", linkTarget: null },
+    );
+
+    const stale = await handlers.resolveTargetCollisions([
+      { skill_id: zod.id, tool: "claude_code", path: destination, decision: "overwrite" },
+    ]);
+    expect(stale[0].status).toEqual({ status: "failed", error: { code: "NOT_FOUND", kind: "target", id: destination } });
+
+    const answered = await handlers.resolveTargetCollisions([
+      { skill_id: zod.id, tool: "claude_code", path: recorded, decision: "overwrite" },
+    ]);
+    expect(answered[0].status).toMatchObject({ status: "synced", outcome: { target_path: recorded } });
+    const left = state.foreign.map((f) => `${globalRoot(f.tool)}/${f.name}`);
+    expect(left).toContain(destination);
+    expect(left).not.toContain(recorded);
+    expect(storedRow(state, zod.id, "claude_code").target_path).toBe(recorded);
+
+    const kept = await handlers.resolveTargetCollisions([
+      { skill_id: zod.id, tool: "codex", path: `${globalRoot("codex")}/${zod.name}`, decision: "keep" },
+    ]);
+    // The codex row's own link is still there: nothing to answer, it is brought into line.
+    expect(kept[0].status).toMatchObject({ status: "synced" });
   });
 });
 

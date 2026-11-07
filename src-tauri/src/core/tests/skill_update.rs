@@ -272,8 +272,10 @@ fn every_byte_adapter_settles_and_reports_propagation() {
         adapter.supports_symlink = false;
         let adapter = tool_adapters::test_overrides::shadow(adapter);
         crate::core::tool_adapters::mark_installed_in(&paths.roots, adapter);
-        let target = paths.roots.home.join("target");
-        fs::create_dir(&target).unwrap();
+        // In Cursor's skills dir: the managed folder a replacement is
+        // claimed in (`placement::managed_global_dirs`).
+        let target = tool_adapters::skills_dir_in(&paths.roots, adapter).join("target");
+        fs::create_dir_all(&target).unwrap();
         fs::write(target.join("SKILL.md"), "old").unwrap();
         store
             .upsert_skill_target(&SkillTargetRecord {
@@ -601,8 +603,8 @@ fn a_refresh_keeps_an_executable_script_executable_in_the_central_copy_and_a_cop
     adapter.supports_symlink = false;
     let adapter = tool_adapters::test_overrides::shadow(adapter);
     tool_adapters::mark_installed_in(&paths.roots, adapter);
-    let target = paths.roots.home.join("copy-target");
-    fs::create_dir(&target).unwrap();
+    let target = tool_adapters::skills_dir_in(&paths.roots, adapter).join("copy-target");
+    fs::create_dir_all(&target).unwrap();
     fs::write(target.join("SKILL.md"), "old").unwrap();
     store
         .upsert_skill_target(&SkillTargetRecord {

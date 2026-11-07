@@ -169,7 +169,7 @@ mod seams {
     use crate::core::artifact_removal::{remove_skill, RemovalTargetStatus};
     use crate::core::content_identity::{self, Source};
     use crate::core::environment::HostRoots;
-    use crate::core::errors::CommandError;
+    use crate::core::errors::{CommandError, RemovalRefusal};
     use crate::core::global_sync::{
         sync_skills_to_tools, BatchPolicy, BatchSkill, BatchTargetOutcome, BatchTargetStatus,
         OverrideDecision,
@@ -179,9 +179,14 @@ mod seams {
         assign_skill_to_project_tools, resolve_collisions, resync_project, AssignmentDecision,
         ProjectSyncOutcomeStatus, ProjectSyncReport,
     };
-    use crate::core::propagation::{propagate_unlocked, PropagationSkip, PropagationStatus};
+    use crate::core::propagation::{
+        propagate_unlocked, resolve_target_collisions, PropagationSkip, PropagationStatus,
+        TargetDecision,
+    };
     use crate::core::removal_fence::central_repo_of;
-    use crate::core::skill_store::{ProjectRecord, ProjectToolRecord, SkillStore};
+    use crate::core::skill_store::{
+        ProjectRecord, ProjectToolRecord, SkillStore, SkillTargetRecord,
+    };
     use crate::core::sync_status::SyncStatus;
     use crate::core::tool_adapters::{adapter_by_key, mark_installed_in};
 
@@ -316,7 +321,61 @@ mod seams {
             .collect()
         }
         fn delete(&self) -> crate::core::artifact_removal::RemovalReport {
-            remove_skill(&self.store, &central_repo_of(&self.store), &self.skill_id).unwrap()
+            remove_skill(
+                &self.store,
+                &central_repo_of(&self.store),
+                &self.paths.roots,
+                &self.skill_id,
+            )
+            .unwrap()
+        }
+        /// Answer Propagation's global ask for the row keyed `tool`, naming
+        /// the path the ask showed.
+        fn answer_global(
+            &self,
+            tool: &str,
+            path: &Path,
+            decision: OverrideDecision,
+        ) -> Vec<BatchTargetOutcome> {
+            resolve_target_collisions(
+                &self.store,
+                &self.paths,
+                &[TargetDecision {
+                    skill_id: self.skill_id.clone(),
+                    tool: tool.into(),
+                    path: path.to_string_lossy().into_owned(),
+                    decision,
+                }],
+                NOW,
+            )
+            .unwrap()
+        }
+        fn answer_project(&self, tool: &str, decision: OverrideDecision) -> ProjectSyncReport {
+            resolve_collisions(
+                &self.store,
+                &central_repo_of(&self.store),
+                &[AssignmentDecision {
+                    project_id: "p1".into(),
+                    skill_id: self.skill_id.clone(),
+                    tool: tool.into(),
+                    decision,
+                }],
+                NOW,
+            )
+            .unwrap()
+        }
+        fn target(&self, tool: &str) -> SkillTargetRecord {
+            self.store
+                .get_skill_target(&self.skill_id, tool)
+                .unwrap()
+                .unwrap()
+        }
+        /// Point the global row keyed `tool` at `path` (a stored record the
+        /// registry would not write today).
+        fn record_target_at(&self, tool: &str, path: &Path) {
+            let mut row = self.target(tool);
+            row.target_path = path.to_string_lossy().into_owned();
+            self.store.upsert_skill_target(&row).unwrap();
         }
         fn global_status(&self, tool: &str) -> Option<SyncStatus> {
             self.store
@@ -528,10 +587,13 @@ mod seams {
         assert!(is_foreign(&global), "Delete leaves it in place");
     }
 
-    /// Propagation never touches a link of ours (it follows the source); a
-    /// folder that took its place is not reported Synced and stays.
+    /// A link row follows the source only while its link is there: a folder
+    /// that took the place of an owned link is asked about through
+    /// Propagation at both scopes — never skipped as `LinkFollowsSource`,
+    /// never reported Synced — and stays (round 20 t18 review: Astra 1 =
+    /// Sol 102).
     #[test]
-    fn propagation_leaves_a_folder_that_replaced_an_owned_link() {
+    fn propagation_asks_about_a_folder_that_replaced_an_owned_link_at_both_scopes() {
         let f = fixture("claude_code");
         f.sync("claude_code");
         f.assign();
@@ -543,13 +605,379 @@ mod seams {
 
         let outcomes = f.propagate();
 
+        assert_eq!(outcomes.len(), 2, "{outcomes:?}");
+        for (_, status) in &outcomes {
+            assert!(
+                matches!(
+                    status,
+                    PropagationStatus::Failed {
+                        error: CommandError::TargetExists { .. },
+                        first_deploy: false,
+                    }
+                ),
+                "TARGET_EXISTS at both scopes: {outcomes:?}"
+            );
+        }
+        assert!(is_foreign(&global) && is_foreign(&assigned));
         assert!(
-            outcomes
+            f.target("claude_code").owns_artifact(),
+            "the ask keeps the claim"
+        );
+    }
+
+    /// The answers to that ask, at both scopes. Keep leaves the folder and
+    /// gives the row's path up; Overwrite replaces it with the app's link, and
+    /// the next Propagation finds the link its own — no second ask.
+    #[test]
+    fn a_replaced_link_asked_about_through_propagation_settles_by_the_answer() {
+        for decision in [OverrideDecision::Keep, OverrideDecision::Overwrite] {
+            let f = fixture("claude_code");
+            f.sync("claude_code");
+            f.assign();
+            let global = f.global(".claude/skills");
+            let assigned = f.assigned(".claude/skills");
+            replace_with_foreign_folder(&global);
+            replace_with_foreign_folder(&assigned);
+            f.update_library();
+            assert!(f
+                .propagate()
                 .iter()
-                .all(|(_, status)| !matches!(status, PropagationStatus::Synced { .. })),
+                .all(|(_, s)| matches!(s, PropagationStatus::Failed { .. })));
+
+            let global_answer = f.answer_global("claude_code", &global, decision);
+            let project_answer = f.answer_project("claude_code", decision);
+
+            match decision {
+                OverrideDecision::Keep => {
+                    assert!(
+                        matches!(global_answer[0].status, BatchTargetStatus::Declined),
+                        "{global_answer:?}"
+                    );
+                    assert!(matches!(
+                        project_answer.items[0].status,
+                        ProjectSyncOutcomeStatus::Declined
+                    ));
+                    assert!(is_foreign(&global) && is_foreign(&assigned), "kept");
+                    let row = f.target("claude_code");
+                    assert_eq!(row.status, SyncStatus::Disabled);
+                    assert!(!row.owns_artifact(), "Keep gives the path up");
+                    assert_eq!(Path::new(&row.target_path), global, "where it was asked");
+                    let again = f.propagate();
+                    assert!(
+                        again.iter().all(|(_, s)| matches!(
+                            s,
+                            PropagationStatus::Skipped {
+                                reason: PropagationSkip::Disabled
+                            }
+                        )),
+                        "{again:?}"
+                    );
+                    let deleted = f.delete();
+                    assert!(deleted.targets.is_empty(), "{deleted}");
+                    assert!(is_foreign(&global) && is_foreign(&assigned));
+                }
+                OverrideDecision::Overwrite => {
+                    assert!(
+                        matches!(global_answer[0].status, BatchTargetStatus::Synced { .. }),
+                        "{global_answer:?}"
+                    );
+                    assert!(matches!(
+                        project_answer.items[0].status,
+                        ProjectSyncOutcomeStatus::Synced
+                    ));
+                    assert!(!is_foreign(&global) && !is_foreign(&assigned));
+                    assert_eq!(f.target("claude_code").status, SyncStatus::Synced);
+                    f.update_library();
+                    let again = f.propagate();
+                    assert!(
+                        again.iter().all(|(_, s)| matches!(
+                            s,
+                            PropagationStatus::Skipped {
+                                reason: PropagationSkip::LinkFollowsSource
+                            }
+                        )),
+                        "no second ask: {again:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Round 20 t18 review, Sol 101: a global Propagation ask names the row's
+    /// recorded path; its answer applies there and nowhere else. A copy row
+    /// records `alpha`, the skill is now `alpha-renamed`, and folders the app
+    /// did not write sit at both paths. Overwrite replaces the asked folder
+    /// only — the one at the batch's destination survives, and the row stays
+    /// where it was asked about. The next Propagation finds the copy its own.
+    #[test]
+    fn a_propagation_overwrite_replaces_only_the_asked_path() {
+        let f = fixture("deep_agents_code");
+        f.sync("deep_agents_code");
+        let mut renamed = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+        renamed.name = "alpha-renamed".into();
+        f.store.upsert_skill(&renamed).unwrap();
+        let recorded = f.global(".deepagents/agent/skills");
+        let destination = recorded.with_file_name("alpha-renamed");
+        replace_with_foreign_folder(&recorded);
+        replace_with_foreign_folder(&destination);
+        f.update_library();
+
+        let outcomes = f.propagate();
+        let [(
+            _,
+            PropagationStatus::Failed {
+                error: CommandError::TargetExists { path, .. },
+                ..
+            },
+        )] = outcomes.as_slice()
+        else {
+            panic!("one ask: {outcomes:?}");
+        };
+        assert_eq!(Path::new(path), recorded, "the ask names the recorded path");
+
+        let answer = f.answer_global(
+            "deep_agents_code",
+            Path::new(path),
+            OverrideDecision::Overwrite,
+        );
+
+        assert!(
+            matches!(answer[0].status, BatchTargetStatus::Synced { .. }),
+            "{answer:?}"
+        );
+        assert!(
+            fs::read_to_string(recorded.join("SKILL.md"))
+                .unwrap()
+                .contains("v2"),
+            "the asked folder is replaced"
+        );
+        assert!(is_foreign(&destination), "the unasked folder survives");
+        let row = f.target("deep_agents_code");
+        assert_eq!(
+            Path::new(&row.target_path),
+            recorded,
+            "the row stays where asked"
+        );
+        assert_eq!(row.status, SyncStatus::Synced);
+        assert_eq!(
+            row.content_hash,
+            content_identity::read(Source::Directory(&f.central())),
+            "the row records what it deployed"
+        );
+
+        let again = f.propagate();
+        assert!(
+            matches!(again.as_slice(), [(_, PropagationStatus::Synced { .. })]),
+            "no second ask: {again:?}"
+        );
+        assert!(is_foreign(&destination));
+    }
+
+    /// Keep leaves both folders, records the row `disabled` at its recorded
+    /// path with its claim given up, and nothing at the destination is
+    /// touched or claimed.
+    #[test]
+    fn a_propagation_keep_disables_the_asked_row_where_it_is() {
+        let f = fixture("deep_agents_code");
+        f.sync("deep_agents_code");
+        let mut renamed = f.store.get_skill_by_id(&f.skill_id).unwrap().unwrap();
+        renamed.name = "alpha-renamed".into();
+        f.store.upsert_skill(&renamed).unwrap();
+        let recorded = f.global(".deepagents/agent/skills");
+        let destination = recorded.with_file_name("alpha-renamed");
+        replace_with_foreign_folder(&recorded);
+        replace_with_foreign_folder(&destination);
+        f.update_library();
+        assert!(propagation_asked(&f.propagate()));
+
+        let answer = f.answer_global("deep_agents_code", &recorded, OverrideDecision::Keep);
+
+        assert!(
+            matches!(answer[0].status, BatchTargetStatus::Declined),
+            "{answer:?}"
+        );
+        assert!(is_foreign(&recorded) && is_foreign(&destination));
+        let row = f.target("deep_agents_code");
+        assert_eq!(Path::new(&row.target_path), recorded);
+        assert_eq!(row.status, SyncStatus::Disabled);
+        assert!(!row.owns_artifact());
+        assert_eq!(f.store.list_skill_targets(&f.skill_id).unwrap().len(), 1);
+    }
+
+    /// An answer is checked against the row now: a row that no longer records
+    /// the asked path (it moved since the ask) is not answered — nothing is
+    /// touched, the row is unchanged.
+    #[test]
+    fn an_answer_for_a_path_the_row_no_longer_records_touches_nothing() {
+        let f = fixture("deep_agents_code");
+        f.sync("deep_agents_code");
+        let recorded = f.global(".deepagents/agent/skills");
+        let elsewhere = recorded.with_file_name("alpha-renamed");
+        replace_with_foreign_folder(&recorded);
+        replace_with_foreign_folder(&elsewhere);
+        f.update_library();
+        assert!(propagation_asked(&f.propagate()));
+        let before = f.target("deep_agents_code");
+
+        for decision in [OverrideDecision::Overwrite, OverrideDecision::Keep] {
+            let answer = f.answer_global("deep_agents_code", &elsewhere, decision);
+            assert!(
+                matches!(
+                    &answer[0].status,
+                    BatchTargetStatus::Failed { error: CommandError::NotFound { kind, .. } }
+                        if kind == "target"
+                ),
+                "{answer:?}"
+            );
+        }
+        assert!(is_foreign(&recorded) && is_foreign(&elsewhere));
+        let after = f.target("deep_agents_code");
+        assert_eq!(
+            (after.status, after.synced_at, &after.target_path),
+            (before.status, before.synced_at, &before.target_path)
+        );
+    }
+
+    /// A corrected-folder legacy record: an Augment link row still records
+    /// the former `~/.augment/rules` folder, an operator's folder took its
+    /// place, and another sits at the current `~/.augment/skills`. The ask
+    /// names the former path; Overwrite re-links there only, the current
+    /// folder's occupant survives, and the next Propagation follows the link.
+    #[test]
+    fn a_legacy_record_in_a_former_folder_is_answered_at_its_recorded_path() {
+        let f = fixture("augment");
+        f.sync("augment");
+        let current = f.global(".augment/skills");
+        let former = f.global(".augment/rules");
+        // The row as 1.2.18 left it: the former folder, a link it wrote, now
+        // taken by the operator's folder.
+        f.record_target_at("augment", &former);
+        replace_with_foreign_folder(&former);
+        replace_with_foreign_folder(&current);
+        f.update_library();
+
+        let outcomes = f.propagate();
+        let [(
+            _,
+            PropagationStatus::Failed {
+                error: CommandError::TargetExists { path, .. },
+                ..
+            },
+        )] = outcomes.as_slice()
+        else {
+            panic!("one ask: {outcomes:?}");
+        };
+        assert_eq!(Path::new(path), former);
+
+        let answer = f.answer_global("augment", &former, OverrideDecision::Overwrite);
+
+        assert!(
+            matches!(answer[0].status, BatchTargetStatus::Synced { .. }),
+            "{answer:?}"
+        );
+        assert!(!is_foreign(&former), "re-linked at the asked path");
+        assert!(
+            is_foreign(&current),
+            "the current folder's occupant survives"
+        );
+        assert_eq!(Path::new(&f.target("augment").target_path), former);
+        let again = f.propagate();
+        assert!(
+            matches!(
+                again.as_slice(),
+                [(
+                    _,
+                    PropagationStatus::Skipped {
+                        reason: PropagationSkip::LinkFollowsSource
+                    }
+                )]
+            ),
+            "no second ask: {again:?}"
+        );
+    }
+
+    // -- Only inside a skills folder the app manages (round 20 t18 review,
+    //    Astra 2)
+
+    /// A Deep Agents copy whose stored path is `~/Documents/alpha` (no flow
+    /// writes one; a malformed record) still holds what the row deployed.
+    /// Delete refuses it (`ResolvesElsewhere`), keeps the bytes, the row
+    /// (`error`, ADR-0002) and the skill.
+    #[test]
+    fn a_stored_path_outside_every_managed_folder_is_refused_by_delete() {
+        let f = fixture("deep_agents_code");
+        f.sync("deep_agents_code");
+        let deployed = f.global(".deepagents/agent/skills");
+        let stray = f.paths.roots.home.join("Documents/alpha");
+        fs::create_dir_all(stray.parent().unwrap()).unwrap();
+        fs::rename(&deployed, &stray).unwrap();
+        f.record_target_at("deep_agents_code", &stray);
+
+        let report = f.delete();
+
+        assert!(
+            !report.record_deleted && !report.central_removed,
+            "{report}"
+        );
+        assert!(
+            matches!(
+                &report.targets[..],
+                [target] if matches!(
+                    &target.status,
+                    RemovalTargetStatus::Failed {
+                        error: CommandError::RemovalRefused {
+                            reason: RemovalRefusal::ResolvesElsewhere,
+                            ..
+                        }
+                    }
+                )
+            ),
+            "{report}"
+        );
+        assert!(stray.join("SKILL.md").is_file(), "the bytes are kept");
+        assert_eq!(f.global_status("deep_agents_code"), Some(SyncStatus::Error));
+        assert!(f.target("deep_agents_code").owns_artifact());
+        assert!(f.store.get_skill_by_id(&f.skill_id).unwrap().is_some());
+    }
+
+    /// The same record through Propagation: its stale copy is the row's own,
+    /// but a stored path outside every managed folder is never replaced.
+    #[test]
+    fn a_stored_path_outside_every_managed_folder_is_never_replaced_by_propagation() {
+        let f = fixture("deep_agents_code");
+        f.sync("deep_agents_code");
+        let deployed = f.global(".deepagents/agent/skills");
+        let stray = f.paths.roots.home.join("Documents/alpha");
+        fs::create_dir_all(stray.parent().unwrap()).unwrap();
+        fs::rename(&deployed, &stray).unwrap();
+        f.record_target_at("deep_agents_code", &stray);
+        f.update_library();
+
+        let outcomes = f.propagate();
+
+        assert!(
+            matches!(
+                outcomes.as_slice(),
+                [(
+                    _,
+                    PropagationStatus::Failed {
+                        error: CommandError::RemovalRefused {
+                            reason: RemovalRefusal::ResolvesElsewhere,
+                            ..
+                        },
+                        ..
+                    }
+                )]
+            ),
             "{outcomes:?}"
         );
-        assert!(is_foreign(&global) && is_foreign(&assigned));
+        assert!(
+            fs::read_to_string(stray.join("SKILL.md"))
+                .unwrap()
+                .contains("v1"),
+            "the old bytes are kept"
+        );
+        assert_eq!(f.global_status("deep_agents_code"), Some(SyncStatus::Error));
     }
 
     // -- Copies (a copy-only harness): the deployed identity is the evidence

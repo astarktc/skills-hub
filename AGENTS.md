@@ -141,7 +141,7 @@ than re-tagging.
 - **Sync-target mutation**: every operation that materialises or removes a Sync target (global sync
   batch, Disable / Enable (`skill_disable::disable_targets` / `enable_targets`), delete,
   assign/unassign/toggle, resync (of one assignment via `resync_project_assignment`, one project, or every project),
-  `resolve_project_collisions`, configure project tools, remove project,
+  `resolve_project_collisions`, `resolve_target_collisions`, configure project tools, remove project,
   gitignore update, Refresh's apply phase, Onboarding import's apply phase, Move Library folder
   (`library_move::move_library` — the only writer of the Library folder setting — and `resume_library_move`, which
   startup runs to finish a move journaled at its switch)) wraps its **own** body in
@@ -377,7 +377,10 @@ than re-tagging.
     (observed where `sync_engine` raises the collision). The frontend raises **one** ask per operator action
     (`src/lib/overwriteAsk.ts` shapes the rows; `useSyncOrchestration` owns the ask) answered per row, and retries:
     global pairs through `sync_skills_to_tools` with per-pair overrides (the install batch's skills exist by then),
-    Enable's global pairs through `enable_skill_targets(scope, overrides)`, project assignments through
+    Enable's global pairs through `enable_skill_targets(scope, overrides)`, Propagation's global rows through
+    `resolve_target_collisions` (each answer names the row **and the path the ask showed**, checked against the row's
+    recorded path before anything is touched and applied there only — never the batch's rebuilt destination, which
+    may be another folder), project assignments through
     `resolve_project_collisions` (`Keep` → the row `disabled`, owning nothing, reported `declined`). A dismissed
     ask sends nothing. An operator action that settles several reports (a group's Deploy all, Retry over several
     Tools, a multi-skill project assignment) or a report of another shape (Refresh / Update / Restore / Re-point —
@@ -505,7 +508,11 @@ than re-tagging.
   removal is admitted by **physical entry identity** (canonical parent; a link leaf never resolved, any other leaf
   resolved to its real spelling; compared by device + inode on Unix, never by spelling) against the library
   (`ProtectedLibrary::new(store, central_dir)`: the **configured central repo's whole subtree** plus every recorded
-  copy), an overwrite's source (`sparing`) and the caller's `Claim`, a directory refused when it is itself a mount point
+  copy), an overwrite's source (`sparing`) and the caller's `Claim` — `artifact_removal` claims each row's managed
+  skills folders (a global row's current and former registry dirs, `placement::managed_global_dirs`; an assignment's
+  project skills dir), and a write at a **stored** path (Propagation's global rows, its ask's answer, Library move's
+  relink) claims them through `Replace::within`, so a malformed record outside them is refused, never removed —
+  a directory refused when it is itself a mount point
   (`MountPoint`) or its subtree — walked, links unfollowed — would cross one (`ContainsMount`; on Linux an unreadable
   mount table fails closed, `MountTableUnreadable`), then removed at that physical location; a refusal
   is the typed `REMOVAL_REFUSED` (BACKLOG #107). So every removal entry point takes the configured `central_dir`,

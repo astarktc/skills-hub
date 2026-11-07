@@ -177,13 +177,13 @@ fn disable_unlocked(
         }
         DisableScope::Skill { skill_id } => {
             let skill = require_skill(store, skill_id)?;
-            disable_skill(store, central_dir, &skill, now)
+            disable_skill(store, central_dir, roots, &skill, now)
         }
         DisableScope::Skills { skill_ids } => {
             let mut reports = Vec::new();
             for skill_id in skill_ids {
                 if let Some(skill) = store.get_skill_by_id(skill_id)? {
-                    reports.push(disable_skill(store, central_dir, &skill, now)?);
+                    reports.push(disable_skill(store, central_dir, roots, &skill, now)?);
                 }
             }
             Ok(RemovalReport::merge(reports))
@@ -274,6 +274,7 @@ fn disable_pair(
 fn disable_skill(
     store: &SkillStore,
     central_dir: &Path,
+    roots: &HostRoots,
     skill: &SkillRecord,
     now: i64,
 ) -> Result<RemovalReport> {
@@ -284,6 +285,7 @@ fn disable_skill(
             store,
             &RemovalScope::SkillGlobal {
                 skill_id: skill.id.clone(),
+                roots: roots.clone(),
             },
         )?,
     )?];

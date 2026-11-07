@@ -68,6 +68,7 @@ import type {
   SkillRefreshStatus,
   SyncMode,
   SyncProgressDto,
+  TargetDecision,
   ToolInfoDto,
   ToolStatusDto,
 } from "../bindings";
@@ -96,6 +97,7 @@ import {
   type FixtureProject,
   type FixtureSkill,
   type StoredAssignment,
+  type StoredTarget,
   type FixtureState,
 } from "./model";
 import { DUPLICATE_READS, READER_REGISTRY, TOOL_REGISTRY, VIRTUAL_GROUP_KEY } from "./registry";
@@ -205,9 +207,18 @@ export function createFixtureBackend(
       for (const entry of list) entry.deployments = foldFolderRows(entry.deployments, projectFolderOf);
     return state.skills.map((s) => {
       const dto = clone(s.dto);
+      // The wire row's own fields only: what a row deployed is internal
+      // evidence, never on the wire.
+      const wire = dto.targets.map(({ tool, mode, status, target_path, synced_at }) => ({
+        tool,
+        mode,
+        status,
+        target_path,
+        synced_at,
+      }));
       return {
         ...dto,
-        targets: foldFolderRows(dto.targets, globalFolderOf),
+        targets: foldFolderRows(wire, globalFolderOf),
         projects: bySkill.get(s.dto.id) ?? [],
       };
     });
@@ -342,19 +353,73 @@ export function createFixtureBackend(
   };
 
   /** Record (or refresh) one row, under its own key at its own path (Rust `sync_skill_into_root`). */
-  const recordTargets = (skill: FixtureSkill, row: BatchRow) => {
-    const at = now();
-    artifacts.set(row.path, true);
-    const stored = skill.dto.targets.find((t) => t.tool === row.key);
-    if (stored) {
-      stored.status = "synced";
-      stored.mode = "symlink";
-      stored.synced_at = at;
-      stored.target_path = row.path;
-    } else {
-      skill.dto.targets.push({ tool: row.key, mode: "symlink", status: "synced", target_path: row.path, synced_at: at });
+  const recordTargets = (skill: FixtureSkill, row: BatchRow): SyncMode => {
+    let stored = skill.dto.targets.find((t) => t.tool === row.key);
+    if (!stored) {
+      stored = { tool: row.key, mode: "symlink", status: "synced", target_path: row.path, synced_at: null, deployed_hash: null };
+      skill.dto.targets.push(stored);
     }
+    return deployGlobal(skill, stored, row.path);
+  };
+
+  /**
+   * Rust `placement::capability_entry`: a folder some copy-only harness
+   * shares is deployed by copy (Deep Agents Code), every other by link.
+   */
+  const globalCopyOnly = (folder: string) =>
+    globalSharers(folder).some((key) => toolByKey(key)?.supportsSymlink === false);
+
+  /**
+   * One global row's successful write at `path` (Rust `TargetTransition::
+   * SyncCompleted` / `Recorded`): the mode its folder's capability gives, and
+   * — a copy — the identity it deployed, the evidence a later removal or
+   * replacement checks the folder against (ADR-0007).
+   */
+  const deployGlobal = (skill: FixtureSkill, row: StoredTarget, path: string): SyncMode => {
+    const at = now();
+    const mode: SyncMode = globalCopyOnly(globalFolderOf(row.tool)) ? "copy" : "symlink";
+    artifacts.set(path, true);
+    delete state.copyIdentities[path];
+    row.status = "synced";
+    row.mode = mode;
+    row.synced_at = at;
+    row.target_path = path;
+    row.deployed_hash = mode === "copy" ? skill.contentHash : null;
     skill.dto.last_sync_at = at;
+    return mode;
+  };
+
+  const foreignAt = (path: string) => state.foreign.findIndex((f) => `${globalRoot(f.tool)}/${f.name}` === path);
+
+  /**
+   * Rust `ownership::check` for one global row, at its recorded path, now:
+   * `ours` only when the folder there is what the row wrote — its link, or a
+   * copy still holding the identity it recorded. An operator's folder
+   * (`foreign`), a copy edited since (`copyIdentities`), a copy whose row
+   * recorded no identity (pre-1.4.0), or any row without a claim is not.
+   * `implied` is the presence a path this backend never wrote assumes.
+   */
+  const globalOccupant = (row: StoredTarget, implied = ownsArtifact(row)): "absent" | "ours" | "foreign" => {
+    const path = row.target_path;
+    if (foreignAt(path) >= 0) return "foreign";
+    if (!presentAt(path, implied)) return "absent";
+    if (!ownsArtifact(row)) return "foreign";
+    if (row.mode !== "copy") return "ours";
+    const recorded = row.deployed_hash ?? null;
+    return recorded !== null && (state.copyIdentities[path] ?? recorded) === recorded ? "ours" : "foreign";
+  };
+
+  /**
+   * A folder a removal left where it was (`left_in_place`) is the operator's
+   * from now on: a later sync meets it as a folder in the way, and the
+   * onboarding scan lists it (Rust: the folder is simply still there).
+   */
+  const leaveInPlace = (path: string, folder: string, identity: string | null) => {
+    if (foreignAt(path) >= 0) return;
+    const root = globalRoot(folder);
+    if (!path.startsWith(`${root}/`)) return;
+    state.foreign.push({ tool: folder, name: path.slice(root.length + 1), fingerprint: identity ?? "unrecorded", linkTarget: null });
+    delete state.copyIdentities[path];
   };
 
   /**
@@ -382,6 +447,7 @@ export function createFixtureBackend(
       // (ADR-0007).
       stored.status = "disabled";
       stored.synced_at = null;
+      stored.deployed_hash = null;
     } else
       skill.dto.targets.push({
         tool: row.key,
@@ -389,6 +455,7 @@ export function createFixtureBackend(
         status: "disabled",
         target_path: row.path,
         synced_at: null,
+        deployed_hash: null,
       });
     // The report row says what the operator did (Rust `record_kept`).
     return { status: "declined" };
@@ -411,18 +478,23 @@ export function createFixtureBackend(
       recordFailedTargets(skill, row);
       return { status: "failed", error: { code: "CENTRAL_PATH_MISSING", path: skill.dto.central_path } };
     }
-    const occupantIndex = state.foreign.findIndex((f) => `${globalRoot(f.tool)}/${f.name}` === row.path);
+    const occupantIndex = foreignAt(row.path);
+    // Rust `global_sync::row_evidence`: the row's own copy at the skill's
+    // place is replaced only while it holds what the row deployed.
+    const own = skill.dto.targets.find((t) => t.tool === row.key && t.target_path === row.path);
+    const ownCopyChanged = occupantIndex < 0 && own !== undefined && own.mode === "copy" && globalOccupant(own) === "foreign";
     let replaced = false;
-    if (occupantIndex >= 0) {
-      const same = state.foreign[occupantIndex].fingerprint === skill.contentHash;
+    if (occupantIndex >= 0 || ownCopyChanged) {
+      const identity = occupantIndex >= 0 ? state.foreign[occupantIndex].fingerprint : state.copyIdentities[row.path];
+      const same = identity === skill.contentHash;
       if (!(overwrite || (same && overwriteIfSameContent))) {
         return { status: "failed", error: targetExists(row.path, same) };
       }
-      state.foreign.splice(occupantIndex, 1);
+      if (occupantIndex >= 0) state.foreign.splice(occupantIndex, 1);
       replaced = true;
     }
-    recordTargets(skill, row);
-    return { status: "synced", outcome: { mode_used: "symlink", target_path: row.path, replaced } };
+    const mode = recordTargets(skill, row);
+    return { status: "synced", outcome: { mode_used: mode, target_path: row.path, replaced } };
   };
 
   const syncBatch = async (
@@ -633,21 +705,29 @@ export function createFixtureBackend(
     for (const [path, rowTools] of byPath) {
       const rows = rowTools.map((tool) => globalRowRef(skill.dto.id, tool));
       const described = skill.dto.targets.filter((t) => rowTools.includes(t.tool));
-      // Rust `ownership::check`: a folder the app did not put there is never
-      // removed; the rows settle and the report says it was left in place.
-      if (state.foreign.some((f) => `${globalRoot(f.tool)}/${f.name}` === path)) {
+      // Rust `ownership::check`, right before the removal: only a folder one
+      // of the rows proves its own (its link, or a copy still holding what it
+      // deployed) is removed. Anything else — an operator's folder, a copy
+      // edited since, a copy a pre-1.4.0 row recorded no identity for — is
+      // left in place, and the rows settle.
+      const implied = described.some((t) => t.status !== "disabled");
+      const verdicts = described.map((t) => globalOccupant(t, implied));
+      if (verdicts.includes("foreign") && !verdicts.includes("ours")) {
+        const identity = state.copyIdentities[path] ?? described.find((t) => t.mode === "copy")?.deployed_hash ?? null;
         if (settle === "disable") {
           for (const row of described) {
             row.status = "disabled";
             row.synced_at = null;
+            row.deployed_hash = null;
           }
         } else {
           skill.dto.targets = skill.dto.targets.filter((t) => !rowTools.includes(t.tool));
         }
+        leaveInPlace(path, globalFolderOf(rowTools[0]), identity);
         targets.push({ path, rows, status: { status: "left_in_place" } });
         continue;
       }
-      const present = presentAt(path, described.some((t) => t.status !== "disabled"));
+      const present = presentAt(path, implied);
       const stuck = state.lockedPaths.includes(path) || rowTools.some((tool) => state.unwritableTools.includes(tool));
       if (present && stuck) {
         artifacts.set(path, true);
@@ -655,11 +735,13 @@ export function createFixtureBackend(
         targets.push({ path, rows, status: { status: "failed", error: PERMISSION_DENIED(path) } });
       } else {
         artifacts.set(path, false);
+        delete state.copyIdentities[path];
         if (settle === "disable") {
           // A successful Disable gives the path up (ADR-0007).
           for (const row of described) {
             row.status = "disabled";
             row.synced_at = null;
+            row.deployed_hash = null;
           }
         } else {
           skill.dto.targets = skill.dto.targets.filter((t) => !rowTools.includes(t.tool));
@@ -1235,16 +1317,20 @@ export function createFixtureBackend(
         skippedGlobal(row.tool, { reason: "tool_not_installed", tool: row.tool });
         continue;
       }
-      // Only a link of ours follows the source: a row that never materialised
-      // (a failed first sync's `error` row) gets a first sync.
+      // Only the link the row wrote, verified now, follows the source (Rust
+      // `propagation::link_follows_source`): a folder that took its place, or
+      // a link gone, takes the occupant decision below; a row that never
+      // materialised (a failed first sync's `error` row) gets a first sync.
       const owned = ownsArtifact(row);
-      if (owned && !needsNewBytes(row.mode)) {
+      const occupant = globalOccupant(row);
+      if (!needsNewBytes(row.mode) && occupant === "ours") {
         skippedGlobal(row.tool, { reason: "link_follows_source" });
         continue;
       }
-      // A foreign folder is never replaced silently, whoever's row meets it
-      // (Rust `ownership::check`, ADR-0007): TARGET_EXISTS for the ask.
-      const occupied = state.foreign.some((f) => `${globalRoot(f.tool)}/${f.name}` === row.target_path);
+      // Only what the row's evidence proves its own is replaced (Rust
+      // `ownership::check`, ADR-0007): anything else is TARGET_EXISTS for the
+      // ask, at the row's recorded path.
+      const occupied = occupant === "foreign";
       // An unwritable dir refuses the replacement's removal of the existing
       // copy: the typed removal-permission failure (not the batch's
       // TOOL_NOT_WRITABLE).
@@ -1253,20 +1339,15 @@ export function createFixtureBackend(
         : state.unwritableTools.includes(row.tool)
           ? PERMISSION_DENIED(row.target_path)
           : occupied
-            ? targetExists(row.target_path)
+            ? targetExists(row.target_path, occupiedIdentity(row) === skill.contentHash)
             : null;
+      const scope = { scope: "global" as const, tool: row.tool };
       if (error) {
         row.status = "error";
+        push(scope, { status: "failed", error, first_deploy: !owned });
       } else {
-        row.status = "synced";
-        row.mode = "symlink";
-        row.synced_at = now();
+        push(scope, { status: "synced", mode_used: deployGlobal(skill, row, row.target_path) });
       }
-      const scope = { scope: "global" as const, tool: row.tool };
-      push(
-        scope,
-        error ? { status: "failed", error, first_deploy: !owned } : { status: "synced", mode_used: "symlink" },
-      );
     }
     for (const project of state.projects) {
       for (const a of project.assignments.filter((x) => x.skill_id === skill.dto.id)) {
@@ -1278,7 +1359,15 @@ export function createFixtureBackend(
           skip({ reason: "unknown_tool", tool: a.tool });
         } else if (!project.path_exists) {
           skip({ reason: "project_unavailable", project_id: project.id });
-        } else if (ownsArtifact(a) && !needsNewBytes(a.mode)) {
+        } else if (
+          ownsArtifact(a) &&
+          !needsNewBytes(a.mode) &&
+          // Only the link the row wrote, verified now: a folder in its place
+          // takes the occupant decision (TARGET_EXISTS), an absent one is
+          // written again.
+          !state.projectOccupants.includes(assignmentPath(project, a)) &&
+          presentAt(assignmentPath(project, a), true)
+        ) {
           skip({ reason: "link_follows_source" });
         } else if (centralMissing) {
           a.status = "error";
@@ -1297,6 +1386,60 @@ export function createFixtureBackend(
       }
     }
     return out;
+  };
+
+  /** The identity of the folder in a global row's way, for the ask's `sameContent`. */
+  const occupiedIdentity = (row: StoredTarget): string | null => {
+    const index = foreignAt(row.target_path);
+    return index >= 0 ? state.foreign[index].fingerprint : (state.copyIdentities[row.target_path] ?? null);
+  };
+
+  /**
+   * Rust `propagation::resolve_target_collisions`: Propagation's global ask
+   * answered at exactly the row and the path it named. A row gone, or no
+   * longer recording that path, is `NOT_FOUND` (nothing touched); a disabled
+   * folder or skill is a skip; a path holding the row's own artifact again
+   * is brought into line whatever the answer; Keep disables the row where it
+   * is (its claim given up); Overwrite replaces the folder at that path only
+   * and records what it deployed there.
+   */
+  const resolveTargetCollision = (decision: TargetDecision): BatchTargetOutcome => {
+    const skill = state.skills.find((s) => s.dto.id === decision.skill_id);
+    const outcome = (status: BatchTargetStatus): BatchTargetOutcome => ({
+      skill_id: decision.skill_id,
+      skill_name: skill?.dto.name ?? "",
+      tool_key: decision.tool,
+      folder_key: globalFolderOf(decision.tool),
+      status,
+    });
+    const row = skill?.dto.targets.find((t) => t.tool === decision.tool && t.target_path === decision.path);
+    if (!skill || !row)
+      return outcome({ status: "failed", error: { code: "NOT_FOUND", kind: "target", id: decision.path } });
+    if (isDisabledFor(skill, globalFolderOf(row.tool)))
+      return outcome({ status: "skipped", error: { code: "TARGET_DISABLED", tool: row.tool } });
+    if (!toolByKey(globalFolderOf(row.tool)))
+      return outcome({ status: "failed", error: { code: "UNKNOWN_TOOL", tool: row.tool } });
+    const ours = globalOccupant(row) === "ours";
+    if (!ours && decision.decision === "keep") {
+      row.status = "disabled";
+      row.synced_at = null;
+      row.deployed_hash = null;
+      return outcome({ status: "declined" });
+    }
+    const error: CommandError | null =
+      skill.files.length === 0
+        ? missingSource(skill)
+        : state.unwritableTools.includes(row.tool)
+          ? PERMISSION_DENIED(row.target_path)
+          : null;
+    if (error) {
+      row.status = "error";
+      return outcome({ status: "failed", error });
+    }
+    const index = foreignAt(row.target_path);
+    if (index >= 0) state.foreign.splice(index, 1);
+    const mode = deployGlobal(skill, row, row.target_path);
+    return outcome({ status: "synced", outcome: { mode_used: mode, target_path: row.target_path, replaced: true } });
   };
 
   /** Rebuild the central copy from the (fake) source; a new revision when upstream moved. */
@@ -2172,6 +2315,10 @@ export function createFixtureBackend(
     syncSkillsToTools: async (skills, tools, policy, onProgress) => {
       await pause(120);
       return syncBatch(skills, tools, policy, onProgress);
+    },
+    resolveTargetCollisions: async (decisions) => {
+      await pause(160);
+      return decisions.map(resolveTargetCollision);
     },
     installSelection: async (request, onProgress) => installBatch(request, onProgress),
     refreshManagedSkills: async (skillIds, onProgress) => refreshBatch(skillIds, onProgress),

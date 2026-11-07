@@ -35,6 +35,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::list_git_skills_cmd,
             commands::install_selection,
             commands::sync_skills_to_tools,
+            commands::resolve_target_collisions,
             commands::refresh_managed_skills,
             commands::update_managed_skill,
             commands::repoint_skill_source,
@@ -169,6 +170,7 @@ pub fn run() {
                     core::library_move::resume_library_move(
                         &store,
                         &central,
+                        &core::environment::HostRoots::resolve()?,
                         core::clock::now_ms(),
                     )
                 },

@@ -9,7 +9,7 @@ import type {
   ToolStatusDto,
 } from "../components/skills/types";
 import type { AssignmentDecision, ProjectSyncReport } from "../components/projects/types";
-import type { PropagationReport, RefreshReport } from "../bindings";
+import type { PropagationReport, RefreshReport, TargetDecision } from "../bindings";
 import { createProgressChannel } from "../lib/platform";
 import { invokeTauri, isTauri } from "../lib/tauri";
 import type { ToolCatalog } from "./useToolCatalog";
@@ -83,12 +83,17 @@ export type SyncPolicy = {
 
 /**
  * How an asked global row is retried: through a sync batch for its skill
- * (a first sync, Propagation over a never-synced row), or
- * through the Enable scope that produced it. Project rows need no route.
+ * (a sync, install or import), through the Enable scope that produced it, or
+ * — a Propagation row (Refresh / Update / Restore / Re-point / Edit) — at the
+ * row and the path the ask showed (`resolveTargetCollisions`): Propagation
+ * writes at the row's recorded path, which need not be where the batch would
+ * place the skill now, so its answer never goes through the batch. Project
+ * rows need no route.
  */
 export type GlobalRetryRoute =
   | { via: "sync"; skill: BatchSyncSkillDto; overwriteIfSameContent: boolean }
-  | { via: "enable"; scope: DisableScope };
+  | { via: "enable"; scope: DisableScope }
+  | { via: "row" };
 
 /** One askable row and how its answer is carried out. */
 export type CollisionClaim = { row: OverwriteRow; route?: GlobalRetryRoute };
@@ -97,14 +102,15 @@ export type CollisionClaim = { row: OverwriteRow; route?: GlobalRetryRoute };
  * A report one operator action produced, as the one ask settles it. `sync`:
  * a global sync batch (`skills` are its items, for the retry); `enable`: an
  * Enable over `scope`; `project`: a project sync report; `refresh`: a
- * Refresh / Update / Restore / Re-point report (Propagation, retried
- * through a sync batch for the skill — `skills` are the catalog's items); `propagation`: one skill's Edit Propagation.
+ * Refresh / Update / Restore / Re-point report and `propagation`: one
+ * skill's Edit Propagation — both Propagation, whose global rows are answered
+ * at the row and path asked about (`{ via: "row" }`).
  */
 export type CollisionPart =
   | { kind: "sync"; report: BatchTargetOutcome[]; skills: readonly BatchSyncSkillDto[]; policy?: SyncPolicy }
   | { kind: "enable"; report: EnableReport; scope: DisableScope }
   | { kind: "project"; report: ProjectSyncReport }
-  | { kind: "refresh"; report: RefreshReport; skills: readonly BatchSyncSkillDto[] }
+  | { kind: "refresh"; report: RefreshReport }
   | { kind: "propagation"; report: PropagationReport; skill: BatchSyncSkillDto };
 
 /** A part with its answered rows settled; `declined` for the shapes that carry no declined row. */
@@ -119,6 +125,9 @@ export type SettledParts<P extends readonly CollisionPart[]> = {
 /** The askable rows of one part, each with its retry route. */
 function claimsOf(part: CollisionPart, labels: Readonly<Record<string, string>>): CollisionClaim[] {
   const project = (row: OverwriteRow): CollisionClaim => ({ row });
+  // Propagation's rows: a global one is answered at its recorded path.
+  const atRow = (row: OverwriteRow): CollisionClaim =>
+    row.scope.kind === "project" ? project(row) : { row, route: { via: "row" } };
   const viaSync = (skills: readonly BatchSyncSkillDto[], sameContent: boolean) => {
     const bySkill = new Map(skills.map((skill) => [skill.skill_id, skill]));
     return (row: OverwriteRow): CollisionClaim[] => {
@@ -141,15 +150,14 @@ function claimsOf(part: CollisionPart, labels: Readonly<Record<string, string>>)
       ];
     case "project":
       return projectCollisionRows(part.report, labels).map(project);
-    // Propagation writes with the same-content rule on.
     case "refresh":
-      return refreshCollisionRows(part.report, labels).flatMap(viaSync(part.skills, true));
+      return refreshCollisionRows(part.report, labels).map(atRow);
     case "propagation":
       return propagationCollisionRows(
         { skillId: part.skill.skill_id, skillName: part.skill.name },
         part.report.targets,
         labels,
-      ).flatMap(viaSync([part.skill], true));
+      ).map(atRow);
   }
 }
 
@@ -486,8 +494,10 @@ export function useSyncOrchestration({
    * retries run for the asked rows only. A global pair is retried the way
    * it was produced — a sync batch per group of skills asking about the
    * same Tools (exact pair identity: no skill × Tool product reaches a pair
-   * nobody asked about), or its Enable scope with per-pair decisions — and
-   * project assignments through `resolveProjectCollisions`. Null when
+   * nobody asked about), its Enable scope with per-pair decisions, or — a
+   * Propagation row — `resolveTargetCollisions` with the row and the path
+   * the ask showed — and project assignments through
+   * `resolveProjectCollisions`. Null when
    * nothing was askable or the ask was dismissed: no retry ran, nothing was
    * recorded.
    */
@@ -510,11 +520,15 @@ export function useSyncOrchestration({
       const bySkill = new Map<string, { skill: BatchSyncSkillDto; sameContent: boolean; tools: string[]; overrides: BatchSyncOverrideDto[] }>();
       // Enable-route pairs: one retry per scope.
       const byScope = new Map<string, { scope: DisableScope; overrides: BatchSyncOverrideDto[] }>();
+      // Propagation rows: each answer bound to its row and the path asked about.
+      const atRows: TargetDecision[] = [];
       unique.forEach((claim, index) => {
         const { row, route } = claim;
         if (row.scope.kind !== "global" || !route) return;
         const override = { skill_id: row.skillId, tool: row.toolKey, decision: answer[index] };
-        if (route.via === "sync") {
+        if (route.via === "row") {
+          atRows.push({ skill_id: row.skillId, tool: row.toolKey, path: row.path, decision: answer[index] });
+        } else if (route.via === "sync") {
           const entry = bySkill.get(row.skillId) ?? { skill: route.skill, sameContent: route.overwriteIfSameContent, tools: [], overrides: [] };
           entry.tools.push(row.toolKey);
           entry.overrides.push(override);
@@ -546,6 +560,7 @@ export function useSyncOrchestration({
       for (const entry of byScope.values()) {
         global.push(...(await invokeTauri("enableSkillTargets", entry.scope, entry.overrides)).global);
       }
+      if (atRows.length > 0) global.push(...(await invokeTauri("resolveTargetCollisions", atRows)));
       const projects = await resolveAssignments(rows, answer);
       // Only the asked pairs' rows: a retry reporting other pairs does not
       // speak for the operator's action.

@@ -76,6 +76,14 @@ export const commands = {
 	 */
 	syncSkillsToTools: (skills: BatchSyncSkillDto[], tools: string[], policy: BatchSyncPolicyDto, onProgress: Channel<SyncProgressDto>) => __TAURI_INVOKE<BatchTargetOutcome[]>("sync_skills_to_tools", { skills, tools, policy, onProgress }),
 	/**
+	 *  The overwrite ask's retry for Propagation's global rows (D12): each
+	 *  answer names the row and the path the ask showed, and is settled at that
+	 *  path only (`propagation::resolve_target_collisions`) — never through the
+	 *  sync batch, whose destination may be another folder. Per-row outcomes are
+	 *  report data.
+	 */
+	resolveTargetCollisions: (decisions: TargetDecision[]) => __TAURI_INVOKE<BatchTargetOutcome[]>("resolve_target_collisions", { decisions }),
+	/**
 	 *  Re-acquire Managed skills from their sources, finalize them, and
 	 *  propagate to every Sync target — one batch, one report. `skillIds` of
 	 *  `None` means every Managed skill (Refresh all); a single-skill Update is
@@ -2001,6 +2009,23 @@ export type SyncStatus =
  *  `skill_disable::enable_targets` lifts it.
  */
 "disabled";
+
+/**
+ *  The operator's answer to the overwrite ask for one **global** row whose
+ *  Propagation met a folder it cannot prove its own (a `TARGET_EXISTS`
+ *  Propagation outcome, D12). It names the row (`skill_id`, `tool`: the
+ *  outcome's raw row key) **and the path the ask showed** (`path`: the
+ *  `TARGET_EXISTS` row's path, the row's recorded `target_path`), so the
+ *  answer applies to exactly the row and the folder it was asked about —
+ *  never to the global batch's destination for the skill, which may be
+ *  another folder. Crosses the wire as itself.
+ */
+export type TargetDecision = {
+	skill_id: string,
+	tool: string,
+	path: string,
+	decision: OverrideDecision,
+};
 
 /**
  *  Which way a toggle went, with the resulting view and that direction's

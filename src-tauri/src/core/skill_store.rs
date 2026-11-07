@@ -1311,9 +1311,9 @@ impl SkillStore {
         })
     }
 
-    /// Read one global target row. Store-level read used by tests and by
-    /// future callers; the removal module plans from `list_skill_targets`.
-    #[allow(dead_code)]
+    /// Read one global target row: the row a Propagation ask was raised for
+    /// (`propagation::resolve_target_collisions`), and tests. The removal
+    /// module plans from `list_skill_targets`.
     pub fn get_skill_target(
         &self,
         skill_id: &str,

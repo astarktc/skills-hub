@@ -1041,24 +1041,24 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     ["restore", "updateManagedSkill", {}],
     ["repoint", "repointSkillSource", { target: { kind: "local", path: "/elsewhere" } }],
   ] as const)(
-    "%s: Propagation's collisions (global and project) are one ask; the answered pairs are retried and replace the failures",
+    "%s: Propagation's collisions (global and project) are one ask; the answered rows are retried where they were asked and replace the failures",
     async (verb, command, opts) => {
       const skills = [skill("s1", "alpha", ["claude"])];
       backend(skills, {
         [command]: [{ report: refreshedWith([occupiedTarget("cursor"), occupiedTarget("claude", "p1")]), skills }],
-        syncSkillsToTools: [[done("s1", "cursor")]],
+        resolveTargetCollisions: [[done("s1", "cursor")]],
         resolveProjectCollisions: [{ skipped_projects: [], items: [{ assignment_id: "a1", project_id: "p1", skill_id: "s1", skill_name: "alpha", tool: "claude", status: { status: "synced" } }] }],
       });
       const rendered = renderReal();
       await ready(rendered, skills);
       const asked = await drive(rendered, async () => { await rendered.result.current.actions.run(verb, [skills[0]!], opts as never); }, "confirmed");
       expect(asked).toEqual([["global:s1:cursor", "p1:s1:claude"]]);
-      expect(calls("syncSkillsToTools").map(([, items, tools, policy]) => [items, tools, policy])).toEqual([
-        [
-          [{ skill_id: "s1", name: "alpha", source_path: "/hub/alpha" }],
-          ["cursor"],
-          { overwrite: false, overwrite_if_same_content: true, overrides: [{ skill_id: "s1", tool: "cursor", decision: "overwrite" }] },
-        ],
+      // Round 20 t18 review, Sol 101: a Propagation row's answer is bound to
+      // the row and the path the ask showed — never the sync batch, whose
+      // destination may be another folder.
+      expect(calls("syncSkillsToTools")).toEqual([]);
+      expect(calls("resolveTargetCollisions")).toEqual([
+        ["resolveTargetCollisions", [{ skill_id: "s1", tool: "cursor", path: "/tools/cursor/alpha", decision: "overwrite" }]],
       ]);
       expect(calls("resolveProjectCollisions")[0]![1]).toEqual([
         { project_id: "p1", skill_id: "s1", tool: "claude", decision: "overwrite" },
@@ -1096,14 +1096,17 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     const skills = [skill("s1", "alpha", ["claude"])];
     backend(skills, {
       refreshManagedSkills: [refreshedWith([occupiedTarget("cursor")])],
-      syncSkillsToTools: [[pair("s1", "cursor", { status: "declined" })]],
+      resolveTargetCollisions: [[pair("s1", "cursor", { status: "declined" })]],
     });
     const rendered = renderReal();
     await ready(rendered, skills);
     const spy = vi.spyOn(folds, "refreshOutcome");
     const asked = await drive(rendered, () => rendered.result.current.actions.run("update", "all", { confirmed: true }), "declined");
     expect(asked).toEqual([["global:s1:cursor"]]);
-    expect(calls("syncSkillsToTools")[0]![3]).toMatchObject({ overrides: [{ skill_id: "s1", tool: "cursor", decision: "keep" }] });
+    expect(calls("syncSkillsToTools")).toEqual([]);
+    expect(calls("resolveTargetCollisions")[0]![1]).toEqual([
+      { skill_id: "s1", tool: "cursor", path: "/tools/cursor/alpha", decision: "keep" },
+    ]);
     // Folded once, over the merged report.
     expect(spy).toHaveBeenCalledTimes(1);
     const [report, ctx] = spy.mock.calls[0]!;
@@ -1116,13 +1119,16 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     const skills = [skill("s1", "alpha", ["claude"])];
     backend(skills, {
       setSkillInvocationOverride: [{ report: { skill_id: "s1", skill_name: "alpha", propagation: { targets: [occupiedTarget("claude")] } }, skills }],
-      syncSkillsToTools: [[done("s1", "claude")]],
+      resolveTargetCollisions: [[done("s1", "claude")]],
     });
     const rendered = renderReal();
     await ready(rendered, skills);
     const asked = await drive(rendered, () => rendered.result.current.actions.run("editInvocation", [skills[0]!], { mode: "user-only" }), "confirmed");
     expect(asked).toEqual([["global:s1:claude"]]);
-    expect(calls("syncSkillsToTools")).toHaveLength(1);
+    expect(calls("syncSkillsToTools")).toEqual([]);
+    expect(calls("resolveTargetCollisions")[0]![1]).toEqual([
+      { skill_id: "s1", tool: "claude", path: "/tools/claude/alpha", decision: "overwrite" },
+    ]);
     expect(rendered.result.current.reporter.notifications.filter((row) => row.kind === "error")).toEqual([]);
   });
 
