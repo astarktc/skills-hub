@@ -98,3 +98,9 @@ previews "would move N" and runs as one redeploy action with a report.
     move: 1 move unfinished".
   - **Detail:** describe the uncertainty truthfully (the app couldn't verify another working Deployment, so it kept the
     move for retry), not "Nothing else serves the skill".
+- 2026-11-07 (orchestrator): carried over from the ticket 10 review, round 5.
+  - **Finding 15:** when the app's own exchange changes how an alias resolves, report the surviving leftovers by their
+    physical location rather than `Moved` with nothing left behind.
+  - **Finding 16:** staged Library links should be built from the verified physical Library location, so an alias
+    that passes through the destination can't become a link to itself. Retained entries that can't progress need an
+    actionable recovery.

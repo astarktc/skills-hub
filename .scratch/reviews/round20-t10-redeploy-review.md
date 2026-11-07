@@ -269,3 +269,48 @@ non-atomic swap". It is the ticket 09 pattern: patching an inference that keeps 
    Anything else is kept as `Unfinished` and retried. An absent or unreachable path never authorises forgetting an
    entry.
 3. **Finding 13** goes to ticket 12.
+
+---
+
+# Round 5 (Astra): fix pass 4 (`71cd484c`, delta from `3acc5a76`)
+
+- **Verdict:** **BLOCK** (finding 14).
+- **Closed:**
+  - replacement is now atomic only, and the unsupported case is refused before the occupant is touched;
+  - findings 7–12's non-atomic failure paths are closed;
+  - `no_replace.rs` is back to its pre-fix-pass-2 state, and install publication is unchanged.
+
+## Findings
+
+### 14. P1: recovery before the swap drops the journal without showing that anything serves the skill
+
+`settle_replacing`, at `redeploy.rs:1820–1831` (the drop is at `:1898–1900`), discards the staged copy whenever the
+occupant is unchanged.
+
+Reproduced:
+1. The old Mux copy was already gone before redeploy.
+2. The destination held an unrelated folder, and the operator answered Overwrite.
+3. The run was cut before the swap.
+4. Startup then removed the staged copy and dropped the journal: `old_serves=false dest_serves=false journal=0`.
+
+**Fix:** discard staging only on evidence that aborting leaves a working Deployment. Otherwise keep the staged copy and
+an `Unfinished` entry.
+
+### 15. P2 → ticket 12: finding 12's link-mode layout orphans both leftovers and reports `Moved`
+
+Nothing unsafe is deleted: the cleanup is refused with `CentralLibrary`, and Delete removes only the skill's own
+central copy. The report is still inaccurate.
+
+### 16. P2 → ticket 12: finding 11's Library alias becomes a link to itself after the exchange
+
+The journal is kept (two entries), so this doesn't meet the bar. But retries can't repair it, and the entry needs an
+actionable recovery. Staged Library links could use the verified physical Library location.
+
+**Gate:** passed (1,470 frontend tests; 1,204 Rust tests). CI is green.
+
+## Disposition (orchestrator, 2026-11-07)
+
+Fix pass 5 takes finding 14 only. Before the swap, recovery may discard staging only when the moved row's recorded
+old path serves the skill (`serves()` against the row's evidence). Otherwise the staged copy and the journal stay
+`Unfinished`. The orchestrator verifies this directly; given its size, it gets no further full review round. Findings
+15 and 16 go to ticket 12.
