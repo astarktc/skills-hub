@@ -47,3 +47,8 @@ treatment as a second row kind in the same ask.
     path.
   - **Sol N3:** a stale answer (`NOT_FOUND`) reads "the Deployment changed since you were asked, so your answer
     wasn't applied", never `target:<path>`.
+- 2026-11-07 (orchestrator): carried over from the ticket 10 review, round 1.
+  - **Sol 102:** readers of a copy left behind read as "still visible in …" unless a duplicate is proven. The backend
+    keeps old-copy readers separate from proven duplicate readers.
+  - **Sol 104 / Astra 4:** a move with both a folder in the way and an edited old copy asks both questions in one ask
+    for that one operator action.
