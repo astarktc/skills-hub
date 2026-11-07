@@ -354,8 +354,12 @@ pub struct RedeployJournalRecord {
     pub old_content_hash: Option<String>,
     pub new_path: String,
     pub new_entry: String,
-    /// `pending` (its removal is owed) or `edited` (an edited copy awaiting
-    /// the operator's answer).
+    /// `pending` (its removal is owed), `edited` (an edited copy awaiting
+    /// the operator's answer), `overwritten` (a folder the operator answered
+    /// Overwrite for, set aside: its removal is owed under that answer), or
+    /// `replacing` / `replacing_answered` (a staged replacement in progress:
+    /// `old_path` the destination's occupant, `new_path` the staged
+    /// artifact; `core::redeploy` owns the rule).
     pub state: String,
     pub created_at: i64,
 }
@@ -2180,17 +2184,22 @@ impl SkillStore {
     /// The redeploy's row switch (`core::redeploy`), in **one transaction**:
     /// delete the rows `absorbed` (collapsed into the survivor), rewrite the
     /// survivor `row_id` as `row` (its key, path and every lifecycle column),
-    /// and write the `journal` entries owed for the old artifacts. A crash
-    /// leaves either everything or nothing of it.
+    /// drop the journal entries `finished` (a staged replacement the switch
+    /// completes) and write the `journal` entries owed for the old
+    /// artifacts. A crash leaves either everything or nothing of it.
     pub fn switch_redeployed_rows(
         &self,
         row_id: &str,
         row: SwitchedRow<'_>,
         absorbed: &[&str],
+        finished: &[&str],
         journal: &[RedeployJournalRecord],
     ) -> Result<()> {
         self.with_conn(|conn| {
             let tx = conn.unchecked_transaction()?;
+            for id in finished {
+                tx.execute("DELETE FROM redeploy_journal WHERE id = ?1", params![id])?;
+            }
             for id in absorbed {
                 tx.execute("DELETE FROM skill_targets WHERE id = ?1", params![id])?;
             }
@@ -2251,6 +2260,13 @@ impl SkillStore {
             }
             Ok(items)
         })
+    }
+
+    /// Write one journal entry on its own: a staged replacement's record,
+    /// written before the occupant it replaces is moved aside
+    /// (`core::redeploy`).
+    pub fn insert_redeploy_journal_entry(&self, entry: &RedeployJournalRecord) -> Result<()> {
+        self.with_conn(|conn| insert_journal_entry(conn, entry))
     }
 
     /// Drop a settled journal entry.

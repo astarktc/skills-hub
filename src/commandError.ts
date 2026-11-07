@@ -108,6 +108,7 @@ const REMOVAL_REFUSAL_KEYS: Record<RemovalRefusal, string> = {
 const DESTINATION_REFUSAL_KEYS: Record<DestinationRefusal, string> = {
   inLibrary: "errors.destinationRefused.inLibrary",
   outsideSkillsFolder: "errors.destinationRefused.outsideSkillsFolder",
+  overlapsDeployment: "errors.destinationRefused.overlapsDeployment",
 };
 
 // Exhaustive over the generated reason union: a new refusal fails the build
@@ -213,7 +214,8 @@ export function describeCommandError(
       return t(REMOVAL_REFUSAL_KEYS[e.reason], { path: e.path, resolved: e.resolved });
     case "DESTINATION_REFUSED":
       // Refused before anything was written: the folder resolves into the
-      // Library, or outside the folder Skills Hub manages for the row.
+      // Library, outside the folder Skills Hub manages for the row, or into
+      // (or around) another Deployment.
       return t(DESTINATION_REFUSAL_KEYS[e.reason], { path: e.path, resolved: e.resolved });
     case "REMOVAL_PERMISSION_DENIED":
       // The OS refused for lack of permission: say what to check and that a

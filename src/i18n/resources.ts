@@ -254,6 +254,8 @@ export const resources = {
             "Did not write {{path}}: its folder leads into your Skills Hub library ({{resolved}}), so a deployment there would write into the library itself. Replace that link with a real folder, then try again.",
           outsideSkillsFolder:
             "Did not write {{path}}: its folder ({{resolved}}) is outside every skills folder Skills Hub manages for it. Use Move Deployments in Settings → Harnesses to deploy it where the harness reads skills.",
+          overlapsDeployment:
+            "Did not write {{path}}: a linked folder nests it with the deployment at {{resolved}}, so writing there would change or remove that deployment. Replace the link that nests them with a real folder, then move again.",
         },
         redeployPending:
           "Not deployed to {{tool}} here: its deployment at {{path}} waits to move to its new folder. Use Move Deployments in Settings → Harnesses.",
@@ -1919,7 +1921,14 @@ export const resources = {
             replaced: "Something else is at that place now, so it was left alone.",
             stale: "The new copy isn't the one Skills Hub wrote any more, so the old one may be the only copy. It was left alone.",
             removal_failed: "It could not be removed.",
+            holds_deployment:
+              "A deployment lies inside it through a linked folder, so removing it would remove that one too. It was left alone.",
           },
+          refused_one: "{{count}} answer no longer applied",
+          refused_other: "{{count}} answers no longer applied",
+          refusedTitle: "An answer about {{path}} no longer applies",
+          refusedMessage:
+            "What it answered changed since you were asked, so nothing was changed there. Move Deployments again to answer what is there now.",
           readers: "Shows twice in {{readers}}.",
           lostDisableTitle: "{{name}}: turned off for {{tool}} no longer holds",
           lostDisableMessage:

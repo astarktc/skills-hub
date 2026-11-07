@@ -2076,6 +2076,13 @@ export function createFixtureBackend(
     };
   };
 
+  /** Rust `redeploy`'s journal entry ids, as the fixture hands them out. */
+  let nextJournalEntry = 0;
+  const refusedAnswer = (path: string, id: string) => ({
+    path,
+    error: { code: "NOT_FOUND" as const, kind: "redeploy_question", id },
+  });
+
   /** Rust `redeploy::preview`: the moves still to make and the journal still owed. */
   const redeployPreview = (): RedeployPreview => {
     const harnesses: string[] = [];
@@ -2105,9 +2112,17 @@ export function createFixtureBackend(
     answers: RedeployAnswer[],
     onProgress: ProgressSink<RedeployProgress>,
   ): Promise<RedeployResultDto> => {
-    const report: RedeployReport = { moves: [], journal: [], left_behind: [], edited_copies: [], lost_disables: [] };
+    const report: RedeployReport = {
+      moves: [],
+      journal: [],
+      left_behind: [],
+      edited_copies: [],
+      lost_disables: [],
+      refused_answers: [],
+    };
     const nameOf = (skillId: string) => state.skills.find((s) => s.dto.id === skillId)?.dto.name ?? skillId;
     const editedCopy = (move: FixtureRedeployMove) => ({
+      entry_id: move.entryId ?? "",
       skill_id: move.skillId,
       skill_name: nameOf(move.skillId),
       tool: move.tool,
@@ -2121,11 +2136,19 @@ export function createFixtureBackend(
     for (const move of state.redeploy.awaiting) {
       emit(onProgress, { done: done++, total, name: nameOf(move.skillId) });
       await pause(120);
-      const answer = answers.find(
-        (a) => a.question === "edited_copy" && a.skill_id === move.skillId && a.tool === move.tool && a.path === move.from,
-      );
-      const entry = { skill_id: move.skillId, skill_name: nameOf(move.skillId), tool: move.tool, path: move.from };
-      if (!answer || answer.question !== "edited_copy") {
+      // An answer names its journal entry and the path it showed; one naming
+      // the entry with another path is refused (Rust `edited_answer`).
+      const named = answers.find((a) => a.question === "edited_copy" && a.entry_id === move.entryId);
+      const answer = named?.question === "edited_copy" && named.path === move.from ? named : undefined;
+      if (named && !answer) report.refused_answers.push(refusedAnswer(named.path, move.entryId ?? ""));
+      const entry = {
+        entry_id: move.entryId ?? "",
+        skill_id: move.skillId,
+        skill_name: nameOf(move.skillId),
+        tool: move.tool,
+        path: move.from,
+      };
+      if (!answer) {
         awaiting.push(move);
         report.journal.push({ ...entry, status: "awaiting_answer" });
         report.edited_copies.push(editedCopy(move));
@@ -2141,17 +2164,32 @@ export function createFixtureBackend(
       emit(onProgress, { done: done++, total, name: nameOf(move.skillId) });
       await pause(Math.max(20, Math.min(160, 2400 / Math.max(total, 1))));
       const skill = state.skills.find((s) => s.dto.id === move.skillId);
-      const answer = answers.find(
+      const rowId = `${move.skillId}:${move.tool}`;
+      const named = answers.find(
         (a) => a.question === "occupied" && a.skill_id === move.skillId && a.folder_key === move.folderKey,
       );
+      const answer = named?.question === "occupied" ? named : undefined;
       const base = {
         skill_id: move.skillId,
         skill_name: nameOf(move.skillId),
         folder_key: move.folderKey,
         path: move.to,
         cause: "correction" as const,
-        rows: [{ id: `${move.skillId}:${move.tool}`, tool: move.tool, from: move.from }],
+        rows: [{ id: rowId, tool: move.tool, from: move.from }],
       };
+      // An answer names the move's rows and the place it showed (Rust
+      // `execute`): another is stale, the move fails and nothing is touched.
+      if (answer && (answer.path !== move.to || answer.row_ids.join() !== rowId)) {
+        remaining.push(move);
+        report.moves.push({
+          ...base,
+          status: {
+            status: "failed",
+            error: { code: "NOT_FOUND", kind: "redeploy_question", id: answer.row_ids.join(",") },
+          },
+        });
+        continue;
+      }
       if (move.occupied && !answer) {
         remaining.push(move);
         report.moves.push({
@@ -2163,7 +2201,7 @@ export function createFixtureBackend(
         });
         continue;
       }
-      if (answer && answer.question === "occupied" && answer.decision === "keep") {
+      if (answer?.decision === "keep") {
         remaining.push(move);
         report.moves.push({ ...base, status: { status: "kept", reason: "declined" } });
         continue;
@@ -2175,11 +2213,25 @@ export function createFixtureBackend(
         target.synced_at = now();
       }
       if (move.edited) {
+        move.entryId = `journal-${(nextJournalEntry += 1)}`;
         awaiting.push(move);
         report.edited_copies.push(editedCopy(move));
         report.moves.push({ ...base, status: { status: "left_old", edited: true } });
       } else {
         report.moves.push({ ...base, status: { status: "moved" } });
+      }
+    }
+    // Answers naming no question this run asked (Rust
+    // `refuse_unasked_answers`).
+    for (const a of answers) {
+      if (a.question === "edited_copy" && !state.redeploy.awaiting.some((m) => m.entryId === a.entry_id)) {
+        report.refused_answers.push(refusedAnswer(a.path, a.entry_id));
+      }
+      if (
+        a.question === "occupied" &&
+        !state.redeploy.moves.some((m) => m.skillId === a.skill_id && m.folderKey === a.folder_key)
+      ) {
+        report.refused_answers.push(refusedAnswer(a.path, a.row_ids.join(",")));
       }
     }
     state.redeploy = { moves: remaining, awaiting };

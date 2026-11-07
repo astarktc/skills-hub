@@ -232,7 +232,14 @@ describe("Propagation rows (ticket 09 B2)", () => {
 // ---------------------------------------------------------------------------
 
 describe("the redeploy's ask", () => {
-  const EMPTY: RedeployReport = { moves: [], journal: [], left_behind: [], edited_copies: [], lost_disables: [] };
+  const EMPTY: RedeployReport = {
+    moves: [],
+    journal: [],
+    left_behind: [],
+    edited_copies: [],
+    lost_disables: [],
+    refused_answers: [],
+  };
   const move = (
     skill: string,
     status: RedeployReport["moves"][number]["status"],
@@ -256,7 +263,15 @@ describe("the redeploy's ask", () => {
       move("c", { status: "moved" }),
     ],
     edited_copies: [
-      { skill_id: "b", skill_name: "b", tool: "codex", path: "/h/.codex/skills/b", modified_at: 9, readers: ["codex"] },
+      {
+        entry_id: "e-b",
+        skill_id: "b",
+        skill_name: "b",
+        tool: "codex",
+        path: "/h/.codex/skills/b",
+        modified_at: 9,
+        readers: ["codex"],
+      },
     ],
   };
 
@@ -273,6 +288,7 @@ describe("the redeploy's ask", () => {
         sameContent: false,
         scope: { kind: "redeploy" },
         question: "occupied",
+        rowIds: ["r-a"],
       },
       {
         skillId: "b",
@@ -284,17 +300,25 @@ describe("the redeploy's ask", () => {
         sameContent: false,
         scope: { kind: "redeploy" },
         question: "editedCopy",
+        entryId: "e-b",
         readers: ["Codex"],
       },
     ]);
     expect(new Set(rows.map(overwriteRowKey)).size).toBe(2);
   });
 
-  it("answers each row at the path it showed: Overwrite/Keep, Delete/Leave", () => {
+  it("answers each row naming its question and the path it showed: Overwrite/Keep, Delete/Leave", () => {
     const rows = redeployAskRows(first, {});
     expect(redeployAnswers(rows, ["keep", "overwrite"])).toEqual([
-      { question: "occupied", skill_id: "a", folder_key: "agents_skills", path: "/h/.agents/skills/a", decision: "keep" },
-      { question: "edited_copy", skill_id: "b", tool: "codex", path: "/h/.codex/skills/b", decision: "delete" },
+      {
+        question: "occupied",
+        skill_id: "a",
+        folder_key: "agents_skills",
+        row_ids: ["r-a"],
+        path: "/h/.agents/skills/a",
+        decision: "keep",
+      },
+      { question: "edited_copy", entry_id: "e-b", path: "/h/.codex/skills/b", decision: "delete" },
     ]);
     expect(redeployAnswers(rows, ["overwrite", "keep"])[1]).toMatchObject({ decision: "leave" });
   });
@@ -303,7 +327,9 @@ describe("the redeploy's ask", () => {
     const retry: RedeployReport = {
       ...EMPTY,
       moves: [move("a", { status: "moved" })],
-      journal: [{ skill_id: "b", skill_name: "b", tool: "codex", path: "/h/.codex/skills/b", status: "finished" }],
+      journal: [
+        { entry_id: "e-b", skill_id: "b", skill_name: "b", tool: "codex", path: "/h/.codex/skills/b", status: "finished" },
+      ],
     };
     const merged = mergeRedeployRetry(first, retry);
     expect(merged.moves.map((m) => [m.skill_id, m.status.status])).toEqual([
@@ -318,7 +344,9 @@ describe("the redeploy's ask", () => {
   it("a left edited copy keeps its move left_old and joins what stays", () => {
     const retry: RedeployReport = {
       ...EMPTY,
-      journal: [{ skill_id: "b", skill_name: "b", tool: "codex", path: "/h/.codex/skills/b", status: "left_behind" }],
+      journal: [
+        { entry_id: "e-b", skill_id: "b", skill_name: "b", tool: "codex", path: "/h/.codex/skills/b", status: "left_behind" },
+      ],
       left_behind: [
         { skill_id: "b", skill_name: "b", tool: "codex", path: "/h/.codex/skills/b", reason: "edited", readers: [], error: null },
       ],
@@ -327,5 +355,27 @@ describe("the redeploy's ask", () => {
     expect(merged.moves[1].status).toEqual({ status: "left_old", edited: true });
     expect(merged.left_behind).toHaveLength(1);
     expect(merged.moves[0].status.status).toBe("failed");
+  });
+
+  it("two edited copies at one path are two questions, keyed by their journal entries", () => {
+    const twice: RedeployReport = {
+      ...EMPTY,
+      edited_copies: [first.edited_copies[0], { ...first.edited_copies[0], entry_id: "e-later" }],
+    };
+    const rows = redeployAskRows(twice, {});
+    expect(new Set(rows.map(overwriteRowKey)).size).toBe(2);
+    expect(redeployAnswers(rows, ["overwrite", "keep"]).map((a) => a.question === "edited_copy" && a.entry_id)).toEqual([
+      "e-b",
+      "e-later",
+    ]);
+  });
+
+  it("the merged report keeps the answers the retry refused as stale", () => {
+    const refused = {
+      path: "/h/.codex/skills/b",
+      error: { code: "NOT_FOUND" as const, kind: "redeploy_question", id: "e-b" },
+    };
+    const merged = mergeRedeployRetry(first, { ...EMPTY, refused_answers: [refused] });
+    expect(merged.refused_answers).toEqual([refused]);
   });
 });

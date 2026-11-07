@@ -407,6 +407,12 @@ pub enum DestinationRefusal {
     /// the row is managed in (a stored path pointing elsewhere, or an aliased
     /// folder on the way leading elsewhere).
     OutsideSkillsFolder,
+    /// The place written physically lies inside another live Deployment, or
+    /// the folder already there holds one (an aliased folder nests them):
+    /// writing or replacing it would change or remove that Deployment.
+    /// `resolved` names the Deployment in the way. Raised by the redeploy
+    /// (`core::redeploy`).
+    OverlapsDeployment,
 }
 
 /// Why Move Library folder refused a destination (the backend classifies;

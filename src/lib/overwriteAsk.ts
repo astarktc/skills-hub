@@ -50,6 +50,13 @@ export type OverwriteRow = {
    * wrote it (Delete = `overwrite`, Leave = `keep`). Absent: occupied.
    */
   question?: "occupied" | "editedCopy";
+  /**
+   * Which question it is (redeploy only), as the backend asked it and an
+   * answer must name it back: an occupied move's rows (`RedeployMove.rows`
+   * ids), an edited copy's journal entry (`EditedCopy.entry_id`).
+   */
+  rowIds?: readonly string[];
+  entryId?: string;
   /** The harnesses that show a left edited copy twice (labels). */
   readers?: string[];
 };
@@ -62,7 +69,9 @@ export const overwriteRowKey = (row: OverwriteRow): string =>
   row.scope.kind === "project"
     ? `project\n${row.scope.projectId}\n${row.skillId}\n${row.toolKey}`
     : row.scope.kind === "redeploy"
-      ? `redeploy\n${row.question ?? "occupied"}\n${row.skillId}\n${row.toolKey}\n${row.path}`
+      ? row.question === "editedCopy"
+        ? `redeploy\neditedCopy\n${row.entryId ?? ""}`
+        : `redeploy\noccupied\n${row.skillId}\n${row.toolKey}\n${row.path}`
       : `global\n${row.skillId}\n${row.toolKey}`;
 
 type Labels = Readonly<Record<string, string>>;
@@ -389,6 +398,7 @@ export function redeployAskRows(report: RedeployReport, toolLabelById: Labels): 
       ...facts(error),
       scope: { kind: "redeploy" },
       question: "occupied",
+      rowIds: move.rows.map((row) => row.id),
     });
   }
   for (const copy of report.edited_copies) {
@@ -402,13 +412,18 @@ export function redeployAskRows(report: RedeployReport, toolLabelById: Labels): 
       sameContent: false,
       scope: { kind: "redeploy" },
       question: "editedCopy",
+      entryId: copy.entry_id,
       readers: copy.readers.map(label),
     });
   }
   return rows;
 }
 
-/** The answers for the asked redeploy rows, each naming the path it showed. */
+/**
+ * The answers for the asked redeploy rows, each naming exactly the question
+ * it answers — the move's rows or the edited copy's journal entry — and the
+ * path it showed; the backend refuses one whose question changed since.
+ */
 export function redeployAnswers(
   rows: readonly OverwriteRow[],
   choices: readonly OverwriteChoice[],
@@ -420,8 +435,7 @@ export function redeployAnswers(
       ? [
           {
             question: "edited_copy",
-            skill_id: row.skillId,
-            tool: row.toolKey,
+            entry_id: row.entryId ?? "",
             path: row.path,
             decision: choice === "overwrite" ? "delete" : "leave",
           },
@@ -431,6 +445,7 @@ export function redeployAnswers(
             question: "occupied",
             skill_id: row.skillId,
             folder_key: row.toolKey,
+            row_ids: [...(row.rowIds ?? [])],
             path: row.path,
             decision: choice,
           },
@@ -445,8 +460,8 @@ const moveKey = (move: Pick<RedeployMove, "skill_id" | "folder_key">) => `${move
  * asked move replaced by the retry's move for it; an edited copy the retry
  * settled no longer awaits, and its move reads `moved` once the copy was
  * deleted (`left_old` when it was left); everything else the retry found
- * (its journal, left-behind copies, lost disables, copies still awaiting)
- * joins the report.
+ * (its journal, left-behind copies, lost disables, copies still awaiting,
+ * answers it refused as stale) joins the report.
  */
 export function mergeRedeployRetry(first: RedeployReport, retry: RedeployReport): RedeployReport {
   const retried = new Map(retry.moves.map((move) => [moveKey(move), move]));
@@ -471,5 +486,6 @@ export function mergeRedeployRetry(first: RedeployReport, retry: RedeployReport)
     left_behind: [...first.left_behind, ...retry.left_behind],
     edited_copies: retry.edited_copies,
     lost_disables: [...first.lost_disables, ...retry.lost_disables],
+    refused_answers: [...first.refused_answers, ...retry.refused_answers],
   };
 }

@@ -423,10 +423,13 @@ fn a_different_folder_at_the_new_place_is_asked_about() {
     assert!(f.row("codex").is_some(), "the row is unchanged");
 }
 
+/// The answer the ask raised for Codex's move: its one row and the place
+/// it showed.
 fn occupied(f: &Fixture, decision: OverrideDecision) -> RedeployAnswer {
     RedeployAnswer::Occupied {
         skill_id: "alpha".into(),
         folder_key: "agents_skills".into(),
+        row_ids: vec!["row-codex".into()],
         path: f.at(".agents/skills/alpha").to_string_lossy().into_owned(),
         decision,
     }
@@ -466,11 +469,18 @@ fn overwrite_replaces_the_folder_in_the_way() {
     let report = f.run(&[occupied(&f, OverrideDecision::Overwrite)]);
 
     assert!(matches!(only_move(&report).status, RedeployStatus::Moved));
+    assert!(report.refused_answers.is_empty(), "{report:#?}");
     assert_eq!(
         fs::read_link(f.at(".agents/skills/alpha")).unwrap(),
         f.central
     );
     assert!(!present(&old));
+    assert_eq!(
+        fs::read_dir(f.at(".agents/skills")).unwrap().count(),
+        1,
+        "the folder in the way is gone, nothing staged is left"
+    );
+    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
 }
 
 /// An answer applies to the path its ask showed, and only there.
@@ -484,6 +494,7 @@ fn an_answer_naming_another_path_is_stale_and_touches_nothing() {
     let report = f.run(&[RedeployAnswer::Occupied {
         skill_id: "alpha".into(),
         folder_key: "agents_skills".into(),
+        row_ids: vec!["row-codex".into()],
         path: f.at("elsewhere/alpha").to_string_lossy().into_owned(),
         decision: OverrideDecision::Overwrite,
     }]);
@@ -534,10 +545,13 @@ fn an_edited_old_copy_is_asked_about_and_kept_until_answered() {
     assert_eq!(f.preview().journal, 1, "the line keeps it");
 }
 
+/// The answer to the one edited copy awaiting it: its journal entry and the
+/// path the ask showed.
 fn edited_answer(f: &Fixture, decision: EditedCopyDecision) -> RedeployAnswer {
+    let journal = f.store.list_redeploy_journal().unwrap();
+    assert_eq!(journal.len(), 1, "one copy awaits");
     RedeployAnswer::EditedCopy {
-        skill_id: "alpha".into(),
-        tool: "codex".into(),
+        entry_id: journal[0].id.clone(),
         path: f.at(".codex/skills/alpha").to_string_lossy().into_owned(),
         decision,
     }
@@ -551,6 +565,7 @@ fn delete_removes_the_edited_copy() {
 
     let report = f.run(&[edited_answer(&f, EditedCopyDecision::Delete)]);
 
+    assert!(report.refused_answers.is_empty(), "{report:#?}");
     assert_eq!(report.journal.len(), 1);
     assert_eq!(report.journal[0].status, JournalStatus::Finished);
     assert!(!present(&old));
@@ -584,14 +599,111 @@ fn an_edited_copy_answer_naming_another_path_deletes_nothing() {
     f.run(&[]);
 
     let report = f.run(&[RedeployAnswer::EditedCopy {
-        skill_id: "alpha".into(),
-        tool: "codex".into(),
+        entry_id: f.store.list_redeploy_journal().unwrap()[0].id.clone(),
         path: f.at(".codex/skills/other").to_string_lossy().into_owned(),
         decision: EditedCopyDecision::Delete,
     }]);
 
     assert_eq!(report.journal[0].status, JournalStatus::AwaitingAnswer);
     assert!(old.join("local.txt").is_file());
+    assert_eq!(report.refused_answers.len(), 1, "{report:#?}");
+    assert!(matches!(
+        &report.refused_answers[0].error,
+        CommandError::NotFound { kind, .. } if kind == "redeploy_question"
+    ));
+}
+
+/// Astra round 1, finding 2 (answer identity): an Overwrite answered for one
+/// row never reaches a row recreated since at the same skill, folder and
+/// place — the question it answered is gone. Refused, nothing touched.
+#[cfg(unix)]
+#[test]
+fn an_overwrite_for_a_row_recreated_since_is_refused() {
+    let f = agents_fixture(&["codex"]);
+    let old = f.link_row("codex", ".codex/skills/alpha");
+    let foreign = foreign_at(&f, ".agents/skills/alpha");
+    let asked = f.run(&[]);
+    assert_eq!(only_move(&asked).rows[0].id, "row-codex");
+    // The row is deleted and recreated (same skill, key and place).
+    f.store.delete_skill_target("alpha", "codex").unwrap();
+    let mut recreated = f.store.list_skill_targets("alpha").unwrap();
+    assert!(recreated.is_empty());
+    recreated.push(SkillTargetRecord {
+        id: "replacement-row".into(),
+        skill_id: "alpha".into(),
+        tool: "codex".into(),
+        target_path: old.to_string_lossy().into_owned(),
+        mode: SyncMode::Symlink,
+        status: SyncStatus::Synced,
+        last_error: None,
+        synced_at: Some(2),
+        content_hash: None,
+    });
+    f.store.upsert_skill_target(&recreated[0]).unwrap();
+
+    let report = f.run(&[occupied(&f, OverrideDecision::Overwrite)]);
+
+    assert!(
+        matches!(
+            &only_move(&report).status,
+            RedeployStatus::Failed {
+                error: CommandError::NotFound { kind, .. }
+            } if kind == "redeploy_question"
+        ),
+        "{report:#?}"
+    );
+    assert_eq!(
+        fs::read_to_string(foreign.join("SKILL.md")).unwrap(),
+        "someone else's",
+        "the folder in the way is untouched"
+    );
+    assert!(present(&old));
+    assert_eq!(f.row("codex").unwrap().id, "replacement-row");
+    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+}
+
+/// Astra round 1, finding 2 (answer identity): a Delete answered for one
+/// journal entry never deletes a later entry's copy at the same key and
+/// path. The later copy is asked about again; the answer is refused.
+#[test]
+fn an_old_delete_answer_never_deletes_a_later_entrys_copy() {
+    let f = agents_fixture(&["codex"]);
+    let old = edited_copy(&f);
+    f.run(&[]);
+    let first = edited_answer(&f, EditedCopyDecision::Delete);
+    // Leave settles that entry; then the harness's old folder holds another
+    // edited copy, recorded again, and the next run journals it anew.
+    f.run(&[edited_answer(&f, EditedCopyDecision::Leave)]);
+    fs::write(old.join("local.txt"), "edited again").unwrap();
+    f.store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "row-codex-again".into(),
+            skill_id: "alpha".into(),
+            tool: "codex".into(),
+            target_path: old.to_string_lossy().into_owned(),
+            mode: SyncMode::Copy,
+            status: SyncStatus::Synced,
+            last_error: None,
+            synced_at: Some(2),
+            content_hash: content_identity::read(Source::Directory(&f.central)),
+        })
+        .unwrap();
+    let report = f.run(&[]);
+    assert_eq!(report.edited_copies.len(), 1, "{report:#?}");
+    let later = report.edited_copies[0].entry_id.clone();
+    assert_eq!(Path::new(&report.edited_copies[0].path), old);
+
+    let report = f.run(&[first]);
+
+    assert_eq!(report.journal.len(), 1);
+    assert_eq!(report.journal[0].entry_id, later);
+    assert_eq!(report.journal[0].status, JournalStatus::AwaitingAnswer);
+    assert_eq!(report.refused_answers.len(), 1, "{report:#?}");
+    assert_eq!(
+        fs::read_to_string(old.join("local.txt")).unwrap(),
+        "edited again",
+        "the later copy is untouched"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -999,6 +1111,432 @@ fn f14_a_missing_old_artifact_with_a_foreign_destination_is_not_reported_synced(
     );
 }
 
+/// F14 (nested alias; Astra round 1, finding 1): `~/.kilo/skills` is an alias
+/// of the old copy `~/.kilocode/skills/alpha` itself, so the new place would
+/// lie inside the old Deployment — and removing the old copy would take the
+/// new one with it. The move is refused before anything is written, never
+/// reported moved; the old copy, its bytes and its row survive.
+#[cfg(unix)]
+#[test]
+fn f14_a_new_folder_aliased_into_the_old_copy_is_refused() {
+    let f = fixture(&["kilo_code"]);
+    let old = f.copy_row("kilo_code", ".kilocode/skills/alpha");
+    fs::create_dir_all(f.at(".kilo")).unwrap();
+    link(&old, &f.at(".kilo/skills"));
+
+    let report = f.run(&[]);
+
+    assert!(
+        matches!(
+            &only_move(&report).status,
+            RedeployStatus::Failed {
+                error: CommandError::DestinationRefused {
+                    reason: DestinationRefusal::OverlapsDeployment,
+                    resolved,
+                    ..
+                }
+            } if Path::new(resolved) == old
+        ),
+        "{report:#?}"
+    );
+    assert_eq!(fs::read_to_string(old.join("a.txt")).unwrap(), "v1");
+    assert!(!present(&old.join("alpha")), "nothing written inside it");
+    let row = f.row("kilo_code").unwrap();
+    assert_eq!(Path::new(&row.target_path), old);
+    assert_eq!(row.status, SyncStatus::Synced);
+    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+    assert_eq!(f.preview().global.correction, 1, "still pending");
+}
+
+/// Lays the Kilo nesting out after a crash left its journal entry: the new
+/// Deployment (moved, keeping its identity) now lies inside the old copy,
+/// reached through `~/.kilo/skills` aliased onto it.
+#[cfg(unix)]
+fn nest_the_new_kilo_deployment_in_the_old_copy(f: &Fixture, old: &Path) -> PathBuf {
+    let new = f.at(".kilo/skills/alpha");
+    fs::rename(&new, old.join("alpha")).unwrap();
+    fs::remove_dir(f.at(".kilo/skills")).unwrap();
+    link(old, &f.at(".kilo/skills"));
+    assert_eq!(
+        fs::read_link(&new).unwrap(),
+        f.central,
+        "reached through it"
+    );
+    new
+}
+
+/// F14 (nested alias) at cleanup: the journal finish never removes an old
+/// copy the journaled new Deployment lies inside. Both survive; the old copy
+/// is reported left behind (`holds_deployment`), never finished.
+#[cfg(unix)]
+#[test]
+fn f14_the_journal_finish_keeps_an_old_copy_holding_the_new_deployment() {
+    let f = fixture(&["kilo_code"]);
+    let old = f.copy_row("kilo_code", ".kilocode/skills/alpha");
+    crash(&f, test_seams::crash_after_switch);
+    let new = nest_the_new_kilo_deployment_in_the_old_copy(&f, &old);
+
+    let report = finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
+        .unwrap()
+        .expect("settled");
+
+    assert_eq!(report.journal[0].status, JournalStatus::LeftBehind);
+    assert_eq!(
+        report.left_behind[0].reason,
+        RedeployLeftReason::HoldsDeployment
+    );
+    assert!(present(&new), "the new Deployment survives");
+    assert_eq!(fs::read_to_string(old.join("a.txt")).unwrap(), "v1");
+    assert_eq!(
+        Path::new(&f.row("kilo_code").unwrap().target_path),
+        new,
+        "the row still records it"
+    );
+}
+
+/// F14 (nested alias) for an answered Delete: an edited old copy the new
+/// Deployment came to lie inside is kept even though the operator answered
+/// Delete for it — the answer never reaches another Deployment.
+#[cfg(unix)]
+#[test]
+fn f14_an_answered_delete_keeps_an_old_copy_holding_the_new_deployment() {
+    let f = fixture(&["kilo_code"]);
+    let old = f.copy_row("kilo_code", ".kilocode/skills/alpha");
+    fs::write(old.join("local.txt"), "only here").unwrap();
+    let report = f.run(&[]);
+    assert_eq!(report.edited_copies.len(), 1, "{report:#?}");
+    let asked = &report.edited_copies[0];
+    let answer = RedeployAnswer::EditedCopy {
+        entry_id: asked.entry_id.clone(),
+        path: asked.path.clone(),
+        decision: EditedCopyDecision::Delete,
+    };
+    let new = nest_the_new_kilo_deployment_in_the_old_copy(&f, &old);
+
+    let report = f.run(&[answer]);
+
+    assert_eq!(report.journal[0].status, JournalStatus::LeftBehind);
+    assert_eq!(
+        report.left_behind[0].reason,
+        RedeployLeftReason::HoldsDeployment
+    );
+    assert!(present(&new), "the new Deployment survives");
+    assert_eq!(
+        fs::read_to_string(old.join("local.txt")).unwrap(),
+        "only here"
+    );
+}
+
+/// F14 (nested alias, the other way): the old copy lies inside the folder at
+/// the new place (`~/.kilocode/skills` aliased into it). Even an Overwrite
+/// answer for that folder is refused before anything is touched — replacing
+/// it would remove the old Deployment.
+#[cfg(unix)]
+#[test]
+fn f14_a_destination_holding_the_old_copy_is_refused_even_on_overwrite() {
+    let f = fixture(&["kilo_code"]);
+    let holder = f.at(".kilo/skills/alpha");
+    fs::create_dir_all(&holder).unwrap();
+    fs::remove_dir_all(f.at(".kilocode/skills")).ok();
+    link(&holder, &f.at(".kilocode/skills"));
+    let old = f.copy_row("kilo_code", ".kilocode/skills/alpha");
+    assert!(holder.join("alpha/a.txt").is_file());
+
+    let report = f.run(&[RedeployAnswer::Occupied {
+        skill_id: "alpha".into(),
+        folder_key: "kilo_code".into(),
+        row_ids: vec!["row-kilo_code".into()],
+        path: holder.to_string_lossy().into_owned(),
+        decision: OverrideDecision::Overwrite,
+    }]);
+
+    assert!(
+        matches!(
+            &only_move(&report).status,
+            RedeployStatus::Failed {
+                error: CommandError::DestinationRefused {
+                    reason: DestinationRefusal::OverlapsDeployment,
+                    ..
+                }
+            }
+        ),
+        "{report:#?}"
+    );
+    assert_eq!(fs::read_to_string(old.join("a.txt")).unwrap(), "v1");
+    assert_eq!(Path::new(&f.row("kilo_code").unwrap().target_path), old);
+}
+
+// ---------------------------------------------------------------------------
+// Non-destructive adoption and the staged replacement (Astra round 1,
+// finding 3)
+// ---------------------------------------------------------------------------
+
+/// The physical identity of the entry at `path`.
+#[cfg(unix)]
+fn inode(path: &Path) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    fs::symlink_metadata(path).unwrap().ino()
+}
+
+/// Astra's reproduction: the old recorded copy is gone and an identical copy
+/// sits at the new place. It is adopted as it is — never removed and
+/// re-created — so an interruption right after the destination step leaves
+/// it in place, and the next run records it.
+#[cfg(unix)]
+#[test]
+fn an_identical_copy_at_the_new_place_is_adopted_where_it_is() {
+    let f = agents_fixture(&["codex"]);
+    let old = f.copy_row("codex", ".codex/skills/alpha");
+    fs::remove_dir_all(&old).unwrap();
+    let new = f.at(".agents/skills/alpha");
+    copy_of(&f.central, &new);
+    let identity = inode(&new);
+
+    crash(&f, test_seams::crash_before_switch);
+    assert_eq!(inode(&new), identity, "untouched by the interrupted run");
+    assert!(new.join("a.txt").is_file());
+
+    let report = f.run(&[]);
+
+    assert!(
+        matches!(only_move(&report).status, RedeployStatus::Adopted),
+        "{report:#?}"
+    );
+    assert_eq!(inode(&new), identity, "recorded as it is");
+    let row = f.row("agents_skills").unwrap();
+    assert_eq!(Path::new(&row.target_path), new);
+    assert_eq!(row.mode, SyncMode::Copy);
+    assert_eq!(
+        row.content_hash,
+        content_identity::read(Source::Directory(&f.central))
+    );
+}
+
+/// Deep Agents Code takes copies only: a legacy link row at its place is
+/// ours in the wrong mode, so the move is a genuine replacement.
+#[cfg(unix)]
+fn deep_agents_link(f: &Fixture) -> PathBuf {
+    f.link_row("deep_agents_code", ".deepagents/agent/skills/alpha")
+}
+
+/// What the Deep Agents folder holds besides the skill (stage leftovers).
+#[cfg(unix)]
+fn deep_agents_extras(f: &Fixture) -> Vec<String> {
+    fs::read_dir(f.at(".deepagents/agent/skills"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name != "alpha")
+        .collect()
+}
+
+#[cfg(unix)]
+fn assert_deep_agents_copy(f: &Fixture, dest: &Path) {
+    let meta = fs::symlink_metadata(dest).unwrap();
+    assert!(meta.is_dir() && !meta.file_type().is_symlink(), "a copy");
+    assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "v1");
+    assert!(
+        deep_agents_extras(f).is_empty(),
+        "{:?}",
+        deep_agents_extras(f)
+    );
+}
+
+/// The replacement completes: the link becomes a copy, nothing staged stays.
+#[cfg(unix)]
+#[test]
+fn a_link_where_copies_are_taken_is_replaced_by_a_copy() {
+    let f = fixture(&["deep_agents_code"]);
+    let dest = deep_agents_link(&f);
+
+    let report = f.run(&[]);
+
+    assert!(matches!(only_move(&report).status, RedeployStatus::Moved));
+    assert_deep_agents_copy(&f, &dest);
+    let row = f.row("deep_agents_code").unwrap();
+    assert_eq!(row.mode, SyncMode::Copy);
+    assert!(row.content_hash.is_some());
+    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+    assert_eq!(f.preview(), RedeployPreview::default());
+}
+
+/// Interrupted before the occupant moves: the link still serves; the launch
+/// check drops what was staged, and the next run completes the move.
+#[cfg(unix)]
+#[test]
+fn a_replacement_interrupted_before_the_swap_keeps_the_link_and_completes() {
+    let f = fixture(&["deep_agents_code"]);
+    let dest = deep_agents_link(&f);
+    crash(&f, test_seams::crash_before_set_aside);
+    assert_eq!(fs::read_link(&dest).unwrap(), f.central, "still deployed");
+    assert_eq!(f.preview().journal, 1);
+
+    let finished = finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
+        .unwrap()
+        .expect("settled");
+    assert_eq!(finished.journal[0].status, JournalStatus::Finished);
+    assert_eq!(fs::read_link(&dest).unwrap(), f.central);
+    assert!(deep_agents_extras(&f).is_empty());
+
+    assert!(matches!(
+        only_move(&f.run(&[])).status,
+        RedeployStatus::Moved
+    ));
+    assert_deep_agents_copy(&f, &dest);
+}
+
+/// Interrupted right after the swap (an atomic exchange, or the second of
+/// two renames): the new copy is in place, the old link beside it. The launch
+/// check removes the link; the next run records the copy as it is.
+#[cfg(unix)]
+#[test]
+fn a_replacement_interrupted_after_the_swap_keeps_the_copy_and_completes() {
+    for two_step in [false, true] {
+        let f = fixture(&["deep_agents_code"]);
+        let dest = deep_agents_link(&f);
+        if two_step {
+            test_seams::force_two_step_swap();
+        }
+        crash(&f, test_seams::crash_after_swap);
+        assert!(dest.join("a.txt").is_file(), "deployed in the new place");
+        assert!(!fs::symlink_metadata(&dest)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+
+        finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
+            .unwrap()
+            .expect("settled");
+        assert_deep_agents_copy(&f, &dest);
+
+        assert!(matches!(
+            only_move(&f.run(&[])).status,
+            RedeployStatus::Adopted
+        ));
+        assert_eq!(f.row("deep_agents_code").unwrap().mode, SyncMode::Copy);
+        assert_eq!(f.preview(), RedeployPreview::default());
+    }
+}
+
+/// Interrupted between two renames (no atomic exchange: Windows, some file
+/// systems): nothing is at the new place for that instant, the copy is
+/// staged beside it. The launch check moves it in.
+#[cfg(unix)]
+#[test]
+fn a_replacement_interrupted_between_two_renames_is_moved_in_at_launch() {
+    let f = fixture(&["deep_agents_code"]);
+    let dest = deep_agents_link(&f);
+    test_seams::force_two_step_swap();
+    crash(&f, test_seams::crash_between_swap_renames);
+    assert!(!present(&dest));
+    assert_eq!(deep_agents_extras(&f).len(), 2, "staged copy and the link");
+
+    let finished = finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
+        .unwrap()
+        .expect("settled");
+
+    assert_eq!(finished.journal[0].status, JournalStatus::Finished);
+    assert_deep_agents_copy(&f, &dest);
+    assert!(matches!(
+        only_move(&f.run(&[])).status,
+        RedeployStatus::Adopted
+    ));
+}
+
+/// An Overwrite over a folder in the way is staged the same way: interrupted
+/// after the swap, the launch check removes that folder under the answer.
+#[cfg(unix)]
+#[test]
+fn an_overwrite_interrupted_after_the_swap_is_finished_under_the_answer() {
+    let f = agents_fixture(&["codex"]);
+    let old = f.link_row("codex", ".codex/skills/alpha");
+    foreign_at(&f, ".agents/skills/alpha");
+    test_seams::crash_after_swap();
+    let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        redeploy_unlocked(
+            &f.store,
+            &f.roots,
+            &f.central_dir(),
+            &PlacementSettings::default(),
+            &[occupied(&f, OverrideDecision::Overwrite)],
+            NOW,
+            |_| {},
+        )
+    }))
+    .is_err();
+    assert!(crashed);
+    assert_eq!(
+        fs::read_link(f.at(".agents/skills/alpha")).unwrap(),
+        f.central
+    );
+    assert!(present(&old), "the old link still serves too");
+
+    finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
+        .unwrap()
+        .expect("settled");
+
+    assert_eq!(
+        fs::read_dir(f.at(".agents/skills")).unwrap().count(),
+        1,
+        "the folder answered Overwrite for is gone"
+    );
+    let report = f.run(&[]);
+    assert!(matches!(only_move(&report).status, RedeployStatus::Adopted));
+    assert!(!present(&old));
+}
+
+/// Every platform (Windows has no atomic exchange, so its swap is always the
+/// two renames): an Overwrite cut between the two renames leaves the skill
+/// staged beside an empty place; the launch check moves it in and removes
+/// the folder answered Overwrite for, and the next run records it.
+#[test]
+fn an_overwrite_cut_between_two_renames_is_finished_at_launch() {
+    let f = fixture(&["mux"]);
+    let old = f.copy_row("mux", ".mux/skills/alpha");
+    let dest = foreign_at(&f, ".xum/skills/alpha");
+    let answer = RedeployAnswer::Occupied {
+        skill_id: "alpha".into(),
+        folder_key: "mux".into(),
+        row_ids: vec!["row-mux".into()],
+        path: dest.to_string_lossy().into_owned(),
+        decision: OverrideDecision::Overwrite,
+    };
+    test_seams::force_two_step_swap();
+    test_seams::crash_between_swap_renames();
+    let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        redeploy_unlocked(
+            &f.store,
+            &f.roots,
+            &f.central_dir(),
+            &PlacementSettings::default(),
+            std::slice::from_ref(&answer),
+            NOW,
+            |_| {},
+        )
+    }))
+    .is_err();
+    assert!(crashed);
+    assert!(!present(&dest), "cut between the renames");
+    assert!(old.join("a.txt").is_file(), "the old copy still serves");
+
+    finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
+        .unwrap()
+        .expect("settled");
+
+    assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "v1");
+    assert_eq!(
+        fs::read_dir(f.at(".xum/skills")).unwrap().count(),
+        1,
+        "the folder answered Overwrite for is gone, nothing staged is left"
+    );
+    let report = f.run(&[]);
+    assert!(
+        matches!(only_move(&report).status, RedeployStatus::Adopted),
+        "{report:#?}"
+    );
+    assert!(!present(&old));
+    assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+}
+
 /// F15 (destination aliased onto the central repo): the folder serving Codex
 /// is an alias of the Library. The deploy is refused before anything is
 /// written; the central bytes and the old link survive.
@@ -1033,8 +1571,9 @@ fn f15_a_destination_aliased_onto_the_central_repo_is_refused() {
 
 /// F15 (the old root aliased onto the central repo): Codex's old folder is an
 /// alias of the Library, so its "old copy" is the central copy itself. The
-/// move completes, and the removal is refused by the fence: the central
-/// bytes survive, reported left behind.
+/// move completes, and the old copy is kept: the new link resolves into it
+/// (`holds_deployment`, checked first), and the removal fence would refuse it
+/// anyway. The central bytes survive, reported left behind.
 #[cfg(unix)]
 #[test]
 fn f15_an_old_root_aliased_onto_the_central_repo_never_loses_central_bytes() {
@@ -1050,12 +1589,8 @@ fn f15_an_old_root_aliased_onto_the_central_repo_never_loses_central_bytes() {
     assert_eq!(report.left_behind.len(), 1, "{report:#?}");
     assert_eq!(
         report.left_behind[0].reason,
-        RedeployLeftReason::RemovalFailed
+        RedeployLeftReason::HoldsDeployment
     );
-    assert!(matches!(
-        report.left_behind[0].error,
-        Some(CommandError::RemovalRefused { .. })
-    ));
     assert_eq!(
         fs::read_link(f.at(".agents/skills/alpha")).unwrap(),
         f.central

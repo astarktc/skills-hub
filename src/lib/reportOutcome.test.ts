@@ -3153,7 +3153,14 @@ describe("per-Deployment folds of the per-row reports (round 4)", () => {
 // ---------------------------------------------------------------------------
 
 describe("redeployOutcome", () => {
-  const EMPTY: RedeployReport = { moves: [], journal: [], left_behind: [], edited_copies: [], lost_disables: [] };
+  const EMPTY: RedeployReport = {
+    moves: [],
+    journal: [],
+    left_behind: [],
+    edited_copies: [],
+    lost_disables: [],
+    refused_answers: [],
+  };
   const move = (
     skill: string,
     status: RedeployReport["moves"][number]["status"],
@@ -3220,7 +3227,15 @@ describe("redeployOutcome", () => {
           move("b", { status: "left_old", edited: true }),
         ],
         edited_copies: [
-          { skill_id: "b", skill_name: "b", tool: "codex", path: "/h/.codex/skills/b", modified_at: null, readers: ["codex", "cursor"] },
+          {
+            entry_id: "e-b",
+            skill_id: "b",
+            skill_name: "b",
+            tool: "codex",
+            path: "/h/.codex/skills/b",
+            modified_at: null,
+            readers: ["codex", "cursor"],
+          },
         ],
       },
       { ...en(), toolLabelById: { codex: "Codex", cursor: "Cursor" } },
@@ -3291,12 +3306,50 @@ describe("redeployOutcome", () => {
     const outcome = redeployOutcome(
       {
         ...EMPTY,
-        journal: [{ skill_id: "a", skill_name: "a", tool: "codex", path: "/h/.codex/skills/a", status: "finished" }],
+        journal: [
+          { entry_id: "e-a", skill_id: "a", skill_name: "a", tool: "codex", path: "/h/.codex/skills/a", status: "finished" },
+        ],
       },
       en(),
       { resumed: true },
     );
     expect(outcome.toast?.message).toBe("Finished an interrupted move: 1 old copy removed");
+  });
+
+  it("an answer refused as stale is an error, and the headline counts it", () => {
+    const outcome = redeployOutcome(
+      {
+        ...EMPTY,
+        refused_answers: [
+          { path: "/h/.codex/skills/a", error: { code: "NOT_FOUND", kind: "redeploy_question", id: "e-a" } },
+        ],
+      },
+      en(),
+    );
+    expect(outcome.toast).toMatchObject({ tone: "failure", message: "1 answer no longer applied" });
+    expect(outcome.errors.map((e) => e.title)).toEqual(["An answer about /h/.codex/skills/a no longer applies"]);
+  });
+
+  it("an old copy holding a Deployment is a warning saying why it stays", () => {
+    const outcome = redeployOutcome(
+      {
+        ...EMPTY,
+        left_behind: [
+          {
+            skill_id: "a",
+            skill_name: "a",
+            tool: "kilo_code",
+            path: "/h/.kilocode/skills/a",
+            reason: "holds_deployment",
+            readers: [],
+            error: null,
+          },
+        ],
+      },
+      en(),
+    );
+    expect(outcome.warnings[0].message).toContain("A deployment lies inside it");
+    expect(outcome.errors).toEqual([]);
   });
 
   it("every left-behind reason has English copy", () => {

@@ -150,6 +150,8 @@ export type FixtureRedeployMove = {
   occupied?: boolean;
   /** The old copy was edited after Skills Hub wrote it: asked, never removed silently. */
   edited?: boolean;
+  /** The journal entry that asks about the edited old copy, once the move journaled it. */
+  entryId?: string;
 };
 
 /** The redeploy's pending work: moves still to make, edited copies awaiting an answer. */

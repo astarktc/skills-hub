@@ -59,6 +59,7 @@ const EMPTY_REPORT: RedeployReport = {
   left_behind: [],
   edited_copies: [],
   lost_disables: [],
+  refused_answers: [],
 };
 
 const move = (skill: string, status: RedeployReport["moves"][number]["status"]) => ({
@@ -84,6 +85,7 @@ const ASKING: RedeployResultDto = {
     ],
     edited_copies: [
       {
+        entry_id: "entry-beta",
         skill_id: "beta",
         skill_name: "beta",
         tool: "codex",
@@ -102,7 +104,14 @@ const ANSWERED: RedeployResultDto = {
     ...EMPTY_REPORT,
     moves: [move("alpha", { status: "moved" })],
     journal: [
-      { skill_id: "beta", skill_name: "beta", tool: "codex", path: "/home/op/.codex/skills/beta", status: "finished" },
+      {
+        entry_id: "entry-beta",
+        skill_id: "beta",
+        skill_name: "beta",
+        tool: "codex",
+        path: "/home/op/.codex/skills/beta",
+        status: "finished",
+      },
     ],
   },
   skills: [],
@@ -216,7 +225,7 @@ describe("useRedeploy launch check", () => {
   it("records the journal the launch check finished as a background run", async () => {
     const finished: RedeployReport = {
       ...EMPTY_REPORT,
-      journal: [{ skill_id: "a", skill_name: "a", tool: "codex", path: "/x/a", status: "finished" }],
+      journal: [{ entry_id: "e1", skill_id: "a", skill_name: "a", tool: "codex", path: "/x/a", status: "finished" }],
     };
     stubBackend({ check: { finished, preview: NONE }, runs: [] });
     const { result } = render();
@@ -267,10 +276,11 @@ describe("useRedeploy run", () => {
         question: "occupied",
         skill_id: "alpha",
         folder_key: "agents_skills",
+        row_ids: ["row-alpha"],
         path: "/home/op/.agents/skills/alpha",
         decision: "overwrite",
       },
-      { question: "edited_copy", skill_id: "beta", tool: "codex", path: "/home/op/.codex/skills/beta", decision: "delete" },
+      { question: "edited_copy", entry_id: "entry-beta", path: "/home/op/.codex/skills/beta", decision: "delete" },
     ]);
     expect(replaceCatalog).toHaveBeenCalledWith(ANSWERED.skills);
     expect(result.current.redeploy.pendingCount).toBe(0);

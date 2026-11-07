@@ -27,13 +27,18 @@
 //! **Per move, in order (spec Q4):**
 //!
 //! 1. **Deploy** at the new place through `sync_engine`'s capability-aware
-//!    overwrite path, claimed inside the folder the destination was derived in.
-//!    An occupant that is ours (the row recorded there) or byte-identical to
-//!    the skill is **adopted**; anything else is a `TARGET_EXISTS` row for the
-//!    one overwrite ask. A Keep answer leaves the move undone (`kept`, still
-//!    pending); Overwrite replaces the occupant. A Disabled row and a row that
-//!    never deployed (no claim) are re-recorded at the new place with nothing
-//!    written.
+//!    path, admitted inside the folder the destination was derived in. A new
+//!    place that would nest with a live Deployment (an aliased folder puts
+//!    one inside the other) is refused first, nothing written. An occupant
+//!    that is ours (the row recorded there, or a link to the Library copy
+//!    where links are deployed) or byte-identical to the skill is **adopted**
+//!    — recorded as it is, never removed and re-created; anything else is a
+//!    `TARGET_EXISTS` row for the one overwrite ask. A Keep answer leaves the
+//!    move undone (`kept`, still pending). A genuine replacement — Overwrite,
+//!    or ours in the wrong mode — is **staged** ([`staged_replace`]): deployed
+//!    beside the occupant, journaled, then swapped in. A Disabled row and a
+//!    row that never deployed (no claim) are re-recorded at the new place with
+//!    nothing written.
 //! 2. **Switch** in one transaction: the folder's row takes the new key, path
 //!    and mode, the rows it absorbs are deleted, and a **journal entry** is
 //!    written per old artifact still on disk — its path and physical identity,
@@ -43,9 +48,11 @@
 //!    fence, only when it is provably ours — a link resolving by physical
 //!    identity to the skill's Library copy, or a copy whose Content identity
 //!    equals the one its row recorded or the Library's — **and** no other live
-//!    row records it (Amp keeps the folder Kimi Code left). A copy that differs
-//!    is an **edited copy**: a row of the same ask, delete or leave; leaving it
-//!    disowns it and the report names its readers. A link elsewhere is never
+//!    row records it (Amp keeps the folder Kimi Code left) **and** no live
+//!    Deployment, the journaled new one included, lies inside it or resolves
+//!    into it (`holds_deployment`). A copy that differs is an **edited
+//!    copy**: a row of the same ask, delete or leave; leaving it disowns it
+//!    and the report names its readers. A link elsewhere is never
 //!    ours and is reported left behind. Each settled entry is dropped.
 //!
 //! **The journal.** Every run and the launch check finish the journal first:
@@ -53,9 +60,12 @@
 //! place and both artifacts still have their journaled identities (Library
 //! move's resume rule); otherwise it is reported left behind and dropped. An
 //! edited copy awaiting an answer stays in the journal (`edited`) and is
-//! asked again by the next run. A crash at any step leaves at most a
-//! duplicate, never a missing skill: the old artifact goes only after the new
-//! one is recorded.
+//! asked again by the next run. An answer names exactly its question — an
+//! occupied move's rows and place, an edited copy's journal entry and path —
+//! and a stale one is refused with nothing touched. A crash at any step
+//! leaves at most a duplicate, never a missing skill: the old artifact goes
+//! only after the new one is recorded, and a replaced occupant only after the
+//! new artifact is in its place.
 //!
 //! Core never resolves roots: callers pass the host roots and the configured
 //! central repo (`commands::installer_paths`).
@@ -72,23 +82,24 @@ use super::artifact_removal::{
 };
 use super::content_identity::{self, Source};
 use super::environment::HostRoots;
-use super::errors::{CommandError, SignalError};
+use super::errors::{CommandError, DestinationRefusal, SignalError};
 use super::global_sync::OverrideDecision;
 use super::mutation_guard;
-use super::ownership::Deployed;
+use super::no_replace::{ExchangeError, HeldDir, RenameError};
+use super::ownership::{self, Deployed, Occupancy};
 use super::placement::{
     self, capability_entry, managed_global_dirs, readers_of_global_dir, row_reachable, DeployMode,
     InstalledSet, Placement, PlacementScope, PlacementSettings, ScopeKind,
 };
-use super::removal_fence::{EntryId, ProtectedLibrary};
+use super::removal_fence::{self, Claim, EntryId, Fence, Place, ProtectedLibrary};
 use super::settings;
 use super::skill_store::{
     RedeployJournalRecord, SkillRecord, SkillStore, SkillTargetRecord, SwitchedRow,
     TargetTransition,
 };
-use super::sync_engine::{self, Replace, TargetExistsError};
+use super::sync_engine::{self, Occupant, Replace, TargetExistsError};
 use super::sync_status::{SyncMode, SyncStatus};
-use super::tool_adapters::installed_set_in;
+use super::tool_adapters::{installed_set_in, ToolAdapter};
 
 // ---------------------------------------------------------------------------
 // Wire types
@@ -150,6 +161,11 @@ pub struct RedeployReport {
     /// Per-harness disables a collapse into one folder row no longer holds
     /// (spec Q24).
     pub lost_disables: Vec<LostDisable>,
+    /// Answers that named no question this run asks — an edited copy whose
+    /// journal entry is gone or another, a move no longer planned. Refused:
+    /// nothing was touched for them. (An answer naming a planned move whose
+    /// rows or place changed fails that move instead.)
+    pub refused_answers: Vec<RefusedAnswer>,
 }
 
 impl RedeployReport {
@@ -159,7 +175,18 @@ impl RedeployReport {
             && self.left_behind.is_empty()
             && self.edited_copies.is_empty()
             && self.lost_disables.is_empty()
+            && self.refused_answers.is_empty()
     }
+}
+
+/// An answer refused because the question it answered is no longer asked:
+/// `error` is the typed `NOT_FOUND` (`kind` `redeploy_question`, `id` the
+/// question's identity — the journal entry, or the move's rows).
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct RefusedAnswer {
+    /// The path the answer's ask showed.
+    pub path: String,
+    pub error: CommandError,
 }
 
 /// One move: a skill's rows that land in one Deployment folder.
@@ -225,6 +252,8 @@ pub enum RedeploySkip {
 /// A journal entry an earlier run or a crash left, as this run settled it.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct JournalOutcome {
+    /// The journal entry.
+    pub entry_id: String,
     pub skill_id: String,
     pub skill_name: String,
     /// The key of the row that owned the old artifact.
@@ -277,14 +306,20 @@ pub enum RedeployLeftReason {
     Stale,
     /// Its removal failed or was refused.
     RemovalFailed,
+    /// A live Deployment (the journaled new one, or another row's) lies
+    /// inside it, or resolves into it through an aliased folder: removing it
+    /// would remove that Deployment too.
+    HoldsDeployment,
 }
 
 /// An edited copy: a row of the one overwrite ask (delete / leave).
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct EditedCopy {
+    /// The journal entry that asks — what an answer names.
+    pub entry_id: String,
     pub skill_id: String,
     pub skill_name: String,
-    /// The key of the row that owned it — the key an answer names.
+    /// The key of the row that owned it.
     pub tool: String,
     pub path: String,
     pub modified_at: Option<i64>,
@@ -304,22 +339,27 @@ pub struct LostDisable {
     pub folder_key: String,
 }
 
-/// The operator's answer to one row of the ask, naming the path it showed:
-/// it applies only while that row's place is still that path. Input only.
+/// The operator's answer to one row of the ask, naming exactly the question
+/// it was asked — which rows or which journal entry, and the path it showed.
+/// It applies only while that question is still the one asked: checked under
+/// the guard, and a stale answer is refused with nothing touched. Input only.
 #[derive(Debug, Clone, Deserialize, Type)]
 #[serde(tag = "question", rename_all = "snake_case")]
 pub enum RedeployAnswer {
     /// The folder in a move's way (`TARGET_EXISTS`): Overwrite or Keep.
+    /// `row_ids` are the move's rows as the ask's report listed them
+    /// (`RedeployMove.rows`); the move must still be exactly those rows.
     Occupied {
         skill_id: String,
         folder_key: String,
+        row_ids: Vec<String>,
         path: String,
         decision: OverrideDecision,
     },
-    /// An edited old copy: delete it, or leave it (disowned).
+    /// An edited old copy: delete it, or leave it (disowned). `entry_id` is
+    /// the journal entry that asked (`EditedCopy.entry_id`).
     EditedCopy {
-        skill_id: String,
-        tool: String,
+        entry_id: String,
         path: String,
         decision: EditedCopyDecision,
     },
@@ -416,6 +456,7 @@ pub(crate) fn redeploy_unlocked(
     let mut done = 0u32;
     let mut report = RedeployReport::default();
 
+    refuse_unasked_answers(answers, &journal, &planned, &mut report);
     for entry in journal {
         on_progress(RedeployProgress {
             done,
@@ -423,12 +464,11 @@ pub(crate) fn redeploy_unlocked(
             name: skill_name_of(store, &entry.skill_id)?,
         });
         done += 1;
-        let answer = (entry.state == STATE_EDITED)
-            .then(|| edited_answer(answers, &entry))
-            .flatten();
+        let answer = edited_answer(answers, &entry, &mut report);
         let settled = settle_entry(&ctx, &entry, answer)?;
         let status = record_settled(&ctx, &entry, settled, &mut report)?;
         report.journal.push(JournalOutcome {
+            entry_id: entry.id.clone(),
             skill_id: entry.skill_id.clone(),
             skill_name: skill_name_of(store, &entry.skill_id)?,
             tool: entry.tool.clone(),
@@ -484,6 +524,7 @@ pub(crate) fn finish_journal_unlocked(
         let settled = settle_entry(&ctx, &entry, None)?;
         let status = record_settled(&ctx, &entry, settled, &mut report)?;
         report.journal.push(JournalOutcome {
+            entry_id: entry.id.clone(),
             skill_id: entry.skill_id.clone(),
             skill_name: skill_name_of(store, &entry.skill_id)?,
             tool: entry.tool.clone(),
@@ -616,8 +657,16 @@ struct Ctx<'a> {
     now: i64,
 }
 
+/// A journal entry's state (`RedeployJournalRecord::state`): an old
+/// artifact's removal is owed (`pending`); an edited copy awaits its answer
+/// (`edited`); a folder the operator answered Overwrite for, set aside, is
+/// owed its removal under that answer (`overwritten`); a staged replacement
+/// is in progress (`replacing`, `replacing_answered` — [`staged_replace`]).
 const STATE_PENDING: &str = "pending";
 const STATE_EDITED: &str = "edited";
+const STATE_OVERWRITTEN: &str = "overwritten";
+const STATE_REPLACING: &str = "replacing";
+const STATE_REPLACING_ANSWERED: &str = "replacing_answered";
 
 fn execute(
     ctx: &Ctx<'_>,
@@ -708,6 +757,7 @@ fn execute(
             },
             &absorbed,
             &[],
+            &[],
         )?;
         if !all_disabled {
             note_lost_disables(planned, report);
@@ -722,30 +772,38 @@ fn execute(
         return Ok(moved);
     }
 
-    // The operator's answer for this move, if it is about this place.
+    // The operator's answer for this move, if it is about this move: it must
+    // name exactly the rows the ask's report listed, and the place it showed.
+    // Anything else is a stale answer, refused with nothing touched.
     let answer = answers.iter().find_map(|answer| match answer {
         RedeployAnswer::Occupied {
             skill_id,
             folder_key,
+            row_ids,
             path,
             decision,
         } if *skill_id == skill.id && folder_key == planned.folder_key => {
-            Some((path.as_str(), *decision))
+            Some((row_ids, path.as_str(), *decision))
         }
         _ => None,
     });
-    if let Some((asked, _)) = answer {
-        if Path::new(asked) != planned.dest {
+    if let Some((row_ids, asked, _)) = answer {
+        if Path::new(asked) != planned.dest || !same_rows(row_ids, &planned.rows) {
             moved.status = RedeployStatus::Failed {
-                error: CommandError::from(SignalError::NotFound {
-                    kind: "target".to_string(),
-                    id: asked.to_string(),
-                }),
+                error: if Path::new(asked) != planned.dest {
+                    CommandError::from(SignalError::NotFound {
+                        kind: "target".to_string(),
+                        id: asked.to_string(),
+                    })
+                } else {
+                    stale_answer(&row_ids.join(","))
+                },
             };
             return Ok(moved);
         }
     }
-    if let Some((_, OverrideDecision::Keep)) = answer {
+    let answer = answer.map(|(_, _, decision)| decision);
+    if answer == Some(OverrideDecision::Keep) {
         settle_missing_old(ctx, &live, "the operator kept the folder at its new place")?;
         moved.status = RedeployStatus::Kept {
             reason: RedeployKept::Declined,
@@ -784,9 +842,25 @@ fn execute(
             },
             &absorbed,
             &[],
+            &[],
         )?;
         note_lost_disables(planned, report);
         moved.status = RedeployStatus::Unchanged;
+        return Ok(moved);
+    }
+
+    // The new place and a live Deployment must not nest (an aliased folder
+    // can put one inside the other): writing there would change that
+    // Deployment, and removing the old one later would take the new one with
+    // it. Refused before anything is touched; the move stays pending.
+    if let Some(blocking) = overlapping_deployment(ctx, &planned.dest)? {
+        moved.status = RedeployStatus::Failed {
+            error: CommandError::from(SignalError::DestinationRefused {
+                path: dest.clone(),
+                resolved: blocking.to_string_lossy().into_owned(),
+                reason: DestinationRefusal::OverlapsDeployment,
+            }),
+        };
         return Ok(moved);
     }
 
@@ -799,33 +873,8 @@ fn execute(
         };
         return Ok(moved);
     };
-    let at_dest = planned
-        .rows
-        .iter()
-        .find(|row| Path::new(&row.target_path) == planned.dest && row.owns_artifact());
-    let evidence = at_dest
-        .map(|row| Deployed::of_target(row, Some(skill)))
-        .unwrap_or_default();
-    let occupied_before = std::fs::symlink_metadata(&planned.dest).is_ok();
-    let replace = match answer {
-        Some((_, OverrideDecision::Overwrite)) => Replace::confirmed(),
-        _ => Replace::if_ours(&evidence).or_same_content(true),
-    };
-    let managed = [planned.folder_path.clone()];
-    let library = ProtectedLibrary::new(store, ctx.central_dir);
-    let outcome = sync_engine::sync_dir_for_tool_with_overwrite(
-        capability,
-        Path::new(&skill.central_path),
-        Source::Managed {
-            store,
-            skill_id: &skill.id,
-        },
-        &planned.dest,
-        replace.within(&managed),
-        &library,
-    );
-    let outcome = match outcome {
-        Ok(outcome) => outcome,
+    let deployment = match deploy(ctx, planned, &survivor.id, capability, answer) {
+        Ok(deployment) => deployment,
         Err(err) => {
             let error = match err
                 .chain()
@@ -859,17 +908,7 @@ fn execute(
             planned.dest
         ),
     };
-    let content_hash = outcome
-        .mode_used
-        .can_drift()
-        .then(|| {
-            content_identity::read(Source::Managed {
-                store,
-                skill_id: &skill.id,
-            })
-        })
-        .flatten();
-    let mut journal = Vec::new();
+    let mut journal: Vec<RedeployJournalRecord> = deployment.set_aside.into_iter().collect();
     for row in &live {
         let old = Path::new(&row.target_path);
         if old == planned.dest {
@@ -895,18 +934,20 @@ fn execute(
     }
     #[cfg(test)]
     test_seams::before_switch();
+    let finished: Vec<&str> = deployment.replacing.iter().map(String::as_str).collect();
     store.switch_redeployed_rows(
         &survivor.id,
         SwitchedRow {
             tool: planned.folder_key,
             target_path: &dest,
-            mode: outcome.mode_used,
+            mode: deployment.mode,
             status: SyncStatus::Synced,
             last_error: None,
             synced_at: Some(ctx.now),
-            content_hash: content_hash.as_deref(),
+            content_hash: deployment.content_hash.as_deref(),
         },
         &absorbed,
+        &finished,
         &journal,
     )?;
     note_lost_disables(planned, report);
@@ -929,13 +970,499 @@ fn execute(
         }
         record_settled(ctx, entry, settled, report)?;
     }
-    let overwrote = matches!(answer, Some((_, OverrideDecision::Overwrite)));
     moved.status = match left_old {
         Some(edited) => RedeployStatus::LeftOld { edited },
-        None if occupied_before && !overwrote => RedeployStatus::Adopted,
+        None if deployment.adopted => RedeployStatus::Adopted,
         None => RedeployStatus::Moved,
     };
     Ok(moved)
+}
+
+/// Whether an answer's `row_ids` are exactly the move's rows (in any order).
+fn same_rows(row_ids: &[String], rows: &[SkillTargetRecord]) -> bool {
+    row_ids.len() == rows.len() && rows.iter().all(|row| row_ids.contains(&row.id))
+}
+
+/// What step 1 left at the new place, for the switch.
+struct Deployment {
+    mode: SyncMode,
+    /// The Content identity deployed there (a copy).
+    content_hash: Option<String>,
+    /// Ours or identical content was already there and is recorded as it is.
+    adopted: bool,
+    /// A staged replacement's journal entry, which the switch drops.
+    replacing: Option<String>,
+    /// The occupant a staged replacement set aside: an old artifact the
+    /// switch journals for removal.
+    set_aside: Option<RedeployJournalRecord>,
+}
+
+/// What occupies the new place, judged for the deploy (ADR-0007).
+enum Judged {
+    /// What this move would deploy, or what its own row recorded there: kept
+    /// and recorded as it is, never removed and re-created.
+    Acceptable {
+        mode: SyncMode,
+        content_hash: Option<String>,
+    },
+    /// Ours, in the wrong mode (a link where the folder takes copies): a
+    /// genuine replacement, staged.
+    Ours,
+    /// Not provably ours: the overwrite ask decides.
+    Foreign,
+}
+
+/// Step 1, the deploy at the new place. Nothing there: a first write. An
+/// acceptable occupant (ours, or identical content) is adopted as it is. A
+/// replacement — ours in the wrong mode, or a folder the operator answered
+/// Overwrite for — is staged ([`staged_replace`]). Anything else is the
+/// typed `TARGET_EXISTS` for the ask.
+fn deploy(
+    ctx: &Ctx<'_>,
+    planned: &Planned,
+    survivor: &str,
+    capability: &ToolAdapter,
+    answer: Option<OverrideDecision>,
+) -> Result<Deployment> {
+    let store = ctx.store;
+    let skill = &planned.skill;
+    let identity = || Source::Managed {
+        store,
+        skill_id: &skill.id,
+    };
+    let managed = [planned.folder_path.clone()];
+    let library = ProtectedLibrary::new(store, ctx.central_dir);
+    // Admitted like any write — never into the Library, only inside the
+    // folder managed for it — before anything is written, replaced or
+    // adopted (an adopted Library copy would be recorded as a Deployment).
+    sync_engine::admit_destination(&planned.dest, &Replace::never().within(&managed), &library)?;
+    let copy_hash = |mode: SyncMode| {
+        mode.can_drift()
+            .then(|| content_identity::read(identity()))
+            .flatten()
+    };
+    let Some(occupant) = JournaledEntry::of(&planned.dest)? else {
+        let outcome = sync_engine::sync_dir_for_tool_with_overwrite(
+            capability,
+            Path::new(&skill.central_path),
+            identity(),
+            &planned.dest,
+            Replace::never().within(&managed),
+            &library,
+        )?;
+        return Ok(Deployment {
+            mode: outcome.mode_used,
+            content_hash: copy_hash(outcome.mode_used),
+            adopted: false,
+            replacing: None,
+            set_aside: None,
+        });
+    };
+    let at_dest: Vec<&SkillTargetRecord> = planned
+        .rows
+        .iter()
+        .filter(|row| {
+            row.owns_artifact()
+                && (Path::new(&row.target_path) == planned.dest
+                    || same_entry(Path::new(&row.target_path), &planned.dest))
+        })
+        .collect();
+    let (answered, evidence_hash) = match judge_occupant(ctx, planned, &at_dest, occupant)? {
+        Judged::Acceptable { mode, content_hash } => {
+            return Ok(Deployment {
+                mode,
+                content_hash,
+                adopted: true,
+                replacing: None,
+                set_aside: None,
+            })
+        }
+        Judged::Ours => (
+            false,
+            at_dest.iter().find_map(|row| row.content_hash.clone()),
+        ),
+        Judged::Foreign if answer == Some(OverrideDecision::Overwrite) => (true, None),
+        Judged::Foreign => anyhow::bail!(TargetExistsError {
+            target: planned.dest.clone(),
+            occupant: Occupant::observe(identity(), &planned.dest),
+        }),
+    };
+    let staged = staged_replace(
+        ctx,
+        planned,
+        survivor,
+        capability,
+        occupant,
+        Authority {
+            answered,
+            evidence_hash,
+        },
+        &managed,
+        &library,
+    )?;
+    Ok(Deployment {
+        mode: staged.mode,
+        content_hash: copy_hash(staged.mode),
+        adopted: false,
+        replacing: Some(staged.replacing),
+        set_aside: Some(staged.set_aside),
+    })
+}
+
+/// Judge the occupant of the new place, now: a link resolving to the skill's
+/// Library copy is acceptable where links are deployed (ours, in the wrong
+/// mode where copies are); a real folder is acceptable when its content is
+/// the Library's, or what a row of this move recorded deploying there. Any
+/// other entry, or one the check cannot read, is foreign.
+fn judge_occupant(
+    ctx: &Ctx<'_>,
+    planned: &Planned,
+    at_dest: &[&SkillTargetRecord],
+    occupant: JournaledEntry,
+) -> Result<Judged> {
+    let skill = &planned.skill;
+    let dest = &planned.dest;
+    let ours = |deployed: &Deployed| match ownership::check(dest, deployed) {
+        Ok(occupancy) => occupancy == Occupancy::Ours,
+        Err(err) => {
+            log::warn!("[redeploy] occupant of {:?} not verified: {err:#}", dest);
+            false
+        }
+    };
+    if occupant.link {
+        let library_link = Deployed::recorded(true, Some(Path::new(&skill.central_path)), None);
+        if !ours(&library_link) {
+            return Ok(Judged::Foreign);
+        }
+        if planned.mode == DeployMode::Copy {
+            return Ok(Judged::Ours);
+        }
+        let mode = at_dest
+            .iter()
+            .map(|row| row.mode)
+            .find(|mode| matches!(mode, SyncMode::Symlink | SyncMode::Junction))
+            .unwrap_or(SyncMode::Symlink);
+        return Ok(Judged::Acceptable {
+            mode,
+            content_hash: None,
+        });
+    }
+    if !std::fs::symlink_metadata(dest).is_ok_and(|meta| meta.is_dir()) {
+        return Ok(Judged::Foreign);
+    }
+    let identity = Source::Managed {
+        store: ctx.store,
+        skill_id: &skill.id,
+    };
+    if content_identity::same_content(identity, dest) {
+        return Ok(Judged::Acceptable {
+            mode: SyncMode::Copy,
+            content_hash: content_identity::read(Source::Managed {
+                store: ctx.store,
+                skill_id: &skill.id,
+            }),
+        });
+    }
+    for row in at_dest {
+        if ours(&Deployed::of_target(row, Some(skill))) {
+            return Ok(Judged::Acceptable {
+                mode: SyncMode::Copy,
+                content_hash: row.content_hash.clone(),
+            });
+        }
+    }
+    Ok(Judged::Foreign)
+}
+
+/// The live Deployment, if any, that the new place `dest` would nest with:
+/// a recorded artifact (any skill, either scope) that is a real folder `dest`
+/// lies inside, or one whose parent chain runs through the real folder at
+/// `dest`. An artifact physically at `dest` is the destination itself, never
+/// a nesting. One that cannot be read counts as nesting (refused, never
+/// guessed).
+fn overlapping_deployment(ctx: &Ctx<'_>, dest: &Path) -> Result<Option<PathBuf>> {
+    let Some(parent) = dest.parent() else {
+        return Ok(None);
+    };
+    // Where the new place is; not knowing refuses (never guessed).
+    let placed = (|| -> Result<_> {
+        let dest_dir = if real_dir(dest) {
+            Some(Place::of(dest)?)
+        } else {
+            None
+        };
+        Ok((Place::of(parent)?, EntryId::of(dest)?, dest_dir))
+    })();
+    let Ok((into, dest_id, dest_dir)) = placed else {
+        return Ok(Some(dest.to_path_buf()));
+    };
+    for path in recorded_target_paths(ctx.store, ctx.roots)? {
+        if path == dest {
+            continue;
+        }
+        let id = match EntryId::of(&path) {
+            Ok(Some(id)) => id,
+            Ok(None) => continue,
+            Err(_) => return Ok(Some(path)),
+        };
+        if Some(id) == dest_id {
+            continue;
+        }
+        let nests = (|| -> Result<bool> {
+            if real_dir(&path) && into.within(&Place::of(&path)?) {
+                return Ok(true);
+            }
+            Ok(match (&dest_dir, path.parent()) {
+                (Some(dest_dir), Some(parent)) => Place::of(parent)?.within(dest_dir),
+                _ => false,
+            })
+        })();
+        if nests.unwrap_or(true) {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+/// Whether `path` names a real folder (not a link, not a file).
+fn real_dir(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir())
+}
+
+// ---------------------------------------------------------------------------
+// A staged replacement
+// ---------------------------------------------------------------------------
+
+/// Why a staged replacement may remove the occupant it sets aside.
+struct Authority {
+    /// The operator answered Overwrite for it.
+    answered: bool,
+    /// What the move's row recorded deploying there (evidence the occupant
+    /// is ours, beside the Library link).
+    evidence_hash: Option<String>,
+}
+
+struct Staged {
+    mode: SyncMode,
+    replacing: String,
+    set_aside: RedeployJournalRecord,
+}
+
+const STAGE_PREFIX: &str = ".skills-hub-redeploy-";
+const STAGE_NEW: &str = ".new";
+const STAGE_OLD: &str = ".old";
+
+/// The set-aside sibling of a staged artifact's path.
+fn aside_of(stage: &Path) -> Option<PathBuf> {
+    let name = stage.file_name()?.to_str()?;
+    let base = name.strip_suffix(STAGE_NEW)?;
+    base.starts_with(STAGE_PREFIX)
+        .then(|| stage.with_file_name(format!("{base}{STAGE_OLD}")))
+}
+
+/// Replace the occupant at the new place so that an interruption at any
+/// step is finished from the journal, never leaving the skill missing:
+///
+/// 1. admit the occupant's removal (the Library, the managed folder, mounts)
+///    before anything is written;
+/// 2. deploy the skill beside it, at a staged sibling
+///    (`.skills-hub-redeploy-<id>.new`);
+/// 3. journal the replacement (`replacing`): the occupant and the staged
+///    artifact, by path and physical identity;
+/// 4. swap them — the occupant checked to still be the one judged right
+///    before: one atomic exchange where the OS offers it
+///    (`no_replace::HeldDir::exchange`; the occupant lands at the staged
+///    name), else the occupant set aside (`….old`) and the staged artifact
+///    moved in, each an exclusive rename (`core::no_replace`);
+/// 5. the switch (the caller) drops the `replacing` entry and journals the
+///    set-aside occupant as an old artifact, removed like any other.
+///
+/// A failure before the occupant moves undoes what was staged; a failure
+/// between the two renames puts the occupant back. What an interruption
+/// leaves, the journal finish completes ([`settle_replacing`]): with the
+/// exchange the new place is never empty; with two renames it is empty only
+/// between them, and the finish moves the staged artifact in.
+#[allow(clippy::too_many_arguments)]
+fn staged_replace(
+    ctx: &Ctx<'_>,
+    planned: &Planned,
+    survivor: &str,
+    capability: &ToolAdapter,
+    occupant: JournaledEntry,
+    authority: Authority,
+    managed: &[PathBuf],
+    library: &ProtectedLibrary<'_>,
+) -> Result<Staged> {
+    let store = ctx.store;
+    let skill = &planned.skill;
+    let dest = &planned.dest;
+    let central = Path::new(&skill.central_path);
+    let (Some(folder), Some(name)) = (dest.parent(), dest.file_name()) else {
+        anyhow::bail!("redeploy: {:?} names no entry", dest);
+    };
+    let id = Uuid::new_v4().to_string();
+    let stage_name = format!("{STAGE_PREFIX}{id}{STAGE_NEW}");
+    let aside_name = format!("{STAGE_PREFIX}{id}{STAGE_OLD}");
+    let stage = folder.join(&stage_name);
+    let aside = folder.join(&aside_name);
+
+    // 1. The occupant could be removed at all.
+    removal_fence::admit(
+        dest,
+        &Fence::new(library)
+            .sparing(central)
+            .claiming(Claim::Within(managed)),
+    )?;
+    // 2. Stage the new artifact.
+    let discard_stage = || {
+        if let Err(err) = remove_superseded_artifact_unlocked(
+            store,
+            ctx.central_dir,
+            &stage,
+            managed,
+            SupersededAuthority::Answered,
+        ) {
+            log::warn!("[redeploy] could not discard {:?}: {err:#}", stage);
+        }
+    };
+    let outcome = match sync_engine::sync_dir_for_tool_with_overwrite(
+        capability,
+        central,
+        Source::Managed {
+            store,
+            skill_id: &skill.id,
+        },
+        &stage,
+        Replace::never().within(managed),
+        library,
+    ) {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            discard_stage();
+            return Err(err);
+        }
+    };
+    let Some(staged) = JournaledEntry::of(&stage)? else {
+        anyhow::bail!("redeploy: {:?} is gone right after its deploy", stage);
+    };
+    // 3. Journal the replacement before the occupant moves.
+    let record = RedeployJournalRecord {
+        id: id.clone(),
+        row_id: survivor.to_string(),
+        skill_id: skill.id.clone(),
+        tool: planned.folder_key.to_string(),
+        old_path: dest.to_string_lossy().into_owned(),
+        old_entry: serde_json::to_string(&occupant)?,
+        old_content_hash: authority.evidence_hash.clone(),
+        new_path: stage.to_string_lossy().into_owned(),
+        new_entry: serde_json::to_string(&staged)?,
+        state: if authority.answered {
+            STATE_REPLACING_ANSWERED
+        } else {
+            STATE_REPLACING
+        }
+        .to_string(),
+        created_at: ctx.now,
+    };
+    if let Err(err) = store.insert_redeploy_journal_entry(&record) {
+        discard_stage();
+        return Err(err);
+    }
+    let undo = |err: anyhow::Error| -> Result<Staged> {
+        discard_stage();
+        store.delete_redeploy_journal_entry(&id)?;
+        Err(err)
+    };
+    #[cfg(test)]
+    test_seams::before_set_aside();
+    // 4. The occupant is still the one judged; set it aside, move the new in.
+    if JournaledEntry::of(dest)? != Some(occupant) {
+        return undo(anyhow::anyhow!(TargetExistsError {
+            target: dest.clone(),
+            occupant: Occupant::observe(
+                Source::Managed {
+                    store,
+                    skill_id: &skill.id,
+                },
+                dest,
+            ),
+        }));
+    }
+    let held = match HeldDir::open(folder) {
+        Ok(held) => held,
+        Err(err) => return undo(err.into()),
+    };
+    // One atomic exchange where the OS offers it: the new place is never
+    // empty, and the occupant lands at the staged name.
+    #[cfg(test)]
+    let exchanged = if test_seams::two_step_swap() {
+        Err(ExchangeError::Unsupported)
+    } else {
+        held.exchange(name, stage_name.as_ref())
+    };
+    #[cfg(not(test))]
+    let exchanged = held.exchange(name, stage_name.as_ref());
+    let set_aside_at = match exchanged {
+        Ok(()) => stage.clone(),
+        Err(ExchangeError::Failed(err)) => {
+            return undo(anyhow::Error::new(err).context(format!("redeploy: swap at {:?}", dest)))
+        }
+        // Elsewhere two exclusive renames: set the occupant aside, then move
+        // the staged artifact in (the journal finishes a cut between them).
+        Err(ExchangeError::Unsupported) => {
+            if let Err(err) = held.rename_no_replace(name, aside_name.as_ref()) {
+                return undo(rename_error(err, dest));
+            }
+            #[cfg(test)]
+            test_seams::between_swap_renames();
+            if let Err(err) = held.rename_no_replace(stage_name.as_ref(), name) {
+                let err = rename_error(err, dest);
+                return match held.rename_no_replace(aside_name.as_ref(), name) {
+                    Ok(()) => undo(err),
+                    // Neither in place: the journal entry stays for the finish.
+                    Err(back) => Err(err.context(format!(
+                        "and the folder set aside at {:?} could not be put back: {}",
+                        aside,
+                        rename_error(back, dest)
+                    ))),
+                };
+            }
+            aside
+        }
+    };
+    #[cfg(test)]
+    test_seams::after_swap();
+    Ok(Staged {
+        mode: outcome.mode_used,
+        replacing: id,
+        set_aside: RedeployJournalRecord {
+            id: Uuid::new_v4().to_string(),
+            row_id: survivor.to_string(),
+            skill_id: skill.id.clone(),
+            tool: planned.folder_key.to_string(),
+            old_path: set_aside_at.to_string_lossy().into_owned(),
+            old_entry: serde_json::to_string(&occupant)?,
+            old_content_hash: authority.evidence_hash,
+            new_path: dest.to_string_lossy().into_owned(),
+            new_entry: serde_json::to_string(&staged)?,
+            state: if authority.answered {
+                STATE_OVERWRITTEN
+            } else {
+                STATE_PENDING
+            }
+            .to_string(),
+            created_at: ctx.now,
+        },
+    })
+}
+
+fn rename_error(err: RenameError, at: &Path) -> anyhow::Error {
+    match err {
+        RenameError::Occupied => anyhow::anyhow!("redeploy: something took {:?} meanwhile", at),
+        RenameError::Failed(err) => {
+            anyhow::Error::new(err).context(format!("redeploy: rename at {:?}", at))
+        }
+    }
 }
 
 /// Q24: every Disabled row that collapsed into a folder row where another
@@ -1024,25 +1551,47 @@ enum Settled {
     Left {
         reason: RedeployLeftReason,
         error: Option<CommandError>,
+        /// What stays, when it is not the entry's old path (a staged
+        /// replacement's artifacts).
+        at: Option<PathBuf>,
     },
     /// An edited copy awaiting the answer; stays journaled.
     Awaiting,
 }
 
+fn left(reason: RedeployLeftReason) -> Settled {
+    Settled::Left {
+        reason,
+        error: None,
+        at: None,
+    }
+}
+
+fn left_at(reason: RedeployLeftReason, at: &Path) -> Settled {
+    Settled::Left {
+        reason,
+        error: None,
+        at: Some(at.to_path_buf()),
+    }
+}
+
 /// Settle `entry` now (the module's journal rule): act only while its row
 /// still records the journaled new place and both artifacts keep their
-/// journaled identities; remove the old artifact only when it is provably
-/// ours and no other live row records it, or the operator answered Delete.
+/// journaled identities; remove the old artifact only when no live
+/// Deployment is it or lies inside it, and it is provably ours, or the
+/// operator answered Delete (or Overwrite, for a folder set aside).
 fn settle_entry(
     ctx: &Ctx<'_>,
     entry: &RedeployJournalRecord,
     answer: Option<EditedCopyDecision>,
 ) -> Result<Settled> {
+    if matches!(
+        entry.state.as_str(),
+        STATE_REPLACING | STATE_REPLACING_ANSWERED
+    ) {
+        return settle_replacing(ctx, entry);
+    }
     let store = ctx.store;
-    let left = |reason| Settled::Left {
-        reason,
-        error: None,
-    };
     let (Ok(old_id), Ok(new_id)) = (
         serde_json::from_str::<JournaledEntry>(&entry.old_entry),
         serde_json::from_str::<JournaledEntry>(&entry.new_entry),
@@ -1070,16 +1619,73 @@ fn settle_entry(
         Some(now) if now != old_id => return Ok(left(RedeployLeftReason::Replaced)),
         Some(_) => {}
     }
-    // Another live row (any skill, either scope) records it: its Deployment.
-    // A path that cannot be read is counted as recording it (kept, never
-    // removed blind).
-    for path in recorded_target_paths(store, ctx.roots)? {
+    if let Some(kept) = protected(ctx, old, old_id, new)? {
+        return Ok(kept);
+    }
+    let authority = if entry.state == STATE_OVERWRITTEN {
+        Some(EditedCopyDecision::Delete)
+    } else {
+        answer
+    };
+    remove_old(ctx, entry, old, authority)
+}
+
+/// Whether a live Deployment keeps the old artifact `old` (identity
+/// `old_id`): another row (any skill, either scope) records it — it is that
+/// row's Deployment (`Retained`) — or, `old` being a real folder, the
+/// journaled new place `new` or a recorded Deployment lies inside it or
+/// resolves into it through an aliased folder (`HoldsDeployment`): removing
+/// it would remove that one too. A path that cannot be read counts as
+/// keeping it (never removed blind).
+fn protected(
+    ctx: &Ctx<'_>,
+    old: &Path,
+    old_id: JournaledEntry,
+    new: &Path,
+) -> Result<Option<Settled>> {
+    let old_place = if real_dir(old) {
+        match Place::of(old) {
+            Ok(place) => Some(place),
+            Err(_) => return Ok(Some(left(RedeployLeftReason::HoldsDeployment))),
+        }
+    } else {
+        None
+    };
+    // Its parent chain runs through the old folder, or the entry itself
+    // resolves into it.
+    let holds = |path: &Path| match &old_place {
+        Some(old_place) => {
+            let through = |at: &Path| Place::of(at).map_or(true, |place| place.within(old_place));
+            path.parent().is_some_and(through) || through(path)
+        }
+        None => false,
+    };
+    if holds(new) {
+        return Ok(Some(left(RedeployLeftReason::HoldsDeployment)));
+    }
+    for path in recorded_target_paths(ctx.store, ctx.roots)? {
         match EntryId::of(&path) {
-            Ok(Some(id)) if id == old_id.id => return Ok(Settled::Retained),
+            Ok(Some(id)) if id == old_id.id => return Ok(Some(Settled::Retained)),
             Ok(_) => {}
-            Err(_) => return Ok(Settled::Retained),
+            Err(_) => return Ok(Some(Settled::Retained)),
+        }
+        if holds(&path) {
+            return Ok(Some(left(RedeployLeftReason::HoldsDeployment)));
         }
     }
+    Ok(None)
+}
+
+/// Remove the old artifact `old` of `entry`: by evidence (the old row's
+/// recorded identity, or the Library's), else as `answer` says for an edited
+/// copy — Delete removes it, Leave disowns it, no answer asks.
+fn remove_old(
+    ctx: &Ctx<'_>,
+    entry: &RedeployJournalRecord,
+    old: &Path,
+    answer: Option<EditedCopyDecision>,
+) -> Result<Settled> {
+    let store = ctx.store;
     let Some(skill) = store.get_skill_by_id(&entry.skill_id)? else {
         return Ok(left(RedeployLeftReason::Stale));
     };
@@ -1099,24 +1705,160 @@ fn settle_entry(
     let failed = |err: anyhow::Error| Settled::Left {
         reason: RedeployLeftReason::RemovalFailed,
         error: Some(CommandError::from_anyhow(err)),
+        at: Some(old.to_path_buf()),
     };
+    if entry.state == STATE_OVERWRITTEN {
+        // The operator answered Overwrite for exactly this folder.
+        return Ok(match removal(SupersededAuthority::Answered) {
+            Ok(_) => Settled::Finished,
+            Err(err) => failed(err),
+        });
+    }
     match removal(SupersededAuthority::Evidence(&evidence)) {
         Ok(Superseded::Removed | Superseded::Absent) => return Ok(Settled::Finished),
         Ok(Superseded::NotOurs) => {}
         Err(err) => return Ok(failed(err)),
     }
-    let is_copy = std::fs::symlink_metadata(old).is_ok_and(|meta| meta.is_dir());
-    if !is_copy {
-        return Ok(left(RedeployLeftReason::NotOurs));
+    if !real_dir(old) {
+        return Ok(left_at(RedeployLeftReason::NotOurs, old));
     }
     match answer {
         Some(EditedCopyDecision::Delete) => match removal(SupersededAuthority::Answered) {
             Ok(_) => Ok(Settled::Finished),
             Err(err) => Ok(failed(err)),
         },
-        Some(EditedCopyDecision::Leave) => Ok(left(RedeployLeftReason::Edited)),
+        Some(EditedCopyDecision::Leave) => Ok(left_at(RedeployLeftReason::Edited, old)),
         None => Ok(Settled::Awaiting),
     }
+}
+
+/// Finish a staged replacement an interruption cut short
+/// ([`staged_replace`]); its row was never switched, so the next run plans
+/// the move again and adopts what is in place. `old_path` is the new place
+/// (where the occupant was), `new_path` the staged artifact, and the
+/// occupant's set-aside sibling is derived from it:
+///
+/// - cut between the two renames (nothing in place): the staged artifact is
+///   moved in when it is intact, else the occupant is put back;
+/// - the staged artifact in place: the occupant (at the staged name after an
+///   exchange, set aside after two renames) is removed under
+///   the replacement's authority (ours by evidence, or the operator's
+///   Overwrite), else reported left behind;
+/// - the occupant still in place: the staged artifact — the app's own,
+///   checked by identity — is removed;
+/// - anything else: reported left behind, nothing touched.
+fn settle_replacing(ctx: &Ctx<'_>, entry: &RedeployJournalRecord) -> Result<Settled> {
+    let dest = Path::new(&entry.old_path);
+    let stage = Path::new(&entry.new_path);
+    let parsed = (
+        serde_json::from_str::<JournaledEntry>(&entry.old_entry),
+        serde_json::from_str::<JournaledEntry>(&entry.new_entry),
+        aside_of(stage),
+        dest.parent().zip(dest.file_name()),
+    );
+    let (Ok(occupant), Ok(staged), Some(aside), Some((folder, name))) = parsed else {
+        log::warn!(
+            "[redeploy] unreadable journal entry {}; nothing was touched",
+            entry.id
+        );
+        return Ok(left(RedeployLeftReason::Stale));
+    };
+    let (Some(stage_name), Some(aside_name)) = (stage.file_name(), aside.file_name()) else {
+        return Ok(left(RedeployLeftReason::Stale));
+    };
+    let managed = managed_global_dirs(ctx.roots, &entry.tool);
+    if JournaledEntry::of(dest)?.is_none() {
+        let back = if JournaledEntry::of(stage)? == Some(staged) {
+            Some(stage_name)
+        } else if JournaledEntry::of(&aside)? == Some(occupant) {
+            Some(aside_name)
+        } else {
+            None
+        };
+        if let Some(from) = back {
+            let renamed = HeldDir::open(folder)
+                .map_err(anyhow::Error::from)
+                .and_then(|held| {
+                    held.rename_no_replace(from, name)
+                        .map_err(|err| rename_error(err, dest))
+                });
+            if let Err(err) = renamed {
+                return Ok(Settled::Left {
+                    reason: RedeployLeftReason::RemovalFailed,
+                    error: Some(CommandError::from_anyhow(err)),
+                    at: Some(folder.join(from)),
+                });
+            }
+        }
+    }
+    let in_place = JournaledEntry::of(dest)?;
+    if in_place == Some(staged) {
+        // Swapped: the occupant lies at the staged name (an exchange) or set
+        // aside (two renames), owed its removal under the replacement's
+        // authority.
+        for at in [stage, aside.as_path()] {
+            match JournaledEntry::of(at)? {
+                None => continue,
+                Some(now) if now != occupant => {
+                    return Ok(left_at(RedeployLeftReason::Replaced, at))
+                }
+                Some(_) => {}
+            }
+            if let Some(kept) = protected(ctx, at, occupant, dest)? {
+                return Ok(match kept {
+                    Settled::Left { reason, error, .. } => Settled::Left {
+                        reason,
+                        error,
+                        at: Some(at.to_path_buf()),
+                    },
+                    other => other,
+                });
+            }
+            let set_aside = RedeployJournalRecord {
+                old_path: at.to_string_lossy().into_owned(),
+                state: if entry.state == STATE_REPLACING_ANSWERED {
+                    STATE_OVERWRITTEN
+                } else {
+                    STATE_PENDING
+                }
+                .to_string(),
+                ..entry.clone()
+            };
+            return Ok(match remove_old(ctx, &set_aside, at, None)? {
+                // A set-aside occupant is never asked about: it was ours by
+                // evidence when it was replaced.
+                Settled::Awaiting => left_at(RedeployLeftReason::NotOurs, at),
+                settled => settled,
+            });
+        }
+        return Ok(Settled::Finished);
+    }
+    if in_place == Some(occupant) {
+        return Ok(match JournaledEntry::of(stage)? {
+            None => Settled::Finished,
+            Some(now) if now != staged => left_at(RedeployLeftReason::Replaced, stage),
+            Some(_) => match remove_superseded_artifact_unlocked(
+                ctx.store,
+                ctx.central_dir,
+                stage,
+                &managed,
+                SupersededAuthority::Answered,
+            ) {
+                Ok(_) => Settled::Finished,
+                Err(err) => Settled::Left {
+                    reason: RedeployLeftReason::RemovalFailed,
+                    error: Some(CommandError::from_anyhow(err)),
+                    at: Some(stage.to_path_buf()),
+                },
+            },
+        });
+    }
+    let stays = if JournaledEntry::of(&aside)?.is_some() {
+        aside
+    } else {
+        stage.to_path_buf()
+    };
+    Ok(left_at(RedeployLeftReason::Stale, &stays))
 }
 
 /// Record how `entry` settled — drop it, or keep it awaiting the answer —
@@ -1128,15 +1870,15 @@ fn record_settled(
     report: &mut RedeployReport,
 ) -> Result<JournalStatus> {
     let store = ctx.store;
-    let old = Path::new(&entry.old_path);
-    let readers = || -> Vec<String> {
-        old.parent()
+    let readers = |path: &Path| -> Vec<String> {
+        path.parent()
             .map(|dir| readers_of_global_dir(ctx.roots, ctx.installed, dir))
             .unwrap_or_default()
             .into_iter()
             .map(str::to_string)
             .collect()
     };
+    let old = Path::new(&entry.old_path);
     let skill_name = skill_name_of(store, &entry.skill_id)?;
     Ok(match settled {
         Settled::Finished => {
@@ -1147,16 +1889,17 @@ fn record_settled(
             store.delete_redeploy_journal_entry(&entry.id)?;
             JournalStatus::Retained
         }
-        Settled::Left { reason, error } => {
+        Settled::Left { reason, error, at } => {
             store.delete_redeploy_journal_entry(&entry.id)?;
-            log::info!("[redeploy] left {} on disk ({reason:?})", entry.old_path);
+            let path = at.unwrap_or_else(|| old.to_path_buf());
+            log::info!("[redeploy] left {:?} on disk ({reason:?})", path);
             report.left_behind.push(LeftBehindCopy {
                 skill_id: entry.skill_id.clone(),
                 skill_name,
                 tool: entry.tool.clone(),
-                path: entry.old_path.clone(),
+                path: path.to_string_lossy().into_owned(),
                 reason,
-                readers: readers(),
+                readers: readers(&path),
                 error,
             });
             JournalStatus::LeftBehind
@@ -1166,35 +1909,93 @@ fn record_settled(
                 store.set_redeploy_journal_state(&entry.id, STATE_EDITED)?;
             }
             report.edited_copies.push(EditedCopy {
+                entry_id: entry.id.clone(),
                 skill_id: entry.skill_id.clone(),
                 skill_name,
                 tool: entry.tool.clone(),
                 path: entry.old_path.clone(),
                 modified_at: modified_at(old),
-                readers: readers(),
+                readers: readers(old),
             });
             JournalStatus::AwaitingAnswer
         }
     })
 }
 
-/// The answer to the edited-copy question `entry` raised, naming its row's
-/// key and the path it showed.
+/// The answer to the edited-copy question `entry` raised: one naming this
+/// journal entry and the path it showed, while the entry still awaits it.
+/// An answer naming the entry with another path, or an entry that is not
+/// awaiting an answer, is refused (report data), never applied.
 fn edited_answer(
     answers: &[RedeployAnswer],
     entry: &RedeployJournalRecord,
+    report: &mut RedeployReport,
 ) -> Option<EditedCopyDecision> {
-    answers.iter().find_map(|answer| match answer {
+    let (path, decision) = answers.iter().find_map(|answer| match answer {
         RedeployAnswer::EditedCopy {
-            skill_id,
-            tool,
+            entry_id,
             path,
             decision,
-        } if *skill_id == entry.skill_id && *tool == entry.tool && *path == entry.old_path => {
-            Some(*decision)
-        }
+        } if *entry_id == entry.id => Some((path, *decision)),
         _ => None,
+    })?;
+    if entry.state == STATE_EDITED && *path == entry.old_path {
+        return Some(decision);
+    }
+    report.refused_answers.push(refused(path, &entry.id));
+    None
+}
+
+/// Refuse every answer that names no question this run asks: an edited-copy
+/// answer whose journal entry is gone (settled, or never this one), and an
+/// Overwrite/Keep answer for a move no longer planned. Nothing is touched for
+/// them.
+fn refuse_unasked_answers(
+    answers: &[RedeployAnswer],
+    journal: &[RedeployJournalRecord],
+    planned: &[Planned],
+    report: &mut RedeployReport,
+) {
+    for answer in answers {
+        match answer {
+            RedeployAnswer::EditedCopy { entry_id, path, .. } => {
+                if !journal.iter().any(|entry| entry.id == *entry_id) {
+                    report.refused_answers.push(refused(path, entry_id));
+                }
+            }
+            RedeployAnswer::Occupied {
+                skill_id,
+                folder_key,
+                row_ids,
+                path,
+                ..
+            } => {
+                let asked = planned
+                    .iter()
+                    .any(|move_| move_.skill.id == *skill_id && move_.folder_key == folder_key);
+                if !asked {
+                    report
+                        .refused_answers
+                        .push(refused(path, &row_ids.join(",")));
+                }
+            }
+        }
+    }
+}
+
+/// A stale answer's typed refusal: the question `id` is no longer asked.
+fn stale_answer(id: &str) -> CommandError {
+    CommandError::from(SignalError::NotFound {
+        kind: "redeploy_question".to_string(),
+        id: id.to_string(),
     })
+}
+
+fn refused(path: &str, id: &str) -> RefusedAnswer {
+    RefusedAnswer {
+        path: path.to_string(),
+        error: stale_answer(id),
+    }
 }
 
 fn skill_name_of(store: &SkillStore, skill_id: &str) -> Result<String> {
@@ -1212,6 +2013,57 @@ pub(crate) mod test_seams {
     thread_local! {
         static CRASH_BEFORE_SWITCH: Cell<bool> = const { Cell::new(false) };
         static CRASH_AFTER_SWITCH: Cell<bool> = const { Cell::new(false) };
+        static CRASH_BEFORE_SET_ASIDE: Cell<bool> = const { Cell::new(false) };
+        static CRASH_BETWEEN_SWAP_RENAMES: Cell<bool> = const { Cell::new(false) };
+        static CRASH_AFTER_SWAP: Cell<bool> = const { Cell::new(false) };
+        static TWO_STEP_SWAP: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Staged replacements on this thread swap by two renames, as on an OS
+    /// or file system without an atomic exchange (Windows).
+    pub(crate) fn force_two_step_swap() {
+        TWO_STEP_SWAP.with(|cell| cell.set(true));
+    }
+
+    pub(super) fn two_step_swap() -> bool {
+        TWO_STEP_SWAP.with(Cell::get)
+    }
+
+    /// The next staged replacement on this thread panics right after its
+    /// swap: the new artifact in place, the occupant beside it, nothing
+    /// switched.
+    pub(crate) fn crash_after_swap() {
+        CRASH_AFTER_SWAP.with(|cell| cell.set(true));
+    }
+
+    pub(super) fn after_swap() {
+        if CRASH_AFTER_SWAP.with(|cell| cell.replace(false)) {
+            panic!("simulated crash right after the swap");
+        }
+    }
+
+    /// The next staged replacement on this thread panics after its staged
+    /// artifact is journaled and before the occupant is set aside.
+    pub(crate) fn crash_before_set_aside() {
+        CRASH_BEFORE_SET_ASIDE.with(|cell| cell.set(true));
+    }
+
+    /// The next staged replacement on this thread panics between its two
+    /// renames: the occupant set aside, the staged artifact not yet in place.
+    pub(crate) fn crash_between_swap_renames() {
+        CRASH_BETWEEN_SWAP_RENAMES.with(|cell| cell.set(true));
+    }
+
+    pub(super) fn before_set_aside() {
+        if CRASH_BEFORE_SET_ASIDE.with(|cell| cell.replace(false)) {
+            panic!("simulated crash before the occupant is set aside");
+        }
+    }
+
+    pub(super) fn between_swap_renames() {
+        if CRASH_BETWEEN_SWAP_RENAMES.with(|cell| cell.replace(false)) {
+            panic!("simulated crash between the swap's renames");
+        }
     }
 
     /// The next move on this thread panics — as a crash would — after its

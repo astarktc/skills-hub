@@ -2167,6 +2167,8 @@ export function redeployCounts(report: RedeployReport) {
     leftBehind: report.left_behind.length,
     removalFailed: report.left_behind.filter((item) => item.reason === "removal_failed").length,
     lostDisables: report.lost_disables.length,
+    /** Answers refused as stale: nothing was done for them. */
+    refused: report.refused_answers.length,
     removed,
   };
 }
@@ -2177,9 +2179,9 @@ export function redeployCounts(report: RedeployReport) {
  * moves, an error per failed move, a "to review" entry per folder in a
  * move's way and per edited copy still awaiting its answer (pending work
  * surfaces — the fold skips no non-failed status), a warning per old copy
- * left behind naming the harnesses that show it twice, and one per Disable
- * a collapse no longer honours. Nothing reloads: the command answers the
- * catalog.
+ * left behind naming the harnesses that show it twice, one per Disable a
+ * collapse no longer honours, and an error per answer refused as stale.
+ * Nothing reloads: the command answers the catalog.
  */
 export function redeployOutcome(
   report: RedeployReport,
@@ -2248,6 +2250,13 @@ export function redeployOutcome(
       subject: { skillId: lost.skill_id, skillName: lost.skill_name, tool: lost.folder_key },
     });
   }
+  for (const refused of report.refused_answers) {
+    out.errors.push({
+      title: ctx.t("redeploy.report.refusedTitle", { path: refused.path }),
+      message: ctx.t("redeploy.report.refusedMessage"),
+      error: refused.error,
+    });
+  }
   if (counts.skipped > 0) out.notes.push(ctx.t("redeploy.report.skippedLine", { count: counts.skipped }));
 
   const parts: string[] = [];
@@ -2257,12 +2266,13 @@ export function redeployOutcome(
   part(HEADLINE_DONE_KEY.moved, counts.moved);
   part("redeploy.report.removed", counts.removed);
   part("outcome.targetsFailed", counts.failed);
+  part("redeploy.report.refused", counts.refused);
   part("redeploy.report.kept", counts.kept);
   part("redeploy.report.review", counts.review);
   part("redeploy.report.leftBehind", counts.leftBehind);
   if (parts.length === 0) parts.push(ctx.t(HEADLINE_DONE_KEY.moved, { count: 0 }));
   const tone: OutcomeTone =
-    counts.failed > 0 || counts.removalFailed > 0
+    counts.failed > 0 || counts.removalFailed > 0 || counts.refused > 0
       ? "failure"
       : counts.review > 0
         ? "conflict"

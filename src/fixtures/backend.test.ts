@@ -2380,13 +2380,46 @@ describe("fixture redeploy", () => {
     const copy = first.report.edited_copies[0];
     const second = await handlers.redeployDeployments(
       [
-        { question: "occupied", skill_id: occupied.skill_id, folder_key: occupied.folder_key, path: occupied.path, decision: "overwrite" },
-        { question: "edited_copy", skill_id: copy.skill_id, tool: copy.tool, path: copy.path, decision: "delete" },
+        {
+          question: "occupied",
+          skill_id: occupied.skill_id,
+          folder_key: occupied.folder_key,
+          row_ids: occupied.rows.map((row) => row.id),
+          path: occupied.path,
+          decision: "overwrite",
+        },
+        { question: "edited_copy", entry_id: copy.entry_id, path: copy.path, decision: "delete" },
       ],
       sink<RedeployProgress>().channel,
     );
     expect(second.report.moves.map((m) => m.status.status)).toEqual(["moved"]);
     expect(second.report.journal.map((j) => j.status)).toEqual(["finished"]);
+    expect(second.report.refused_answers).toEqual([]);
     expect(second.preview).toEqual({ global: { correction: 0, migration: 0 }, journal: 0, harnesses: [] });
+  });
+
+  it("answers naming another question are refused and touch nothing (Rust answer identity)", async () => {
+    const { handlers } = backendFor("redeploy");
+    const first = await handlers.redeployDeployments([], sink<RedeployProgress>().channel);
+    const occupied = first.report.moves.find((m) => m.status.status === "failed")!;
+    const copy = first.report.edited_copies[0];
+    const second = await handlers.redeployDeployments(
+      [
+        {
+          question: "occupied",
+          skill_id: occupied.skill_id,
+          folder_key: occupied.folder_key,
+          row_ids: ["a-recreated-row"],
+          path: occupied.path,
+          decision: "overwrite",
+        },
+        { question: "edited_copy", entry_id: "an-earlier-entry", path: copy.path, decision: "delete" },
+      ],
+      sink<RedeployProgress>().channel,
+    );
+    expect(second.report.moves[0].status).toMatchObject({ status: "failed", error: { code: "NOT_FOUND" } });
+    expect(second.report.journal.map((j) => j.status)).toEqual(["awaiting_answer"]);
+    expect(second.report.refused_answers.map((r) => r.path)).toEqual([copy.path]);
+    expect(second.preview).toEqual({ global: { correction: 1, migration: 0 }, journal: 1, harnesses: ["kilo_code"] });
   });
 });

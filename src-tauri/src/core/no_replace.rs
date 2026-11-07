@@ -35,6 +35,13 @@
 //! needs no fallback, and could not use one: a directory cannot be renamed
 //! onto an existing one there.
 //!
+//! [`HeldDir::exchange`] swaps two entries of the held directory in one step
+//! where the kernel offers it (Linux `renameat2(.., RENAME_EXCHANGE)`, macOS
+//! `renameatx_np(.., RENAME_SWAP)`), so neither name is ever empty — how the
+//! redeploy replaces a Deployment recoverably (`core::redeploy`). Elsewhere
+//! (Windows, a file system without it) it says so, and the caller falls back
+//! to two exclusive renames under its own journal.
+//!
 //! Scope (CONTEXT.md, Artifact removal): another process swapping entries
 //! inside the Library while the app acts is out of scope. This module closes
 //! the app's own check-then-act gaps; hardening against a concurrent
@@ -52,6 +59,15 @@ pub(crate) enum RenameError {
     /// changed.
     Occupied,
     /// Any other failure. Nothing was put at the new name.
+    Failed(io::Error),
+}
+
+/// Why [`HeldDir::exchange`] did not exchange.
+#[derive(Debug)]
+pub(crate) enum ExchangeError {
+    /// No atomic exchange on this OS or file system. Nothing changed.
+    Unsupported,
+    /// Any other failure (a name absent included). Nothing changed.
     Failed(io::Error),
 }
 
@@ -91,6 +107,25 @@ impl HeldDir {
         }
         sys::rename_no_replace(self, from, to)
     }
+
+    /// Exchange this directory's entries `a` and `b` (both present, of any
+    /// type) in one atomic step, where the OS and file system offer it;
+    /// [`ExchangeError::Unsupported`] elsewhere. Both are single folder names.
+    pub(crate) fn exchange(&self, a: &OsStr, b: &OsStr) -> Result<(), ExchangeError> {
+        for name in [a, b] {
+            let mut components = Path::new(name).components();
+            if !matches!(
+                (components.next(), components.next()),
+                (Some(Component::Normal(_)), None)
+            ) {
+                return Err(ExchangeError::Failed(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("{name:?} is not one entry name"),
+                )));
+            }
+        }
+        sys::exchange(self, a, b)
+    }
 }
 
 #[cfg(unix)]
@@ -103,7 +138,7 @@ mod sys {
     use std::os::unix::io::{AsRawFd, RawFd};
     use std::path::Path;
 
-    use super::{HeldDir, RenameError};
+    use super::{ExchangeError, HeldDir, RenameError};
 
     pub(super) fn open(path: &Path) -> io::Result<File> {
         std::fs::OpenOptions::new()
@@ -131,6 +166,54 @@ mod sys {
             }
             Err(err) => Err(classify(err)),
         }
+    }
+
+    pub(super) fn exchange(dir: &HeldDir, a: &OsStr, b: &OsStr) -> Result<(), ExchangeError> {
+        let fd = dir.dir.as_raw_fd();
+        let a = c_name(a).map_err(ExchangeError::Failed)?;
+        let b = c_name(b).map_err(ExchangeError::Failed)?;
+        match atomic_exchange(fd, &a, &b) {
+            Ok(()) => Ok(()),
+            Err(err) if unsupported(&err) => Err(ExchangeError::Unsupported),
+            Err(err) => Err(ExchangeError::Failed(err)),
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn atomic_exchange(fd: RawFd, a: &CString, b: &CString) -> io::Result<()> {
+        // SAFETY: a live directory descriptor and two NUL-terminated names;
+        // every variadic argument is passed at register width.
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_renameat2,
+                fd as libc::c_long,
+                a.as_ptr(),
+                fd as libc::c_long,
+                b.as_ptr(),
+                libc::RENAME_EXCHANGE as libc::c_long,
+            )
+        };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    #[cfg(target_vendor = "apple")]
+    fn atomic_exchange(fd: RawFd, a: &CString, b: &CString) -> io::Result<()> {
+        // SAFETY: a live directory descriptor and two NUL-terminated names.
+        let rc = unsafe { libc::renameatx_np(fd, a.as_ptr(), fd, b.as_ptr(), libc::RENAME_SWAP) };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple")))]
+    fn atomic_exchange(_fd: RawFd, _a: &CString, _b: &CString) -> io::Result<()> {
+        Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
     /// The exclusive-rename fallback: reserve `to` with an exclusive
@@ -266,7 +349,12 @@ mod sys {
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS};
     use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
 
-    use super::{HeldDir, RenameError};
+    use super::{ExchangeError, HeldDir, RenameError};
+
+    /// Windows has no atomic exchange of two directory entries.
+    pub(super) fn exchange(_dir: &HeldDir, _a: &OsStr, _b: &OsStr) -> Result<(), ExchangeError> {
+        Err(ExchangeError::Unsupported)
+    }
 
     pub(super) fn open(path: &Path) -> io::Result<File> {
         const FILE_READ_ATTRIBUTES: u32 = 0x0080;

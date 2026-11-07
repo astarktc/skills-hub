@@ -455,8 +455,9 @@ fn sync_dir_for_tool(
 /// into the Library itself (audit 3 F15) — and, for a stored path
 /// ([`Replace::within`]), must be one of the managed skills folders, spelled
 /// as it or physically inside it. A refusal is the typed
-/// `DestinationRefused`; nothing is touched.
-fn admit_destination(
+/// `DestinationRefused`; nothing is touched. Also the redeploy's admission
+/// of a place it adopts without writing (`core::redeploy`).
+pub(crate) fn admit_destination(
     target: &Path,
     replace: &Replace<'_>,
     library: &ProtectedLibrary<'_>,

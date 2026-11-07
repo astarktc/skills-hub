@@ -601,7 +601,15 @@ export type DestinationRefusal =
  *  the row is managed in (a stored path pointing elsewhere, or an aliased
  *  folder on the way leading elsewhere).
  */
-"outsideSkillsFolder";
+"outsideSkillsFolder" |
+/**
+ *  The place written physically lies inside another live Deployment, or
+ *  the folder already there holds one (an aliased folder nests them):
+ *  writing or replacing it would change or remove that Deployment.
+ *  `resolved` names the Deployment in the way. Raised by the redeploy
+ *  (`core::redeploy`).
+ */
+"overlapsDeployment";
 
 /**
  *  What the operator asked to disable or enable. Crosses the wire as itself:
@@ -650,9 +658,11 @@ export type DuplicateReadsDto = {
 
 /**  An edited copy: a row of the one overwrite ask (delete / leave). */
 export type EditedCopy = {
+	/**  The journal entry that asks — what an answer names. */
+	entry_id: string,
 	skill_id: string,
 	skill_name: string,
-	/**  The key of the row that owned it — the key an answer names. */
+	/**  The key of the row that owned it. */
 	tool: string,
 	path: string,
 	modified_at: number | null,
@@ -997,6 +1007,8 @@ export type InvocationOverride = {
 
 /**  A journal entry an earlier run or a crash left, as this run settled it. */
 export type JournalOutcome = {
+	/**  The journal entry. */
+	entry_id: string,
 	skill_id: string,
 	skill_name: string,
 	/**  The key of the row that owned the old artifact. */
@@ -1653,14 +1665,23 @@ export type ReaderHarnessDto = {
 };
 
 /**
- *  The operator's answer to one row of the ask, naming the path it showed:
- *  it applies only while that row's place is still that path. Input only.
+ *  The operator's answer to one row of the ask, naming exactly the question
+ *  it was asked — which rows or which journal entry, and the path it showed.
+ *  It applies only while that question is still the one asked: checked under
+ *  the guard, and a stale answer is refused with nothing touched. Input only.
  */
 export type RedeployAnswer =
-/**  The folder in a move's way (`TARGET_EXISTS`): Overwrite or Keep. */
-{ question: "occupied"; skill_id: string; folder_key: string; path: string; decision: OverrideDecision } |
-/**  An edited old copy: delete it, or leave it (disowned). */
-{ question: "edited_copy"; skill_id: string; tool: string; path: string; decision: EditedCopyDecision };
+/**
+ *  The folder in a move's way (`TARGET_EXISTS`): Overwrite or Keep.
+ *  `row_ids` are the move's rows as the ask's report listed them
+ *  (`RedeployMove.rows`); the move must still be exactly those rows.
+ */
+{ question: "occupied"; skill_id: string; folder_key: string; row_ids: string[]; path: string; decision: OverrideDecision } |
+/**
+ *  An edited old copy: delete it, or leave it (disowned). `entry_id` is
+ *  the journal entry that asked (`EditedCopy.entry_id`).
+ */
+{ question: "edited_copy"; entry_id: string; path: string; decision: EditedCopyDecision };
 
 /**  Why a move moves — counting only; the mechanism is one. */
 export type RedeployCause = "correction" | "migration";
@@ -1697,7 +1718,13 @@ export type RedeployLeftReason =
  */
 "stale" |
 /**  Its removal failed or was refused. */
-"removal_failed";
+"removal_failed" |
+/**
+ *  A live Deployment (the journaled new one, or another row's) lies
+ *  inside it, or resolves into it through an aliased folder: removing it
+ *  would remove that Deployment too.
+ */
+"holds_deployment";
 
 /**  One move: a skill's rows that land in one Deployment folder. */
 export type RedeployMove = {
@@ -1756,6 +1783,13 @@ export type RedeployReport = {
 	 *  (spec Q24).
 	 */
 	lost_disables: LostDisable[],
+	/**
+	 *  Answers that named no question this run asks — an edited copy whose
+	 *  journal entry is gone or another, a move no longer planned. Refused:
+	 *  nothing was touched for them. (An answer naming a planned move whose
+	 *  rows or place changed fails that move instead.)
+	 */
+	refused_answers: RefusedAnswer[],
 };
 
 /**
@@ -1829,6 +1863,17 @@ export type RefreshSkipReason =
  *  is no Restore-like repair here — retrying the Delete is.
  */
 { kind: "delete_incomplete" };
+
+/**
+ *  An answer refused because the question it answered is no longer asked:
+ *  `error` is the typed `NOT_FOUND` (`kind` `redeploy_question`, `id` the
+ *  question's identity — the journal entry, or the move's rows).
+ */
+export type RefusedAnswer = {
+	/**  The path the answer's ask showed. */
+	path: string,
+	error: CommandError,
+};
 
 export type RelinkOutcome = {
 	skill_id: string,
