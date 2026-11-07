@@ -41,6 +41,7 @@ import {
   visibleToolChoices,
   UNLOCATABLE_STATE_KEY,
   UNLOCATABLE_TOOLTIP_KEY,
+  isUnlocatableKind,
   UNLOCATABLE_REPAIR_KEY,
   SKIPPED_REASON_KEY,
   type ImportVariantFields,
@@ -72,10 +73,12 @@ const facts = (status: string, synced_at: number | null) => ({
 describe("unlocatable translation maps", () => {
   it("maps wire states and repairs to presentation keys", () => {
     expect(UNLOCATABLE_STATE_KEY).toEqual({
+      not_a_folder_name: "unlocatable.notAFolderName",
       source_missing: "unlocatable.sourceMissing",
       central_missing: "unlocatable.centralMissing",
     });
     expect(UNLOCATABLE_TOOLTIP_KEY).toEqual({
+      not_a_folder_name: "unlocatable.notAFolderNameTooltip",
       source_missing: "unlocatable.sourceMissingTooltip",
       central_missing: "unlocatable.centralMissingTooltip",
     });
@@ -85,9 +88,16 @@ describe("unlocatable translation maps", () => {
       restore: "unlocatable.restore",
     });
     expect(SKIPPED_REASON_KEY).toEqual({
+      not_a_folder_name: "errors.refreshSkippedNotAFolderName",
       source_missing: "errors.refreshSkippedSourceMissing",
       central_missing: "errors.refreshSkippedCentralMissing",
     });
+  });
+
+  it("tells an Unlocatable health row from every other kind", () => {
+    expect(["not_a_folder_name", "source_missing", "central_missing"].every((k) => isUnlocatableKind(k as never))).toBe(true);
+    expect(isUnlocatableKind("fetch_failed")).toBe(false);
+    expect(isUnlocatableKind("targets_failed")).toBe(false);
   });
 });
 
@@ -793,6 +803,8 @@ describe("skillHealth (the fold)", () => {
 
   it.each([
     ["central copy missing", { unlocatable: "central_missing" }, ["central_missing"], "failed", ["restore", "delete"]],
+    // Round 20 t19: a name that is not one folder name — only Remove repairs it.
+    ["name is not a folder name", { unlocatable: "not_a_folder_name" }, ["not_a_folder_name"], "failed", ["delete"]],
     ["source folder missing", { unlocatable: "source_missing" }, ["source_missing"], "stale", ["repoint", "detach", "delete"]],
     ["fetch failed", { health: { kind: "fetch_failed", error: failure, at: 5 } }, ["fetch_failed"], "stale", ["update", "repoint"]],
     ["edit conflict (stored)", { health: { kind: "edit_conflict", error: failure, at: 5 } }, ["edit_conflict"], "stale", ["editInvocation"]],
@@ -1119,6 +1131,9 @@ describe("My Skills folds (ticket 11)", () => {
     it("offers nothing for a skill off everywhere or without its central copy", () => {
       expect(offered({ disabled_at: 3, targets: [row("cursor", "disabled")] })).toEqual([]);
       expect(offered({ unlocatable: "central_missing", targets: [row("cursor", "synced")] })).toEqual([]);
+      // Nothing deploys from a skill whose name is not one folder name.
+      expect(offered({ unlocatable: "not_a_folder_name", targets: [row("cursor", "synced")] })).toEqual([]);
+      expect(offered({ unlocatable: "not_a_folder_name", targets: [] })).toEqual([]);
     });
   });
 

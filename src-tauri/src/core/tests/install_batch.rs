@@ -701,3 +701,164 @@ fn the_report_crosses_the_wire_with_cancelled_as_its_own_kind() {
         ]})
     );
 }
+
+/// The stub's bytes with its SKILL.md replaced: a repository whose manifest
+/// says what the test needs it to.
+struct ManifestApi {
+    inner: StubApi,
+    manifest: &'static str,
+}
+
+impl GithubApi for ManifestApi {
+    fn matching_refs(&self, repo: &GithubRepo, prefix: &str) -> anyhow::Result<Vec<String>> {
+        self.inner.matching_refs(repo, prefix)
+    }
+
+    fn branch_sha(&self, coords: &GithubCoords) -> anyhow::Result<String> {
+        self.inner.branch_sha(coords)
+    }
+
+    fn download_directory(
+        &self,
+        coords: &GithubCoords,
+        dest: &Path,
+        cancel: Option<&CancelToken>,
+    ) -> anyhow::Result<()> {
+        self.inner.download_directory(coords, dest, cancel)?;
+        fs::write(dest.join("SKILL.md"), self.manifest)?;
+        Ok(())
+    }
+}
+
+fn git_request(subpath: &str, name_override: Option<&str>) -> InstallRequest {
+    InstallRequest {
+        source: InstallSource::Git {
+            url: "https://github.com/owner/repo".into(),
+            resolution: Some(GitSourceResolution {
+                branch: Some("main".into()),
+                subpath: None,
+            }),
+        },
+        candidates: vec![InstallCandidate {
+            subpath: subpath.into(),
+            name_override: name_override.map(str::to_string),
+        }],
+        tools: vec!["claude_code".into()],
+        overwrite_if_same_content: true,
+        overrides: Vec::new(),
+        deploy: true,
+    }
+}
+
+/// What the fixture's root holds besides the Library: nothing of a skill
+/// ever lands beside it.
+fn outside_the_library(f: &Fixture) -> Vec<String> {
+    let mut entries: Vec<String> = fs::read_dir(f._dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| !["central", "cache", "home", "source", "test.db"].contains(&name.as_str()))
+        .collect();
+    entries.sort();
+    entries
+}
+
+fn refused_name(report: &InstallBatchReport) -> Option<&str> {
+    match &report.candidates[0].status {
+        InstallCandidateStatus::Failed {
+            error: CommandError::SkillNameInvalid { name },
+        } => Some(name),
+        _ => None,
+    }
+}
+
+/// Round 20 ticket 19: a name typed in the Add flow that is not one folder
+/// name is the typed refusal, raised before any acquisition — no GitHub call,
+/// no clone cache, no staging, no record.
+#[test]
+fn a_requested_name_that_is_not_one_folder_name_is_refused_before_download() {
+    // Drive-relative and drive-absolute spellings only mean something there.
+    let windows: &[&str] = if cfg!(windows) {
+        &["C:x", "C:\\x"]
+    } else {
+        &[]
+    };
+    let bad = ["../x", "../../x", "a/b", "a\\b", "..", ""];
+    for &name in bad.iter().chain(windows) {
+        let f = fixture();
+        let api = RecordingApi::new();
+        let report = install_selection_with(
+            &f.paths,
+            &f.store,
+            &git_request("skills/alpha", Some(name)),
+            &api,
+            None,
+            1000,
+            |_| {},
+        );
+        assert_eq!(refused_name(&report), Some(name), "{name:?}: {report:?}");
+        assert!(api.calls.borrow().is_empty(), "{name:?}: nothing acquired");
+        assert!(!f.paths.cache_dir.exists(), "{name:?}: no clone cache");
+        assert_eq!(
+            fs::read_dir(&f.paths.central_dir).unwrap().count(),
+            0,
+            "{name:?}: no staging, no copy"
+        );
+        assert!(outside_the_library(&f).is_empty(), "{name:?}");
+        assert!(f.store.list_skills().unwrap().is_empty());
+
+        // A local source: refused before anything is copied.
+        let mut local = request(&f, &["alpha"]);
+        local.candidates[0].name_override = Some(name.to_string());
+        let report = run(&f, &local, None);
+        assert_eq!(refused_name(&report), Some(name), "{name:?}: {report:?}");
+        assert_eq!(fs::read_dir(&f.paths.central_dir).unwrap().count(), 0);
+        assert!(outside_the_library(&f).is_empty(), "{name:?}");
+    }
+}
+
+/// A repository whose SKILL.md says `name: ../../x` installs under the
+/// derived name (the subpath's leaf), inside the Library.
+#[test]
+fn a_manifest_name_that_is_not_one_folder_name_installs_under_the_derived_name() {
+    let f = fixture();
+    let api = ManifestApi {
+        inner: StubApi::serving(&"a".repeat(40)),
+        manifest: "---\nname: ../../x\ndescription: hostile\n---\n",
+    };
+    let report = install_selection_with(
+        &f.paths,
+        &f.store,
+        &git_request("skills/derived", None),
+        &api,
+        None,
+        1000,
+        |_| {},
+    );
+    let InstallCandidateStatus::Installed { skill, .. } = &report.candidates[0].status else {
+        panic!("{report:?}");
+    };
+    assert_eq!(skill.name, "derived");
+    assert_eq!(skill.central_path, f.paths.central_dir.join("derived"));
+    assert!(outside_the_library(&f).is_empty());
+    assert!(matches!(
+        target_status(&report, "derived"),
+        BatchTargetStatus::Synced { .. }
+    ));
+}
+
+/// A local folder whose SKILL.md name is not one folder name installs under
+/// the folder's own name, as an unnamed local install does.
+#[test]
+fn a_local_manifest_name_that_is_not_one_folder_name_installs_under_the_folder_name() {
+    let f = fixture();
+    let hostile = f.source.join("hostile");
+    fs::create_dir_all(&hostile).unwrap();
+    fs::write(hostile.join("SKILL.md"), "---\nname: ../../x\n---\nbody\n").unwrap();
+    let report = run(&f, &request(&f, &["hostile"]), None);
+    let InstallCandidateStatus::Installed { skill, .. } = &report.candidates[0].status else {
+        panic!("{report:?}");
+    };
+    assert_eq!(skill.name, "hostile");
+    assert_eq!(skill.central_path, f.paths.central_dir.join("hostile"));
+    assert!(outside_the_library(&f).is_empty());
+}

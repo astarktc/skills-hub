@@ -482,6 +482,7 @@ export type UnlocatableRepair = "repoint" | "detach" | "restore";
 
 /** Wire states and repairs meet the i18n catalog only in these maps. */
 export const UNLOCATABLE_STATE_KEY = {
+  not_a_folder_name: "unlocatable.notAFolderName",
   source_missing: "unlocatable.sourceMissing",
   central_missing: "unlocatable.centralMissing",
 } satisfies Record<UnlocatableState, string>;
@@ -493,9 +494,15 @@ export const ACQUISITION_SKIP_KEY = {
 } satisfies Record<UpdateSkip, string>;
 
 export const UNLOCATABLE_TOOLTIP_KEY = {
+  not_a_folder_name: "unlocatable.notAFolderNameTooltip",
   source_missing: "unlocatable.sourceMissingTooltip",
   central_missing: "unlocatable.centralMissingTooltip",
 } satisfies Record<UnlocatableState, string>;
+
+/** Whether a health row is an Unlocatable state (its explanation is the state's tooltip). */
+export function isUnlocatableKind(kind: HealthRowKind): kind is UnlocatableState {
+  return Object.hasOwn(UNLOCATABLE_TOOLTIP_KEY, kind);
+}
 
 export const UNLOCATABLE_REPAIR_KEY = {
   repoint: "unlocatable.repoint",
@@ -505,6 +512,7 @@ export const UNLOCATABLE_REPAIR_KEY = {
 
 /** The panel row's message for a skill Refresh (all) skipped, by state. */
 export const SKIPPED_REASON_KEY = {
+  not_a_folder_name: "errors.refreshSkippedNotAFolderName",
   source_missing: "errors.refreshSkippedSourceMissing",
   central_missing: "errors.refreshSkippedCentralMissing",
 } satisfies Record<UnlocatableState, string>;
@@ -514,7 +522,8 @@ export const SKIPPED_REASON_KEY = {
  * state and both affordance bits are the backend's answers (computed at
  * list time); this only pairs them: a missing source offers Re-point, and
  * Detach when the central copy is there to become the truth; a missing
- * central copy offers Restore (an Update) when the skill is refreshable.
+ * central copy offers Restore (an Update) when the skill is refreshable; a
+ * name that is not one folder name offers nothing but Remove.
  */
 export function unlocatableRepairs(
   skill: UnlocatableRepairFields,
@@ -732,6 +741,7 @@ export type HealthRow = {
  * muted one). The first row is the skill's headline problem.
  */
 export const HEALTH_ROW_ORDER = [
+  "not_a_folder_name",
   "central_missing",
   "restore_failed",
   "delete_incomplete",
@@ -749,6 +759,7 @@ export const HEALTH_ROW_ORDER = [
 ] as const satisfies readonly HealthRowKind[];
 
 const ROW_SEVERITY: Record<HealthRowKind, HealthSeverity> = {
+  not_a_folder_name: "failed",
   central_missing: "failed",
   restore_failed: "failed",
   delete_incomplete: "failed",
@@ -774,6 +785,7 @@ const SEVERITY_RANK: Record<HealthSeverity, number> = {
 
 /** The label of each row kind (`health.rows.*`; counted kinds take `count`). */
 export const HEALTH_ROW_LABEL_KEY = {
+  not_a_folder_name: "unlocatable.notAFolderName",
   central_missing: "unlocatable.centralMissing",
   source_missing: "unlocatable.sourceMissing",
   fetch_failed: "skillHealth.fetchFailed",
@@ -1190,15 +1202,21 @@ const WRITES_TO_HARNESS: ReadonlySet<TargetAction> = new Set(["retry", "enable",
  * overwrite ask) and can be disabled — unless a Disable holds on its folder
  * (`held`: a removal that did not finish), where the repair is finishing the
  * Disable, or Enable; a live copy disabled; a disabled pair enabled; a
- * harness without a copy deployed. A skill off everywhere, or whose
- * central copy is gone, offers nothing here — Health carries its repair. On a
+ * harness without a copy deployed. A skill off everywhere, whose central
+ * copy is gone, or whose name is not one folder name (nothing deploys from
+ * it), offers nothing here — Health carries its repair. On a
  * harness that is not detected, every verb that writes to it is refused.
  */
 export function targetActions(
   mark: Pick<StripMark, "state" | "detected" | "held">,
   skill: Pick<SkillHealthFields, "disabled_at" | "unlocatable">,
 ): OfferedTargetAction[] {
-  if (skill.disabled_at !== null || skill.unlocatable === "central_missing") return [];
+  if (
+    skill.disabled_at !== null ||
+    skill.unlocatable === "central_missing" ||
+    skill.unlocatable === "not_a_folder_name"
+  )
+    return [];
   const actions: TargetAction[] = (() => {
     switch (mark.state) {
       case "failed":

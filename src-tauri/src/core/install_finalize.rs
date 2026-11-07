@@ -11,6 +11,16 @@
 //!
 //! Collisions are raised as `SignalError::SkillExists { name }` so the command
 //! seam maps them to a typed wire variant; no message here is user copy.
+//!
+//! A skill's name becomes a folder in the Library and in every harness, so it
+//! is always one folder name (`placement::is_folder_name`, the one rule):
+//! [`library_path`] is the one place a name becomes a Library copy's path. A
+//! name the caller asks for that fails it is the typed `SkillNameInvalid`,
+//! raised by [`ensure_name_available`] before any acquisition; a SKILL.md
+//! `name` that fails it is passed over for the derived name, as a taken one
+//! is. The destination is then admitted physically ([`admit_library_entry`]):
+//! nothing at its leaf, not even a link, and its parent the central repo
+//! itself by physical identity (the removal fence's claim), not by spelling.
 
 use std::path::{Path, PathBuf};
 
@@ -21,7 +31,9 @@ use super::clock::now_ms;
 use super::content_identity;
 use super::errors::SignalError;
 use super::manifest::{find_skill_md, parse_skill_md};
+use super::placement::is_folder_name;
 use super::provenance::Provenance;
+use super::removal_fence::Place;
 use super::skill_store::{SkillRecord, SkillStore};
 use super::sync_engine::copy_dir_recursive;
 
@@ -180,18 +192,67 @@ impl Drop for StagingDir {
     }
 }
 
-/// Resolve `central_dir/name`, raising the typed `SkillExists` collision when
-/// something already lives there. Flows call this before acquiring bytes so a
-/// doomed install never downloads; [`finalize_install`] re-checks it as the
-/// authority.
-pub fn ensure_name_available(central_dir: &Path, name: &str) -> Result<PathBuf> {
-    let central_path = central_dir.join(name);
-    if central_path.exists() {
-        anyhow::bail!(SignalError::SkillExists {
-            name: name.to_string(),
-        });
+/// Refuse a skill name that is not one folder name (`placement::is_folder_name`):
+/// the typed `SkillNameInvalid`.
+pub(crate) fn ensure_folder_name(name: &str) -> Result<()> {
+    if is_folder_name(name) {
+        return Ok(());
     }
+    anyhow::bail!(SignalError::SkillNameInvalid {
+        name: name.to_string(),
+    })
+}
+
+/// Where the skill named `name` lives in the Library `central_dir`: the one
+/// place a skill name becomes a Library copy's path, so it is always a direct
+/// child of the Library. A name that is not one folder name is refused
+/// ([`ensure_folder_name`]) before anything touches the disk.
+pub(crate) fn library_path(central_dir: &Path, name: &str) -> Result<PathBuf> {
+    ensure_folder_name(name)?;
+    Ok(central_dir.join(name))
+}
+
+/// Resolve `central_dir/name` for a new skill: refused typed when `name` is
+/// not one folder name (`SkillNameInvalid`) or something already lives there
+/// (`SkillExists`), then admitted physically ([`admit_library_entry`]). Flows
+/// call this before acquiring bytes so a doomed install never downloads;
+/// [`finalize_install`] re-checks it as the authority.
+pub fn ensure_name_available(central_dir: &Path, name: &str) -> Result<PathBuf> {
+    let central_path = library_path(central_dir, name)?;
+    admit_library_entry(central_dir, &central_path, name)?;
     Ok(central_path)
+}
+
+/// Admit `central_path` as a new Library copy of the skill `name`: nothing
+/// lives at it — not even a dangling link, which a write would follow or
+/// replace (`SkillExists`) — and its parent is the central repo itself by
+/// physical identity (`removal_fence::Place`, the identity the removal
+/// fence's claim compares), so the copy lands physically inside the Library
+/// whatever the path's spelling. The second check cannot fail for a path
+/// [`library_path`] built; it is the authority that does not rest on the
+/// spelling.
+fn admit_library_entry(central_dir: &Path, central_path: &Path, name: &str) -> Result<()> {
+    match std::fs::symlink_metadata(central_path) {
+        Ok(_) => anyhow::bail!(SignalError::SkillExists {
+            name: name.to_string(),
+        }),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err).with_context(|| format!("inspect {:?}", central_path)),
+    }
+    let library = Place::of(central_dir)?;
+    let parent = central_path
+        .parent()
+        .map(Place::of)
+        .transpose()?
+        .filter(|parent| parent.same(&library));
+    if parent.is_none() {
+        anyhow::bail!(
+            "refusing a Library copy at {:?}: it is not a direct child of the central repo {:?}",
+            central_path,
+            central_dir
+        );
+    }
+    Ok(())
 }
 
 /// Materialize a staged skill as a new managed skill: resolve the final name,
@@ -206,13 +267,15 @@ pub fn finalize_install(
     let requested_path = ensure_name_available(central_dir, name.requested())?;
     let (md_name, description) = read_skill_md_meta(staged.path());
 
+    // SKILL.md's name wins over a derived one only when it can be this
+    // skill's folder: one folder name, free in the Library. Otherwise the
+    // derived name stands — the manifest is untrusted input, never a path.
     let (name, central_path) = match (&name, md_name) {
         (NameIntent::Derived(requested), Some(better)) if better != *requested => {
-            let better_path = central_dir.join(&better);
-            if better_path.exists() {
-                (requested.clone(), requested_path)
-            } else {
-                (better, better_path)
+            match ensure_name_available(central_dir, &better) {
+                Ok(better_path) => (better, better_path),
+                Err(err) if passed_over(&err) => (requested.clone(), requested_path),
+                Err(err) => return Err(err),
             }
         }
         _ => (name.requested().to_string(), requested_path),
@@ -257,6 +320,15 @@ pub fn finalize_install(
     })
 }
 
+/// Whether a SKILL.md name refusal only passes the name over (it is taken, or
+/// not one folder name) rather than failing the install.
+fn passed_over(err: &anyhow::Error) -> bool {
+    matches!(
+        err.downcast_ref::<SignalError>(),
+        Some(SignalError::SkillExists { .. } | SignalError::SkillNameInvalid { .. })
+    )
+}
+
 /// Replace a managed skill's content with the staged bytes and refresh its
 /// record (identity, name, provenance, and timestamps other than `updated_at`
 /// are preserved; `revision` overrides the stored one when known). Returns
@@ -274,6 +346,10 @@ pub fn finalize_install(
 /// step owns rollback of its auxiliary rows; finalize owns bytes and the skill
 /// row. Snapshot the persisted row before landing: acquisition may have
 /// overridden provenance in its input record (Re-point).
+///
+/// A record whose name is not one folder name (written before ticket 19, its
+/// copy possibly outside the Library) is refused typed before anything
+/// moves: acquired bytes never land at its recorded path.
 pub fn finalize_update<T>(
     store: &SkillStore,
     record: &SkillRecord,
@@ -281,6 +357,7 @@ pub fn finalize_update<T>(
     revision: Option<String>,
     settle: impl FnOnce(&mut SkillRecord) -> Result<T>,
 ) -> Result<(SkillRecord, T)> {
+    ensure_folder_name(&record.name)?;
     let previous = store
         .get_skill_by_id(&record.id)?
         .context("skill missing before finalize")?;

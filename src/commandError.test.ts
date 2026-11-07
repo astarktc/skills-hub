@@ -373,6 +373,12 @@ describe("describeCommandError", () => {
     ).toBe('errors.invalidPath {"path":"/x","reason":"martian"}');
   });
 
+  it("names the refused name for SKILL_NAME_INVALID", () => {
+    expect(
+      describeCommandError({ code: "SKILL_NAME_INVALID", name: "../x" }, t),
+    ).toBe('errors.skillNameInvalid {"name":"../x"}');
+  });
+
   it("names the colliding skill for SKILL_EXISTS", () => {
     expect(
       describeCommandError(

@@ -802,3 +802,195 @@ fn move_into_removes_partial_dest_when_the_fallback_copy_fails() {
     // Restore permissions so the tempdir can be cleaned up.
     fs::set_permissions(&blocked, fs::Permissions::from_mode(0o755)).unwrap();
 }
+
+/// A Library under a root the test owns, so "outside the Library" is
+/// observable: the root holds the Library and nothing else.
+fn library_in_root() -> (tempfile::TempDir, std::path::PathBuf) {
+    let root = tempfile::tempdir().unwrap();
+    let central = root.path().join("library");
+    fs::create_dir_all(&central).unwrap();
+    (root, central)
+}
+
+/// Names that are not one folder name on every platform, plus an absolute
+/// path that would land beside the Library (`root/elsewhere`).
+fn names_that_are_not_one_folder_name(root: &Path) -> Vec<String> {
+    let mut names: Vec<String> = [
+        "../../x", "../x", "..", ".", "", "a/b", "./x", "x/", "a\\b", "..\\x", "a\0b",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+    names.push(root.join("elsewhere").to_string_lossy().into_owned());
+    // Drive-relative and drive-absolute spellings only mean something there.
+    #[cfg(windows)]
+    names.extend(["C:x", "C:\\x", "\\\\server\\share"].map(str::to_string));
+    names
+}
+
+fn root_entries(root: &Path) -> Vec<String> {
+    central_entries(root)
+}
+
+/// Round 20 ticket 19: SKILL.md is untrusted input. A `name` that is not one
+/// folder name (`name: ../../x`) is passed over for the derived name, as a
+/// taken one is, and the copy lands inside the Library.
+#[test]
+fn a_skill_md_name_that_is_not_one_folder_name_installs_under_the_derived_name() {
+    for bad in names_that_are_not_one_folder_name(Path::new("/unused")) {
+        if bad.contains('\0') || bad.is_empty() {
+            // A manifest value cannot carry these through the frontmatter
+            // reader; the rule itself is covered below.
+            continue;
+        }
+        let (_db, store) = make_store();
+        let (root, central) = library_in_root();
+        let staged = stage_skill(&central, &format!("---\nname: {bad}\n---\n"));
+
+        let res = finalize_install(
+            &store,
+            &central,
+            staged,
+            NameIntent::Derived("derived".to_string()),
+            SkillProvenance::git("https://github.com/o/r", None, None),
+        )
+        .unwrap_or_else(|err| panic!("{bad:?}: {err:#}"));
+
+        assert_eq!(res.name, "derived", "{bad:?}");
+        assert_eq!(res.central_path, central.join("derived"), "{bad:?}");
+        assert_eq!(
+            central_entries(&central),
+            vec!["derived".to_string()],
+            "{bad:?}"
+        );
+        assert_eq!(
+            root_entries(root.path()),
+            vec!["library".to_string()],
+            "{bad:?}"
+        );
+        let record = store.get_skill_by_id(&res.skill_id).unwrap().unwrap();
+        assert_eq!(record.name, "derived");
+    }
+}
+
+/// A requested name that is not one folder name is the typed refusal, from
+/// the pre-acquisition check and from finalize alike; nothing lands anywhere.
+#[test]
+fn a_requested_name_that_is_not_one_folder_name_is_refused_typed() {
+    let (root, central) = library_in_root();
+    for bad in names_that_are_not_one_folder_name(root.path()) {
+        let refusal = SignalError::SkillNameInvalid { name: bad.clone() };
+        let err = ensure_name_available(&central, &bad).unwrap_err();
+        assert_eq!(err.downcast_ref::<SignalError>(), Some(&refusal), "{bad:?}");
+
+        let (_db, store) = make_store();
+        for intent in [
+            NameIntent::UserProvided(bad.clone()),
+            NameIntent::Derived(bad.clone()),
+        ] {
+            let staged = stage_skill(&central, "---\nname: fine\n---\n");
+            let err = finalize_install(
+                &store,
+                &central,
+                staged,
+                intent,
+                SkillProvenance::local(Path::new("/src/x")),
+            )
+            .unwrap_err();
+            assert_eq!(err.downcast_ref::<SignalError>(), Some(&refusal), "{bad:?}");
+        }
+        assert!(central_entries(&central).is_empty(), "{bad:?}");
+        assert_eq!(
+            root_entries(root.path()),
+            vec!["library".to_string()],
+            "{bad:?}"
+        );
+        assert!(store.list_skills().unwrap().is_empty());
+    }
+}
+
+/// The Library copy is admitted by what is at the destination, not by
+/// `exists()`: a dangling link there is taken (a write would follow or
+/// replace it), so nothing is written through it.
+#[cfg(unix)]
+#[test]
+fn a_dangling_link_at_the_destination_is_a_taken_name() {
+    let (root, central) = library_in_root();
+    let outside = root.path().join("outside");
+    std::os::unix::fs::symlink(&outside, central.join("alpha")).unwrap();
+
+    let err = ensure_name_available(&central, "alpha").unwrap_err();
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::SkillExists {
+            name: "alpha".to_string()
+        })
+    );
+    let (_db, store) = make_store();
+    let staged = stage_skill(&central, "---\nname: alpha\n---\n");
+    finalize_install(
+        &store,
+        &central,
+        staged,
+        NameIntent::UserProvided("alpha".to_string()),
+        SkillProvenance::local(Path::new("/src/alpha")),
+    )
+    .unwrap_err();
+    assert!(!outside.exists(), "nothing written through the link");
+}
+
+/// The Library copy is admitted physically: its parent must be the central
+/// repo itself by identity. A Library reached through a link is still the
+/// Library (the parent resolves to it); a destination whose parent is
+/// another folder is refused, whatever its spelling.
+#[cfg(unix)]
+#[test]
+fn the_library_copy_is_admitted_by_physical_identity() {
+    let (root, central) = library_in_root();
+    let alias = root.path().join("alias");
+    std::os::unix::fs::symlink(&central, &alias).unwrap();
+    assert_eq!(
+        ensure_name_available(&alias, "alpha").unwrap(),
+        alias.join("alpha")
+    );
+
+    let other = root.path().join("other");
+    fs::create_dir_all(&other).unwrap();
+    super::admit_library_entry(&central, &other.join("alpha"), "alpha")
+        .expect_err("a destination outside the central repo is refused");
+    super::admit_library_entry(&central, &central.join("alpha"), "alpha").unwrap();
+}
+
+/// A record written before ticket 19 whose name is not one folder name
+/// names a copy that may lie outside the Library: Update refuses to land
+/// bytes at it, typed, before anything moves.
+#[test]
+fn finalize_update_refuses_a_record_whose_name_is_not_one_folder_name() {
+    let (_db, store) = make_store();
+    let (root, central) = library_in_root();
+    let staged = stage_skill(&central, "---\nname: s\n---\n");
+    let installed = finalize_install(
+        &store,
+        &central,
+        staged,
+        NameIntent::UserProvided("s".to_string()),
+        SkillProvenance::local(Path::new("/src/s")),
+    )
+    .unwrap();
+    let mut record = store.get_skill_by_id(&installed.skill_id).unwrap().unwrap();
+    let outside = central.join("../x");
+    record.name = "../x".to_string();
+    record.central_path = outside.to_string_lossy().into_owned();
+    store.upsert_skill(&record).unwrap();
+
+    let staged = stage_skill(&central, "---\nname: s\n---\nnew\n");
+    let err = finalize_update(&store, &record, staged, None).unwrap_err();
+    assert_eq!(
+        err.downcast_ref::<SignalError>(),
+        Some(&SignalError::SkillNameInvalid {
+            name: "../x".to_string()
+        })
+    );
+    assert!(!root.path().join("x").exists(), "nothing landed outside");
+    assert_eq!(central_entries(&central), vec!["s".to_string()]);
+}

@@ -15,7 +15,7 @@ use super::{
         acquire, parse_github_url, AcquireRequest, Acquired, GitSelection, GitSource, GithubApi,
         SkillIntent,
     },
-    install_finalize::{finalize_update, StagingDir},
+    install_finalize::{ensure_folder_name, finalize_update, StagingDir},
     installer::{ensure_installable_skill_dir, InstallerPaths},
     propagation::{propagate_unlocked, PropagationReport},
     provenance::{is_refreshable, Provenance},
@@ -80,6 +80,9 @@ impl UpdateRequest {
     /// provenance was (`local`, the folder, no subpath); that proposal is only
     /// persisted by apply after staging succeeds.
     pub(crate) fn local(record: SkillRecord, source: &Path, repoint: bool) -> Result<Self> {
+        // Finalize refuses to land bytes for a name that is not one folder
+        // name; refuse it before copying any.
+        ensure_folder_name(&record.name)?;
         if !source.exists() {
             anyhow::bail!(SignalError::SourcePathMissing {
                 path: source.to_string_lossy().into_owned()
@@ -403,13 +406,19 @@ fn resolved_subpath(resolved: Option<String>) -> Option<String> {
     resolved.filter(|subpath| subpath != ".")
 }
 
+/// The skill an acquisition lands bytes for. Its name must be one folder name
+/// (`SkillNameInvalid` otherwise, as finalize would refuse): a record written
+/// before ticket 19 may name a copy outside the Library, and nothing is
+/// downloaded for it.
 fn require_record(store: &SkillStore, skill_id: &str) -> Result<SkillRecord> {
-    store.get_skill_by_id(skill_id)?.ok_or_else(|| {
+    let record = store.get_skill_by_id(skill_id)?.ok_or_else(|| {
         anyhow::anyhow!(SignalError::NotFound {
             kind: "skill".to_string(),
             id: skill_id.to_string(),
         })
-    })
+    })?;
+    ensure_folder_name(&record.name)?;
+    Ok(record)
 }
 
 /// The typed condition for an Update of a skill that has no external source

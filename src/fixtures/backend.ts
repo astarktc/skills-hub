@@ -228,6 +228,9 @@ export function createFixtureBackend(
 
   const nameTaken = (name: string) =>
     state.skills.some((s) => s.dto.name.toLowerCase() === name.toLowerCase());
+  // The backend's one name rule (`placement::is_folder_name`), as far as a
+  // fixture name can break it: a skill's name is one folder name.
+  const isFolderName = (name: string) => name !== "" && name !== "." && name !== ".." && !/[/\\\0]/.test(name);
 
   const insideToolDir = (path: string) =>
     TOOL_REGISTRY.find((tool) => path.startsWith(`${globalRoot(tool.key)}/`));
@@ -245,6 +248,7 @@ export function createFixtureBackend(
     invocation?: InvocationMode;
     hashOverride?: string;
   }): FixtureSkill => {
+    if (!isFolderName(input.name)) fail({ code: "SKILL_NAME_INVALID", name: input.name });
     if (nameTaken(input.name)) fail({ code: "SKILL_EXISTS", name: input.name });
     const files = skillFiles(input.name, input.description, input.invocation ?? "user-and-model");
     const at = now();
@@ -1795,6 +1799,7 @@ export function createFixtureBackend(
     const chosen = group.variants.find((v) => v.path === selection.chosen_path);
     if (!chosen) return failed({ code: "NOT_FOUND", kind: "onboarding_variant", id: selection.chosen_path });
     const name = selection.name ?? group.name;
+    if (!isFolderName(name)) return failed({ code: "SKILL_NAME_INVALID", name });
     if (nameTaken(name)) return failed({ code: "SKILL_EXISTS", name });
     const skill = finalize({
       name,

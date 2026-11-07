@@ -26,6 +26,7 @@ import {
   INVOCATION_LABEL_KEY,
   ROW_MARK_LABEL_KEY,
   UNLOCATABLE_TOOLTIP_KEY,
+  isUnlocatableKind,
   healthRowPlaces,
   rowMarks,
   skillHealth,
@@ -148,7 +149,7 @@ const SkillRow = ({
     const parts = [
       row.error
         ? describeCommandError(row.error, t)
-        : row.kind === "central_missing" || row.kind === "source_missing"
+        : isUnlocatableKind(row.kind)
           ? t(UNLOCATABLE_TOOLTIP_KEY[row.kind])
           : null,
       ...healthRowPlaces(row, { t, labelOf }),

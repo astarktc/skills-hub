@@ -1,8 +1,15 @@
 //! Unlocatable skill: a Managed skill the app can no longer locate (see
 //! **Unlocatable skill** in `CONTEXT.md`).
 //!
-//! Two states, computed from the recorded paths at listing time and never
-//! stored:
+//! Three states, computed from the record at listing time and never stored:
+//!
+//! - `not_a_folder_name` — the skill's name is not one folder name
+//!   (`placement::is_folder_name`). Only a record written before ticket 19
+//!   can be one (install now refuses or passes over such a name); its
+//!   central copy was joined from that name, so it may lie outside the
+//!   Library. Nothing deploys from it (`placement::deployment_path` refuses
+//!   the name) and nothing lands bytes at it (`install_finalize::finalize_update`
+//!   refuses it). Repair: Remove.
 //!
 //! - `source_missing` — a `local` skill whose folder is gone. Repairs:
 //!   Re-point (`core::repoint` with a local target — the single-skill Update
@@ -22,13 +29,18 @@ use std::path::Path;
 use anyhow::Result;
 
 use super::errors::SignalError;
+use super::placement::is_folder_name;
 use super::provenance::Provenance;
 use super::skill_store::{SkillRecord, SkillStore};
 
-/// Which of a skill's recorded paths is gone.
+/// Which of a skill's recorded paths is gone — or cannot be a Library copy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum UnlocatableState {
+    /// The skill's name is not one folder name, so its central copy is not a
+    /// folder of the Library (it may lie outside it): never deployed from,
+    /// never updated.
+    NotAFolderName,
     /// A `local` skill's source folder is not there.
     SourceMissing,
     /// The central copy is not there.
@@ -42,8 +54,13 @@ pub enum UnlocatableState {
 /// links), so the listing and the acquire step agree by construction: a
 /// dangling link is missing. Both paths gone reports `source_missing`,
 /// because Re-point is the repair that fixes both (its Update rebuilds the
-/// central copy), while Restore alone would fail on the missing source.
+/// central copy), while Restore alone would fail on the missing source. A
+/// name that is not one folder name wins over both: no repair but Remove
+/// applies to it.
 pub fn unlocatable_state(record: &SkillRecord) -> Option<UnlocatableState> {
+    if !is_folder_name(&record.name) {
+        return Some(UnlocatableState::NotAFolderName);
+    }
     if Provenance::parse(&record.source_type) == Some(Provenance::Local) {
         let source_present = record
             .source_ref
