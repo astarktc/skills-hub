@@ -491,7 +491,13 @@ pub(crate) fn finish_journal_unlocked(
             status,
         });
     }
-    if report.is_empty() {
+    // An entry still awaiting its answer changed nothing: the launch offer
+    // (the preview counts it) asks again, so it is not a run of its own.
+    let settled_any = report
+        .journal
+        .iter()
+        .any(|entry| entry.status != JournalStatus::AwaitingAnswer);
+    if report.is_empty() || !settled_any {
         return Ok(None);
     }
     settings::record_redeploy_report(store, &serde_json::to_string(&report)?)?;

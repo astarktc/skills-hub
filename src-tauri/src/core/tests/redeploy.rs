@@ -1153,3 +1153,22 @@ fn the_global_batch_leaves_a_pending_move_to_the_redeploy() {
     assert_eq!(Path::new(&f.row("codex").unwrap().target_path), old);
     assert_eq!(f.preview().global.correction, 1, "still the redeploy's");
 }
+
+/// An edited copy awaiting its answer is asked again by the next run, not
+/// reported as a launch-check run of its own on every launch.
+#[test]
+fn the_launch_check_records_nothing_for_an_edited_copy_still_awaiting() {
+    let f = fixture(&["codex"]);
+    edited_copy(&f);
+    f.run(&[]);
+
+    assert!(finish_journal(&f.store, &f.roots, &f.central_dir(), NOW)
+        .unwrap()
+        .is_none());
+    assert!(take_finished_journal(&f.store).unwrap().is_none());
+    assert_eq!(
+        f.store.list_redeploy_journal().unwrap().len(),
+        1,
+        "still owed"
+    );
+}
