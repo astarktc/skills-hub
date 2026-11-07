@@ -594,6 +594,7 @@ fn batch_isolates_per_target_failures() {
 
 #[test]
 fn batch_override_applies_to_the_folder_its_key_names() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let dir = tempfile::tempdir().expect("tempdir");
     let store = make_store(dir.path());
     seed_skill(&store, "skill-1");
@@ -799,6 +800,7 @@ fn install_tool(home: &Path, key: &str) {
 
 #[test]
 fn plan_resolves_each_key_to_its_folder_root_and_installedness_from_home() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let home = tempfile::tempdir().expect("home");
     install_tool(home.path(), "claude_code");
     // amp and kimi_cli share ~/.config/agents/skills but are detected by
@@ -908,7 +910,7 @@ fn sync_skills_to_tools_writes_under_temp_home_and_reports_unknown_tools() {
 #[cfg(unix)]
 #[test]
 fn an_overwrite_never_removes_a_folder_inside_the_central_library() {
-    use crate::core::errors::{CommandError, RemovalRefusal};
+    use crate::core::errors::{CommandError, DestinationRefusal};
 
     let dir = tempfile::tempdir().expect("tempdir");
     let store = make_store(dir.path());
@@ -945,15 +947,17 @@ fn an_overwrite_never_removes_a_folder_inside_the_central_library() {
     )
     .expect_err("the overwrite must be refused");
 
+    // Refused before anything is written (round 20 t10: a write's admission
+    // keeps it out of the Library), so the removal fence never has to act.
     assert!(
         matches!(
             CommandError::from(err),
-            CommandError::RemovalRefused {
-                reason: RemovalRefusal::CentralLibrary,
+            CommandError::DestinationRefused {
+                reason: DestinationRefusal::InLibrary,
                 ..
             }
         ),
-        "refused with the typed central-library reason"
+        "refused with the typed in-library reason"
     );
     assert_eq!(
         fs::read_to_string(nested.join("SKILL.md")).unwrap(),
@@ -973,7 +977,7 @@ fn an_overwrite_never_removes_a_folder_inside_the_central_library() {
 #[cfg(unix)]
 #[test]
 fn an_overwrite_never_removes_an_unrecorded_folder_of_the_configured_repo() {
-    use crate::core::errors::{CommandError, RemovalRefusal};
+    use crate::core::errors::{CommandError, DestinationRefusal};
 
     let dir = tempfile::tempdir().expect("tempdir");
     let store = make_store(dir.path());
@@ -1004,15 +1008,17 @@ fn an_overwrite_never_removes_an_unrecorded_folder_of_the_configured_repo() {
     )
     .expect_err("the overwrite must be refused");
 
+    // Refused before anything is written (round 20 t10: a write's admission
+    // keeps it out of the Library), so the removal fence never has to act.
     assert!(
         matches!(
             CommandError::from(err),
-            CommandError::RemovalRefused {
-                reason: RemovalRefusal::CentralLibrary,
+            CommandError::DestinationRefused {
+                reason: DestinationRefusal::InLibrary,
                 ..
             }
         ),
-        "refused with the typed central-library reason"
+        "refused with the typed in-library reason"
     );
     assert_eq!(
         fs::read_to_string(unrecorded.join("SKILL.md")).unwrap(),
@@ -1170,6 +1176,7 @@ fn a_detected_reader_makes_its_group_deployable_before_the_group_folder_exists()
 /// touched. A Keep naming `amp` then records Amp's row `disabled` alone.
 #[test]
 fn every_row_writes_the_skills_place_and_an_answer_reaches_the_row_it_names() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     use crate::core::skill_store::SkillTargetRecord;
     let dir = tempfile::tempdir().expect("tempdir");
     let store = make_store(dir.path());

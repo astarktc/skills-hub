@@ -40,11 +40,7 @@ fn groups_by_name_and_detects_conflicts_by_fingerprint() {
     let home = tempfile::tempdir().unwrap();
 
     installed_with_skill(home.path(), "cursor", "foo", b"cursor");
-    installed_with_skill(home.path(), "codex", "foo", b"codex");
-
-    // Codex .system should be ignored
-    fs::create_dir_all(home.path().join(".codex/skills/.system")).unwrap();
-    fs::write(home.path().join(".codex/skills/.system/SKILL.md"), b"x").unwrap();
+    installed_with_skill(home.path(), "pi", "foo", b"pi");
 
     let plan = plan_in(home.path(), &OnboardingScanScope::Installed, None, None).unwrap();
     assert_eq!(plan.total_tools_scanned, 2);
@@ -201,7 +197,7 @@ fn invalid_manifests_are_listed_apart_from_the_groups() {
 fn plan_counts_groups_and_copies_separately() {
     let home = tempfile::tempdir().unwrap();
     installed_with_skill(home.path(), "cursor", "foo", b"same");
-    installed_with_skill(home.path(), "codex", "foo", b"same");
+    installed_with_skill(home.path(), "pi", "foo", b"same");
     installed_with_skill(home.path(), "claude_code", "foo", b"other");
     installed_with_skill(home.path(), "claude_code", "bar", b"bar");
 

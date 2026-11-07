@@ -15,16 +15,12 @@ fn path_resolution_joins_adapter_dirs_onto_home() {
     let home = tempfile::tempdir().unwrap();
     let cases: [(&str, &str, &[&str]); 6] = [
         ("claude_code", ".claude/skills", &[".claude"]),
-        ("codex", ".codex/skills", &[".codex"]),
+        ("codex", ".agents/skills", &[".codex"]),
         ("cursor", ".cursor/skills", &[".cursor"]),
-        // Amp and Kimi share a skills convention dir but are detected by
-        // their own config roots (Kimi's moved across releases).
+        // Amp keeps the skills convention dir Kimi left (round 20 #108); each
+        // is detected by its own config root (Kimi's moved across releases).
         ("amp", ".config/agents/skills", &[".config/amp"]),
-        (
-            "kimi_cli",
-            ".config/agents/skills",
-            &[".kimi-code", ".kimi"],
-        ),
+        ("kimi_cli", ".kimi-code/skills", &[".kimi-code", ".kimi"]),
         ("pi", ".pi/agent/skills", &[".pi"]),
     ];
     for (key, skills, detect) in cases {
@@ -46,9 +42,10 @@ fn path_resolution_joins_adapter_dirs_onto_home() {
 }
 
 /// Every registry row's resolved global paths — skills dir, former dirs,
-/// detect dirs — as they stood before typed roots (round 20 ticket 01). Typed
-/// roots move no Deployment: each existing row still resolves under home to
-/// exactly these paths, on every OS (no production row carries an override).
+/// detect dirs — as they stood before typed roots (round 20 ticket 01), with
+/// the round 20 #108 corrections (ticket 10, spec Q12) as the one deliberate
+/// edit since: each corrected row's old dir is its former dir. Typed roots
+/// move no Deployment; a correction moves them only through the redeploy.
 #[test]
 fn every_existing_row_resolves_to_the_paths_it_always_has() {
     // `HostRoots::under_home` puts roaming app data at `~/AppData/Roaming`.
@@ -62,12 +59,22 @@ fn every_existing_row_resolves_to_the_paths_it_always_has() {
     } else {
         ".reasonix"
     };
+    const DEVIN_SKILLS: &str = if cfg!(windows) {
+        "AppData/Roaming/devin/skills"
+    } else {
+        ".config/devin/skills"
+    };
+    const DEVIN_DETECT: &str = if cfg!(windows) {
+        "AppData/Roaming/devin"
+    } else {
+        ".config/devin"
+    };
     #[allow(clippy::type_complexity)]
     let expected: &[(&str, &str, &[&str], &[&str])] = &[
         ("agents_skills", ".agents/skills", &[], &[".agents"]),
         ("cursor", ".cursor/skills", &[], &[".cursor"]),
         ("claude_code", ".claude/skills", &[], &[".claude"]),
-        ("codex", ".codex/skills", &[], &[".codex"]),
+        ("codex", ".agents/skills", &[".codex/skills"], &[".codex"]),
         (
             "opencode",
             ".config/opencode/skills",
@@ -76,15 +83,15 @@ fn every_existing_row_resolves_to_the_paths_it_always_has() {
         ),
         (
             "antigravity",
-            ".gemini/antigravity/global_skills",
-            &[],
-            &[".gemini/antigravity"],
+            ".gemini/config/skills",
+            &[".gemini/antigravity/global_skills"],
+            &[".gemini/antigravity", ".gemini/antigravity-cli"],
         ),
         ("amp", ".config/agents/skills", &[], &[".config/amp"]),
         (
             "kimi_cli",
-            ".config/agents/skills",
-            &[],
+            ".kimi-code/skills",
+            &[".config/agents/skills"],
             &[".kimi-code", ".kimi"],
         ),
         (
@@ -111,31 +118,51 @@ fn every_existing_row_resolves_to_the_paths_it_always_has() {
         ("kode", ".kode/skills", &[], &[".kode"]),
         ("mcpjam", ".mcpjam/skills", &[], &[".mcpjam"]),
         ("mistral_vibe", ".vibe/skills", &[], &[".vibe"]),
-        ("mux", ".mux/skills", &[], &[".mux"]),
+        ("mux", ".xum/skills", &[".mux/skills"], &[".mux", ".xum"]),
         ("openclaude", ".openclaude/skills", &[], &[".openclaude"]),
-        ("openhands", ".openhands/skills", &[], &[".openhands"]),
+        (
+            "openhands",
+            ".agents/skills",
+            &[".openhands/skills"],
+            &[".openhands"],
+        ),
         ("pi", ".pi/agent/skills", &[], &[".pi"]),
         ("qoder", ".qoder/skills", &[], &[".qoder"]),
         ("qoderwork", ".qoderwork/skills", &[], &[".qoderwork"]),
         ("qwen_code", ".qwen/skills", &[], &[".qwen"]),
         ("trae", ".trae/skills", &[], &[".trae"]),
         ("trae_cn", ".trae-cn/skills", &[], &[".trae-cn"]),
-        ("zencoder", ".zencoder/skills", &[], &[".zencoder"]),
+        (
+            "zencoder",
+            ".agents/skills",
+            &[".zencoder/skills"],
+            &[".zencoder"],
+        ),
         ("neovate", ".neovate/skills", &[], &[".neovate"]),
         ("pochi", ".pochi/skills", &[], &[".pochi"]),
         ("adal", ".adal/skills", &[], &[".adal"]),
-        ("kilo_code", ".kilocode/skills", &[], &[".kilocode"]),
+        (
+            "kilo_code",
+            ".kilo/skills",
+            &[".kilocode/skills"],
+            &[".kilocode", ".kilo"],
+        ),
         ("roo_code", ".roo/skills", &[], &[".roo"]),
-        ("goose", ".config/goose/skills", &[], &[".config/goose"]),
+        (
+            "goose",
+            ".agents/skills",
+            &[".config/goose/skills"],
+            &[".config/goose"],
+        ),
         ("gemini_cli", ".gemini/skills", &[], &[".gemini"]),
         ("github_copilot", ".copilot/skills", &[], &[".copilot"]),
         ("clawdbot", ".clawdbot/skills", &[], &[".clawdbot"]),
         ("droid", ".factory/skills", &[], &[".factory"]),
         (
             "windsurf",
-            ".codeium/windsurf/skills",
-            &[],
-            &[".codeium/windsurf"],
+            DEVIN_SKILLS,
+            &[".codeium/windsurf/skills"],
+            &[".codeium/windsurf", DEVIN_DETECT],
         ),
         ("moltbot", ".moltbot/skills", &[], &[".moltbot"]),
         ("hermes-agent", ".hermes/skills", &[], &[".hermes"]),
@@ -329,14 +356,15 @@ fn a_registry_path_displays_under_tilde_only_when_it_lies_under_home() {
 }
 
 /// Every default root is home, and the only per-OS overrides are Reasonix's
-/// (round 20 ticket 06, the first production consumer): its skills and its
-/// config root live under `%APPDATA%\reasonix` on Windows. A row moving off
-/// home, or a second override, is a deliberate registry edit that updates
-/// this pin.
+/// (round 20 ticket 06, the first production consumer) and Devin's (round 20
+/// #108, brief I7): their skills and their config roots live under
+/// `%APPDATA%` on Windows. A row moving off home, or another override, is a
+/// deliberate registry edit that updates this pin.
 #[test]
-fn every_production_path_is_home_rooted_and_only_reasonix_overrides() {
-    let reasonix_overrides: [(&str, &[OsOverride]); 2] = [
+fn every_production_path_is_home_rooted_and_only_reasonix_and_devin_override() {
+    let overridden: [(&str, &str, &[OsOverride]); 4] = [
         (
+            "reasonix",
             ".reasonix/skills",
             &[OsOverride {
                 os: HostOs::Windows,
@@ -345,11 +373,30 @@ fn every_production_path_is_home_rooted_and_only_reasonix_overrides() {
             }],
         ),
         (
+            "reasonix",
             ".reasonix",
             &[OsOverride {
                 os: HostOs::Windows,
                 root: HostRoot::RoamingAppData,
                 rel: "reasonix",
+            }],
+        ),
+        (
+            "windsurf",
+            ".config/devin/skills",
+            &[OsOverride {
+                os: HostOs::Windows,
+                root: HostRoot::RoamingAppData,
+                rel: "devin/skills",
+            }],
+        ),
+        (
+            "windsurf",
+            ".config/devin",
+            &[OsOverride {
+                os: HostOs::Windows,
+                root: HostRoot::RoamingAppData,
+                rel: "devin",
             }],
         ),
     ];
@@ -359,15 +406,12 @@ fn every_production_path_is_home_rooted_and_only_reasonix_overrides() {
         paths.extend(adapter.detect_dirs.iter().copied());
         for path in paths {
             assert_eq!(path.root, HostRoot::Home, "{}: {path:?}", adapter.key());
-            if adapter.key() == "reasonix" {
-                let expected = reasonix_overrides
-                    .iter()
-                    .find(|(rel, _)| *rel == path.rel)
-                    .map(|(_, overrides)| *overrides);
-                assert_eq!(Some(path.overrides), expected, "reasonix: {path:?}");
-            } else {
-                assert!(path.overrides.is_empty(), "{}: {path:?}", adapter.key());
-            }
+            let expected = overridden
+                .iter()
+                .find(|(key, rel, _)| *key == adapter.key() && *rel == path.rel)
+                .map(|(_, _, overrides)| *overrides)
+                .unwrap_or(&[]);
+            assert_eq!(path.overrides, expected, "{}: {path:?}", adapter.key());
         }
     }
 }
@@ -691,11 +735,13 @@ fn adapter_by_key_finds_new_tools() {
     assert!(adapter_by_key("qwen_code").is_some());
 }
 
+/// Round 20 #108: Kimi Code left the `~/.config/agents/skills` folder it
+/// shared with Amp; each is now its own Deployment folder.
 #[test]
-fn amp_and_kimi_share_one_deployment_folder() {
+fn amp_keeps_the_folder_kimi_left() {
     use crate::core::placement::{own_folder, ScopeKind};
     assert_eq!(own_folder(ScopeKind::Global, "amp"), Some("amp"));
-    assert_eq!(own_folder(ScopeKind::Global, "kimi_cli"), Some("amp"));
+    assert_eq!(own_folder(ScopeKind::Global, "kimi_cli"), Some("kimi_cli"));
 }
 
 /// A placeholder detect dir for adapters only `scan_tool_dir` reads.
@@ -1071,21 +1117,30 @@ fn augment_global_skills_dir_is_augment_skills_and_rules_is_former() {
     assert_eq!(augment.project_skills_dir, Some(".augment/skills"));
 }
 
-/// A former dir is a registry fact about a *correction*: it must never be a
-/// live skills dir of any Tool (relocation would then move a healthy target).
+/// A former dir is a registry fact about a *correction*: it is never the
+/// row's own current skills dir. It may be another harness's current dir —
+/// Kimi Code's former `~/.config/agents/skills` is Amp's — because nothing
+/// decides placement from a former dir (the redeploy compares rows with
+/// placement, and removes an old artifact only when no other live row records
+/// it), so Amp's Deployments there are never moved or removed for Kimi's sake.
 #[test]
-fn no_former_skills_dir_is_a_current_skills_dir() {
+fn no_former_skills_dir_is_its_own_rows_current_dir() {
+    let mut shared_with_another_row = Vec::new();
     for adapter in default_tool_adapters() {
         for former in adapter.former_skills_dirs {
             assert!(
-                default_tool_adapters()
-                    .iter()
-                    .all(|a| !a.skills_dir.same_location(former)),
-                "{}'s former dir {former:?} is still some Tool's skills dir",
+                !adapter.skills_dir.same_location(former),
+                "{}'s former dir {former:?} is its own skills dir",
                 adapter.key()
             );
+            for other in default_tool_adapters() {
+                if other.skills_dir.same_location(former) {
+                    shared_with_another_row.push((adapter.key(), other.key()));
+                }
+            }
         }
     }
+    assert_eq!(shared_with_another_row, vec![("kimi_cli", "amp")]);
 }
 
 // ---------------------------------------------------------------------------
@@ -1185,51 +1240,81 @@ fn a_path_resolving_into_a_tool_skills_dir_names_that_tool() {
 
 /// Round 20 relabels move nothing: each product's new name is a label only,
 /// and the key every stored row (targets, selections, assignments) carries
-/// is unchanged and still resolves to the same folders.
+/// is unchanged. Folders moved only where #108 corrected them (ticket 10),
+/// and then the folder the key always had is its former dir — so the
+/// redeploy, not the relabel, moves its Deployments.
 #[test]
 fn relabelled_harnesses_keep_their_stored_keys_and_folders() {
     let home = tempfile::tempdir().unwrap();
     let roots = HostRoots::under_home(home.path());
-    let cases = [
-        ("mux", "Xum", ".mux/skills"),
-        ("windsurf", "Devin (Windsurf)", ".codeium/windsurf/skills"),
-        ("copaw", "QwenPaw", ".copaw/skill_pool"),
-        ("zencoder", "Zencoder / Zenflow", ".zencoder/skills"),
+    let devin = if cfg!(windows) {
+        "AppData/Roaming/devin/skills"
+    } else {
+        ".config/devin/skills"
+    };
+    let cases: [(&str, &str, &str, Option<&str>); 4] = [
+        ("mux", "Xum", ".xum/skills", Some(".mux/skills")),
+        (
+            "windsurf",
+            "Devin (Windsurf)",
+            devin,
+            Some(".codeium/windsurf/skills"),
+        ),
+        ("copaw", "QwenPaw", ".copaw/skill_pool", None),
+        (
+            "zencoder",
+            "Zencoder / Zenflow",
+            ".agents/skills",
+            Some(".zencoder/skills"),
+        ),
     ];
-    for (stored_key, label, skills) in cases {
+    let under = |rel: &str| {
+        let mut path = home.path().to_path_buf();
+        path.extend(rel.split('/'));
+        path
+    };
+    for (stored_key, label, skills, former) in cases {
         let adapter = adapter_by_key(stored_key).unwrap_or_else(|| panic!("{stored_key}"));
         assert_eq!(adapter.key(), stored_key, "the stored key round-trips");
         assert_eq!(adapter.display_name, label);
-        let mut expected = home.path().to_path_buf();
-        expected.extend(skills.split('/'));
         assert_eq!(
             skills_dir_in(&roots, adapter),
-            expected,
-            "{stored_key} moved nothing"
+            under(skills),
+            "{stored_key}"
+        );
+        assert_eq!(
+            former_skills_dirs_in(&roots, adapter),
+            former.map(under).into_iter().collect::<Vec<_>>(),
+            "{stored_key}'s old folder is its former dir"
         );
     }
 }
 
-/// #108: these detect dirs land only with their folder corrections. Adding
-/// one now would detect a harness into a folder it does not read (QwenPaw's
-/// root is `~/.qwenpaw` but its row deploys under `~/.copaw`; Antigravity
-/// CLI and Devin read other folders than their rows target). Remove this pin
-/// deliberately, in #108, with the folder move.
+/// #108 (round 20 ticket 10): the detect dirs Wave A held back landed with
+/// their folder corrections — Antigravity CLI's root and Devin's config root
+/// now detect rows that deploy where those harnesses read. QwenPaw's
+/// `.qwenpaw` still waits for its own correction (BACKLOG #118): its row
+/// deploys under `~/.copaw`, which `.qwenpaw` would mis-detect.
 #[test]
-fn deferred_detect_dirs_wait_for_108() {
-    let deferred = [
-        ("copaw", ".qwenpaw"),
-        ("antigravity", ".gemini/antigravity-cli"),
-        ("windsurf", ".config/devin"),
-    ];
-    for (key, rel) in deferred {
-        for adapter in default_tool_adapters() {
-            assert!(
-                adapter.detect_dirs.iter().all(|dir| dir.rel != rel),
-                "{}: `{rel}` (deferred for {key}) waits for #108",
-                adapter.key()
-            );
-        }
+fn the_deferred_detect_dirs_landed_with_their_corrections() {
+    let antigravity = adapter_by_key("antigravity").unwrap();
+    assert!(antigravity
+        .detect_dirs
+        .iter()
+        .any(|dir| dir.rel == ".gemini/antigravity-cli"));
+    assert_eq!(antigravity.skills_dir.rel, ".gemini/config/skills");
+    let devin = adapter_by_key("windsurf").unwrap();
+    assert!(devin
+        .detect_dirs
+        .iter()
+        .any(|dir| dir.rel == ".config/devin"));
+    assert_eq!(devin.skills_dir.rel, ".config/devin/skills");
+    for adapter in default_tool_adapters() {
+        assert!(
+            adapter.detect_dirs.iter().all(|dir| dir.rel != ".qwenpaw"),
+            "{}: `.qwenpaw` waits for #118",
+            adapter.key()
+        );
     }
 }
 
@@ -1385,7 +1470,8 @@ fn every_row_restates_its_brief_read_facts() {
             [Yes, No],
             P::Both,
             D::ShowsAll,
-            &[],
+            // Its own deprecated folder, still read (round 20 #108 moved the row).
+            &[(".codex/skills", M::Default)],
         ),
         (
             "opencode",
@@ -1574,7 +1660,7 @@ fn every_row_restates_its_brief_read_facts() {
             ALL_UNKNOWN,
             P::Own,
             D::Shadows,
-            &[(".xum/skills", M::Default)],
+            &[(".xum/skills", M::Default), (".mux/skills", M::Default)],
         ),
         (
             "openclaude",
@@ -1592,7 +1678,7 @@ fn every_row_restates_its_brief_read_facts() {
             [Yes, No],
             P::Shared,
             D::Shadows,
-            &[],
+            &[(".openhands/skills", M::Default)],
         ),
         (
             "pi",
@@ -1660,7 +1746,7 @@ fn every_row_restates_its_brief_read_facts() {
             [Yes, Yes],
             P::Unknown,
             D::Unknown,
-            &[],
+            &[(".zencoder/skills", M::Default)],
         ),
         (
             "neovate",
@@ -1717,7 +1803,10 @@ fn every_row_restates_its_brief_read_facts() {
             [Yes, Yes],
             P::Unknown,
             D::Unknown,
-            &[(".agents/plugins", M::Default)],
+            &[
+                (".agents/plugins", M::Default),
+                (".config/goose/skills", M::Default),
+            ],
         ),
         (
             "gemini_cli",

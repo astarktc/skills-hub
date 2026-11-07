@@ -764,10 +764,11 @@ fn a_failed_relink_keeps_the_old_copy_it_reaches() {
 /// skills folder its harness is managed in (a malformed stored path) is never
 /// replaced by the relink, even though the link there reaches the old copy:
 /// the relink is refused (`ResolvesElsewhere`), the link and the old copy it
-/// reaches are kept, and the row is kept `error`.
+/// reaches are kept, and the row is kept `error`. Since round 20 t10 the
+/// write is refused at admission (`DestinationRefused`), before the fence.
 #[test]
 fn a_relink_never_replaces_a_link_recorded_outside_the_managed_folders() {
-    use crate::core::errors::{CommandError, RemovalRefusal};
+    use crate::core::errors::{CommandError, DestinationRefusal};
     let mut f = fixture(&["claude_code"]);
     let alpha = f.install("alpha");
     f.sync(&alpha, &["claude_code"]);
@@ -790,8 +791,8 @@ fn a_relink_never_replaces_a_link_recorded_outside_the_managed_folders() {
         matches!(
             &report.deployments[0].status,
             RelinkStatus::Failed {
-                error: CommandError::RemovalRefused {
-                    reason: RemovalRefusal::ResolvesElsewhere,
+                error: CommandError::DestinationRefused {
+                    reason: DestinationRefusal::OutsideSkillsFolder,
                     ..
                 }
             }
@@ -2414,6 +2415,7 @@ const STORED_1_3_4_REPORT: &str = include_str!("fixtures/library-move-report-1.3
 /// pre-1.4.0 rows name their one folder at both scopes.
 #[test]
 fn a_stored_1_3_4_report_decodes_with_each_rows_folder() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     use crate::core::artifact_removal::RowRef;
     use crate::core::library_move::{decode_stored_report, RelinkStatus};
 

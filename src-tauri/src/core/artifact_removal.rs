@@ -94,8 +94,7 @@ use crate::core::{
     },
     sync_engine::{remove_central_copy, remove_path_any, typed_removal_failure},
     tool_adapters::{
-        adapter_by_key, ensure_path_within_tool_dirs, former_skills_dirs_in, installed_set_in,
-        project_skills_dir_in, ToolAdapter,
+        adapter_by_key, ensure_path_within_tool_dirs, installed_set_in, project_skills_dir_in,
     },
 };
 
@@ -997,47 +996,65 @@ fn settle_row_as_error(store: &SkillStore, row: &RowRef, error: &str) -> Result<
     }
 }
 
-/// Remove an artifact a global Sync target *used to* occupy, after its row
-/// was settled at the Tool's current skills dir (`core::target_relocation`).
-/// No row is touched: the row already describes the new artifact, so there
-/// is nothing to settle here — a failure is the caller's to log.
+/// Why the redeploy may remove an old artifact (`core::redeploy`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum SupersededAuthority<'a> {
+    /// Only an occupant one of these proves ours — the old row's own record,
+    /// or the Library's Content identity — through the occupant check, now.
+    Evidence(&'a [Deployed]),
+    /// The operator answered "Delete your edited copy" for exactly this path.
+    Answered,
+}
+
+/// What [`remove_superseded_artifact_unlocked`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Superseded {
+    /// Removed now.
+    Removed,
+    /// Nothing was there.
+    Absent,
+    /// Something is there that no evidence proves ours: untouched.
+    NotOurs,
+}
+
+/// Remove an old artifact a redeploy's row switch superseded
+/// (`core::redeploy`). No row is settled: the row already records the new
+/// place, and the journal entry is the caller's to clear.
 ///
-/// Fenced to `adapter`'s **former** skills dirs, the only place a relocation
-/// leaves an artifact behind; anything else is refused as
-/// `PathOutsideToolDirs`, and the removal is admitted physically against
-/// the central library and those dirs. Presence follows the module rule,
-/// and the old artifact is removed only while it is still what the row
-/// deployed (`deployed`, the occupant check): anything else there is left.
+/// The occupant rule runs here, at the moment of removal: under
+/// [`SupersededAuthority::Evidence`] the occupant is removed only when one of
+/// the evidences proves it ours (`core::ownership::check`); anything else is
+/// [`Superseded::NotOurs`] and stays. The removal is admitted physically like
+/// every removal — never the central library — and only inside `managed`,
+/// the skills folders the old row is managed in
+/// (`placement::managed_global_dirs`, its harness's current and former
+/// dirs): a malformed path elsewhere is refused (`ResolvesElsewhere`).
 /// Unlocked internal seam.
-///
-/// Only Target relocation calls it, and relocation is not run at launch
-/// since 1.3.2 (BACKLOG #89); its tests still drive it until #108 rewires it.
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "relocation is unwired until BACKLOG #108")
-)]
 pub(crate) fn remove_superseded_artifact_unlocked(
     store: &SkillStore,
-    roots: &HostRoots,
     central_dir: &Path,
-    adapter: &ToolAdapter,
     path: &Path,
-    deployed: &Deployed,
-) -> Result<()> {
-    let former = former_skills_dirs_in(roots, adapter);
-    let fenced = former
-        .iter()
-        .any(|dir| path.parent() == Some(dir.as_path()));
-    if !fenced {
-        anyhow::bail!(SignalError::PathOutsideToolDirs {
-            path: path.to_string_lossy().into_owned(),
-        });
+    managed: &[PathBuf],
+    authority: SupersededAuthority<'_>,
+) -> Result<Superseded> {
+    if !is_present(path) {
+        return Ok(Superseded::Absent);
     }
-    if ownership::check(path, deployed)? == Occupancy::Ours {
-        let library = ProtectedLibrary::new(store, central_dir);
-        remove_path_any(path, &Fence::new(&library).claiming(Claim::Within(&former)))?;
+    if let SupersededAuthority::Evidence(evidence) = authority {
+        let mut ours = false;
+        for deployed in evidence {
+            if ownership::check(path, deployed)? == Occupancy::Ours {
+                ours = true;
+                break;
+            }
+        }
+        if !ours {
+            return Ok(Superseded::NotOurs);
+        }
     }
-    Ok(())
+    let library = ProtectedLibrary::new(store, central_dir);
+    remove_path_any(path, &Fence::new(&library).claiming(Claim::Within(managed)))?;
+    Ok(Superseded::Removed)
 }
 
 /// Move Library folder's Clean step (`core::library_move`): remove a moved

@@ -168,6 +168,19 @@ pub enum SignalError {
         path: String,
         detail: String,
     },
+    /// A sync write (a first write or a replacement) was refused before
+    /// anything was written: the folder it would write into, `path`'s parent
+    /// resolved through every link or junction, is `resolved` — inside the
+    /// central library, or (for a stored path) outside every skills folder
+    /// the row is managed in (`reason`). The operator causes it by aliasing a
+    /// harness skills folder onto the Library or elsewhere, or by a record
+    /// pointing outside its folder; the redeploy moves a Deployment to its
+    /// canonical folder. Owned by `core::sync_engine`.
+    DestinationRefused {
+        path: String,
+        resolved: String,
+        reason: DestinationRefusal,
+    },
 }
 
 impl fmt::Display for SignalError {
@@ -301,6 +314,16 @@ impl fmt::Display for SignalError {
             SignalError::LibraryCopyFailed { name, path, detail } => {
                 write!(f, "copying skill {name} from {path} failed: {detail}")
             }
+            SignalError::DestinationRefused {
+                path,
+                resolved,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "write to {path} refused ({reason:?}): its folder resolves to {resolved}"
+                )
+            }
         }
     }
 }
@@ -371,6 +394,21 @@ pub enum RemovalRefusal {
     MountTableUnreadable,
 }
 
+/// Why a sync write was refused before anything was written (the backend
+/// classifies; the frontend owns the copy). Owned by `core::sync_engine`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum DestinationRefusal {
+    /// The folder written into physically is, or lies inside, the central
+    /// library (an aliased harness skills folder): a Deployment there would
+    /// write into the Library itself.
+    InLibrary,
+    /// The folder written into physically lies outside every skills folder
+    /// the row is managed in (a stored path pointing elsewhere, or an aliased
+    /// folder on the way leading elsewhere).
+    OutsideSkillsFolder,
+}
+
 /// Why Move Library folder refused a destination (the backend classifies;
 /// the frontend owns the copy). Owned by `core::library_move`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -412,6 +450,18 @@ pub enum CommandError {
     TargetDisabled {
         /// Registry key of the Tool the pair names.
         tool: String,
+    },
+    /// A sync fan-out skipped this row because its Deployment waits for the
+    /// redeploy (round 20 #108): the row owns an artifact at another place
+    /// than the one placement gives it now (`path`, as recorded). Writing the
+    /// new place here would re-record the row and orphan that artifact; the
+    /// redeploy (Settings → Harnesses → Move Deployments) moves it. A skip
+    /// reason, never a failure.
+    RedeployPending {
+        /// The key of the row.
+        tool: String,
+        /// Where the row records its artifact.
+        path: String,
     },
     /// A sync target is occupied by a folder the app does not own. Every
     /// producer's row carries what the one overwrite ask shows (D12): the
@@ -592,6 +642,16 @@ pub enum CommandError {
         path: String,
         /// The diagnostic chain, diagnostics only.
         detail: String,
+    },
+    /// A sync write was refused before anything was written: `path`'s folder
+    /// physically resolves to `resolved`, inside the central library or
+    /// outside every skills folder the row is managed in.
+    DestinationRefused {
+        /// The path the write was asked to create.
+        path: String,
+        /// Where its folder physically leads.
+        resolved: String,
+        reason: DestinationRefusal,
     },
     /// An Update replayed the operator's invocation Edit onto new upstream
     /// bytes whose own invocation mode disagrees with both the Edit's base
@@ -809,6 +869,15 @@ impl From<SignalError> for CommandError {
             SignalError::LibraryCopyFailed { name, path, detail } => {
                 CommandError::LibraryCopyFailed { name, path, detail }
             }
+            SignalError::DestinationRefused {
+                path,
+                resolved,
+                reason,
+            } => CommandError::DestinationRefused {
+                path,
+                resolved,
+                reason,
+            },
         }
     }
 }
@@ -822,6 +891,10 @@ impl From<GlobalSyncError> for CommandError {
             GlobalSyncError::TargetDisabled { tool_key } => {
                 CommandError::TargetDisabled { tool: tool_key }
             }
+            GlobalSyncError::RedeployPending { tool_key, path } => CommandError::RedeployPending {
+                tool: tool_key,
+                path: path.to_string_lossy().into_owned(),
+            },
             GlobalSyncError::TargetExists {
                 target_path,
                 occupant,

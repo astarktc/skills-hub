@@ -211,6 +211,7 @@ fn import_of_a_variant_installed_by_npx_skills_add_records_its_upstream_as_git()
 
 #[test]
 fn auto_sync_on_overwrites_the_source_tool_in_place_in_its_shared_folder() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     // amp and kimi_cli share `.config/agents/skills` (one detect dir, one
     // artifact): the source variant's own path IS one of the sync targets.
     let f = fixture();
@@ -900,10 +901,10 @@ fn auto_sync_off_without_remove_originals_leaves_and_reports_every_original() {
     let f = fixture();
     install_tool(&f, "claude_code");
     install_tool(&f, "cursor");
-    install_tool(&f, "codex");
+    install_tool(&f, "pi");
     let chosen = seed_skill_dir(&f, "claude_code", "alpha", "same");
     let sibling = seed_skill_dir(&f, "cursor", "alpha", "same");
-    let divergent = seed_skill_dir(&f, "codex", "alpha", "different");
+    let divergent = seed_skill_dir(&f, "pi", "alpha", "different");
 
     let report = run(&f, &[selection("alpha", &chosen)], policy_off(false));
 
@@ -925,7 +926,7 @@ fn auto_sync_off_without_remove_originals_leaves_and_reports_every_original() {
                 matches!(status, OriginalStatus::LeftInPlace),
                 "{tool}: {status:?}"
             ),
-            "codex" => assert!(
+            "pi" => assert!(
                 matches!(status, OriginalStatus::KeptDivergent),
                 "{tool}: {status:?}"
             ),
@@ -1384,11 +1385,11 @@ fn remove_divergent_retains_a_copy_whose_identity_is_unknown() {
     let f = fixture();
     install_tool(&f, "claude_code");
     install_tool(&f, "cursor");
-    install_tool(&f, "codex");
+    install_tool(&f, "pi");
     let chosen = seed_skill_dir(&f, "claude_code", "alpha", "same-body");
     fs::write(chosen.join("notes.txt"), "notes").unwrap();
     let divergent = seed_skill_dir(&f, "cursor", "alpha", "different-body");
-    let unknown = seed_skill_dir(&f, "codex", "alpha", "same-body");
+    let unknown = seed_skill_dir(&f, "pi", "alpha", "same-body");
     fs::write(unknown.join("notes.txt"), "notes").unwrap();
     if !make_unreadable(&unknown.join("notes.txt")) {
         eprintln!("skipped: this user can read a 000 file");
@@ -1410,7 +1411,7 @@ fn remove_divergent_retains_a_copy_whose_identity_is_unknown() {
     );
     assert!(divergent.symlink_metadata().is_err(), "B is gone");
     assert!(
-        is_identity_unknown(original_at(originals, &unknown, "codex"), &unknown),
+        is_identity_unknown(original_at(originals, &unknown, "pi"), &unknown),
         "C is retained and reported as an unknown comparison: {originals:?}"
     );
     assert_eq!(
@@ -1595,6 +1596,7 @@ fn remove_divergent_never_follows_a_link_into_the_central_repo() {
 /// the same row (audit F6).
 #[test]
 fn remove_divergent_settles_a_shared_dir_once_and_reports_every_harness() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture();
     install_tool(&f, "claude_code");
     install_tool(&f, "amp");

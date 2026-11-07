@@ -48,6 +48,22 @@ export const commands = {
 	 */
 	left_behind: LeftBehind[],
 } | null>("take_resumed_library_move"),
+	/**
+	 *  The launch check's facts (round 20 #108): the report of the journal finish
+	 *  startup ran (taken once: `null` when it settled nothing or was already
+	 *  taken) and the redeploy preview — what the launch offer and the Harnesses
+	 *  pane's "Move N Deployments" line state. Read-only but for the take.
+	 */
+	getRedeployLaunchCheck: () => __TAURI_INVOKE<RedeployLaunchCheck>("get_redeploy_launch_check"),
+	/**
+	 *  Redeploy: move every global Deployment placement says belongs somewhere
+	 *  else — deploy first, switch the rows with a journal, remove only what is
+	 *  provably ours — answering the one ask's `answers` from an earlier run of
+	 *  the same operator action. Answers the report, the catalog read after it
+	 *  and the preview of what is still pending; streams progress. Not
+	 *  cancellable.
+	 */
+	redeployDeployments: (answers: RedeployAnswer[], onProgress: Channel<RedeployProgress>) => __TAURI_INVOKE<RedeployResultDto>("redeploy_deployments", { answers, onProgress }),
 	getToolStatus: () => __TAURI_INVOKE<ToolStatusDto>("get_tool_status"),
 	getProjectToolStatus: () => __TAURI_INVOKE<ToolStatusDto>("get_project_tool_status"),
 	/**
@@ -416,6 +432,19 @@ export type CommandError = { code: "TOOL_NOT_INSTALLED"; tool: string } |
 /**  Registry key of the Tool the pair names. */
 tool: string } |
 /**
+ *  A sync fan-out skipped this row because its Deployment waits for the
+ *  redeploy (round 20 #108): the row owns an artifact at another place
+ *  than the one placement gives it now (`path`, as recorded). Writing the
+ *  new place here would re-record the row and orphan that artifact; the
+ *  redeploy (Settings → Harnesses → Move Deployments) moves it. A skip
+ *  reason, never a failure.
+ */
+{ code: "REDEPLOY_PENDING";
+/**  The key of the row. */
+tool: string;
+/**  Where the row records its artifact. */
+path: string } |
+/**
  *  A sync target is occupied by a folder the app does not own. Every
  *  producer's row carries what the one overwrite ask shows (D12): the
  *  path, the folder's modification time and whether its content is
@@ -527,6 +556,16 @@ path: string;
 /**  The diagnostic chain, diagnostics only. */
 detail: string } |
 /**
+ *  A sync write was refused before anything was written: `path`'s folder
+ *  physically resolves to `resolved`, inside the central library or
+ *  outside every skills folder the row is managed in.
+ */
+{ code: "DESTINATION_REFUSED";
+/**  The path the write was asked to create. */
+path: string;
+/**  Where its folder physically leads. */
+resolved: string; reason: DestinationRefusal } |
+/**
  *  An Update replayed the operator's invocation Edit onto new upstream
  *  bytes whose own invocation mode disagrees with both the Edit's base
  *  and its override: the Edit was kept and needs review. Settled by
@@ -545,6 +584,24 @@ export type ConfigureProjectToolsResultDto = {
 	view: ProjectViewDto,
 	report: RemovalReport,
 };
+
+/**
+ *  Why a sync write was refused before anything was written (the backend
+ *  classifies; the frontend owns the copy). Owned by `core::sync_engine`.
+ */
+export type DestinationRefusal =
+/**
+ *  The folder written into physically is, or lies inside, the central
+ *  library (an aliased harness skills folder): a Deployment there would
+ *  write into the Library itself.
+ */
+"inLibrary" |
+/**
+ *  The folder written into physically lies outside every skills folder
+ *  the row is managed in (a stored path pointing elsewhere, or an aliased
+ *  folder on the way leading elsewhere).
+ */
+"outsideSkillsFolder";
 
 /**
  *  What the operator asked to disable or enable. Crosses the wire as itself:
@@ -590,6 +647,23 @@ export type DuplicateReadsDto = {
 	/**  What this harness does with the second copy. */
 	behaviour: DuplicateBehaviour,
 };
+
+/**  An edited copy: a row of the one overwrite ask (delete / leave). */
+export type EditedCopy = {
+	skill_id: string,
+	skill_name: string,
+	/**  The key of the row that owned it — the key an answer names. */
+	tool: string,
+	path: string,
+	modified_at: number | null,
+	/**
+	 *  The detected harnesses that read its folder: who shows it twice if it
+	 *  is left.
+	 */
+	readers: string[],
+};
+
+export type EditedCopyDecision = "delete" | "leave";
 
 /**  What Enable re-synced. */
 export type EnableReport = {
@@ -921,6 +995,30 @@ export type InvocationOverride = {
 	conflict: boolean,
 };
 
+/**  A journal entry an earlier run or a crash left, as this run settled it. */
+export type JournalOutcome = {
+	skill_id: string,
+	skill_name: string,
+	/**  The key of the row that owned the old artifact. */
+	tool: string,
+	/**  The old artifact. */
+	path: string,
+	status: JournalStatus,
+};
+
+export type JournalStatus =
+/**  Removed, or already gone. */
+"finished" |
+/**  Another live row records it: it stays as that row's Deployment. */
+"retained" |
+/**  Left on disk and no longer journaled (see `left_behind`). */
+"left_behind" |
+/**
+ *  An edited copy still awaiting the operator's answer (see
+ *  `edited_copies`); still journaled.
+ */
+"awaiting_answer";
+
 export type LeftBehind = {
 	path: string,
 	reason: LeftBehindReason,
@@ -929,6 +1027,22 @@ export type LeftBehind = {
 	 *  `unrecorded`).
 	 */
 	skill_id: string | null,
+	/**  Why its removal failed (`removal_failed`). */
+	error: CommandError | null,
+};
+
+/**  An old artifact the redeploy left on disk: a duplicate of a moved skill. */
+export type LeftBehindCopy = {
+	skill_id: string,
+	skill_name: string,
+	tool: string,
+	path: string,
+	reason: RedeployLeftReason,
+	/**
+	 *  The detected harnesses that read its folder and will show the skill
+	 *  twice.
+	 */
+	readers: string[],
 	/**  Why its removal failed (`removal_failed`). */
 	error: CommandError | null,
 };
@@ -1071,6 +1185,18 @@ export type LocalSkillCandidate = {
 	reason: string | null,
 };
 
+/**
+ *  A per-harness Disable that no longer holds once its row collapsed into a
+ *  folder row where another harness had the skill live (spec Q24).
+ */
+export type LostDisable = {
+	skill_id: string,
+	skill_name: string,
+	/**  The key of the disabled row. */
+	tool: string,
+	folder_key: string,
+};
+
 export type ManagedSkillDto = {
 	id: string,
 	name: string,
@@ -1128,6 +1254,14 @@ export type ManagedSkillDto = {
 	 *  (`disabled` included). Counts are the frontend fold's, never carried.
 	 */
 	projects: SkillProjectDto[],
+};
+
+/**  One row of a move, as it was recorded. */
+export type MovedRow = {
+	id: string,
+	tool: string,
+	/**  Where it recorded its artifact. */
+	from: string,
 };
 
 export type OnboardingGroup = {
@@ -1517,6 +1651,150 @@ export type ReaderHarnessDto = {
 	 */
 	duplicate_readers: DuplicateReadsDto | null,
 };
+
+/**
+ *  The operator's answer to one row of the ask, naming the path it showed:
+ *  it applies only while that row's place is still that path. Input only.
+ */
+export type RedeployAnswer =
+/**  The folder in a move's way (`TARGET_EXISTS`): Overwrite or Keep. */
+{ question: "occupied"; skill_id: string; folder_key: string; path: string; decision: OverrideDecision } |
+/**  An edited old copy: delete it, or leave it (disowned). */
+{ question: "edited_copy"; skill_id: string; tool: string; path: string; decision: EditedCopyDecision };
+
+/**  Why a move moves — counting only; the mechanism is one. */
+export type RedeployCause = "correction" | "migration";
+
+/**  Moves per cause at one scope. */
+export type RedeployCounts = {
+	/**  The Deployment's place on disk changes (its folder or its mode). */
+	correction: number,
+	/**
+	 *  Only the record changes: rows converted into their folder's one row,
+	 *  at the path they already have.
+	 */
+	migration: number,
+};
+
+export type RedeployKept = "declined";
+
+/**  `get_redeploy_launch_check`'s answer. */
+export type RedeployLaunchCheck = {
+	finished: RedeployReport | null,
+	preview: RedeployPreview,
+};
+
+export type RedeployLeftReason =
+/**  An edited copy the operator chose to leave: no longer the app's. */
+"edited" |
+/**  Not provably ours (a link elsewhere, a file): never removed. */
+"not_ours" |
+/**  Something else occupies the old path since it was journaled. */
+"replaced" |
+/**
+ *  The row no longer records the journaled new place, or the new artifact
+ *  is no longer the one deployed: the old one may be the only copy.
+ */
+"stale" |
+/**  Its removal failed or was refused. */
+"removal_failed";
+
+/**  One move: a skill's rows that land in one Deployment folder. */
+export type RedeployMove = {
+	skill_id: string,
+	skill_name: string,
+	/**  The Deployment folder the rows land in. */
+	folder_key: string,
+	/**  The skill's place in it. */
+	path: string,
+	cause: RedeployCause,
+	/**  The rows as recorded before the move. */
+	rows: MovedRow[],
+	status: RedeployStatus,
+};
+
+/**  What a redeploy would do, answered before anything is written. */
+export type RedeployPreview = {
+	/**  Global Deployments whose place differs from placement's answer. */
+	global: RedeployCounts,
+	/**
+	 *  Journal entries still owed: an old artifact a crash left, or an edited
+	 *  copy awaiting the operator's answer.
+	 */
+	journal: number,
+	/**
+	 *  The harnesses (registry keys) whose Deployments move, in first-seen
+	 *  order — what the launch offer names.
+	 */
+	harnesses: string[],
+};
+
+/**  A streamed step of the redeploy. */
+export type RedeployProgress = {
+	/**  Steps done before this one. */
+	done: number,
+	total: number,
+	/**  The skill this step is about. */
+	name: string,
+};
+
+/**  What a redeploy did. Crosses the wire as itself. */
+export type RedeployReport = {
+	/**  This run's moves, one per (skill, Deployment folder). */
+	moves: RedeployMove[],
+	/**  Journal entries an earlier run (or a crash) left, finished first. */
+	journal: JournalOutcome[],
+	/**
+	 *  Old artifacts left on disk: duplicates, each with the harnesses that
+	 *  will show it.
+	 */
+	left_behind: LeftBehindCopy[],
+	/**  Edited copies awaiting the operator's answer (rows of the one ask). */
+	edited_copies: EditedCopy[],
+	/**
+	 *  Per-harness disables a collapse into one folder row no longer holds
+	 *  (spec Q24).
+	 */
+	lost_disables: LostDisable[],
+};
+
+/**
+ *  `redeploy_deployments`' answer: its report, the catalog read after it and
+ *  what is still pending.
+ */
+export type RedeployResultDto = {
+	report: RedeployReport,
+	skills: ManagedSkillDto[],
+	preview: RedeployPreview,
+};
+
+export type RedeploySkip =
+/**  Disabled: re-recorded with nothing written (Enable deploys it there). */
+"disabled" |
+/**  Never deployed (no claim): re-recorded with nothing written. */
+"not_deployed";
+
+export type RedeployStatus =
+/**  Deployed at the new place and every old artifact settled. */
+{ status: "moved" } |
+/**  Ours or identical content was already at the new place and is kept. */
+{ status: "adopted" } |
+/**  Only the record changed: the artifact already was at the new place. */
+{ status: "unchanged" } |
+/**
+ *  Deployed and recorded, but an old artifact stays: an edited copy
+ *  (`edited`, asked or left by the answer) or something not ours.
+ */
+{ status: "left_old"; edited: boolean } |
+/**  Not moved: the operator kept the folder in the way. Still pending. */
+{ status: "kept"; reason: RedeployKept } |
+/**
+ *  Re-recorded at the new place with nothing written, or (a skill whose
+ *  Disable left an artifact) not touched.
+ */
+{ status: "skipped"; reason: RedeploySkip } |
+/**  Not moved; nothing was switched. Still pending. */
+{ status: "failed"; error: CommandError };
 
 export type RefreshPhaseDto = "acquiring" | "applying";
 

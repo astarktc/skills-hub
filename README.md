@@ -37,11 +37,11 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 | `agents_skills` | .agents/skills | `.agents/skills` | `.agents/skills` | `.agents` |
 | `cursor` | Cursor | `.cursor/skills` | `.agents/skills` | `.cursor` |
 | `claude_code` | Claude Code | `.claude/skills` | `.claude/skills` | `.claude` |
-| `codex` | Codex | `.codex/skills` | `.agents/skills` | `.codex` |
+| `codex` | Codex | `.agents/skills` | `.agents/skills` | `.codex` |
 | `opencode` | OpenCode | `.config/opencode/skills` | `.agents/skills` | `.config/opencode` |
-| `antigravity` | Antigravity | `.gemini/antigravity/global_skills` | `.agents/skills` | `.gemini/antigravity` |
+| `antigravity` | Antigravity | `.gemini/config/skills` | `.agents/skills` | `.gemini/antigravity` or `.gemini/antigravity-cli` |
 | `amp` | Amp | `.config/agents/skills` | `.agents/skills` | `.config/amp` |
-| `kimi_cli` | Kimi Code CLI | `.config/agents/skills` | `.agents/skills` | `.kimi-code` or `.kimi` |
+| `kimi_cli` | Kimi Code CLI | `.kimi-code/skills` | `.agents/skills` | `.kimi-code` or `.kimi` |
 | `augment` | Augment | `.augment/skills` | `.augment/skills` | `.augment` |
 | `openclaw` | OpenClaw | `.openclaw/skills` | `skills` | `.openclaw` |
 | `copaw` | QwenPaw | `.copaw/skill_pool` | `.copaw/skill_pool` | `.copaw` |
@@ -56,27 +56,27 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 | `kode` | Kode | `.kode/skills` | `.kode/skills` | `.kode` |
 | `mcpjam` | MCPJam | `.mcpjam/skills` | `.mcpjam/skills` | `.mcpjam` |
 | `mistral_vibe` | Mistral Vibe | `.vibe/skills` | `.vibe/skills` | `.vibe` |
-| `mux` | Xum | `.mux/skills` | `.mux/skills` | `.mux` |
+| `mux` | Xum | `.xum/skills` | `.mux/skills` | `.mux` or `.xum` |
 | `openclaude` | OpenClaude IDE | `.openclaude/skills` | `.openclaude/skills` | `.openclaude` |
-| `openhands` | OpenHands | `.openhands/skills` | `.openhands/skills` | `.openhands` |
+| `openhands` | OpenHands | `.agents/skills` | `.openhands/skills` | `.openhands` |
 | `pi` | Pi | `.pi/agent/skills` | `.pi/skills` | `.pi` |
 | `qoder` | Qoder | `.qoder/skills` | `.qoder/skills` | `.qoder` |
 | `qoderwork` | QoderWork | `.qoderwork/skills` | `.qoderwork/skills` | `.qoderwork` |
 | `qwen_code` | Qwen Code | `.qwen/skills` | `.qwen/skills` | `.qwen` |
 | `trae` | Trae | `.trae/skills` | `.trae/skills` | `.trae` |
 | `trae_cn` | Trae CN | `.trae-cn/skills` | `.trae/skills` | `.trae-cn` |
-| `zencoder` | Zencoder / Zenflow | `.zencoder/skills` | `.zencoder/skills` | `.zencoder` |
+| `zencoder` | Zencoder / Zenflow | `.agents/skills` | `.zencoder/skills` | `.zencoder` |
 | `neovate` | Neovate | `.neovate/skills` | `.neovate/skills` | `.neovate` |
 | `pochi` | Pochi | `.pochi/skills` | `.pochi/skills` | `.pochi` |
 | `adal` | AdaL | `.adal/skills` | `.adal/skills` | `.adal` |
-| `kilo_code` | Kilo Code | `.kilocode/skills` | `.kilocode/skills` | `.kilocode` |
+| `kilo_code` | Kilo Code | `.kilo/skills` | `.kilocode/skills` | `.kilocode` or `.kilo` |
 | `roo_code` | Roo Code | `.roo/skills` | `.roo/skills` | `.roo` |
-| `goose` | Goose | `.config/goose/skills` | `.goose/skills` | `.config/goose` |
+| `goose` | Goose | `.agents/skills` | `.goose/skills` | `.config/goose` |
 | `gemini_cli` | Gemini CLI | `.gemini/skills` | `.agents/skills` | `.gemini` |
 | `github_copilot` | GitHub Copilot | `.copilot/skills` | `.agents/skills` | `.copilot` |
 | `clawdbot` | Clawdbot | `.clawdbot/skills` | `.clawdbot/skills` | `.clawdbot` |
 | `droid` | Droid | `.factory/skills` | `.factory/skills` | `.factory` |
-| `windsurf` | Devin (Windsurf) | `.codeium/windsurf/skills` | `.windsurf/skills` | `.codeium/windsurf` |
+| `windsurf` | Devin (Windsurf) | `.config/devin/skills` | `.windsurf/skills` | `.codeium/windsurf` or `.config/devin` |
 | `moltbot` | MoltBot | `.moltbot/skills` | `.moltbot/skills` | `.moltbot` |
 | `hermes-agent` | Hermes Agent | `.hermes/skills` | `.hermes/skills` | `.hermes` |
 | `deepseek_harness` | DeepSeek Harness | `.dsh/skills` | `.dsh/skills` | `.dsh` |
@@ -117,9 +117,9 @@ A cross-platform desktop app (Tauri + React) to manage Agent Skills in one place
 | `crow_cli` | crow-cli | — | — | `.agents/crow` |
 | `corust_agent` | Corust Agent | — | — | `.corust-agent` |
 
-`agents_skills` is scope-dependent. **Globally** it is a plain, independently selectable target: it
-manages `~/.agents/skills` and nothing else — Cursor still reads `~/.cursor/skills`, Codex still reads
-`~/.codex/skills`, so those harnesses keep their own rows in the global list. **In a project** it is an
+`agents_skills` is scope-dependent. **Globally** it is the folder `~/.agents/skills`, and the harnesses whose
+own global folder it is — Codex, Goose, OpenHands and Zencoder — are served by it: one Deployment there, never one per
+harness. Cursor still reads `~/.cursor/skills`, so it keeps its own row. **In a project** it is an
 aggregate shown as `.agents/skills (N harnesses)`: one folder, `<project>/.agents/skills`, that every harness
 in the group reads (today Cursor, Codex, OpenCode, Antigravity, Amp, Kimi Code CLI, Cline, Gemini CLI,
 GitHub Copilot, Letta Code, Muse Code, Poolside and Dirac, plus the reader-only harnesses below), so those harnesses have no separate project row. N is counted
@@ -147,6 +147,13 @@ That includes `GROK_HOME`, `DEEPAGENTS_HOME`, `REASONIX_HOME`, `AUTOHAND_HOME`, 
 `FORGE_CONFIG` and `MINIMAX_DATA_DIR`. On Windows, Reasonix lives under `%APPDATA%\reasonix` instead of
 `~/.reasonix` (skills in `%APPDATA%\reasonix\skills`), as Reasonix documents. Deep Agents Code is deployed
 by copy, not by link: it refuses a skill whose real path lies outside its skill folders.
+
+<!-- round 20 ticket 10 notes -->
+Some harnesses moved folders (1.4.0): Codex, Goose, OpenHands and Zencoder to `~/.agents/skills`, Antigravity to
+`~/.gemini/config/skills`, Kimi Code to `~/.kimi-code/skills`, Kilo to `~/.kilo/skills`, Xum to `~/.xum/skills` and
+Devin to `~/.config/devin/skills` (on Windows `%APPDATA%\devin\skills`). At the first launch Skills Hub offers to move
+the skills you deployed to the old folders; Settings → Harnesses keeps a "Move N Deployments" line until they move.
+An old folder is removed only when it is provably Skills Hub's own copy or link; anything else is left and reported.
 
 ## Development
 

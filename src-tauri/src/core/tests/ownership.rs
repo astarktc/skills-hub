@@ -961,8 +961,8 @@ mod seams {
                 [(
                     _,
                     PropagationStatus::Failed {
-                        error: CommandError::RemovalRefused {
-                            reason: RemovalRefusal::ResolvesElsewhere,
+                        error: CommandError::DestinationRefused {
+                            reason: crate::core::errors::DestinationRefusal::OutsideSkillsFolder,
                             ..
                         },
                         ..

@@ -59,8 +59,13 @@ fn every_shared_dir_has_its_folder_key() {
         .chain(constituents_of(VirtualGroup::AgentsStandard).map(ToolAdapter::key))
         .collect();
     let expected: Vec<(ScopeKind, &str, &str)> = vec![
-        // Amp and Kimi Code share `~/.config/agents/skills`; no group owns it.
-        (ScopeKind::Global, "/home/op/.config/agents/skills", "amp"),
+        // Codex, OpenHands, Zencoder and Goose deploy to `~/.agents/skills`
+        // since #108: the AGENTS group's own folder.
+        (
+            ScopeKind::Global,
+            "/home/op/.agents/skills",
+            "agents_skills",
+        ),
         // The AGENTS group owns `<project>/.agents/skills`.
         (ScopeKind::Project, ".agents/skills", "agents_skills"),
         (ScopeKind::Project, ".qoder/skills", "qoder"),
@@ -141,6 +146,7 @@ fn every_harness_is_served_by_its_own_folder() {
 
 #[test]
 fn unknown_keys_and_project_less_harnesses_have_no_folder() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     assert_eq!(own_folder(ScopeKind::Global, "no_such_tool"), None);
     // A stored row of an unknown key stands for itself.
     assert_eq!(
@@ -153,15 +159,17 @@ fn unknown_keys_and_project_less_harnesses_have_no_folder() {
     assert_eq!(row_folder(ScopeKind::Project, "trae_cn"), "trae");
 }
 
-/// The operator's machine (Claude Code, Codex and Pi installed): every
-/// harness its own folder; the `.agents` folder is read by Codex and Pi.
+/// The operator's machine (Claude Code, Codex and Pi installed): Claude Code
+/// and Pi in their own folders, Codex served by the `.agents` folder it
+/// deploys to since #108 (its own `~/.codex/skills` is a former dir); Pi
+/// reads the `.agents` folder too.
 #[test]
-fn the_operators_machine_places_three_own_folders() {
+fn the_operators_machine_places_three_folders() {
     let roots = roots();
     let installed = InstalledSet::from_keys(["claude_code", "codex", "pi"]);
     let layout = place(PlacementScope::Global(&roots), &installed, &settings());
 
-    for key in ["claude_code", "codex", "pi"] {
+    for key in ["claude_code", "pi"] {
         let folder = layout.folder_of(key).expect("placed");
         assert_eq!(folder.key, key);
         assert_eq!(folder.served, vec![key]);
@@ -171,10 +179,13 @@ fn the_operators_machine_places_three_own_folders() {
             adapter_by_key(key).unwrap().skills_dir.resolve(&roots)
         );
     }
-    let agents = layout.folder("agents_skills").expect("agents folder");
-    assert!(agents.served.is_empty(), "nothing detects `~/.agents`");
+    let agents = layout.folder_of("codex").expect("codex is placed");
+    assert_eq!(agents.key, "agents_skills");
+    assert_eq!(agents.served, vec!["codex"]);
+    assert_eq!(agents.mode, DeployMode::Link);
+    assert_eq!(agents.path, roots.home.join(".agents/skills"));
     assert_eq!(agents.undetected, {
-        let mut undetected = vec!["agents_skills"];
+        let mut undetected = vec!["agents_skills", "openhands", "zencoder", "goose"];
         undetected.extend(
             crate::core::tool_adapters::reader_only_harnesses()
                 .iter()
@@ -182,7 +193,7 @@ fn the_operators_machine_places_three_own_folders() {
         );
         undetected
     });
-    assert_eq!(agents.readers, vec!["codex", "pi"]);
+    assert_eq!(agents.readers, vec!["pi"]);
     let claude = layout.folder("claude_code").unwrap();
     assert!(
         claude.readers.is_empty(),
@@ -198,6 +209,7 @@ fn the_operators_machine_places_three_own_folders() {
 
 #[test]
 fn amp_and_kimi_are_served_by_one_folder() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let roots = roots();
     let both = place(
         PlacementScope::Global(&roots),
@@ -252,6 +264,7 @@ fn the_deploy_mode_is_the_registry_capability() {
 /// group's folder keeps the group's own capability (never its members' AND).
 #[test]
 fn a_copy_only_member_makes_a_plain_shared_folder_a_copy_but_never_a_groups() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let mut kimi = adapter_by_key("kimi_cli").unwrap().clone();
     kimi.supports_symlink = false;
     test_overrides::shadow(kimi);
@@ -309,6 +322,7 @@ fn row(id: &str, skill: &str, tool: &str, status: SyncStatus) -> SkillTargetReco
 /// Rows written once per shared-dir sibling read as one folder, keyed by it.
 #[test]
 fn sibling_rows_read_as_one_folder() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let rows = vec![
         row("1", "alpha", "kimi_cli", SyncStatus::Synced),
         row("2", "alpha", "amp", SyncStatus::Error),
@@ -337,6 +351,7 @@ fn sibling_rows_read_as_one_folder() {
 /// the synced row's artifact still counts as deployed.
 #[test]
 fn a_disabled_sibling_mutes_the_folder_and_keeps_its_live_artifact_counted() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let rows = vec![
         row("1", "alpha", "amp", SyncStatus::Synced),
         row("2", "alpha", "kimi_cli", SyncStatus::Disabled),
@@ -362,6 +377,7 @@ fn a_disabled_sibling_mutes_the_folder_and_keeps_its_live_artifact_counted() {
 /// failed one, with its own timestamp.
 #[test]
 fn a_failed_removal_shows_beside_a_disabled_sibling() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let mut failed = row("1", "alpha", "amp", SyncStatus::Error);
     failed.synced_at = Some(7);
     let mut disabled = row("2", "alpha", "kimi_cli", SyncStatus::Disabled);
@@ -433,6 +449,7 @@ fn a_folders_status_is_one_fold_over_all_its_rows() {
 /// unknown one — is a legacy row.
 #[test]
 fn a_row_keyed_by_its_folder_is_a_folder_row_and_any_other_is_legacy() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     for (scope, key, folder_row) in [
         (ScopeKind::Global, "amp", true),
         (ScopeKind::Global, "kimi_cli", false),
@@ -453,6 +470,7 @@ fn a_row_keyed_by_its_folder_is_a_folder_row_and_any_other_is_legacy() {
 /// serves; a legacy row only through its own harness (Astra 203).
 #[test]
 fn a_folder_row_is_reached_through_its_folder_and_a_legacy_row_through_its_harness() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let amp_only = InstalledSet::from_keys(["amp"]);
     let kimi_only = InstalledSet::from_keys(["kimi_cli"]);
     assert!(folder_reachable(ScopeKind::Global, "amp", &kimi_only));
@@ -472,6 +490,7 @@ fn a_folder_row_is_reached_through_its_folder_and_a_legacy_row_through_its_harne
 /// the per-row resync of the folder is what settles it.
 #[test]
 fn a_row_recording_another_path_still_folds_into_its_folder() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let mut renamed = row("2", "alpha", "kimi_cli", SyncStatus::Error);
     renamed.target_path = "/home/op/.config/agents/skills/old-name".to_string();
     renamed.synced_at = None;

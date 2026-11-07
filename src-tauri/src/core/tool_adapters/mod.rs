@@ -213,12 +213,13 @@ pub struct ToolAdapter {
     /// root (home unless the vendor documents otherwise).
     pub skills_dir: RegistryPath,
     /// Global skill directories this tool was registered with before
-    /// `skills_dir` was corrected (Augment: `.augment/rules`, which
-    /// is its rules dir, not its skills dir). Artifacts Skills Hub created
-    /// there are moved by `core::target_relocation` at startup, and they
-    /// stay inside the deletion rule (`ensure_path_within_tool_dirs`) so a
-    /// row still pointing there can always be cleaned up. Never scanned,
-    /// never synced into. Empty for almost every tool.
+    /// `skills_dir` was corrected (Augment: `.augment/rules`, its rules dir;
+    /// Codex: `.codex/skills`, round 20 #108). Only two rules read it: the
+    /// deletion rule (`ensure_path_within_tool_dirs`, and the managed folders
+    /// a row's old artifact is removed in, `placement::managed_global_dirs`),
+    /// so a Deployment the redeploy (`core::redeploy`) moves out of it can be
+    /// removed there; and onboarding's scan of former dirs. Nothing is ever
+    /// synced into one, and nothing decides placement from it.
     pub former_skills_dirs: &'static [RegistryPath],
     /// Directories whose presence marks the tool as installed —
     /// the tool's own configuration root(s), any one of which counts. More
@@ -441,8 +442,10 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
     ToolAdapter {
         id: ToolId::Codex,
         display_name: "Codex",
-        skills_dir: home(".codex/skills"),
-        former_skills_dirs: &[],
+        // Brief § 5 / Q12 (round 20 #108): `~/.agents/skills` is Codex's
+        // canonical user dir; its own `~/.codex/skills` is deprecated.
+        skills_dir: home(".agents/skills"),
+        former_skills_dirs: &[home(".codex/skills")],
         detect_dirs: &[home(".codex")],
         project_skills_dir: Some(".agents/skills"),
         group: Some(VirtualGroup::AgentsStandard),
@@ -461,7 +464,10 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
             },
             precedence: Precedence::Both,
             duplicates: DuplicateBehaviour::ShowsAll,
-            also_reads: &[],
+            also_reads: &[AlsoRead {
+                dir: home(".codex/skills"),
+                mode: ReadMode::Default,
+            }],
         },
     },
     ToolAdapter {
@@ -493,10 +499,14 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
     ToolAdapter {
         id: ToolId::Antigravity,
         display_name: "Antigravity",
-        // add-skill global path: ~/.gemini/antigravity/global_skills/
-        skills_dir: home(".gemini/antigravity/global_skills"),
-        former_skills_dirs: &[],
-        detect_dirs: &[home(".gemini/antigravity")],
+        // Brief § Part 1, row "Antigravity CLI" / Q12 (round 20 #108):
+        // `~/.gemini/config/skills`, shared by the App, IDE and CLI. The
+        // add-skill path `~/.gemini/antigravity/global_skills` is not
+        // documented by current releases. The CLI's root
+        // `.gemini/antigravity-cli` detects the row (the CLI is its alias).
+        skills_dir: home(".gemini/config/skills"),
+        former_skills_dirs: &[home(".gemini/antigravity/global_skills")],
+        detect_dirs: &[home(".gemini/antigravity"), home(".gemini/antigravity-cli")],
         project_skills_dir: Some(".agents/skills"),
         group: Some(VirtualGroup::AgentsStandard),
         supports_symlink: true,
@@ -574,13 +584,14 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
     ToolAdapter {
         id: ToolId::KimiCli,
         display_name: "Kimi Code CLI",
-        // add-skill global path: ~/.config/agents/skills/ (shared with Amp).
-        // The tool's config root is ~/.kimi-code (kimi.com/code docs) or
+        // Q12 (round 20 #108): `~/.kimi-code/skills`, under the tool's config
+        // root. The add-skill path `~/.config/agents/skills` (shared with Amp)
+        // is read only by legacy `kimi-cli`: a former dir. The tool's config root is ~/.kimi-code (kimi.com/code docs) or
         // ~/.kimi on earlier releases (kimi-cli.com docs); either counts.
         // `KIMI_CODE_HOME` relocates the root; env-var homes are not honoured
         // (a Finder-launched app does not see shell env).
-        skills_dir: home(".config/agents/skills"),
-        former_skills_dirs: &[],
+        skills_dir: home(".kimi-code/skills"),
+        former_skills_dirs: &[home(".config/agents/skills")],
         detect_dirs: &[home(".kimi-code"), home(".kimi")],
         project_skills_dir: Some(".agents/skills"),
         group: Some(VirtualGroup::AgentsStandard),
@@ -970,17 +981,18 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         id: ToolId::Mux,
         // Mux is now Xum (relabel only; the key stays `mux`, round 19).
         display_name: "Xum",
-        // add-skill global path: ~/.mux/skills/
-        skills_dir: home(".mux/skills"),
-        former_skills_dirs: &[],
-        detect_dirs: &[home(".mux")],
+        // Q12 (round 20 #108): `~/.xum/skills`, Xum's current dir; the
+        // add-skill path `~/.mux/skills` is its legacy, lowest-precedence one.
+        skills_dir: home(".xum/skills"),
+        former_skills_dirs: &[home(".mux/skills")],
+        detect_dirs: &[home(".mux"), home(".xum")],
         project_skills_dir: Some(".mux/skills"),
         group: None,
         supports_symlink: true,
         // Read facts: brief § Part 2, row "Mux → Xum".
         // VERIFIED B02:S42 (`~/.xum` > `~/.agents` > this row's legacy `~/.mux`).
         // `precedence` is the harness's own fact (its own current dir, `~/.xum`,
-        // wins), independent of this row's legacy deploy dir — #108 moves that.
+        // wins); the legacy `~/.mux/skills` is still read, lowest.
         reads: ReadFacts {
             global: ScopeReads {
                 agents: Yes,
@@ -992,10 +1004,16 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
             },
             precedence: Precedence::Own,
             duplicates: DuplicateBehaviour::Shadows,
-            also_reads: &[AlsoRead {
-                dir: home(".xum/skills"),
-                mode: ReadMode::Default,
-            }],
+            also_reads: &[
+                AlsoRead {
+                    dir: home(".xum/skills"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".mux/skills"),
+                    mode: ReadMode::Default,
+                },
+            ],
         },
     },
     ToolAdapter {
@@ -1015,9 +1033,10 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
     ToolAdapter {
         id: ToolId::OpenHands,
         display_name: "OpenHands",
-        // add-skill global path: ~/.openhands/skills/
-        skills_dir: home(".openhands/skills"),
-        former_skills_dirs: &[],
+        // Q12 (round 20 #108): `~/.agents/skills` is the recommended user dir;
+        // the add-skill path `~/.openhands/skills` is legacy (still read).
+        skills_dir: home(".agents/skills"),
+        former_skills_dirs: &[home(".openhands/skills")],
         detect_dirs: &[home(".openhands")],
         project_skills_dir: Some(".openhands/skills"),
         group: None,
@@ -1035,7 +1054,10 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
             },
             precedence: Precedence::Shared,
             duplicates: DuplicateBehaviour::Shadows,
-            also_reads: &[],
+            also_reads: &[AlsoRead {
+                dir: home(".openhands/skills"),
+                mode: ReadMode::Default,
+            }],
         },
     },
     ToolAdapter {
@@ -1201,9 +1223,10 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
         // Zenflow is Zencoder's desktop orchestrator and shares its skills
         // (an alias, not a row).
         display_name: "Zencoder / Zenflow",
-        // add-skill global path: ~/.zencoder/skills/
-        skills_dir: home(".zencoder/skills"),
-        former_skills_dirs: &[],
+        // Q12 (round 20 #108): `~/.agents/skills` is its user dir; the
+        // add-skill path `~/.zencoder/skills` is deprecated (still read).
+        skills_dir: home(".agents/skills"),
+        former_skills_dirs: &[home(".zencoder/skills")],
         detect_dirs: &[home(".zencoder")],
         project_skills_dir: Some(".zencoder/skills"),
         group: None,
@@ -1221,7 +1244,10 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
             },
             precedence: Precedence::Unknown,
             duplicates: DuplicateBehaviour::Unknown,
-            also_reads: &[],
+            also_reads: &[AlsoRead {
+                dir: home(".zencoder/skills"),
+                mode: ReadMode::Default,
+            }],
         },
     },
     ToolAdapter {
@@ -1293,16 +1319,18 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
     ToolAdapter {
         id: ToolId::KiloCode,
         display_name: "Kilo Code",
-        // add-skill global path: ~/.kilocode/skills/
-        skills_dir: home(".kilocode/skills"),
-        former_skills_dirs: &[],
-        detect_dirs: &[home(".kilocode")],
+        // Q12 (round 20 #108): `~/.kilo/skills` is current; the add-skill
+        // path `~/.kilocode/skills` is legacy (whether it is still read is
+        // unknown). Its root `.kilo` detects it too.
+        skills_dir: home(".kilo/skills"),
+        former_skills_dirs: &[home(".kilocode/skills")],
+        detect_dirs: &[home(".kilocode"), home(".kilo")],
         project_skills_dir: Some(".kilocode/skills"),
         group: None,
         supports_symlink: true,
         // Read facts: brief § Part 2, row "Kilo Code".
-        // VERIFIED T61, B02:S24. `~/.kilo/skills` is current; whether this row's
-        // legacy `.kilocode` is still read is unknown (#88).
+        // VERIFIED T61, B02:S24. `~/.kilo/skills` is current (this row's own
+        // dir); whether the legacy `.kilocode` is still read is unknown.
         reads: ReadFacts {
             global: ScopeReads {
                 agents: Yes,
@@ -1355,9 +1383,11 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
     ToolAdapter {
         id: ToolId::Goose,
         display_name: "Goose",
-        // add-skill global path: ~/.config/goose/skills/
-        skills_dir: home(".config/goose/skills"),
-        former_skills_dirs: &[],
+        // Q12 (round 20 #108): `~/.agents/skills` is recommended; the add-skill
+        // path `~/.config/goose/skills` (its platform config dir) is read for
+        // compatibility.
+        skills_dir: home(".agents/skills"),
+        former_skills_dirs: &[home(".config/goose/skills")],
         detect_dirs: &[home(".config/goose")],
         project_skills_dir: Some(".goose/skills"),
         group: None,
@@ -1375,10 +1405,16 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
             },
             precedence: Precedence::Unknown,
             duplicates: DuplicateBehaviour::Unknown,
-            also_reads: &[AlsoRead {
-                dir: home(".agents/plugins"),
-                mode: ReadMode::Default,
-            }],
+            also_reads: &[
+                AlsoRead {
+                    dir: home(".agents/plugins"),
+                    mode: ReadMode::Default,
+                },
+                AlsoRead {
+                    dir: home(".config/goose/skills"),
+                    mode: ReadMode::Default,
+                },
+            ],
         },
     },
     ToolAdapter {
@@ -1480,12 +1516,27 @@ static TOOL_ADAPTERS: &[ToolAdapter] = &[
     ToolAdapter {
         id: ToolId::Windsurf,
         // Windsurf is now Devin (relabel only; the key stays `windsurf`).
-        // Devin's `.config/devin` detect dir waits for #108.
         display_name: "Devin (Windsurf)",
-        // add-skill global path: ~/.codeium/windsurf/skills/
-        skills_dir: home(".codeium/windsurf/skills"),
-        former_skills_dirs: &[],
-        detect_dirs: &[home(".codeium/windsurf")],
+        // Q12 (round 20 #108): the docs (docs.devin.ai, S40) name
+        // `~/.config/devin/skills`; on Windows `%APPDATA%\devin\skills` (brief
+        // I7), where its config root `%APPDATA%\devin` detects it too. Whether
+        // the Devin CLI reads this folder is UNKNOWN; it reads `~/.agents/skills`
+        // either way. The add-skill path `~/.codeium/windsurf/skills` is a
+        // former dir (still read, `read_config_from.windsurf`).
+        skills_dir: home(".config/devin/skills").overridden(&[OsOverride {
+            os: HostOs::Windows,
+            root: HostRoot::RoamingAppData,
+            rel: "devin/skills",
+        }]),
+        former_skills_dirs: &[home(".codeium/windsurf/skills")],
+        detect_dirs: &[
+            home(".codeium/windsurf"),
+            home(".config/devin").overridden(&[OsOverride {
+                os: HostOs::Windows,
+                root: HostRoot::RoamingAppData,
+                rel: "devin",
+            }]),
+        ],
         project_skills_dir: Some(".windsurf/skills"),
         group: None,
         supports_symlink: true,
@@ -2977,6 +3028,25 @@ pub mod test_overrides {
         leaked
     }
 
+    /// The pre-#108 registry shape of Kimi Code (round 20 ticket 10 moved
+    /// it to `~/.kimi-code/skills`): deployed to Amp's
+    /// `~/.config/agents/skills`, a plain shared folder (no virtual group)
+    /// whose folder key is Amp's, the first entry in registry order. No
+    /// shipped row shares a plain folder since #108; the tests of the plain
+    /// shared-folder rules (one folder, one row; a legacy sibling row keeps its
+    /// own meaning until the redeploy converts it) run on this shape.
+    pub fn kimi_on_amps_folder() -> &'static ToolAdapter {
+        let kimi = super::TOOL_ADAPTERS
+            .iter()
+            .find(|adapter| adapter.key() == "kimi_cli")
+            .expect("kimi_cli row");
+        shadow(ToolAdapter {
+            skills_dir: RegistryPath::home(".config/agents/skills"),
+            former_skills_dirs: &[],
+            ..kimi.clone()
+        })
+    }
+
     pub(super) fn lookup(key: &str) -> Option<&'static ToolAdapter> {
         OVERRIDES.with(|o| o.borrow().iter().rev().copied().find(|a| a.key() == key))
     }
@@ -3044,14 +3114,19 @@ pub fn former_skills_dirs_in(roots: &HostRoots, adapter: &ToolAdapter) -> Vec<Pa
 pub fn tool_holding_path(roots: &HostRoots, path: &Path) -> Option<&'static ToolAdapter> {
     let resolved = path.canonicalize().ok();
     TOOL_ADAPTERS.iter().find(|adapter| {
-        let dir = skills_dir_in(roots, adapter);
-        if path.starts_with(&dir) {
-            return true;
-        }
-        match (&resolved, dir.canonicalize()) {
-            (Some(resolved), Ok(dir)) => resolved.starts_with(dir),
-            _ => false,
-        }
+        // A former dir still holds the Tool's copies: a Deployment the
+        // redeploy has not moved yet, or one it left behind.
+        std::iter::once(skills_dir_in(roots, adapter))
+            .chain(former_skills_dirs_in(roots, adapter))
+            .any(|dir| {
+                if path.starts_with(&dir) {
+                    return true;
+                }
+                match (&resolved, dir.canonicalize()) {
+                    (Some(resolved), Ok(dir)) => resolved.starts_with(dir),
+                    _ => false,
+                }
+            })
     })
 }
 
@@ -3101,7 +3176,8 @@ pub fn detect_dirs_in(roots: &HostRoots, adapter: &ToolAdapter) -> Vec<PathBuf> 
 /// Whether the tool is installed on the host whose roots are `roots`.
 ///
 /// Some detect dir must exist **and** not be a *skills-only footprint*: a
-/// detect dir holding nothing but the path down to the tool's skills dir
+/// detect dir holding nothing but the path down to the tool's skills dir (or
+/// one of its former skills dirs)
 /// (`~/.kiro/skills/x` and nothing else) is what a skill deployer leaves
 /// behind — `npx skills add`, ego-browser, Skills Hub itself after the tool
 /// was uninstalled — not evidence of the tool. An empty detect dir still
@@ -3114,11 +3190,18 @@ pub fn detect_dirs_in(roots: &HostRoots, adapter: &ToolAdapter) -> Vec<PathBuf> 
 /// its reader-only harnesses is: the group is that reader's only way in, so
 /// its first deployment must not wait for the group's folder to exist.
 pub fn is_installed_in(roots: &HostRoots, adapter: &ToolAdapter) -> bool {
-    let skills_dir = skills_dir_in(roots, adapter);
+    // A former skills dir leaves the same footprint: `~/.codex/skills/x` and
+    // nothing else under `~/.codex` is a deployer's (or an old Skills Hub's)
+    // leftover, not Codex.
+    let skills_dirs: Vec<PathBuf> = std::iter::once(skills_dir_in(roots, adapter))
+        .chain(former_skills_dirs_in(roots, adapter))
+        .collect();
     let detected = detect_dirs_in(roots, adapter).iter().any(|detect_dir| {
         detect_dir.exists()
             && (adapter.as_virtual_group().is_some()
-                || !is_skills_only_footprint(detect_dir, &skills_dir))
+                || !skills_dirs
+                    .iter()
+                    .any(|skills_dir| is_skills_only_footprint(detect_dir, skills_dir)))
     });
     detected
         || adapter.as_virtual_group().is_some_and(|group| {

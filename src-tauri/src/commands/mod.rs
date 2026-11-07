@@ -34,6 +34,7 @@ use crate::core::onboarding_import::{
     import_onboarding_selection as import_onboarding_selection_core, ImportPhase, ImportPolicy,
     ImportReport, ImportSelection,
 };
+use crate::core::redeploy::{RedeployAnswer, RedeployPreview, RedeployProgress, RedeployReport};
 use crate::core::refresh::{
     refresh_managed_skills as refresh_managed_skills_core, RefreshPhase, RefreshReport,
     RefreshSelection,
@@ -526,6 +527,89 @@ pub async fn take_resumed_library_move(
     .await
     .map_err(CommandError::internal)?
     .map_err(CommandError::from_anyhow)
+}
+
+/// The launch check's facts (round 20 #108): the report of the journal finish
+/// startup ran (taken once: `null` when it settled nothing or was already
+/// taken) and the redeploy preview — what the launch offer and the Harnesses
+/// pane's "Move N Deployments" line state. Read-only but for the take.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_redeploy_launch_check(
+    store: State<'_, SkillStore>,
+) -> Result<RedeployLaunchCheck, CommandError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let finished = crate::core::redeploy::take_finished_journal(&store)?;
+        let preview = crate::core::redeploy::preview(
+            &store,
+            &HostRoots::resolve()?,
+            &crate::core::placement::PlacementSettings::default(),
+        )?;
+        Ok::<_, anyhow::Error>(RedeployLaunchCheck { finished, preview })
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
+/// `get_redeploy_launch_check`'s answer.
+#[derive(Debug, Serialize, Type)]
+pub struct RedeployLaunchCheck {
+    pub finished: Option<RedeployReport>,
+    pub preview: RedeployPreview,
+}
+
+/// Redeploy: move every global Deployment placement says belongs somewhere
+/// else — deploy first, switch the rows with a journal, remove only what is
+/// provably ours — answering the one ask's `answers` from an earlier run of
+/// the same operator action. Answers the report, the catalog read after it
+/// and the preview of what is still pending; streams progress. Not
+/// cancellable.
+#[tauri::command]
+#[specta::specta]
+pub async fn redeploy_deployments(
+    app: tauri::AppHandle,
+    store: State<'_, SkillStore>,
+    answers: Vec<RedeployAnswer>,
+    on_progress: Channel<RedeployProgress>,
+) -> Result<RedeployResultDto, CommandError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let paths = installer_paths(&app, &store)?;
+        let report = crate::core::redeploy::redeploy(
+            &store,
+            &paths.roots,
+            &paths.central_dir,
+            &answers,
+            now_ms(),
+            |progress| {
+                let _ = on_progress.send(progress);
+            },
+        )?;
+        let preview = crate::core::redeploy::preview(
+            &store,
+            &paths.roots,
+            &crate::core::placement::PlacementSettings::default(),
+        )?;
+        Ok::<_, anyhow::Error>(RedeployResultDto {
+            report,
+            skills: managed_skill_dtos(&store)?,
+            preview,
+        })
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
+/// `redeploy_deployments`' answer: its report, the catalog read after it and
+/// what is still pending.
+#[derive(Debug, Serialize, Type)]
+pub struct RedeployResultDto {
+    pub report: RedeployReport,
+    pub skills: Vec<ManagedSkillDto>,
+    pub preview: RedeployPreview,
 }
 
 /// `move_library`'s answer: its report and the catalog read after it.

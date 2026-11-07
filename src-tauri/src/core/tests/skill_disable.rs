@@ -224,8 +224,8 @@ fn item_for<'a>(
 
 #[test]
 fn disabling_a_pair_removes_the_artifact_and_keeps_the_row_disabled() {
-    let f = fixture(&["claude_code", "codex"]);
-    f.sync(&["claude_code", "codex"]);
+    let f = fixture(&["claude_code", "pi"]);
+    f.sync(&["claude_code", "pi"]);
     let target = f.global_path(".claude/skills");
     assert!(exists_any(&target));
 
@@ -242,7 +242,7 @@ fn disabling_a_pair_removes_the_artifact_and_keeps_the_row_disabled() {
     assert!(!exists_any(&target), "artifact gone");
     assert_eq!(f.status("claude_code"), Some(SyncStatus::Disabled));
     assert_eq!(
-        f.status("codex"),
+        f.status("pi"),
         Some(SyncStatus::Synced),
         "other Tools untouched"
     );
@@ -444,6 +444,7 @@ fn disabling_twice_settles_nothing_new() {
 /// batch never writes it for a sibling that has no row of its own.
 #[test]
 fn a_shared_dir_sibling_is_skipped_while_a_member_is_disabled() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture(&["amp", "kimi_cli"]);
     disable_targets(
         &f.store,
@@ -1730,6 +1731,7 @@ fn partial_skill_disable_resync_skips_error_assignments() {
 /// beside it.
 #[test]
 fn a_legacy_sibling_row_is_the_folders_record_for_a_failed_and_retried_disable() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture(&["kimi_cli"]);
     f.sync(&["kimi_cli"]);
     // Re-key the folder's row as the pre-1.4.0 per-sharer write left it.
@@ -1796,6 +1798,7 @@ fn a_legacy_sibling_row_is_the_folders_record_for_a_failed_and_retried_disable()
 /// row of the folder serving it (`amp`), and never a row of its own.
 #[test]
 fn a_harness_on_a_shared_folder_is_disabled_and_enabled_through_the_folders_row() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture(&["kimi_cli", "amp"]);
     let outcomes = f.sync(&["kimi_cli", "amp"]);
     assert_eq!(outcomes.len(), 1, "one folder, one outcome: {outcomes:?}");
@@ -2283,6 +2286,7 @@ fn seed_legacy_sibling(f: &Fixture) {
 /// and syncs it by itself at its own recorded path — no row minted, none lost.
 #[test]
 fn legacy_sibling_rows_are_disabled_gated_and_enabled_each_by_itself() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture(&["amp", "kimi_cli"]);
     f.sync(&["amp"]);
     seed_legacy_sibling(&f);
@@ -2343,6 +2347,7 @@ fn legacy_sibling_rows_are_disabled_gated_and_enabled_each_by_itself() {
 /// the stale name, whose foreign folder is left as it is.
 #[test]
 fn global_enable_re_records_each_taken_row_under_its_own_key_at_the_skills_place() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture(&["amp", "kimi_cli"]);
     f.sync(&["amp"]);
     let shared = f.global_path(".config/agents/skills");
@@ -2419,6 +2424,7 @@ fn global_enable_re_records_each_taken_row_under_its_own_key_at_the_skills_place
 ///   another path — is never rewritten.
 #[test]
 fn a_global_write_or_enable_never_repurposes_another_rows_record() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture(&["amp", "kimi_cli"]);
     f.sync(&["amp"]);
     seed_legacy_sibling(&f);
@@ -2621,6 +2627,7 @@ fn enabling_a_legacy_row_whose_own_harness_is_gone_leaves_no_row() {
 /// The batch's Disabled rule reads a sibling's disabled row as its folder's.
 #[test]
 fn a_disabled_legacy_sibling_row_gates_the_folder() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture(&["amp", "kimi_cli"]);
     f.store
         .upsert_skill_target(&crate::core::skill_store::SkillTargetRecord {
@@ -2675,6 +2682,7 @@ fn delete_removes_legacy_sibling_rows_with_their_one_artifact() {
 /// and the folder — reachable through Amp — gets its one new row.
 #[test]
 fn a_pair_enable_of_a_reachable_folder_deploys_it_when_only_a_gone_harnesss_row_was_disabled() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let f = fixture(&["amp"]);
     f.store
         .upsert_skill_target(&crate::core::skill_store::SkillTargetRecord {

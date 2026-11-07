@@ -43,6 +43,24 @@ const MIGRATION_V12_RELINQUISH: &str =
 UPDATE project_skill_assignments SET synced_at = NULL, content_hash = NULL
   WHERE status = 'disabled';";
 
+/// The redeploy's journal (`core::redeploy`): one entry per old artifact a
+/// redeploy owes a removal of — written in the same transaction as the row
+/// switch that superseded it, deleted once it is removed or reported left
+/// behind. Additive (`CREATE TABLE IF NOT EXISTS`), like `skill_edits`.
+const REDEPLOY_JOURNAL_DDL: &str = "CREATE TABLE IF NOT EXISTS redeploy_journal (
+  id TEXT PRIMARY KEY,
+  row_id TEXT NOT NULL,
+  skill_id TEXT NOT NULL,
+  tool TEXT NOT NULL,
+  old_path TEXT NOT NULL,
+  old_entry TEXT NOT NULL,
+  old_content_hash TEXT NULL,
+  new_path TEXT NOT NULL,
+  new_entry TEXT NOT NULL,
+  state TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);";
+
 // Minimal schema for MVP: skills, skill_targets, settings, discovered_skills(optional).
 const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS skills (
@@ -317,6 +335,45 @@ impl ProjectSkillAssignmentRecord {
     }
 }
 
+/// One redeploy journal entry (`core::redeploy` owns its meaning): the old
+/// artifact a row switch superseded, by path and physical identity, with the
+/// row that records the new place and what the old row recorded as deployed.
+/// The identities are stored as `removal_fence::EntryId` JSON.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RedeployJournalRecord {
+    pub id: String,
+    /// The row that records the new place now (it owned, or absorbed the row
+    /// that owned, the old artifact).
+    pub row_id: String,
+    pub skill_id: String,
+    /// The key of the row that owned the old artifact.
+    pub tool: String,
+    pub old_path: String,
+    pub old_entry: String,
+    /// The Content identity the old row recorded as deployed (a copy).
+    pub old_content_hash: Option<String>,
+    pub new_path: String,
+    pub new_entry: String,
+    /// `pending` (its removal is owed) or `edited` (an edited copy awaiting
+    /// the operator's answer).
+    pub state: String,
+    pub created_at: i64,
+}
+
+/// What a redeploy writes to the row that records a Deployment's new place
+/// (`SkillStore::switch_redeployed_rows`): every lifecycle column, its key and
+/// its path.
+#[derive(Clone, Copy, Debug)]
+pub struct SwitchedRow<'a> {
+    pub tool: &'a str,
+    pub target_path: &'a str,
+    pub mode: SyncMode,
+    pub status: SyncStatus,
+    pub last_error: Option<&'a str>,
+    pub synced_at: Option<i64>,
+    pub content_hash: Option<&'a str>,
+}
+
 /// The store seam for the lifecycle columns: parse the stored `mode` and
 /// `status` strings into the typed vocabulary.
 ///
@@ -511,6 +568,29 @@ impl<'a> ClaimWrite<'a> {
     }
 }
 
+fn insert_journal_entry(conn: &Connection, entry: &RedeployJournalRecord) -> Result<()> {
+    conn.execute(
+        "INSERT INTO redeploy_journal (
+           id, row_id, skill_id, tool, old_path, old_entry, old_content_hash,
+           new_path, new_entry, state, created_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![
+            entry.id,
+            entry.row_id,
+            entry.skill_id,
+            entry.tool,
+            entry.old_path,
+            entry.old_entry,
+            entry.old_content_hash,
+            entry.new_path,
+            entry.new_entry,
+            entry.state,
+            entry.created_at
+        ],
+    )?;
+    Ok(())
+}
+
 /// Whether `table` already has a column named `column` (`PRAGMA table_info`).
 fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table});"))?;
@@ -669,6 +749,11 @@ impl SkillStore {
                     hidden_at INTEGER NOT NULL
                 );",
             )?;
+
+            // Additive: the redeploy's journal (`core::redeploy`). No foreign
+            // key: an entry outlives a deleted skill or row, and is then
+            // reported left behind rather than silently dropped.
+            tx.execute_batch(REDEPLOY_JOURNAL_DDL)?;
 
             // Additive schema repair, also run for pre-existing and migrated DBs.
             tx.execute_batch(
@@ -2059,6 +2144,131 @@ impl SkillStore {
             }
 
             Ok(aggregates)
+        })
+    }
+
+    /// Read one global target row by its id (the redeploy's journal names
+    /// the row that records a Deployment's new place).
+    pub fn get_skill_target_by_id(&self, id: &str) -> Result<Option<SkillTargetRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, skill_id, tool, target_path, mode, status, last_error, synced_at, content_hash
+         FROM skill_targets
+         WHERE id = ?1",
+            )?;
+            let mut rows = stmt.query(params![id])?;
+            let Some(row) = rows.next()? else {
+                return Ok(None);
+            };
+            let id: String = row.get(0)?;
+            let (mode, status, last_error) =
+                read_lifecycle(&id, row.get(4)?, row.get(5)?, row.get(6)?);
+            Ok(Some(SkillTargetRecord {
+                id,
+                skill_id: row.get(1)?,
+                tool: row.get(2)?,
+                target_path: row.get(3)?,
+                mode,
+                status,
+                last_error,
+                synced_at: row.get(7)?,
+                content_hash: row.get(8)?,
+            }))
+        })
+    }
+
+    /// The redeploy's row switch (`core::redeploy`), in **one transaction**:
+    /// delete the rows `absorbed` (collapsed into the survivor), rewrite the
+    /// survivor `row_id` as `row` (its key, path and every lifecycle column),
+    /// and write the `journal` entries owed for the old artifacts. A crash
+    /// leaves either everything or nothing of it.
+    pub fn switch_redeployed_rows(
+        &self,
+        row_id: &str,
+        row: SwitchedRow<'_>,
+        absorbed: &[&str],
+        journal: &[RedeployJournalRecord],
+    ) -> Result<()> {
+        self.with_conn(|conn| {
+            let tx = conn.unchecked_transaction()?;
+            for id in absorbed {
+                tx.execute("DELETE FROM skill_targets WHERE id = ?1", params![id])?;
+            }
+            let updated = tx.execute(
+                "UPDATE skill_targets
+                 SET tool = ?1, target_path = ?2, mode = ?3, status = ?4, last_error = ?5,
+                     synced_at = ?6, content_hash = ?7
+                 WHERE id = ?8",
+                params![
+                    row.tool,
+                    row.target_path,
+                    row.mode.as_str(),
+                    row.status.as_str(),
+                    row.last_error,
+                    row.synced_at,
+                    row.content_hash,
+                    row_id
+                ],
+            )?;
+            if updated != 1 {
+                anyhow::bail!("redeploy: target row {row_id} is gone");
+            }
+            for entry in journal {
+                insert_journal_entry(&tx, entry)?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+    }
+
+    /// Every redeploy journal entry, oldest first.
+    pub fn list_redeploy_journal(&self) -> Result<Vec<RedeployJournalRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, row_id, skill_id, tool, old_path, old_entry, old_content_hash,
+                        new_path, new_entry, state, created_at
+                 FROM redeploy_journal
+                 ORDER BY created_at ASC, rowid ASC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(RedeployJournalRecord {
+                    id: row.get(0)?,
+                    row_id: row.get(1)?,
+                    skill_id: row.get(2)?,
+                    tool: row.get(3)?,
+                    old_path: row.get(4)?,
+                    old_entry: row.get(5)?,
+                    old_content_hash: row.get(6)?,
+                    new_path: row.get(7)?,
+                    new_entry: row.get(8)?,
+                    state: row.get(9)?,
+                    created_at: row.get(10)?,
+                })
+            })?;
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row?);
+            }
+            Ok(items)
+        })
+    }
+
+    /// Drop a settled journal entry.
+    pub fn delete_redeploy_journal_entry(&self, id: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute("DELETE FROM redeploy_journal WHERE id = ?1", params![id])?;
+            Ok(())
+        })
+    }
+
+    /// Set a journal entry's state (`pending` / `edited`).
+    pub fn set_redeploy_journal_state(&self, id: &str, state: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE redeploy_journal SET state = ?1 WHERE id = ?2",
+                params![state, id],
+            )?;
+            Ok(())
         })
     }
 

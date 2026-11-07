@@ -22,6 +22,7 @@ use crate::core::tool_adapters::{adapter_by_key, mark_installed_in, skills_dir_i
 
 #[test]
 fn removal_report_keeps_shared_rows_and_classified_failure_on_the_wire() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let error = CommandError::from_anyhow(
         anyhow::Error::new(SignalError::PathOutsideToolDirs {
             path: "refused".into(),
@@ -418,6 +419,7 @@ fn plan_dedupes_a_shared_skills_dir_into_one_target_with_every_member_row() {
 
 #[test]
 fn skill_tool_scope_expands_the_shared_dir_group_and_leaves_other_tools_alone() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
     let home = home_with(tmp.path(), &["amp", "claude_code"]);
@@ -808,6 +810,7 @@ fn removal_of_a_skill_with_no_rows_reports_nothing_and_still_deletes_the_skill()
 
 #[test]
 fn a_shared_dir_artifact_is_removed_once_and_every_member_row_is_settled() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
     let home = home_with(tmp.path(), &["amp"]);
@@ -1285,6 +1288,7 @@ fn unsync_skill_from_tool_with_an_uninstalled_group_refuses_a_path_outside_tool_
 /// every member row settles, orphan handling notwithstanding.
 #[test]
 fn unsync_skill_from_tool_with_an_installed_group_still_fans_out_across_the_group() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
     let home = home_with(tmp.path(), &["amp"]);
@@ -1627,6 +1631,7 @@ fn a_central_copy_permission_failure_is_typed() {
 /// owns nothing — all name one folder, so a reader counts one Deployment.
 #[test]
 fn removal_rows_and_markers_name_the_deployment_folder_they_describe() {
+    crate::core::tool_adapters::test_overrides::kimi_on_amps_folder();
     let tmp = tempfile::tempdir().unwrap();
     let store = make_store(tmp.path());
     let home = home_with(tmp.path(), &["amp", "kimi_cli"]);
