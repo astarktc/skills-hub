@@ -35,7 +35,7 @@ unrelated.
 
 Every release app carries this requirement:
 
-```
+```text
 identifier "com.skillshub.app" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.1] exists and certificate leaf[subject.OU] = "N66437Y9GD"
 ```
 
