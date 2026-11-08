@@ -19,11 +19,13 @@ self-signed identity `Muesli QM Local Signing` (procedure: `~/Projects/forks/t3c
 and its README section "Code signing"; recipe: `~/Projects/forks/muesli/fork-infra/README.md`
 § "Signing identity").
 
-## Decision already made (QM ADR-0016)
+## Decision (operator 2026-11-08, QM ADR-0017)
 
-Skills Hub is built in GitHub Actions, so it gets **its own identity**, held only in this repo's secrets
-plus the operator's LastPass backup. **Do not reuse the MBP identity.** A leaked CI secret must not be able
-to sign a fake T3 Code or Muesli that inherits their microphone, screen and Keychain grants.
+Skills Hub keeps a legacy Keychain item (the GitHub token, `keyring` crate), so it is signed with the
+operator's **Apple Development certificate of his free personal team N66437Y9GD**, the same team that signs
+T3 Code. One team for all of a developer's apps is the normal practice. If the certificate leaks, it is
+revoked and re-issued. The operator accepted that a leaked certificate could sign code satisfying T3 Code's
+team requirement. **Never reuse the self-signed `Muesli QM Local Signing` identity.**
 
 ## What exists
 
