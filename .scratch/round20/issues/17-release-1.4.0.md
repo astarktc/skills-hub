@@ -32,3 +32,11 @@ the operator can follow on his own machine.
       push `main` (the push is the release).
 - [ ] After publishing: the BACKLOG order line, the effort's Status and closure per `docs/agents/issue-tracker.md` §
       Lifecycle, and a handoff.
+
+## Comments
+
+- 2026-11-08 (orchestrator): add a macOS line to the 1.4.0 smoke list. **Updating 1.3.6 → 1.4.0 must not ask for
+  anything**: no folder or privacy prompt, and no Keychain prompt for `com.skillshub.app`. 1.3.6 switched the macOS
+  release to the Apple team signature, and this is BACKLOG #120's second acceptance check
+  (`docs/macos-code-signing.md`). Before release, check the run log: `release.yml`'s "Verify codesign" passed on both
+  macOS jobs.

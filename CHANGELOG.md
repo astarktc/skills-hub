@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.6] - 2026-11-08
+
+macOS updates stop asking for permissions again. Until now each macOS release was ad-hoc signed, so macOS treated
+every update as a new app and forgot what you had allowed. Releases are now signed with a stable Apple Development
+identity.
+
+### macOS
+
+- **Signed releases.** From this release on, an update keeps the folder access you granted and Keychain access to
+  your saved GitHub token. **Installing 1.3.6 asks once more**, because it's the switch to the new signature. When the
+  Keychain asks about Skills Hub, choose **Always Allow**. After that, updates ask for nothing.
+- The app is signed by an Apple team, but it is not notarized. A DMG downloaded from GitHub may still need the
+  Gatekeeper step in the release notes. In-app updates don't.
+
+### Internal
+
+- `release.yml` signs the macOS app with the operator's Apple Development certificate, team N66437Y9GD. The designated
+  requirement pins the team, so renewing the certificate resets nothing (`scripts/macos-codesign/codesign`).
+- The macOS build fails closed if a signing secret is missing, the certificate is invalid or expiring, or the app's
+  team, requirement or system-only linkage doesn't check out. This is checked on the built app and on the app inside
+  the updater archive. Apple's WWDR G3 intermediate is imported, with a pinned hash.
+- `git2` always builds its vendored `libgit2`, so no build can link a Homebrew `libgit2` that the hardened runtime
+  would refuse.
+- The identity, its renewal before 2027-11-08 and the costs are in `docs/macos-code-signing.md` (BACKLOG #120).
+
+### Smoke list for this release
+
+1. Update to 1.3.6 from inside the app. Grant what macOS asks for once, and choose Always Allow for the Keychain item
+   `com.skillshub.app`.
+2. Run `codesign -d -r- "/Applications/Skills Hub.app"`. It shows `identifier "com.skillshub.app" and anchor apple
+   generic and certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */ and certificate leaf[subject.OU] =
+   N66437Y9GD`. Also run `codesign --verify --deep --strict "/Applications/Skills Hub.app"`, which must pass.
+3. Quit and relaunch the app. Nothing asks again. The real test is the next release, which must ask for nothing.
+
 ## [1.3.5] - 2026-11-07
 
 Round 20, wave B, first part. Skills Hub now checks that a folder is still the one it deployed before replacing or

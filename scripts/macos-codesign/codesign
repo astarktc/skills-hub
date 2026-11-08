@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# codesign shim for the macOS release build (BACKLOG #120, docs/macos-code-signing.md).
+#
+# Tauri's bundler signs the app as `codesign --force -s <identity> [--options runtime] … <path>` and offers no way
+# to pass a designated requirement. release.yml puts this directory first on PATH for the macOS build only, so the
+# app bundle's signature carries a requirement that pins the Apple team instead of one certificate:
+#
+#   identifier "<bundle id>" and anchor apple generic and
+#   certificate 1[field.1.2.840.113635.100.6.2.1] exists and certificate leaf[subject.OU] = "<team id>"
+#
+# A renewed or re-issued Apple Development certificate of the same team then satisfies the requirement that privacy
+# (TCC) grants and Keychain ACLs recorded, so no grant resets. Every other codesign call (the main executable signed
+# before its bundle, the DMG, any display or verify call) passes through unchanged. release.yml's verify step checks
+# the requirement on the built app and on the app inside the updater archive.
+set -euo pipefail
+
+REAL=/usr/bin/codesign
+(($# > 0)) || exec "$REAL"
+
+target="${!#}"
+signing=false
+for arg in "$@"; do
+  case "$arg" in
+    -s | --sign) signing=true ;;
+  esac
+done
+
+if $signing && [[ "${target%/}" == *.app ]]; then
+  : "${MACOS_BUNDLE_ID:?MACOS_BUNDLE_ID must be set for the release signing shim}"
+  : "${MACOS_TEAM_ID:?MACOS_TEAM_ID must be set for the release signing shim}"
+  req="designated => identifier \"$MACOS_BUNDLE_ID\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.1] exists and certificate leaf[subject.OU] = \"$MACOS_TEAM_ID\""
+  echo "codesign shim: signing ${target} with the team designated requirement (team ${MACOS_TEAM_ID})" >&2
+  exec "$REAL" "${@:1:$#-1}" "-r=$req" "$target"
+fi
+
+exec "$REAL" "$@"

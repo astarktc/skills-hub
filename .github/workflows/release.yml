@@ -19,6 +19,12 @@ concurrency:
 jobs:
   release:
     runs-on: ${{ matrix.os }}
+    env:
+      # macOS signing (BACKLOG #120, docs/macos-code-signing.md): the operator's Apple personal team and the bundle
+      # identifier the designated requirement pins. Changing either resets every macOS privacy grant and Keychain
+      # approval once on every Mac.
+      MACOS_TEAM_ID: N66437Y9GD
+      MACOS_BUNDLE_ID: com.skillshub.app
     strategy:
       fail-fast: false
       matrix:
@@ -152,32 +158,47 @@ jobs:
           NODE
 
       - name: Import Apple certificate (codesign)
+        # Fails closed: a macOS release is never built without the team identity. One ad-hoc or otherwise-signed
+        # release would reset every user's privacy grants and Keychain approvals (BACKLOG #120). The APPLE_* values
+        # stay scoped to this step: with APPLE_CERTIFICATE in its environment, Tauri's bundler would build a keychain
+        # of its own and pick the identity from `find-identity -v` itself.
+        if: runner.os == 'macOS'
         shell: bash
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY_INPUT: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          # Apple's WWDR G3 intermediate, which issues Apple Development certificates. Without it in the keychain
+          # `find-identity -v` lists no valid identity and codesign fails with errSecInternalComponent.
+          WWDR_G3_URL: https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          WWDR_G3_SHA256: dcf21878c77f4198e4b4614f03d696d89c66c66008d4244e1b99161aac91601f
         run: |
           set -euo pipefail
 
-          if [ -z "${APPLE_CERTIFICATE:-}" ]; then
-            echo "ℹ️ 未配置 APPLE_CERTIFICATE，跳过 codesign 导入"
-            exit 0
-          fi
-          if [ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ]; then
-            echo "❌ 缺少 Secret：APPLE_CERTIFICATE_PASSWORD" >&2
+          missing=""
+          [ -n "${APPLE_CERTIFICATE:-}" ] || missing="$missing APPLE_CERTIFICATE"
+          [ -n "${APPLE_CERTIFICATE_PASSWORD:-}" ] || missing="$missing APPLE_CERTIFICATE_PASSWORD"
+          [ -n "${APPLE_SIGNING_IDENTITY_INPUT:-}" ] || missing="$missing APPLE_SIGNING_IDENTITY"
+          if [ -n "$missing" ]; then
+            echo "ERROR: missing secrets:$missing. A macOS release is never built unsigned (docs/macos-code-signing.md)." >&2
             exit 1
           fi
-          if [ -z "${KEYCHAIN_PASSWORD:-}" ]; then
-            echo "❌ 缺少 Secret：KEYCHAIN_PASSWORD" >&2
+          IDENTITY="$(printf '%s' "$APPLE_SIGNING_IDENTITY_INPUT" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
+          if ! [[ "$IDENTITY" =~ ^[0-9A-F]{40}$ ]]; then
+            echo "ERROR: APPLE_SIGNING_IDENTITY must be the certificate's 40-hex SHA-1." >&2
             exit 1
           fi
 
           CERT_PATH="$RUNNER_TEMP/certificate.p12"
+          WWDR_PATH="$RUNNER_TEMP/AppleWWDRCAG3.cer"
           KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          # The build keychain lives only for this job; its password never needs to be known outside it.
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
 
-          echo "$APPLE_CERTIFICATE" | (base64 --decode 2>/dev/null || base64 -D) > "$CERT_PATH"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+          curl -fsSL --retry 3 -o "$WWDR_PATH" "$WWDR_G3_URL"
+          echo "$WWDR_G3_SHA256  $WWDR_PATH" | shasum -a 256 -c -
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
@@ -185,22 +206,38 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN_PATH"
           security default-keychain -s "$KEYCHAIN_PATH"
 
+          security import "$WWDR_PATH" -k "$KEYCHAIN_PATH"
           security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          rm -f "$CERT_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" > /dev/null
 
-          echo "Available identities:"
-          security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
-
-          if [ -n "${APPLE_SIGNING_IDENTITY_INPUT:-}" ]; then
-            echo "APPLE_SIGNING_IDENTITY=${APPLE_SIGNING_IDENTITY_INPUT}" >> "$GITHUB_ENV"
-          else
-            IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | head -n 1 | sed -n 's/.*\"\\(.*\\)\".*/\\1/p' || true)"
-            if [ -z "$IDENTITY" ]; then
-              echo "❌ 未能从 keychain 推断 APPLE_SIGNING_IDENTITY，请配置 Secret：APPLE_SIGNING_IDENTITY" >&2
-              exit 1
-            fi
-            echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "Valid codesigning identities:"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+          if ! security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -q "$IDENTITY"; then
+            echo "ERROR: $IDENTITY is not a valid codesigning identity in the build keychain (expired, revoked, not the" >&2
+            echo "imported certificate, or its chain to Apple's root is incomplete)." >&2
+            exit 1
           fi
+
+          # The certificate must be the team's, and it must not be about to lapse (renewal: docs/macos-code-signing.md).
+          CERT_PEM="$(security find-certificate -a -Z -p "$KEYCHAIN_PATH" | awk -v id="$IDENTITY" '
+            /^SHA-1 hash:/ { keep = ($3 == id) } keep && /BEGIN CERTIFICATE/,/END CERTIFICATE/ { if (keep) print }')"
+          SUBJECT="$(printf '%s\n' "$CERT_PEM" | openssl x509 -noout -subject -nameopt sep_multiline)"
+          if ! printf '%s\n' "$SUBJECT" | grep -Eq "^[[:space:]]*OU=${MACOS_TEAM_ID}[[:space:]]*$"; then
+            echo "ERROR: certificate $IDENTITY does not belong to team $MACOS_TEAM_ID." >&2
+            exit 1
+          fi
+          if ! printf '%s\n' "$CERT_PEM" | openssl x509 -noout -checkend 0 > /dev/null; then
+            echo "ERROR: certificate $IDENTITY has expired. Re-issue it in Xcode and update the secrets." >&2
+            exit 1
+          fi
+          if ! printf '%s\n' "$CERT_PEM" | openssl x509 -noout -checkend $((30 * 24 * 3600)) > /dev/null; then
+            echo "::warning::The macOS signing certificate expires within 30 days ($(printf '%s\n' "$CERT_PEM" | openssl x509 -noout -enddate)). Re-issue it in Xcode and update the secrets (docs/macos-code-signing.md)."
+          fi
+
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          # The codesign shim adds the team designated requirement when Tauri signs the app bundle.
+          echo "$GITHUB_WORKSPACE/scripts/macos-codesign" >> "$GITHUB_PATH"
 
       - name: Build Tauri App (macOS)
         if: runner.os == 'macOS'
@@ -211,12 +248,15 @@ jobs:
           echo "=== Building Tauri App for macOS ==="
           echo "Target: ${{ matrix.target }}"
           echo "Arch: ${{ matrix.arch }}"
-          if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
-            echo "✅ 使用 APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY 进行签名"
-          else
-            echo "ℹ️ 未配置 APPLE_SIGNING_IDENTITY，构建未签名版本"
-            unset APPLE_SIGNING_IDENTITY
+          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "ERROR: APPLE_SIGNING_IDENTITY is not set; a macOS release is never built unsigned." >&2
+            exit 1
           fi
+          if [ "$(command -v codesign)" != "$GITHUB_WORKSPACE/scripts/macos-codesign/codesign" ]; then
+            echo "ERROR: the codesign shim is not first on PATH; the app would lack the team requirement." >&2
+            exit 1
+          fi
+          echo "Signing with $APPLE_SIGNING_IDENTITY (team $MACOS_TEAM_ID)"
           # Step 1: compile + bundle the .app (the expensive part; updater *.tar.gz/*.sig derive from it).
           npm run tauri:build -- --target ${{ matrix.target }} --bundles app
           # Step 2: the DMG. Tauri's bundle_dmg.sh (hdiutil create/attach/detach) flakes
@@ -269,24 +309,52 @@ jobs:
           echo "=== Build completed ==="
           ls -la src-tauri/target/${{ matrix.target }}/release/bundle/ || true
 
-      - name: Verify codesign (optional)
+      - name: Verify codesign
+        # The built app and the app inside the updater archive (what an in-app update installs) must both carry the
+        # team signature and the team designated requirement.
         if: runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${APPLE_CERTIFICATE:-}" ]; then
-            echo "ℹ️ 未配置 APPLE_CERTIFICATE，跳过验签"
-            exit 0
-          fi
           TARGET="${{ matrix.target }}"
-          APP_PATH="$(find "src-tauri/target/${TARGET}/release/bundle" -type d -name "*.app" | head -n 1 || true)"
-          if [ -z "$APP_PATH" ]; then
-            echo "⚠️ 未找到 .app，跳过验签" >&2
-            exit 0
+          BUNDLE="src-tauri/target/${TARGET}/release/bundle/macos"
+          CONF_ID="$(node -p "require('./src-tauri/tauri.conf.json').identifier")"
+          if [ "$CONF_ID" != "$MACOS_BUNDLE_ID" ]; then
+            echo "ERROR: tauri.conf.json identifier ($CONF_ID) differs from MACOS_BUNDLE_ID ($MACOS_BUNDLE_ID)." >&2
+            exit 1
           fi
-          echo "APP_PATH=$APP_PATH"
-          codesign -dv --verbose=4 "$APP_PATH" || true
-          codesign --verify --deep --strict --verbose=4 "$APP_PATH"
+          WANT="identifier \"$MACOS_BUNDLE_ID\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */ and certificate leaf[subject.OU] = $MACOS_TEAM_ID"
+
+          check_app() {
+            local app="$1"
+            echo "=== $app"
+            /usr/bin/codesign -dv --verbose=4 "$app" 2>&1 | grep -E '^(Identifier|Format|Authority|TeamIdentifier|Runtime Version|CodeDirectory)' || true
+            /usr/bin/codesign --verify --deep --strict --verbose=2 "$app"
+            local team dr
+            team="$(/usr/bin/codesign -dv "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+            [ "$team" = "$MACOS_TEAM_ID" ] || { echo "ERROR: TeamIdentifier is '${team:-none}', not $MACOS_TEAM_ID" >&2; exit 1; }
+            dr="$(/usr/bin/codesign -d -r- "$app" 2>&1 | sed -n 's/^designated => //p')"
+            echo "designated => $dr"
+            [ "$dr" = "$WANT" ] || { echo "ERROR: unexpected designated requirement" >&2; exit 1; }
+            # The hardened runtime's library validation refuses any non-system dylib (e.g. a Homebrew libgit2).
+            local foreign
+            foreign="$(otool -L "$app/Contents/MacOS/"* | awk 'NR > 1 && $1 !~ /^(\/System\/Library\/|\/usr\/lib\/)/ && $1 !~ /:$/ { print $1 }')"
+            [ -z "$foreign" ] || { echo "ERROR: the app links non-system libraries: $foreign" >&2; exit 1; }
+          }
+
+          APPS=()
+          while IFS= read -r app; do APPS+=("$app"); done < <(find "$BUNDLE" -maxdepth 1 -type d -name '*.app')
+          [ "${#APPS[@]}" -eq 1 ] || { echo "ERROR: expected one .app in $BUNDLE, found ${#APPS[@]}" >&2; exit 1; }
+          check_app "${APPS[0]}"
+
+          TAR_GZ="$(find "$BUNDLE" -maxdepth 1 -type f -name '*.app.tar.gz' | head -n 1)"
+          [ -n "$TAR_GZ" ] || { echo "ERROR: no updater archive in $BUNDLE" >&2; exit 1; }
+          UNPACK="$RUNNER_TEMP/updater-check"
+          rm -rf "$UNPACK" && mkdir -p "$UNPACK"
+          tar -xzf "$TAR_GZ" -C "$UNPACK"
+          UPDATER_APP="$(find "$UNPACK" -maxdepth 1 -type d -name '*.app' | head -n 1)"
+          [ -n "$UPDATER_APP" ] || { echo "ERROR: no .app inside $TAR_GZ" >&2; exit 1; }
+          check_app "$UPDATER_APP"
 
       - name: Prepare macOS Assets
         if: runner.os == 'macOS'

@@ -27,14 +27,7 @@ Harness research behind #92 and #108–#110: `docs/design-inputs/2026-11-05-harn
 
 ## Now — evidence of unfinished work is strong
 
-- **#120 Sign macOS releases with a stable self-signed identity, so updates stop re-prompting for permissions.**
-  Today's releases are ad-hoc (the designated requirement is the cdhash), so macOS forgets every privacy grant and
-  Keychain approval on each update. Operator go 2026-11-08; whether it rides with 1.4.0 or ships alone is the
-  operator's call. The work is mostly secrets: Skills Hub gets its own identity (not the MBP one), the release fails
-  closed without one, and the hardened runtime needs a proof run. Source:
-  `docs/design-inputs/2026-11-08-stable-macos-code-signing.md` (QM Plane QM-352, QM ADR-0016).
-
-(Round 20 Wave B is otherwise the queue.)
+(Round 20 Wave B is the queue.)
 
 (Retired: #88 — split 2026-11-05 (operator): physical identity in every destructive seam, onboarding's physical-path
 exclusion included → #107; resumable moves, dir corrections, the launch pass, F14–F16 and the smoke line → #108;

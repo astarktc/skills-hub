@@ -54,7 +54,9 @@ no separate approval step. `release.yml` only compiles and packages; tests, clip
 and reduced-motion checks are never on that smoke list (operator, 2026-11-05) — the fixture audits and the primitives'
 ARIA/focus tests carry accessibility. Hosted macOS runners can take an hour or a night to
 acquire on this account: push a release off-peak, and re-run only the failed job (`gh run rerun <id> --failed`) rather
-than re-tagging.
+than re-tagging. **macOS releases are signed by the operator's Apple team (N66437Y9GD) and fail closed without it**.
+The designated requirement pins the team, and the certificate must be renewed before **2027-11-08**. Identity,
+secrets, renewal and costs: `docs/macos-code-signing.md`.
 
 ## Environment gotchas
 
