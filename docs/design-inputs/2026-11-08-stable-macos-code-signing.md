@@ -59,6 +59,19 @@ to sign a fake T3 Code or Muesli that inherits their microphone, screen and Keyc
 7. **Document** the identity (name, SHA-1, where the backup lives, what losing it costs) where this repo
    documents releases. Give the operator the SHA-1 and the release tag so Quartermaster can close QM-352.
 
+## Caveat found on T3 Code (2026-11-08): legacy Keychain items still prompt without a Team ID
+
+The stable identity fixed TCC and the Keychain item's ACL on T3 Code, but a deploy still raised one
+Keychain prompt. That item is a legacy file-keychain item (Electron's "t3code Safe Storage"). Besides the
+ACL, such an item carries a **partition list**, and code without a Team ID gets the per-build partition ID
+`cdhash:<hash>`. A self-signed certificate never yields a Team ID, so every new build is outside the list
+and prompts once (`security dump-keychain -a` shows the item's `partition_id` entry growing by one cdhash per
+build). So before or alongside step 1, check whether Skills Hub stores anything in the login Keychain: the
+`keyring` crate, `security-framework`'s generic-password calls, or a Tauri keychain/stronghold plugin. If it
+stores nothing, the self-signed identity is the whole fix. If it uses legacy items, ask the operator whether
+Quartermaster's QM-352 decision moved the apps to an Apple-issued certificate with a Team ID, and use the
+same kind of identity.
+
 ## Cost and risk
 
 - The first signed release costs one round of prompts on each Mac, then never again while the identity lives.
