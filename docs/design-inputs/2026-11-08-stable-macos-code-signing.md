@@ -68,9 +68,10 @@ ACL, such an item carries a **partition list**, and code without a Team ID gets 
 and prompts once (`security dump-keychain -a` shows the item's `partition_id` entry growing by one cdhash per
 build). So before or alongside step 1, check whether Skills Hub stores anything in the login Keychain: the
 `keyring` crate, `security-framework`'s generic-password calls, or a Tauri keychain/stronghold plugin. If it
-stores nothing, the self-signed identity is the whole fix. If it uses legacy items, ask the operator whether
-Quartermaster's QM-352 decision moved the apps to an Apple-issued certificate with a Team ID, and use the
-same kind of identity.
+stores nothing, the self-signed identity is the whole fix. If it uses legacy items, stop and report to the
+operator. QM ADR-0017 moved T3 Code to an Apple Development certificate of his free personal team, with a
+requirement that pins the team. A team certificate in CI secrets could, if leaked, sign a fake T3 Code that
+satisfies that requirement, so the CI identity for that case is his decision.
 
 ## Cost and risk
 
