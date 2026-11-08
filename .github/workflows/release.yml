@@ -310,8 +310,9 @@ jobs:
           ls -la src-tauri/target/${{ matrix.target }}/release/bundle/ || true
 
       - name: Verify codesign
-        # The built app and the app inside the updater archive (what an in-app update installs) must both carry the
-        # team signature and the team designated requirement.
+        # Both shipped apps must carry the team signature and the team designated requirement: the one inside the
+        # updater archive (what an in-app update installs) and the one inside the DMG (a first install). The bundle
+        # dir holds no .app by now: the DMG-only pass deletes the .app it built once the DMG exists.
         if: runner.os == 'macOS'
         shell: bash
         run: |
@@ -342,11 +343,6 @@ jobs:
             [ -z "$foreign" ] || { echo "ERROR: the app links non-system libraries: $foreign" >&2; exit 1; }
           }
 
-          APPS=()
-          while IFS= read -r app; do APPS+=("$app"); done < <(find "$BUNDLE" -maxdepth 1 -type d -name '*.app')
-          [ "${#APPS[@]}" -eq 1 ] || { echo "ERROR: expected one .app in $BUNDLE, found ${#APPS[@]}" >&2; exit 1; }
-          check_app "${APPS[0]}"
-
           TAR_GZ="$(find "$BUNDLE" -maxdepth 1 -type f -name '*.app.tar.gz' | head -n 1)"
           [ -n "$TAR_GZ" ] || { echo "ERROR: no updater archive in $BUNDLE" >&2; exit 1; }
           UNPACK="$RUNNER_TEMP/updater-check"
@@ -355,6 +351,21 @@ jobs:
           UPDATER_APP="$(find "$UNPACK" -maxdepth 1 -type d -name '*.app' | head -n 1)"
           [ -n "$UPDATER_APP" ] || { echo "ERROR: no .app inside $TAR_GZ" >&2; exit 1; }
           check_app "$UPDATER_APP"
+
+          DMG="$(find "src-tauri/target/${TARGET}/release/bundle/dmg" -maxdepth 1 -type f -name '*.dmg' | head -n 1)"
+          [ -n "$DMG" ] || { echo "ERROR: no DMG in bundle/dmg" >&2; exit 1; }
+          MOUNT="$RUNNER_TEMP/dmg-check"
+          mkdir -p "$MOUNT"
+          # hdiutil flakes on hosted runners (see the DMG build loop); retry the attach.
+          for attempt in 1 2 3; do
+            if hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$MOUNT" "$DMG" > /dev/null; then break; fi
+            [ "$attempt" -lt 3 ] || { echo "ERROR: cannot attach $DMG" >&2; exit 1; }
+            sleep 10
+          done
+          DMG_APP="$(find "$MOUNT" -maxdepth 1 -type d -name '*.app' | head -n 1)"
+          [ -n "$DMG_APP" ] || { echo "ERROR: no .app inside $DMG" >&2; hdiutil detach "$MOUNT" -force || true; exit 1; }
+          check_app "$DMG_APP"
+          hdiutil detach "$MOUNT" > /dev/null || hdiutil detach "$MOUNT" -force > /dev/null || true
 
       - name: Prepare macOS Assets
         if: runner.os == 'macOS'
