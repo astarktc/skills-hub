@@ -44,6 +44,13 @@ npm run version:check && npm run check
 `npm run check` **omits the version gate** that CI enforces (`.github/workflows/ci.yml`), so run both.
 A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version to 1.1.7").
 
+## Review findings: drop contrived scenarios
+
+- A finding that needs a scenario nobody would set up on purpose and nobody would hit by accident is
+  dropped, whatever its severity label: say so in one line in the review round's disposition, no fix, no
+  BACKLOG item.
+- Put this rule in every review brief, so reviewers label contrived findings themselves.
+
 ## Release
 
 Releases are built on GitHub, never locally. `npm run version:set X.Y.Z` + CHANGELOG entry, commit,
