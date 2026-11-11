@@ -44,13 +44,6 @@ npm run version:check && npm run check
 `npm run check` **omits the version gate** that CI enforces (`.github/workflows/ci.yml`), so run both.
 A version desync has shipped before (commit `f98bf9b`, "sync Cargo.toml version to 1.1.7").
 
-## Review findings: drop contrived scenarios
-
-- A finding that needs a scenario nobody would set up on purpose and nobody would hit by accident is
-  dropped, whatever its severity label: say so in one line in the review round's disposition, no fix, no
-  BACKLOG item.
-- Put this rule in every review brief, so reviewers label contrived findings themselves.
-
 ## Release
 
 Releases are built on GitHub, never locally. `npm run version:set X.Y.Z` + CHANGELOG entry, commit,
@@ -576,34 +569,22 @@ This cost 18 features in v1.1.4 (`5e1f42e` "restore 18 features lost during para
 
 ## Workflow
 
-1. State the approach and the files you'll touch before writing code; wait for confirmation.
-2. Implement full-stack changes in one pass — command + registration + DTO + i18n (EN) + UI.
-3. Run the definition-of-done gate and fix failures before presenting results.
+1. Implement full-stack changes in one pass — command + registration + DTO + i18n (EN) + UI.
+2. Run the definition-of-done gate and fix failures before presenting results.
 
 ## Delegation (T3 Code `delegate_task`)
 
-Run child agents on the **Pi harness** by default (`providerInstanceId: "pi"`) — it carries every model provider we
-use. Model routing within Pi (IDs as `orchestrator_capabilities` lists them):
+Run child agents on the **Pi harness** (`providerInstanceId: "pi"`) with `auto/*` model names, as
+`orchestrator_capabilities` lists them. Roles and thinking levels follow the global Coding work defaults. Two
+additions for this repo:
 
-- **Fable** → `anthropic/claude-fable-5-1`.
-- **Opus** → `anthropic/claude-opus-5-5` (operator decision 2026-09-25: 5.5 replaces 5 everywhere; the Pi option is
-  `thinking`, lowest tier `low`). Round 19 (operator 2026-09-27): **Opus 5.5 runs `high` across the board** for
-  implementation children.
-- **GPT-6 Astra** → `openai/gpt-6-astra` (the OpenAI seat on multi-model review panels, adversarial reviews and
-  audits; requires a live `openai` login in Pi — Sign in with ChatGPT; `openai-codex` is Pi's legacy provider, never use it).
-- **GPT-6** (other uses) → `openai/gpt-6.1-sol` / `openai/gpt-6-luna` (operator 2026-09-27: the 5.6 family is
-  retired; use 6). Luna is the cheapest model in the catalog: only for very basic, tightly-scoped tasks (e.g. a
+- The OpenAI subscription is Pi's `openai` provider (Sign in with ChatGPT); `openai-codex` is Pi's legacy provider,
+  never use it.
+- `auto/gpt-6-luna` is the cheapest model in the catalog: only for very basic, tightly-scoped tasks (e.g. a
   mechanical single-surface class migration), and always with high thinking.
-- **Cortex** gateways: only when Alex asks for them.
 
-The routing above is the default; confirm with Alex per session — it shifts with 5-hour and weekly usage limits.
-Choose thinking per task: `low`/`medium` for routine work (research, scouting, implementation, reviewing small or
-medium changes), `high` for reviewing large-scale work; ask if unsure. Adversarial review uses a different model
-than the implementer.
-
-Children read AGENTS.md's Workflow step 1 literally and stop for confirmation: **pre-approve it in the brief**
-("state your approach and continue"). Tell them `.scratch/` is tracked and that `docs/agents/issue-tracker.md`
-§ Delegated children applies: they may edit tickets and write handoffs, never archive, `git mv`, or commit under it.
+Tell children that `.scratch/` is tracked and that `docs/agents/issue-tracker.md` § Delegated children applies: they
+may edit tickets and write handoffs, never archive, `git mv`, or commit under it.
 
 Launch children with `runtimeMode: "full-access"` (or `inherit`) so they run unattended. Never use
 `approval-required` for delegated work — it gates every child tool call on an operator prompt. Express
@@ -621,8 +602,9 @@ read-only/no-run constraints in the task brief instead.
 
 ### Issue tracker
 
-Issues live as local markdown files under `.scratch/<effort>/`, tracked in git. **Start every session by reading
-`.scratch/BACKLOG.md` — the only cross-effort queue — then the newest note (by filename date) in `.scratch/handoffs/`.**
+Issues live as local markdown files under `.scratch/<effort>/`, tracked in git. **The top-level session (the thread Alex is
+talking to) starts by reading `.scratch/BACKLOG.md` — the only cross-effort queue — then the newest note (by filename
+date) in `.scratch/handoffs/`.** A delegated child skips both: its brief is its whole job.
 Read `docs/agents/issue-tracker.md` § Lifecycle before scheduling a BACKLOG item, declaring an effort finished, archiving
 anything under `.scratch/`, or adding an item that belongs to no effort.
 

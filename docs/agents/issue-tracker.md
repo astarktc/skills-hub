@@ -34,8 +34,8 @@ Used by `/wayfinder`. The **map** is a file with one **child** file per ticket.
 
 The directory is the tracker state. Two files carry what the directories cannot say:
 
-- **`.scratch/BACKLOG.md`** is the only cross-effort live queue. Every session starts by reading it, then the newest note (by filename date) in
-  `.scratch/handoffs/`. An item is a numbered line with a source pointer (`effort/file:line`, review, or session); **numbers
+- **`.scratch/BACKLOG.md`** is the only cross-effort live queue. The top-level session (the thread Alex is talking to) starts by reading it, then the newest note (by filename date) in
+  `.scratch/handoffs/`; a delegated child skips both. An item is a numbered line with a source pointer (`effort/file:line`, review, or session); **numbers
   are never reused or renumbered** — the header names the next free number, and a retired item is deleted (history keeps
   it). An item leaves the file **in the commit that closes it** — or the commit that opens the ticket/effort absorbing it,
   which says so.
