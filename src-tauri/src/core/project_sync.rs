@@ -411,6 +411,11 @@ pub enum ProjectSyncOutcomeStatus {
     /// alone and the row is kept `disabled`, owning nothing at its path (D9).
     /// Its own outcome kind (D10), never a failure or a skip.
     Declined,
+    /// The operator answered the overwrite ask with Overwrite for this
+    /// assignment ([`resolve_collisions`]) and the folder at `path` was
+    /// replaced by the skill (round 20 #70): its own outcome kind beside
+    /// `Declined`, so the run records what was replaced.
+    Overwritten { path: String },
 }
 
 /// Why a project sync left an assignment alone.
@@ -513,6 +518,7 @@ impl std::fmt::Display for ProjectSyncReport {
                 ProjectSyncOutcomeStatus::Failed { error } => format!("failed: {error}"),
                 ProjectSyncOutcomeStatus::Skipped { reason } => format!("skipped: {reason:?}"),
                 ProjectSyncOutcomeStatus::Declined => "declined".to_string(),
+                ProjectSyncOutcomeStatus::Overwritten { path } => format!("overwritten: {path}"),
             };
             write!(
                 f,
@@ -1148,6 +1154,9 @@ fn resolve_collisions_unlocked(
                     ProjectSyncOutcomeStatus::Declined
                 }
                 OverrideDecision::Overwrite => {
+                    // Something stands at the asked path now: the answer
+                    // replaces it (else it is a plain first sync).
+                    let occupied = std::fs::symlink_metadata(&decision.path).is_ok();
                     let result = project_ops::require_project(store, &assignment.project_id)
                         .and_then(|project| {
                             sync_single_assignment(
@@ -1160,6 +1169,9 @@ fn resolve_collisions_unlocked(
                             )
                         });
                     match result {
+                        Ok(()) if occupied => ProjectSyncOutcomeStatus::Overwritten {
+                            path: decision.path.clone(),
+                        },
                         Ok(()) => ProjectSyncOutcomeStatus::Synced,
                         Err(e) => {
                             let err_msg = format!("{:#}", e);

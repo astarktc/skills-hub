@@ -445,6 +445,34 @@ pub enum LibraryDestinationRefusal {
     NotWritable,
 }
 
+/// Who put the folder in a sync target's way (round 20 #70), judged where
+/// `sync_engine` observes it: a **recorded Deployment** — a live row (either
+/// table, not `disabled`, holding its claim: `synced_at` set) records this
+/// path, or the same physical entry, and the occupant check finds the
+/// occupant ours by that row's own evidence (ADR-0007: a link resolving to
+/// its skill's Library copy, or a copy with the Content identity the row
+/// recorded) — or **foreign**: nothing the app records vouches for it (the
+/// operator's folder, another tool's, or a copy of ours edited since).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum OccupantOwner {
+    /// The artifact of a recorded Deployment, proven by its own evidence.
+    Deployment {
+        /// The skill whose Deployment it is.
+        skill_name: String,
+        /// The registry key of the row that records it.
+        tool: String,
+        /// The project, for an assignment; `None` for a global row.
+        project_id: Option<String>,
+    },
+    /// Not put there by Skills Hub, as far as its records can prove.
+    Foreign,
+}
+
 /// Structured command failure crossing the IPC seam. `Deserialize` because a
 /// settled failure is also stored as this JSON (`skills.last_outcome_error`,
 /// see `core::skill_health`) and read back into the catalog.
@@ -480,11 +508,14 @@ pub enum CommandError {
     /// A sync target is occupied by a folder the app does not own. Every
     /// producer's row carries what the one overwrite ask shows (D12): the
     /// path, the folder's modification time and whether its content is
-    /// identical to the skill's.
+    /// identical to the skill's — and who put it there (`owner`, round 20
+    /// #70: a recorded Deployment's artifact by its own evidence, or not
+    /// ours).
     TargetExists {
         path: String,
         modified_at: Option<i64>,
         same_content: bool,
+        owner: OccupantOwner,
     },
     ToolNotWritable {
         tool: String,
@@ -724,6 +755,7 @@ impl CommandError {
                 path: exists.target.to_string_lossy().into_owned(),
                 modified_at: exists.occupant.modified_at,
                 same_content: exists.occupant.same_content,
+                owner: exists.occupant.owner.clone(),
             };
         }
 
@@ -916,6 +948,7 @@ impl From<GlobalSyncError> for CommandError {
                 path: target_path.to_string_lossy().to_string(),
                 modified_at: occupant.modified_at,
                 same_content: occupant.same_content,
+                owner: occupant.owner,
             },
             GlobalSyncError::ToolNotWritable {
                 tool_display_name,

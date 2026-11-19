@@ -39,8 +39,13 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use super::content_identity::{self, Comparison};
-use super::removal_fence::Place;
-use super::skill_store::{ProjectSkillAssignmentRecord, SkillRecord, SkillTargetRecord};
+use super::errors::OccupantOwner;
+use super::removal_fence::{EntryId, Place};
+use super::skill_store::{
+    ProjectSkillAssignmentRecord, SkillRecord, SkillStore, SkillTargetRecord,
+};
+use super::sync_status::SyncStatus;
+use super::tool_adapters::adapter_by_key;
 
 /// What one row recorded about what it deployed — the evidence [`check`]
 /// verifies the occupant of its path against. Built from the stored row and
@@ -159,6 +164,67 @@ pub(crate) fn check(path: &Path, deployed: &Deployed) -> Result<Occupancy> {
         };
     }
     Ok(Occupancy::Foreign)
+}
+
+/// Who put the folder at `path` there (round 20 #70, the overwrite ask's
+/// provenance): the first **live** row — either table, not `disabled`,
+/// holding its claim — that records `path` (by its spelling, or as the same
+/// physical entry, `EntryId`, read without following a leaf link) and whose
+/// own evidence finds the occupant ours ([`check`]); else `Foreign`. A row
+/// whose path cannot be read, or whose check fails, vouches for nothing:
+/// provenance is shown, never acted on, so an unknown reads as not ours.
+pub(crate) fn recorded_owner(store: &SkillStore, path: &Path) -> Result<OccupantOwner> {
+    let here = EntryId::of(path).ok().flatten();
+    let records = |other: &Path| {
+        other == path || here.is_some_and(|id| EntryId::of(other).ok().flatten() == Some(id))
+    };
+    let live = |status: SyncStatus, owns: bool| owns && status != SyncStatus::Disabled;
+    let proves = |deployed: &Deployed| matches!(check(path, deployed), Ok(Occupancy::Ours));
+    let skills = store.list_skills()?;
+    for skill in &skills {
+        for row in store.list_skill_targets(&skill.id)? {
+            if live(row.status, row.owns_artifact())
+                && records(Path::new(&row.target_path))
+                && proves(&Deployed::of_target(&row, Some(skill)))
+            {
+                return Ok(OccupantOwner::Deployment {
+                    skill_name: skill.name.clone(),
+                    tool: row.tool,
+                    project_id: None,
+                });
+            }
+        }
+    }
+    for project in store.list_projects()? {
+        for assignment in store.list_project_skill_assignments(&project.id)? {
+            if !live(assignment.status, assignment.owns_artifact()) {
+                continue;
+            }
+            let Some(adapter) = adapter_by_key(&assignment.tool) else {
+                continue;
+            };
+            let skill = skills.iter().find(|skill| skill.id == assignment.skill_id);
+            let live_name = skill.map(|skill| skill.name.clone());
+            let Ok(Some(artifact)) = super::project_sync::resolve_assignment_artifact(
+                Path::new(&project.path),
+                adapter,
+                &assignment,
+                || Ok(live_name),
+            ) else {
+                continue;
+            };
+            if records(&artifact) && proves(&Deployed::of_assignment(&assignment, skill)) {
+                return Ok(OccupantOwner::Deployment {
+                    skill_name: skill
+                        .map(|skill| skill.name.clone())
+                        .unwrap_or_else(|| assignment.skill_id.clone()),
+                    tool: assignment.tool,
+                    project_id: Some(project.id.clone()),
+                });
+            }
+        }
+    }
+    Ok(OccupantOwner::Foreign)
 }
 
 /// Whether the link at `link` is the one the app writes for `library_copy`:

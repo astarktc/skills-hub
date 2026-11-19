@@ -558,7 +558,10 @@ mod seams {
                 }
                 OverrideDecision::Overwrite => {
                     assert!(
-                        matches!(answer.items[0].status, ProjectSyncOutcomeStatus::Synced),
+                        matches!(
+                            answer.items[0].status,
+                            ProjectSyncOutcomeStatus::Overwritten { .. }
+                        ),
                         "{answer:?}"
                     );
                     assert!(!is_foreign(&assigned), "replaced on the operator's answer");
@@ -678,12 +681,15 @@ mod seams {
                 }
                 OverrideDecision::Overwrite => {
                     assert!(
-                        matches!(global_answer[0].status, BatchTargetStatus::Synced { .. }),
+                        matches!(
+                            global_answer[0].status,
+                            BatchTargetStatus::Overwritten { .. }
+                        ),
                         "{global_answer:?}"
                     );
                     assert!(matches!(
                         project_answer.items[0].status,
-                        ProjectSyncOutcomeStatus::Synced
+                        ProjectSyncOutcomeStatus::Overwritten { .. }
                     ));
                     assert!(!is_foreign(&global) && !is_foreign(&assigned));
                     assert_eq!(f.target("claude_code").status, SyncStatus::Synced);
@@ -742,7 +748,7 @@ mod seams {
         );
 
         assert!(
-            matches!(answer[0].status, BatchTargetStatus::Synced { .. }),
+            matches!(answer[0].status, BatchTargetStatus::Overwritten { .. }),
             "{answer:?}"
         );
         assert!(
@@ -872,7 +878,7 @@ mod seams {
         let answer = f.answer_global("augment", &former, OverrideDecision::Overwrite);
 
         assert!(
-            matches!(answer[0].status, BatchTargetStatus::Synced { .. }),
+            matches!(answer[0].status, BatchTargetStatus::Overwritten { .. }),
             "{answer:?}"
         );
         assert!(!is_foreign(&former), "re-linked at the asked path");
@@ -1423,7 +1429,10 @@ mod seams {
                     }
                     OverrideDecision::Overwrite => {
                         assert!(
-                            matches!(current.items[0].status, ProjectSyncOutcomeStatus::Synced),
+                            matches!(
+                                current.items[0].status,
+                                ProjectSyncOutcomeStatus::Overwritten { .. }
+                            ),
                             "{change}: {current:?}"
                         );
                         assert!(!is_foreign(&unasked), "{change}: replaced where named");
@@ -1564,7 +1573,7 @@ mod seams {
                 }
                 OverrideDecision::Overwrite => {
                     assert!(
-                        matches!(outcome.status, BatchTargetStatus::Synced { .. }),
+                        matches!(outcome.status, BatchTargetStatus::Overwritten { .. }),
                         "{retry:?}"
                     );
                     assert!(!is_foreign(&asked_path), "replaced at the asked path");
@@ -1591,5 +1600,131 @@ mod seams {
                 }
             )]
         ));
+    }
+}
+
+// ── Who put the folder there (round 20 #70, the overwrite ask's provenance) ──
+
+mod provenance {
+    use super::*;
+    use crate::core::errors::OccupantOwner;
+    use crate::core::ownership::recorded_owner;
+    use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord};
+    use crate::core::sync_status::{SyncMode, SyncStatus};
+
+    fn store(base: &Path) -> SkillStore {
+        let store = SkillStore::new(base.join("test.db"));
+        store.ensure_schema().unwrap();
+        store
+    }
+
+    fn skill(store: &SkillStore, name: &str, central: &Path) -> SkillRecord {
+        let skill = SkillRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            description: None,
+            source_type: "local".to_string(),
+            source_ref: None,
+            source_subpath: None,
+            source_revision: None,
+            central_path: central.to_string_lossy().to_string(),
+            content_hash: None,
+            created_at: 1,
+            updated_at: 1,
+            last_sync_at: None,
+            last_seen_at: 1,
+            status: "ok".to_string(),
+            imported_from_tool: None,
+        };
+        store.upsert_skill(&skill).unwrap();
+        skill
+    }
+
+    fn row(
+        store: &SkillStore,
+        skill: &SkillRecord,
+        tool: &str,
+        path: &Path,
+        status: SyncStatus,
+        hash: Option<&str>,
+    ) {
+        store
+            .upsert_skill_target(&SkillTargetRecord {
+                id: uuid::Uuid::new_v4().to_string(),
+                skill_id: skill.id.clone(),
+                tool: tool.to_string(),
+                target_path: path.to_string_lossy().to_string(),
+                mode: SyncMode::Copy,
+                status,
+                last_error: None,
+                synced_at: (status != SyncStatus::Disabled).then_some(1),
+                content_hash: hash.map(str::to_string),
+            })
+            .unwrap();
+    }
+
+    /// A folder another live row recorded deploying, still holding what that
+    /// row recorded, was put there by Skills Hub — named by that row. The same
+    /// folder edited since, or recorded only by a row that gave its claim up,
+    /// is not ours.
+    #[test]
+    fn an_occupant_is_ours_only_by_a_live_rows_own_evidence() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        let library = dir.path().join("library/alpha");
+        skill_dir(&library, "v1");
+        let alpha = skill(&store, "alpha", &library);
+        let path = dir.path().join("amp/skills/alpha");
+        skill_dir(&path, "v1");
+        assert_eq!(
+            recorded_owner(&store, &path).unwrap(),
+            OccupantOwner::Foreign
+        );
+
+        row(
+            &store,
+            &alpha,
+            "kimi_cli",
+            &path,
+            SyncStatus::Synced,
+            Some(&identity(&path)),
+        );
+        assert_eq!(
+            recorded_owner(&store, &path).unwrap(),
+            OccupantOwner::Deployment {
+                skill_name: "alpha".to_string(),
+                tool: "kimi_cli".to_string(),
+                project_id: None,
+            }
+        );
+
+        fs::write(path.join("SKILL.md"), "v1, edited").unwrap();
+        assert_eq!(
+            recorded_owner(&store, &path).unwrap(),
+            OccupantOwner::Foreign
+        );
+    }
+
+    #[test]
+    fn a_disabled_row_vouches_for_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        let library = dir.path().join("library/alpha");
+        skill_dir(&library, "v1");
+        let alpha = skill(&store, "alpha", &library);
+        let path = dir.path().join("amp/skills/alpha");
+        skill_dir(&path, "v1");
+        row(
+            &store,
+            &alpha,
+            "amp",
+            &path,
+            SyncStatus::Disabled,
+            Some(&identity(&path)),
+        );
+        assert_eq!(
+            recorded_owner(&store, &path).unwrap(),
+            OccupantOwner::Foreign
+        );
     }
 }

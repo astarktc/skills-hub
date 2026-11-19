@@ -11,8 +11,10 @@
 //! paths, checks the file, and holds the opener.
 //!
 //! "Reveal in Finder" never opens anything: it admits only a path the app
-//! manages (`admit_reveal_path`: a Sync target the store records, or a path
-//! inside the central repo) and then **selects** the item — or, once it is
+//! manages (`admit_reveal_path`: a Sync target the store records, a path
+//! inside the central repo, or a folder the app itself reported in an
+//! overwrite ask's way — `core::occupants`, exactly as reported) and then
+//! **selects** the item — or, once it is
 //! gone, its nearest existing ancestor — in its parent folder
 //! (`path_reveal_item`). Opening would hand an ancestor to its default
 //! handler: an `.app` bundle launches, an executable file runs.
@@ -73,13 +75,17 @@ pub fn log_reveal_target(log_dir: &Path, log_file: Option<&Path>) -> LogRevealTa
 pub enum RevealAdmission {
     RecordedTarget,
     CentralRepo,
+    /// A folder the app reported in an overwrite ask's way (round 20 #70),
+    /// exactly as reported: never a path inside, above or beside it.
+    ReportedOccupant,
 }
 
 /// Admit a path Reveal was asked to show: `requested` (a leading `~`
 /// expanded against `home`, the repo's one path rule; no NUL) must be a
 /// plain absolute path — no `.` / `..` segment as written — that is one of
-/// `known_targets` (the artifact paths the store records) or lies inside
-/// `central_repo`. The admitted path is normalised (a trailing separator
+/// `known_targets` (the artifact paths the store records), one of
+/// `reported_occupants` (the folders an overwrite ask showed in a target's
+/// way, `core::occupants`) or lies inside `central_repo`. The admitted path is normalised (a trailing separator
 /// dropped, so a leaf link keeps its link semantics under the presence
 /// probe). Anything else is `None`: refused before the filesystem is
 /// touched.
@@ -88,6 +94,7 @@ pub fn admit_reveal_path(
     home: &Path,
     central_repo: &Path,
     known_targets: &[PathBuf],
+    reported_occupants: &[PathBuf],
 ) -> Option<(PathBuf, RevealAdmission)> {
     if requested.contains('\0') || has_dot_segment(requested) {
         return None;
@@ -102,6 +109,12 @@ pub fn admit_reveal_path(
         .any(|target| target.components().eq(path.components()))
     {
         return Some((path, RevealAdmission::RecordedTarget));
+    }
+    if reported_occupants
+        .iter()
+        .any(|occupant| occupant.components().eq(path.components()))
+    {
+        return Some((path, RevealAdmission::ReportedOccupant));
     }
     let central = expand_home_path_in(home, &central_repo.to_string_lossy()).ok()?;
     let central: PathBuf = central.components().collect();
@@ -145,14 +158,16 @@ pub fn path_reveal_item(path: &Path, exists: impl Fn(&Path) -> bool) -> Option<P
 
 /// The item Reveal selects for `requested`, admitted against every artifact
 /// path the store records (`artifact_removal::recorded_target_paths`, the
-/// identity a Delete report carries) and the central repo — a central item
-/// only once `central_contains` holds; the command resolves `roots` /
-/// `central_repo` once and holds the opener. A refusal is
+/// identity a Delete report carries), the occupants an overwrite ask
+/// reported (`reported_occupants`, `core::occupants::reported`) and the
+/// central repo — a central item only once `central_contains` holds; the
+/// command resolves `roots` / `central_repo` once and holds the opener. A refusal is
 /// `RevealPathFailed { reason: NotManaged }`, nothing on the way `Gone`.
 pub fn resolve_reveal_item(
     store: &SkillStore,
     roots: &HostRoots,
     central_repo: &Path,
+    reported_occupants: &[PathBuf],
     requested: &str,
     exists: impl Fn(&Path) -> bool,
     canonical: impl Fn(&Path) -> Option<PathBuf>,
@@ -163,11 +178,17 @@ pub fn resolve_reveal_item(
         detail,
     };
     let known = recorded_target_paths(store, roots)?;
-    let Some((path, admission)) = admit_reveal_path(requested, &roots.home, central_repo, &known)
-    else {
+    let Some((path, admission)) = admit_reveal_path(
+        requested,
+        &roots.home,
+        central_repo,
+        &known,
+        reported_occupants,
+    ) else {
         return Err(failed(
             RevealPathFailure::NotManaged,
-            "not a Sync target the app records, nor inside the central repo".to_string(),
+            "not a Sync target the app records, an occupant it reported, nor inside the central repo"
+                .to_string(),
         )
         .into());
     };

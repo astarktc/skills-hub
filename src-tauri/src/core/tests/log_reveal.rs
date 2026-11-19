@@ -112,6 +112,7 @@ fn admit(requested: &str) -> Option<PathBuf> {
         Path::new(&home),
         Path::new(&central),
         &known(),
+        &[],
     )
     .map(|(p, _)| p)
 }
@@ -123,6 +124,7 @@ fn admission(requested: &str) -> Option<RevealAdmission> {
         Path::new(&home),
         Path::new(&central),
         &known(),
+        &[],
     )
     .map(|(_, via)| via)
 }
@@ -197,6 +199,53 @@ fn an_unknown_path_outside_every_managed_root_is_refused() {
     }
 }
 
+/// A folder an overwrite ask reported in a target's way (round 20 #70) is
+/// admitted exactly as reported, and nothing else is: not a file inside it,
+/// not its parent folder, not a sibling, not a `..` climb out of it, and not
+/// any path once no ask reported it.
+#[test]
+fn only_a_reported_occupant_is_admitted_and_only_as_reported() {
+    let (home, central) = (abs(HOME), abs(CENTRAL));
+    let occupant = PathBuf::from(abs("/Users/u/.cursor/skills/release-train"));
+    let reported = [occupant.clone()];
+    let admit_with = |requested: &str, reported: &[PathBuf]| {
+        admit_reveal_path(
+            &abs(requested),
+            Path::new(&home),
+            Path::new(&central),
+            &known(),
+            reported,
+        )
+    };
+    assert_eq!(
+        admit_with("/Users/u/.cursor/skills/release-train", &reported),
+        Some((occupant.clone(), RevealAdmission::ReportedOccupant))
+    );
+    assert_eq!(
+        admit_with("~/.cursor/skills/release-train/", &reported).map(|(_, via)| via),
+        Some(RevealAdmission::ReportedOccupant)
+    );
+    for requested in [
+        "/Users/u/.cursor/skills/release-train/SKILL.md",
+        "/Users/u/.cursor/skills",
+        "/Users/u/.cursor/skills/other-skill",
+        "/Users/u/.cursor/skills/release-train/../other-skill",
+        "/Users/u/.cursor/skills/release-train/.",
+        "/Users/u/.cursor",
+    ] {
+        assert_eq!(
+            admit_with(requested, &reported),
+            None,
+            "{requested} must be refused"
+        );
+    }
+    // Unreported, the same folder is refused like any other.
+    assert_eq!(
+        admit_with("/Users/u/.cursor/skills/release-train", &[]),
+        None
+    );
+}
+
 /// The repo's path rule: a leading `~` expands against home (so does a
 /// stored `~` central repo); a relative path, `~user` and an empty string
 /// are refused.
@@ -210,6 +259,7 @@ fn tilde_expands_against_home_and_a_relative_path_is_refused() {
         "~/.skillshub/x",
         Path::new(&abs(HOME)),
         Path::new("~/.skillshub"),
+        &[],
         &[]
     )
     .is_some());
@@ -387,6 +437,7 @@ fn a_central_request_through_an_outside_link_is_refused() {
             &store,
             &HostRoots::under_home(&home),
             &central,
+            &[],
             &requested.to_string_lossy(),
             probe,
             canonical,
@@ -520,6 +571,7 @@ fn a_reported_target_is_selected_and_a_vanished_one_selects_its_ancestor() {
             &store,
             &HostRoots::under_home(&home),
             &central,
+            &[],
             &requested.to_string_lossy(),
             probe,
             |p| fs::canonicalize(p).ok(),
@@ -564,6 +616,7 @@ fn an_unrecorded_path_is_refused_and_a_vanished_volume_is_gone() {
                 &store,
                 &HostRoots::under_home(&home),
                 &central,
+                &[],
                 &requested.to_string_lossy(),
                 probe,
                 |p| fs::canonicalize(p).ok(),
@@ -577,6 +630,7 @@ fn an_unrecorded_path_is_refused_and_a_vanished_volume_is_gone() {
             &store,
             &HostRoots::under_home(&home),
             &central,
+            &[],
             &global.to_string_lossy(),
             |_| false,
             |p| fs::canonicalize(p).ok(),

@@ -549,7 +549,7 @@ fn auto_sync_on_keeps_a_sibling_that_diverged_after_planning() {
             && matches!(
                 &target.status,
                 crate::core::global_sync::BatchTargetStatus::Failed {
-                    error: crate::core::errors::CommandError::TargetExists { path, modified_at: Some(_), same_content: false },
+                    error: crate::core::errors::CommandError::TargetExists { path, modified_at: Some(_), same_content: false, .. },
                 } if Path::new(path) == sibling
             )
     }), "{targets:?}");
@@ -1152,7 +1152,7 @@ fn replace_over_a_divergent_copy_produces_an_askable_target_exists_row() {
         |_| {},
     );
     assert!(
-        matches!(retry[0].status, BatchTargetStatus::Synced { .. }),
+        matches!(retry[0].status, BatchTargetStatus::Overwritten { .. }),
         "{:?}",
         retry
     );

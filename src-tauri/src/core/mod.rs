@@ -23,6 +23,7 @@ pub mod log_reveal;
 pub mod manifest;
 pub mod mutation_guard;
 pub mod no_replace;
+pub mod occupants;
 pub mod onboarding;
 pub mod onboarding_import;
 pub mod ownership;

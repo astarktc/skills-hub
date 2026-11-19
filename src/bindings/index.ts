@@ -176,6 +176,10 @@ export const commands = {
 	searchSkillsOnline: (query: string, limit: number | null) => __TAURI_INVOKE<OnlineSkillDto[]>("search_skills_online", { query, limit }),
 	listSkillFiles: (centralPath: string) => __TAURI_INVOKE<SkillFileEntry[]>("list_skill_files", { centralPath }),
 	readSkillFile: (centralPath: string, filePath: string) => __TAURI_INVOKE<string>("read_skill_file", { centralPath, filePath }),
+	/**  The files of a reported occupant, each compared with the skill's. */
+	listOccupantFiles: (path: string, skillId: string) => __TAURI_INVOKE<OccupantFileEntry[]>("list_occupant_files", { path, skillId }),
+	/**  One file of a reported occupant beside the skill's file at its path. */
+	readOccupantFile: (path: string, skillId: string, filePath: string) => __TAURI_INVOKE<OccupantFile>("read_occupant_file", { path, skillId, filePath }),
 	cloneExploreSkill: (sourceUrl: string, skillName: string | null) => __TAURI_INVOKE<string>("clone_explore_skill", { sourceUrl, skillName }),
 	hideExploreSkill: (sourceUrl: string) => __TAURI_INVOKE<null>("hide_explore_skill", { sourceUrl }),
 	unhideExploreSkill: (sourceUrl: string) => __TAURI_INVOKE<null>("unhide_explore_skill", { sourceUrl }),
@@ -369,7 +373,15 @@ export type BatchTargetStatus = { status: "synced"; outcome: SyncOutcome } | { s
  *  the pair is recorded `disabled`. Only this batch's override produces
  *  it; a later pass reports the same pair as a Disabled skip.
  */
-{ status: "declined" };
+{ status: "declined" } |
+/**
+ *  The operator answered the `TARGET_EXISTS` ask with Overwrite
+ *  (`OverrideDecision::Overwrite`) and the folder in the way was replaced
+ *  by the skill (round 20 #70): its own outcome kind beside `Declined`,
+ *  so the run records what was replaced. Only an answer produces it; an
+ *  answer that found nothing left to replace is plain `Synced`.
+ */
+{ status: "overwritten"; outcome: SyncOutcome };
 
 /**
  *  The fan-out's fresh view plus its report: one item per configured Tool
@@ -448,9 +460,11 @@ path: string } |
  *  A sync target is occupied by a folder the app does not own. Every
  *  producer's row carries what the one overwrite ask shows (D12): the
  *  path, the folder's modification time and whether its content is
- *  identical to the skill's.
+ *  identical to the skill's — and who put it there (`owner`, round 20
+ *  #70: a recorded Deployment's artifact by its own evidence, or not
+ *  ours).
  */
-{ code: "TARGET_EXISTS"; path: string; modifiedAt: number | null; sameContent: boolean } | { code: "TOOL_NOT_WRITABLE"; tool: string; path: string } | { code: "SKILL_INVALID"; reason: string } | { code: "MULTI_SKILLS" } | { code: "SKILL_EXISTS";
+{ code: "TARGET_EXISTS"; path: string; modifiedAt: number | null; sameContent: boolean; owner: OccupantOwner } | { code: "TOOL_NOT_WRITABLE"; tool: string; path: string } | { code: "SKILL_INVALID"; reason: string } | { code: "MULTI_SKILLS" } | { code: "SKILL_EXISTS";
 /**  Name of the skill directory already present in the central repo. */
 name: string } |
 /**
@@ -668,8 +682,18 @@ export type DuplicateReadsDto = {
 
 /**  An edited copy: a row of the one overwrite ask (delete / leave). */
 export type EditedCopy = {
-	/**  The journal entry that asks — what an answer names. */
+	/**
+	 *  The question's identity — what an answer names: the journal entry
+	 *  that asks, or (`ahead`) the moved row whose old artifact it is.
+	 */
 	entry_id: string,
+	/**
+	 *  Asked **ahead** of its move (Sol 104): the move could not deploy yet
+	 *  (a folder in its way, asked in the same ask), so the copy is not
+	 *  journaled; the answer applies when the answered move removes its old
+	 *  artifact, in the same retry. Otherwise asked by its journal entry.
+	 */
+	ahead: boolean,
 	skill_id: string,
 	skill_name: string,
 	/**  The key of the row that owned it. */
@@ -677,10 +701,15 @@ export type EditedCopy = {
 	path: string,
 	modified_at: number | null,
 	/**
-	 *  The detected harnesses that read its folder: who shows it twice if it
-	 *  is left.
+	 *  The detected harnesses that read its folder: if it is left, it stays
+	 *  visible in each.
 	 */
 	readers: string[],
+	/**
+	 *  Those of `readers` that also read the folder the skill is deployed in:
+	 *  a proven duplicate, shown twice if it is left (Sol 102).
+	 */
+	duplicate_readers: string[],
 };
 
 export type EditedCopyDecision = "delete" | "leave";
@@ -705,6 +734,20 @@ export type FeaturedSkillDto = {
 	stars: number,
 	source_url: string,
 };
+
+/**
+ *  How one file of a folder in a target's way compares with the skill's
+ *  Library copy, by its path inside each and its bytes.
+ */
+export type FileComparison =
+/**  The same bytes at the same path in both. */
+"same" |
+/**  At the same path in both, with different bytes. */
+"changed" |
+/**  Only in the folder in the way. */
+"only_here" |
+/**  Only in the skill: the folder in the way lacks it. */
+"only_in_skill";
 
 /**
  *  Inclusive float bound, shipped to the frontend inside `AppSettings`.
@@ -1068,10 +1111,15 @@ export type LeftBehindCopy = {
 	path: string,
 	reason: RedeployLeftReason,
 	/**
-	 *  The detected harnesses that read its folder and will show the skill
-	 *  twice.
+	 *  The detected harnesses that read its folder: the copy is still
+	 *  visible in each.
 	 */
 	readers: string[],
+	/**
+	 *  Those of `readers` that also read the folder the skill is deployed in
+	 *  now: a proven duplicate, shown twice (Sol 102).
+	 */
+	duplicate_readers: string[],
 	/**  Why its removal failed (`removal_failed`). */
 	error: CommandError | null,
 };
@@ -1291,7 +1339,49 @@ export type MovedRow = {
 	tool: string,
 	/**  Where it recorded its artifact. */
 	from: string,
+	/**
+	 *  The journal entry this run left for the row's old artifact, when it
+	 *  is still owed (an edited copy asked, or one left): what a later run's
+	 *  settlement of it is associated by.
+	 */
+	entry_id: string | null,
 };
+
+/**  One file's text on each side; `None` where that side has no such file. */
+export type OccupantFile = {
+	occupant: string | null,
+	skill: string | null,
+};
+
+/**  One file of a reported occupant, or one the skill has and it lacks. */
+export type OccupantFileEntry = {
+	path: string,
+	/**  The occupant's size (the skill's, for a file only the skill has). */
+	size: number,
+	compared: FileComparison,
+};
+
+/**
+ *  Who put the folder in a sync target's way (round 20 #70), judged where
+ *  `sync_engine` observes it: a **recorded Deployment** — a live row (either
+ *  table, not `disabled`, holding its claim: `synced_at` set) records this
+ *  path, or the same physical entry, and the occupant check finds the
+ *  occupant ours by that row's own evidence (ADR-0007: a link resolving to
+ *  its skill's Library copy, or a copy with the Content identity the row
+ *  recorded) — or **foreign**: nothing the app records vouches for it (the
+ *  operator's folder, another tool's, or a copy of ours edited since).
+ */
+export type OccupantOwner =
+/**  The artifact of a recorded Deployment, proven by its own evidence. */
+{ kind: "deployment";
+/**  The skill whose Deployment it is. */
+skillName: string;
+/**  The registry key of the row that records it. */
+tool: string;
+/**  The project, for an assignment; `None` for a global row. */
+projectId: string | null } |
+/**  Not put there by Skills Hub, as far as its records can prove. */
+{ kind: "foreign" };
 
 export type OnboardingGroup = {
 	name: string,
@@ -1542,7 +1632,14 @@ export type ProjectSyncOutcomeStatus =
  *  alone and the row is kept `disabled`, owning nothing at its path (D9).
  *  Its own outcome kind (D10), never a failure or a skip.
  */
-{ status: "declined" };
+{ status: "declined" } |
+/**
+ *  The operator answered the overwrite ask with Overwrite for this
+ *  assignment ([`resolve_collisions`]) and the folder at `path` was
+ *  replaced by the skill (round 20 #70): its own outcome kind beside
+ *  `Declined`, so the run records what was replaced.
+ */
+{ status: "overwritten"; path: string };
 
 export type ProjectSyncReport = {
 	items: ProjectSyncOutcome[],
@@ -1696,7 +1793,9 @@ export type RedeployAnswer =
 { question: "occupied"; skill_id: string; folder_key: string; row_ids: string[]; path: string; decision: OverrideDecision } |
 /**
  *  An edited old copy: delete it, or leave it (disowned). `entry_id` is
- *  the journal entry that asked (`EditedCopy.entry_id`).
+ *  the question that asked (`EditedCopy.entry_id`): its journal entry,
+ *  or — asked ahead of its move — the moved row whose old artifact it
+ *  is.
  */
 { question: "edited_copy"; entry_id: string; path: string; decision: EditedCopyDecision };
 
@@ -1755,6 +1854,11 @@ export type RedeployMove = {
 	/**  The rows as recorded before the move. */
 	rows: MovedRow[],
 	status: RedeployStatus,
+	/**
+	 *  The operator's Overwrite replaced the folder that stood at the new
+	 *  place (round 20 #70): recorded in the run beside `kept`.
+	 */
+	overwritten: boolean,
 };
 
 /**  What a redeploy would do, answered before anything is written. */

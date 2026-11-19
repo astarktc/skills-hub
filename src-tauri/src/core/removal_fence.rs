@@ -158,6 +158,12 @@ impl<'a> ProtectedLibrary<'a> {
         }
     }
 
+    /// The store the library is recorded in (`None` for an engine test's
+    /// unrecorded library): what an occupant's provenance is read from.
+    pub(crate) fn store(&self) -> Option<&'a SkillStore> {
+        self.store
+    }
+
     /// The library in physical form. A store or resolution failure fails the
     /// admission: refusing is recoverable, a blind removal is not.
     fn roots(&self) -> Result<&Roots> {

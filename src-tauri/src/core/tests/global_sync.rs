@@ -663,7 +663,7 @@ fn batch_override_applies_to_the_folder_its_key_names() {
             |_| {},
         );
         assert!(
-            matches!(outcomes[0].status, BatchTargetStatus::Synced { .. }),
+            matches!(outcomes[0].status, BatchTargetStatus::Overwritten { .. }),
             "shared-dir override must apply: {:?}",
             outcomes[0].status
         );
@@ -711,7 +711,7 @@ fn batch_direct_override_forces_overwrite_for_that_skill_only() {
     // skill-1 had the override → replaced; skill-2 did not → TargetExists.
     assert!(matches!(
         outcomes[0].status,
-        BatchTargetStatus::Synced { .. }
+        BatchTargetStatus::Overwritten { .. }
     ));
     assert!(matches!(
         outcomes[1].status,
@@ -738,6 +738,7 @@ fn classification_recovers_target_exists_by_downcast_despite_reworded_message() 
         occupant: crate::core::sync_engine::Occupant {
             modified_at: Some(7),
             same_content: true,
+            owner: crate::core::errors::OccupantOwner::Foreign,
         },
     })
     .context("some totally reworded wrapper text");
@@ -1249,7 +1250,7 @@ fn every_row_writes_the_skills_place_and_an_answer_reaches_the_row_it_names() {
         "{outcomes:?}"
     );
     assert!(
-        status_of(&outcomes, "kimi_cli").starts_with("Synced"),
+        status_of(&outcomes, "kimi_cli").starts_with("Overwritten"),
         "{outcomes:?}"
     );
     assert_ne!(

@@ -469,6 +469,7 @@ fn overwrite_replaces_the_folder_in_the_way() {
     let report = f.run(&[occupied(&f, OverrideDecision::Overwrite)]);
 
     assert!(matches!(only_move(&report).status, RedeployStatus::Moved));
+    assert!(only_move(&report).overwritten, "recorded in the run");
     assert!(report.refused_answers.is_empty(), "{report:#?}");
     assert_eq!(
         fs::read_link(f.at(".agents/skills/alpha")).unwrap(),
@@ -611,6 +612,126 @@ fn an_edited_copy_answer_naming_another_path_deletes_nothing() {
         &report.refused_answers[0].error,
         CommandError::NotFound { kind, .. } if kind == "redeploy_question"
     ));
+}
+
+/// Sol 102: a copy left behind is still visible in every harness reading its
+/// folder; it is a proven duplicate only for those that also read the folder
+/// the skill now lives in. The move names the journal entry it left, so a
+/// later settlement is associated by it (Astra, round 2).
+#[test]
+fn a_left_copy_is_still_visible_and_a_duplicate_only_where_both_folders_are_read() {
+    // A Cursor that reads Codex's folder but not `~/.agents/skills`.
+    agents_shape();
+    {
+        use crate::core::tool_adapters::reads::SharedRead;
+        use crate::core::tool_adapters::{test_overrides, ToolAdapter};
+        let cursor = adapter_by_key("cursor").expect("cursor").clone();
+        test_overrides::shadow(ToolAdapter {
+            reads: crate::core::tool_adapters::reads::ReadFacts {
+                global: crate::core::tool_adapters::reads::ScopeReads {
+                    agents: SharedRead::No,
+                    ..cursor.reads.global
+                },
+                ..cursor.reads
+            },
+            ..cursor
+        });
+    }
+    let f = fixture(&["codex", "cursor"]);
+    edited_copy(&f);
+
+    let report = f.run(&[]);
+
+    let question = &report.edited_copies[0];
+    assert!(!question.ahead);
+    assert_eq!(question.readers, vec!["cursor", "codex"]);
+    // Codex reads both `~/.codex/skills` and `~/.agents/skills`: it shows the
+    // skill twice. This Cursor reads only the old folder: the copy is still
+    // visible there, never called a duplicate.
+    assert_eq!(question.duplicate_readers, vec!["codex"]);
+    let journal = f.store.list_redeploy_journal().unwrap();
+    assert_eq!(
+        only_move(&report).rows[0].entry_id.as_deref(),
+        Some(journal[0].id.as_str())
+    );
+    assert!(!only_move(&report).overwritten);
+}
+
+/// Sol 104 / Astra 4: a move with a folder in its way **and** an edited old
+/// copy asks both questions in the one ask of that operator action — the
+/// edited copy ahead of its move, by its row — and the answered retry
+/// settles both: Overwrite moves it, Delete removes the old copy.
+#[cfg(unix)]
+#[test]
+fn a_folder_in_the_way_and_an_edited_old_copy_are_asked_in_one_ask() {
+    for decision in [EditedCopyDecision::Delete, EditedCopyDecision::Leave] {
+        let f = agents_fixture(&["codex"]);
+        let old = edited_copy(&f);
+        foreign_at(&f, ".agents/skills/alpha");
+
+        let first = f.run(&[]);
+
+        assert!(matches!(
+            &only_move(&first).status,
+            RedeployStatus::Failed {
+                error: CommandError::TargetExists { .. }
+            }
+        ));
+        assert_eq!(first.edited_copies.len(), 1, "{first:#?}");
+        let ahead = &first.edited_copies[0];
+        assert!(ahead.ahead);
+        assert_eq!(ahead.entry_id, "row-codex");
+        assert_eq!(Path::new(&ahead.path), old);
+        assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+
+        let retry = f.run(&[
+            occupied(&f, OverrideDecision::Overwrite),
+            RedeployAnswer::EditedCopy {
+                entry_id: ahead.entry_id.clone(),
+                path: ahead.path.clone(),
+                decision,
+            },
+        ]);
+
+        assert!(retry.refused_answers.is_empty(), "{retry:#?}");
+        assert!(retry.edited_copies.is_empty(), "answered, not asked again");
+        assert!(only_move(&retry).overwritten);
+        match decision {
+            EditedCopyDecision::Delete => {
+                assert!(matches!(only_move(&retry).status, RedeployStatus::Moved));
+                assert!(!present(&old));
+            }
+            EditedCopyDecision::Leave => {
+                assert!(matches!(
+                    only_move(&retry).status,
+                    RedeployStatus::LeftOld { edited: true }
+                ));
+                assert_eq!(retry.left_behind[0].reason, RedeployLeftReason::Edited);
+                assert!(old.join("local.txt").is_file());
+            }
+        }
+        assert!(f.store.list_redeploy_journal().unwrap().is_empty());
+    }
+}
+
+/// An ahead answer naming another path than its row records is refused,
+/// touching nothing.
+#[cfg(unix)]
+#[test]
+fn an_ahead_answer_naming_another_path_is_refused() {
+    let f = agents_fixture(&["codex"]);
+    let old = edited_copy(&f);
+    foreign_at(&f, ".agents/skills/alpha");
+    f.run(&[]);
+
+    let retry = f.run(&[RedeployAnswer::EditedCopy {
+        entry_id: "row-codex".into(),
+        path: f.at(".codex/skills/other").to_string_lossy().into_owned(),
+        decision: EditedCopyDecision::Delete,
+    }]);
+
+    assert_eq!(retry.refused_answers.len(), 1, "{retry:#?}");
+    assert!(old.join("local.txt").is_file());
 }
 
 /// Astra round 1, finding 2 (answer identity): an Overwrite answered for one

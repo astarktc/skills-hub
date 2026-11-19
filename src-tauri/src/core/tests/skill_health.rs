@@ -683,7 +683,7 @@ fn an_overwrite_decision_still_replaces_the_folder() {
     );
     assert!(matches!(
         outcomes[0].status,
-        BatchTargetStatus::Synced { .. }
+        BatchTargetStatus::Overwritten { .. }
     ));
     let row = f
         .store
@@ -797,6 +797,7 @@ fn a_project_first_sync_collision_is_typed_target_exists() {
                 path,
                 modified_at,
                 same_content,
+                ..
             },
     } = &report.items[0].status
     else {
