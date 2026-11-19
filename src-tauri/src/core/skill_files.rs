@@ -21,6 +21,11 @@ pub struct FileEntry {
 }
 
 pub fn list_files(central_path: &Path) -> Result<Vec<FileEntry>> {
+    list_files_within(central_path, usize::MAX)
+}
+
+/// [`list_files`], stopping after `max` files (in walk order, then sorted).
+fn list_files_within(central_path: &Path, max: usize) -> Result<Vec<FileEntry>> {
     let mut entries: Vec<FileEntry> = Vec::new();
 
     for entry in WalkDir::new(central_path)
@@ -28,6 +33,9 @@ pub fn list_files(central_path: &Path) -> Result<Vec<FileEntry>> {
         .into_iter()
         .filter_entry(|e| !is_ignored(e))
     {
+        if entries.len() >= max {
+            break;
+        }
         let entry = entry?;
         if !entry.file_type().is_file() || is_ignored(&entry) {
             continue;
@@ -129,6 +137,9 @@ pub struct OccupantFile {
     pub skill: Option<String>,
 }
 
+/// How many files of a folder in the way are listed at most.
+const OCCUPANT_FILES_MAX: usize = 500;
+
 /// The files of the folder at `occupant` — a folder the app reported in an
 /// ask's way (`core::occupants`; the command admits nothing else) — each
 /// compared with the skill's Library copy at `skill` (`None` when the skill
@@ -139,7 +150,9 @@ pub fn list_occupant_files(
     occupant: &Path,
     skill: Option<&Path>,
 ) -> Result<Vec<OccupantFileEntry>> {
-    let theirs = list_files(occupant)?;
+    // The folder in the way is anyone's: a link there may lead to a large
+    // tree, so the listing is bounded (a skill is a handful of files).
+    let theirs = list_files_within(occupant, OCCUPANT_FILES_MAX)?;
     let ours = match skill {
         Some(skill) if skill.is_dir() => list_files(skill)?,
         _ => Vec::new(),
