@@ -704,6 +704,10 @@ export const resources = {
             "Overwrite — the copy Skills Hub put here ({{owner}} for {{ownerTool}}) is replaced and {{name}} moves here.",
           delete: "Delete — your edited copy is removed; its changes are lost.",
           leave: "Leave — {{where}}. Skills Hub no longer manages it.",
+          deleteAhead: "If the move goes ahead: Delete — your edited copy is removed; its changes are lost.",
+          leaveAhead: "If the move goes ahead: Leave — {{where}}. Skills Hub no longer manages it.",
+          aheadKept:
+            "Nothing happens to this copy now: you kept the folder in the way, so {{name}} does not move. It is asked about again at the next move.",
           all: "Keep all — nothing is replaced; each skill stays off the harness whose folder is kept.",
         },
         leaveShowsTwice: "it shows twice in {{readers}}",
@@ -740,7 +744,9 @@ export const resources = {
         apply: "Apply choices",
         // The redeploy's edited-copy question: a row of the same ask.
         editedHint:
-          "Some old copies were edited after Skills Hub deployed them. The skill already works from its new folder; decide whether to delete each edited copy or leave it as an unmanaged folder.",
+          "Some old copies were edited after Skills Hub deployed them. Their skill already works from its new folder; decide whether to delete each edited copy or leave it as an unmanaged folder.",
+        editedAheadHint:
+          "Some old copies were edited after Skills Hub deployed them, and their skill has not moved yet: a folder is in the way of its new place. A copy's choice applies only if its move goes ahead — Overwrite that folder; Keep it and the copy stays as it is.",
         leave: "Leave",
         delete: "Delete",
         editedChoiceLabel: "{{name}}: edited copy for {{tool}}",

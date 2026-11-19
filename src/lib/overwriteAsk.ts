@@ -574,9 +574,21 @@ export type AskRowCopy = {
   /** The two answers, short (the per-row control's items and the buttons). */
   keepLabel: string;
   overwriteLabel: string;
-  /** What each answer does, as one sentence each (D12: the operator predicts the result). */
+  /**
+   * What each answer does, as one sentence each (D12: the operator predicts
+   * the result). An edited copy asked ahead of its move says each happens
+   * only if the move goes ahead.
+   */
   keep: string;
   overwrite: string;
+  /**
+   * Why neither answer does anything now (null: the row's answer applies):
+   * an edited copy asked ahead of a move whose folder in the way is answered
+   * Keep — the move does not run, so its old copy is neither deleted nor
+   * left (`redeploy::execute` returns at the Keep answer, before the step
+   * that settles old copies).
+   */
+  voided: string | null;
 };
 
 const readerList = (readers: readonly string[], t: Translate) => readers.join(t("common.listSeparator"));
@@ -587,7 +599,7 @@ const readerList = (readers: readonly string[], t: Translate) => readers.join(t(
  * reported, a proven duplicate ("shows twice in …") kept apart from a copy
  * that is merely still visible (Sol 102).
  */
-export function askRowCopy(row: OverwriteRow, t: Translate): AskRowCopy {
+export function askRowCopy(row: OverwriteRow, t: Translate, opts: { moveKept?: boolean } = {}): AskRowCopy {
   const names = { name: row.skillName, tool: row.toolLabel };
   if (row.question === "editedCopy") {
     const duplicates = row.duplicateReaders ?? [];
@@ -600,11 +612,12 @@ export function askRowCopy(row: OverwriteRow, t: Translate): AskRowCopy {
       provenance: t(row.ahead ? "overwriteAsk.owner.editedAhead" : "overwriteAsk.owner.edited", names),
       keepLabel: t("overwriteAsk.leave"),
       overwriteLabel: t("overwriteAsk.delete"),
-      keep: t("overwriteAsk.consequence.leave", {
+      keep: t(row.ahead ? "overwriteAsk.consequence.leaveAhead" : "overwriteAsk.consequence.leave", {
         ...names,
         where: leaveParts.length > 0 ? leaveParts.join("; ") : t("overwriteAsk.leaveNowhere"),
       }),
-      overwrite: t("overwriteAsk.consequence.delete", names),
+      overwrite: t(row.ahead ? "overwriteAsk.consequence.deleteAhead" : "overwriteAsk.consequence.delete", names),
+      voided: row.ahead && opts.moveKept ? t("overwriteAsk.consequence.aheadKept", names) : null,
     };
   }
   const owner = row.owner;
@@ -636,7 +649,40 @@ export function askRowCopy(row: OverwriteRow, t: Translate): AskRowCopy {
     overwriteLabel: t("overwriteAsk.overwrite"),
     keep,
     overwrite,
+    voided: null,
   };
+}
+
+/**
+ * For each row, the row asking about the folder in its move's way when it
+ * is an edited copy asked **ahead** of that move (Sol 104): the occupied
+ * redeploy row whose move holds the moved row the copy names (`entryId` ∈
+ * `rowIds`) — its answer decides whether this one applies. Null otherwise.
+ */
+export function aheadMoveRows(rows: readonly OverwriteRow[]): (number | null)[] {
+  return rows.map((row) => {
+    if (row.question !== "editedCopy" || !row.ahead) return null;
+    const index = rows.findIndex(
+      (other) =>
+        other.scope.kind === "redeploy" &&
+        other.question !== "editedCopy" &&
+        (other.rowIds ?? []).includes(row.entryId ?? ""),
+    );
+    return index === -1 ? null : index;
+  });
+}
+
+/**
+ * The ask's lines about its edited copies: one for copies whose skill has
+ * moved already (it works from its new folder), one for copies asked ahead
+ * of a move a folder holds (their answer applies only if it goes ahead).
+ */
+export function editedCopyHints(rows: readonly OverwriteRow[], t: Translate): string[] {
+  const edited = rows.filter((row) => row.question === "editedCopy");
+  return [
+    ...(edited.some((row) => !row.ahead) ? [t("overwriteAsk.editedHint")] : []),
+    ...(edited.some((row) => row.ahead) ? [t("overwriteAsk.editedAheadHint")] : []),
+  ];
 }
 
 /**

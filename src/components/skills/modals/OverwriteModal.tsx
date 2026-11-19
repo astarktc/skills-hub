@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef, useState, type RefObject } from 'react'
+import { memo, useId, useMemo, useRef, useState, type RefObject } from 'react'
 import type { TFunction } from 'i18next'
 import { FolderSearch } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -11,9 +11,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Segmented, SegmentedItem } from '@/components/ui/segmented'
+import { cn } from '@/lib/utils'
 import {
+  aheadMoveRows,
   askRowCopy,
   askRowLabels,
+  editedCopyHints,
   overwriteRowKey,
   type OverwriteChoice,
   type OverwriteRow,
@@ -56,7 +59,12 @@ type OverwriteModalProps = {
  * A redeploy's ask also carries **edited copies** (round 20 #108): an old
  * copy edited after Skills Hub wrote it, answered Delete (`overwrite`) or
  * Leave (`keep`), Leave chosen until the operator picks Delete — an edit is
- * never deleted by default. With any such row the choices are per row.
+ * never deleted by default. With any such row the choices are per row. A
+ * copy asked **ahead** of its move (the move held by a folder in this same
+ * ask) says each answer happens only if the move goes ahead; while that
+ * folder's row is answered Keep, the copy's choice stays operable but is
+ * visibly void — its line says nothing happens to the copy now — because
+ * the kept move never reaches the step that settles its old copies.
  *
  * Three kinds of answer: an Overwrite / per-row choice (`confirmed` or
  * `{ choices }`), the explicit "Keep existing" (`declined` — recorded: the
@@ -110,6 +118,7 @@ function OverwriteAsk({
     rows.map((row) => (edited(row) ? 'keep' : 'overwrite')),
   )
   const labels = useMemo(() => askRowLabels(rows, t), [rows, t])
+  const moveRows = useMemo(() => aheadMoveRows(rows), [rows])
   const anyEdited = rows.some(edited)
   const perRow = rows.length > 1 || anyEdited
   const mixed = anyEdited || choices.some((choice) => choice === 'keep')
@@ -128,7 +137,11 @@ function OverwriteAsk({
             <p className="mb-1 text-foreground">{t('overwriteAsk.afterCancel', { count: rows.length })}</p>
           ) : null}
           {occupied > 0 ? <p>{t('overwrite.body', { count: occupied })}</p> : null}
-          {anyEdited ? <p className="mt-1">{t('overwriteAsk.editedHint')}</p> : null}
+          {editedCopyHints(rows, t).map((hint) => (
+            <p key={hint} className="mt-1">
+              {hint}
+            </p>
+          ))}
           {perRow ? <p className="mt-1">{t('overwriteAsk.perRowHint')}</p> : null}
           <ul className="m-0 flex max-h-[55vh] list-none flex-col divide-y divide-border overflow-y-auto rounded-md border border-border p-0">
             {rows.map((row, index) => (
@@ -137,6 +150,7 @@ function OverwriteAsk({
                 row={row}
                 label={labels[index]}
                 choice={perRow ? choices[index] : null}
+                moveKept={moveRows[index] !== null && choices[moveRows[index]] === 'keep'}
                 onChoice={(value) =>
                   setChoices((prev) => prev.map((choice, i) => (i === index ? value : choice)))
                 }
@@ -183,6 +197,7 @@ function AskRow({
   row,
   label,
   choice,
+  moveKept,
   onChoice,
   onReveal,
   t,
@@ -190,12 +205,15 @@ function AskRow({
   row: OverwriteRow
   label: string
   choice: OverwriteChoice | null
+  /** An edited copy asked ahead of its move, whose folder in the way is answered Keep. */
+  moveKept: boolean
   onChoice: (choice: OverwriteChoice) => void
   onReveal: (path: string) => void
   t: TFunction
 }) {
   const [showContents, setShowContents] = useState(false)
-  const copy = askRowCopy(row, t)
+  const copy = askRowCopy(row, t, { moveKept })
+  const consequenceId = useId()
   const heading =
     row.question === 'editedCopy'
       ? t('overwriteAsk.editedChoiceLabel', { name: row.skillName, tool: row.toolLabel })
@@ -212,6 +230,7 @@ function AskRow({
         {choice !== null ? (
           <Segmented
             aria-label={label}
+            aria-describedby={consequenceId}
             value={choice}
             onValueChange={(value) => onChoice(value as OverwriteChoice)}
             className="shrink-0"
@@ -222,7 +241,9 @@ function AskRow({
         ) : null}
       </div>
       {choice !== null ? (
-        <p className="m-0 text-xs text-foreground">{choice === 'keep' ? copy.keep : copy.overwrite}</p>
+        <p id={consequenceId} className={cn('m-0 text-xs', copy.voided ? 'text-muted-foreground' : 'text-foreground')}>
+          {copy.voided ?? (choice === 'keep' ? copy.keep : copy.overwrite)}
+        </p>
       ) : (
         <div className="flex flex-col gap-0.5 text-xs text-foreground">
           <p className="m-0">{copy.overwrite}</p>

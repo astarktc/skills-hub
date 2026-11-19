@@ -23,7 +23,9 @@ import {
   mergeRedeployRetry,
   recordedCollisionRow,
   refreshCollisionRows,
+  aheadMoveRows,
   askRowCopy,
+  editedCopyHints,
   askRowLabels,
   type OverwriteRow,
 } from "./overwriteAsk";
@@ -556,6 +558,55 @@ describe("what the ask says per row (round 20 #70)", () => {
     const noDuplicate = askRowCopy({ ...edited, duplicateReaders: [] }, t).keep;
     expect(noDuplicate).not.toContain("leaveShowsTwice");
     expect(noDuplicate).toContain("leaveStillVisible");
+  });
+
+  describe("an edited copy asked ahead of its move (Sol 104)", () => {
+    const blocker: OverwriteRow = {
+      ...base,
+      path: "/h/.agents/skills/alpha",
+      scope: { kind: "redeploy" },
+      question: "occupied",
+      rowIds: ["row-claude", "row-codex"],
+    };
+    const moved: OverwriteRow = { ...base, owner: null, scope: { kind: "redeploy" }, question: "editedCopy", entryId: "e1" };
+    const ahead: OverwriteRow = { ...moved, entryId: "row-codex", ahead: true };
+
+    it("says each answer happens only if the move goes ahead", () => {
+      const copy = askRowCopy(ahead, t);
+      expect(copy.overwrite).toBe(t("overwriteAsk.consequence.deleteAhead", { name: "alpha", tool: "Claude" }));
+      expect(copy.keep).toContain("overwriteAsk.consequence.leaveAhead");
+      expect(copy.voided).toBeNull();
+      // A copy whose skill moved already keeps the unconditional words.
+      expect(askRowCopy(moved, t)).toMatchObject({
+        overwrite: t("overwriteAsk.consequence.delete", { name: "alpha", tool: "Claude" }),
+        voided: null,
+      });
+    });
+
+    it("is void while its move's folder is answered Keep: the kept move settles no old copy", () => {
+      expect(askRowCopy(ahead, t, { moveKept: true }).voided).toBe(
+        t("overwriteAsk.consequence.aheadKept", { name: "alpha", tool: "Claude" }),
+      );
+      // Only an ahead copy hangs on a move.
+      expect(askRowCopy(moved, t, { moveKept: true }).voided).toBeNull();
+      expect(askRowCopy(blocker, t, { moveKept: true }).voided).toBeNull();
+    });
+
+    it("finds the row asking about the folder in its move's way, by the moved row it names", () => {
+      const other: OverwriteRow = { ...blocker, skillId: "s2", rowIds: ["row-other"] };
+      expect(aheadMoveRows([other, ahead, moved, blocker])).toEqual([null, 3, null, null]);
+      expect(aheadMoveRows([ahead])).toEqual([null]);
+    });
+
+    it("tells moved copies from copies asked ahead in the ask's hint", () => {
+      expect(editedCopyHints([blocker], t)).toEqual([]);
+      expect(editedCopyHints([moved], t)).toEqual(["overwriteAsk.editedHint"]);
+      expect(editedCopyHints([blocker, ahead], t)).toEqual(["overwriteAsk.editedAheadHint"]);
+      expect(editedCopyHints([moved, blocker, ahead], t)).toEqual([
+        "overwriteAsk.editedHint",
+        "overwriteAsk.editedAheadHint",
+      ]);
+    });
   });
 
   it("gives every row a distinct accessible name, even two edited copies at one path (Sol 112)", () => {
