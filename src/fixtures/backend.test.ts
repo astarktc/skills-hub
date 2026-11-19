@@ -243,7 +243,8 @@ describe("rich", () => {
     await expect(handlers.listOccupantFiles(path, zod.id)).rejects.toMatchObject({ code: "NOT_FOUND", kind: "occupant" });
     const batch = [{ skill_id: zod.id, name: zod.name, source_path: zod.central_path }];
     await handlers.syncSkillsToTools(batch, ["cursor"], { overwrite_if_same_content: true }, sink().channel);
-    const files = await handlers.listOccupantFiles(path, zod.id);
+    const { entries: files, truncated } = await handlers.listOccupantFiles(path, zod.id);
+    expect(truncated).toBe(false);
     expect(files.find((f) => f.path === "SKILL.md")?.compared).toBe("changed");
     expect(files.find((f) => f.path === "NOTES.md")?.compared).toBe("only_here");
     const both = await handlers.readOccupantFile(path, zod.id, "SKILL.md");

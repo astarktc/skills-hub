@@ -723,6 +723,7 @@ export const resources = {
           only_here: "only here",
           only_in_skill: "missing here",
         },
+        truncated: "Showing the first 500 files of this folder, and every file the skill has.",
         diffLegend: "Lines marked − are the skill's; lines marked + are in this folder.",
         noDifference: "This file is the same as the skill's.",
         afterCancel_one:

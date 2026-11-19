@@ -177,7 +177,7 @@ export const commands = {
 	listSkillFiles: (centralPath: string) => __TAURI_INVOKE<SkillFileEntry[]>("list_skill_files", { centralPath }),
 	readSkillFile: (centralPath: string, filePath: string) => __TAURI_INVOKE<string>("read_skill_file", { centralPath, filePath }),
 	/**  The files of a reported occupant, each compared with the skill's. */
-	listOccupantFiles: (path: string, skillId: string) => __TAURI_INVOKE<OccupantFileEntry[]>("list_occupant_files", { path, skillId }),
+	listOccupantFiles: (path: string, skillId: string) => __TAURI_INVOKE<OccupantFileListing>("list_occupant_files", { path, skillId }),
 	/**  One file of a reported occupant beside the skill's file at its path. */
 	readOccupantFile: (path: string, skillId: string, filePath: string) => __TAURI_INVOKE<OccupantFile>("read_occupant_file", { path, skillId, filePath }),
 	cloneExploreSkill: (sourceUrl: string, skillName: string | null) => __TAURI_INVOKE<string>("clone_explore_skill", { sourceUrl, skillName }),
@@ -1359,6 +1359,16 @@ export type OccupantFileEntry = {
 	/**  The occupant's size (the skill's, for a file only the skill has). */
 	size: number,
 	compared: FileComparison,
+};
+
+/**
+ *  A reported occupant's files against the skill: `truncated` when the
+ *  folder holds more files than [`OCCUPANT_FILES_MAX`] and only the first of
+ *  them (plus every file the skill has, probed directly) are listed.
+ */
+export type OccupantFileListing = {
+	entries: OccupantFileEntry[],
+	truncated: boolean,
 };
 
 /**

@@ -36,6 +36,11 @@ export type SkillDocument = {
   skillContent: string | null;
   /** Whether this document is compared with a skill (`comparedWith`). */
   compared: boolean;
+  /**
+   * A compared folder holds more files than its bounded listing shows (the
+   * skill's files are always compared in full).
+   */
+  truncated: boolean;
   /** Listing the folder failed: shown in place of the tree, never a toast. */
   listError: CommandError | null;
   /** Reading the open file failed. */
@@ -51,6 +56,7 @@ export type SkillDocument = {
 type Listing = {
   key: string;
   files: DocumentFile[];
+  truncated: boolean;
   error: CommandError | null;
 };
 
@@ -85,13 +91,16 @@ export function useSkillDocument(doc: SkillDocumentRef | null): SkillDocument {
     let stale = false;
     void (async () => {
       try {
-        const files: DocumentFile[] =
+        const { files, truncated }: { files: DocumentFile[]; truncated: boolean } =
           comparedWith === null
-            ? await invokeTauri("listSkillFiles", root)
-            : await invokeTauri("listOccupantFiles", root, comparedWith);
-        if (!stale) setListing({ key: docKey, files, error: null });
+            ? { files: await invokeTauri("listSkillFiles", root), truncated: false }
+            : await invokeTauri("listOccupantFiles", root, comparedWith).then((listing) => ({
+                files: listing.entries,
+                truncated: listing.truncated,
+              }));
+        if (!stale) setListing({ key: docKey, files, truncated, error: null });
       } catch (err) {
-        if (!stale) setListing({ key: docKey, files: [], error: toCommandError(err) });
+        if (!stale) setListing({ key: docKey, files: [], truncated: false, error: toCommandError(err) });
       }
     })();
     return () => {
@@ -163,6 +172,7 @@ export function useSkillDocument(doc: SkillDocumentRef | null): SkillDocument {
     content: read?.content ?? "",
     skillContent: read?.skillContent ?? null,
     compared: comparedWith !== null,
+    truncated: current?.truncated ?? false,
     listError: current?.error ?? null,
     contentError: read?.error ?? null,
     loadingFiles: doc !== null && current === null,

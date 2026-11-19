@@ -1609,7 +1609,7 @@ pub async fn list_occupant_files(
     store: State<'_, SkillStore>,
     path: String,
     skill_id: String,
-) -> Result<Vec<crate::core::skill_files::OccupantFileEntry>, CommandError> {
+) -> Result<crate::core::skill_files::OccupantFileListing, CommandError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let (occupant, skill) = admit_occupant(&store, &path, &skill_id)?;

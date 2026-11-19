@@ -246,6 +246,7 @@ export default function SkillFiles({ doc, label, layout, t }: SkillFilesProps) {
           layout === "split" ? "w-64 border-r border-border pr-2" : "max-h-48 rounded-md border border-border p-1",
         )}
       >
+        {doc.truncated ? <p className="m-0 px-1 pb-1 text-xs text-muted-foreground">{t("overwriteAsk.truncated")}</p> : null}
         <Tree nodes={doc.tree} depth={0} doc={doc} t={t} />
       </nav>
       <div

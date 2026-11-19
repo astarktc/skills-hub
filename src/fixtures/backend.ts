@@ -142,6 +142,9 @@ type ProgressSink<T> = Pick<Channel<T>, "onmessage">;
 const permissionDeniedText = (path: string) => `Permission denied (os error 13): ${path}`;
 /** A removal the OS refuses for lack of permission — typed like Rust's
  * `sync_engine::remove_path_any` (`REMOVAL_PERMISSION_DENIED`, BACKLOG #76). */
+/** Rust `skill_files::OCCUPANT_FILES_MAX`: a folder in the way lists this many files at most. */
+const OCCUPANT_FILES_MAX = 500;
+
 const PERMISSION_DENIED = (path: string): CommandError => ({
   code: "REMOVAL_PERMISSION_DENIED",
   path,
@@ -2936,16 +2939,27 @@ export function createFixtureBackend(
       const theirs = state.reportedOccupants[path] ?? fail({ code: "NOT_FOUND", kind: "occupant", id: path });
       const ours = state.skills.find((s) => s.dto.id === skillId)?.files ?? [];
       const size = (content: string) => new TextEncoder().encode(content).length;
-      return [
-        ...theirs.map((file) => {
-          const mine = ours.find((f) => f.path === file.path);
-          const compared: FileComparison = !mine ? "only_here" : mine.content === file.content ? "same" : "changed";
-          return { path: file.path, size: size(file.content), compared };
-        }),
-        ...ours
-          .filter((mine) => !theirs.some((file) => file.path === mine.path))
-          .map((mine) => ({ path: mine.path, size: size(mine.content), compared: "only_in_skill" as const })),
-      ];
+      // Rust `OCCUPANT_FILES_MAX`: the folder's listing is bounded; the
+      // skill's files are probed in full, so one past the bound is compared.
+      const listed = theirs.slice(0, OCCUPANT_FILES_MAX);
+      const compare = (file: { path: string; content: string }): FileComparison => {
+        const mine = ours.find((f) => f.path === file.path);
+        return !mine ? "only_here" : mine.content === file.content ? "same" : "changed";
+      };
+      return {
+        entries: [
+          ...listed.map((file) => ({ path: file.path, size: size(file.content), compared: compare(file) })),
+          ...ours
+            .filter((mine) => !listed.some((file) => file.path === mine.path))
+            .map((mine) => {
+              const file = theirs.find((f) => f.path === mine.path);
+              return file
+                ? { path: file.path, size: size(file.content), compared: compare(file) }
+                : { path: mine.path, size: size(mine.content), compared: "only_in_skill" as const };
+            }),
+        ],
+        truncated: theirs.length > OCCUPANT_FILES_MAX,
+      };
     },
     readOccupantFile: async (path, skillId, filePath) => {
       await pause(50);
