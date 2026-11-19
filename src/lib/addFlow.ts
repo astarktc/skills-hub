@@ -190,8 +190,9 @@ function deploymentDetail(
   ctx: { t: Translate; toolLabelById: Readonly<Record<string, string>> },
 ): { detail: string; attention: boolean } {
   const { t, toolLabelById } = ctx;
-  const synced = report.filter((row) => row.status.status === "synced");
+  const synced = report.filter((row) => row.status.status === "synced" || row.status.status === "overwritten");
   const declined = report.filter((row) => row.status.status === "declined").map((row) => row.tool_key);
+  const overwritten = report.filter((row) => row.status.status === "overwritten").map((row) => row.tool_key);
   const skipped = report
     .filter((row) => row.status.status === "skipped" && !unwritable(row))
     .map((row) => row.tool_key);
@@ -202,6 +203,8 @@ function deploymentDetail(
   const parts: string[] = [];
   if (synced.length > 0) parts.push(t("add.settlement.deployed", { count: synced.length }));
   if (declined.length > 0) parts.push(t("add.settlement.kept", { tools: labelList(declined, toolLabelById, t) }));
+  if (overwritten.length > 0)
+    parts.push(t("add.settlement.overwritten", { tools: labelList(overwritten, toolLabelById, t) }));
   if (collisions.length > 0)
     parts.push(t("add.settlement.toReview", { count: collisions.length, tools: labelList(collisions, toolLabelById, t) }));
   // Which Tools it missed; why is said once, by `settlementNotices`.

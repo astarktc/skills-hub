@@ -5,9 +5,16 @@
  * section and Explore's preview render them.
  */
 
+import type { FileComparison } from "../bindings";
 import type { SkillFileEntry } from "../components/skills/types";
 
-export type { SkillFileEntry };
+export type { FileComparison, SkillFileEntry };
+
+/**
+ * A file the browser lists. A folder shown against a skill (an overwrite
+ * ask's occupant, round 20 #70) says how each file compares with the skill's.
+ */
+export type DocumentFile = SkillFileEntry & { compared?: FileComparison };
 
 export type FileTreeNode = {
   name: string;
@@ -16,6 +23,8 @@ export type FileTreeNode = {
   isDir: boolean;
   /** Bytes (0 for a folder). */
   size: number;
+  /** How the file compares with the skill's (a compared document only). */
+  compared?: FileComparison;
   children: FileTreeNode[];
 };
 
@@ -93,14 +102,21 @@ export function isMarkdown(filename: string): boolean {
  * The tree of a flat file list: folders first (alphabetical), then files
  * with `SKILL.md` first, then alphabetical — at every level.
  */
-export function buildTree(files: readonly SkillFileEntry[]): FileTreeNode[] {
+export function buildTree(files: readonly DocumentFile[]): FileTreeNode[] {
   const root: FileTreeNode[] = [];
   for (const file of files) {
     const parts = file.path.split("/").filter((part) => part !== "");
     let level = root;
     parts.forEach((name, i) => {
       if (i === parts.length - 1) {
-        level.push({ name, path: file.path, isDir: false, size: file.size, children: [] });
+        level.push({
+          name,
+          path: file.path,
+          isDir: false,
+          size: file.size,
+          ...(file.compared ? { compared: file.compared } : {}),
+          children: [],
+        });
         return;
       }
       let dir = level.find((node) => node.isDir && node.name === name);
@@ -149,4 +165,52 @@ export function defaultFile(files: readonly SkillFileEntry[]): string | null {
 export function ancestorDirs(path: string): string[] {
   const parts = path.split("/");
   return parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join("/"));
+}
+
+/** One line of a file compared with the skill's: in both, only the skill's, or only this folder's. */
+export type DiffLine = { kind: "same" | "removed" | "added"; text: string };
+
+/** Above this many line pairs the diff is not aligned: the two texts are shown whole, one after the other. */
+const DIFF_CELLS_LIMIT = 4_000_000;
+
+/**
+ * A line diff of `ours` (the skill's file) against `theirs` (the folder in
+ * the way): the longest common subsequence of lines, then every line of
+ * `ours` it skips as `removed` and every line of `theirs` as `added`, in
+ * reading order. A side without the file is `null` (all lines on the other
+ * side). Pure; bounded — beyond `DIFF_CELLS_LIMIT` the two texts are listed
+ * whole, removed then added.
+ */
+export function lineDiff(ours: string | null, theirs: string | null): DiffLine[] {
+  const split = (text: string | null) => (text === null || text === "" ? [] : text.replace(/\n$/, "").split("\n"));
+  const a = split(ours);
+  const b = split(theirs);
+  if (a.length * b.length > DIFF_CELLS_LIMIT) {
+    return [
+      ...a.map((text): DiffLine => ({ kind: "removed", text })),
+      ...b.map((text): DiffLine => ({ kind: "added", text })),
+    ];
+  }
+  // lcs[i][j]: the common length of a[i..] and b[j..].
+  const lcs: number[][] = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i--)
+    for (let j = b.length - 1; j >= 0; j--)
+      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+  const out: DiffLine[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      out.push({ kind: "same", text: a[i] });
+      i++;
+      j++;
+    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+      out.push({ kind: "removed", text: a[i++] });
+    } else {
+      out.push({ kind: "added", text: b[j++] });
+    }
+  }
+  while (i < a.length) out.push({ kind: "removed", text: a[i++] });
+  while (j < b.length) out.push({ kind: "added", text: b[j++] });
+  return out;
 }

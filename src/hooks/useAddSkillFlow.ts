@@ -326,11 +326,17 @@ export function useAddSkillFlow({
         // The skills are installed whatever the retry does: a thrown retry
         // is reported and the batch settles as it first answered (the
         // collided rows read as folders to review).
+        // A Cancel the batch could no longer honour (the skills were already
+        // being added): the ask says so (round 20 #70).
+        const afterCancel = action.cancelRequested();
         try {
           const settled = await action.uncancellable(() =>
-            resolveGlobalCollisions(targets, skills, {
-              overwriteIfSameContent: true,
-            }),
+            resolveGlobalCollisions(
+              targets,
+              skills,
+              { overwriteIfSameContent: true },
+              afterCancel ? { afterCancel } : {},
+            ),
           );
           report = mergeInstallRetry(report, asked, settled);
         } catch (err) {

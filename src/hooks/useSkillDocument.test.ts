@@ -47,6 +47,24 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("useSkillDocument", () => {
+  it("a compared document reads a reported occupant through the fence, beside the skill (#70)", async () => {
+    stubBackend({
+      listOccupantFiles: async (root, skillId) => [
+        { path: "SKILL.md", size: 4, compared: "changed" },
+        { path: `${root as string}|${skillId as string}`, size: 1, compared: "only_here" },
+      ],
+      readOccupantFile: async (_root, skillId, file) => ({ occupant: `theirs ${file as string}`, skill: `ours ${skillId as string}` }),
+    });
+    const { result } = renderHook(() =>
+      useSkillDocument({ root: "/home/.claude/skills/alpha", version: 0, comparedWith: "s1" }),
+    );
+    await waitFor(() => expect(result.current.content).toBe("theirs SKILL.md"));
+    expect(result.current.compared).toBe(true);
+    expect(result.current.skillContent).toBe("ours s1");
+    expect(result.current.files[0].compared).toBe("changed");
+    expect(mockInvoke.mock.calls.map(([command]) => command)).toEqual(["listOccupantFiles", "readOccupantFile"]);
+  });
+
   it("lists the folder and opens SKILL.md, reading it", async () => {
     const { result } = renderHook(() => useSkillDocument({ root: "/central/docx", version: 1 }));
     expect(result.current.loadingFiles).toBe(true);

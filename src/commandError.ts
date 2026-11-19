@@ -182,6 +182,10 @@ export function describeCommandError(
     case "ASSIGNMENT_EXISTS":
       return t("projects.assignmentExistsError");
     case "NOT_FOUND":
+      // A stale overwrite answer (Sol N3): the Deployment changed under the ask.
+      if (e.kind === "target") return t("errors.staleAnswer");
+      // A folder no ask reported (or one reported too long ago) is never read or revealed.
+      if (e.kind === "occupant") return t("errors.occupantNotReported");
       return t("projects.notFoundError") + `: ${e.kind}:${e.id}`;
     case "UNKNOWN_TOOL":
       return t("errors.unknownTool", { tool: e.tool });

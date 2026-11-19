@@ -815,6 +815,7 @@ function App() {
 
       <OverwriteModal
         pending={overwriteAsk}
+        onReveal={handleReveal}
         t={t}
       />
 

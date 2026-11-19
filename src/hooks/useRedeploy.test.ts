@@ -68,8 +68,9 @@ const move = (skill: string, status: RedeployReport["moves"][number]["status"]) 
   folder_key: "agents_skills",
   path: `/home/op/.agents/skills/${skill}`,
   cause: "correction" as const,
-  rows: [{ id: `row-${skill}`, tool: "codex", from: `/home/op/.codex/skills/${skill}` }],
+  rows: [{ id: `row-${skill}`, tool: "codex", from: `/home/op/.codex/skills/${skill}`, entry_id: null }],
   status,
+  overwritten: false,
 });
 
 /** A first run that meets a folder in alpha's way and beta's edited copy. */
@@ -79,7 +80,7 @@ const ASKING: RedeployResultDto = {
     moves: [
       move("alpha", {
         status: "failed",
-        error: { code: "TARGET_EXISTS", path: "/home/op/.agents/skills/alpha", modifiedAt: 1, sameContent: false },
+        error: { code: "TARGET_EXISTS", path: "/home/op/.agents/skills/alpha", modifiedAt: 1, sameContent: false, owner: { kind: "foreign" as const } },
       }),
       move("beta", { status: "left_old", edited: true }),
     ],
@@ -92,6 +93,8 @@ const ASKING: RedeployResultDto = {
         path: "/home/op/.codex/skills/beta",
         modified_at: 2,
         readers: ["codex", "cursor"],
+        duplicate_readers: ["codex"],
+        ahead: false,
       },
     ],
   },

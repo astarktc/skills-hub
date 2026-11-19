@@ -113,6 +113,18 @@ describe("describeCommandError", () => {
     ).toBe("errors.gitCloneExecFailed\n\nboom");
   });
 
+  it("a stale overwrite answer reads as the Deployment having changed, never target:<path> (Sol N3)", () => {
+    expect(describeCommandError({ code: "NOT_FOUND", kind: "target", id: "/h/.claude/skills/a" }, t)).toBe(
+      "errors.staleAnswer",
+    );
+    expect(describeCommandError({ code: "NOT_FOUND", kind: "occupant", id: "/x" }, t)).toBe(
+      "errors.occupantNotReported",
+    );
+    expect(describeCommandError({ code: "NOT_FOUND", kind: "assignment", id: "p/s/t" }, t)).toBe(
+      "projects.notFoundError: assignment:p/s/t",
+    );
+  });
+
   it("interpolates the checkable URL for GITHUB_SKILL_NOT_FOUND", () => {
     expect(
       describeCommandError(

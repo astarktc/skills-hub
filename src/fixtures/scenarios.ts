@@ -280,6 +280,7 @@ function baseState(scenario: ScenarioName, now: number): FixtureState {
     lockedPaths: [],
     unreconciledViews: [],
     revealed: [],
+    reportedOccupants: {},
     projectOccupants: [],
     copyIdentities: {},
     dialogPicks: [`${HOME}/Projects/team-skills`, `${HOME}/Projects/new-service`],

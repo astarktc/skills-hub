@@ -21,7 +21,11 @@ import {
   redeployAnswers,
   redeployAskRows,
   mergeRedeployRetry,
+  recordedCollisionRow,
   refreshCollisionRows,
+  askRowCopy,
+  askRowLabels,
+  type OverwriteRow,
 } from "./overwriteAsk";
 
 const collided = (skill_id: string, tool_key: string, sameContent = false): BatchTargetOutcome => ({
@@ -29,7 +33,7 @@ const collided = (skill_id: string, tool_key: string, sameContent = false): Batc
   skill_name: skill_id,
   tool_key,
   folder_key: tool_key,
-  status: { status: "failed", error: { code: "TARGET_EXISTS", path: `/${tool_key}/${skill_id}`, modifiedAt: 7, sameContent } },
+  status: { status: "failed", error: { code: "TARGET_EXISTS", path: `/${tool_key}/${skill_id}`, modifiedAt: 7, sameContent, owner: { kind: "foreign" } } },
 });
 const synced = (skill_id: string, tool_key: string): BatchTargetOutcome => ({
   skill_id,
@@ -58,6 +62,8 @@ describe("overwriteAsk", () => {
         path: "/cursor/a",
         modifiedAt: 7,
         sameContent: true,
+        owner: { kind: "foreign" },
+        ownerToolLabel: null,
         scope: { kind: "global" },
       },
     ]);
@@ -73,7 +79,7 @@ describe("overwriteAsk", () => {
           skill_name: "a",
           tool: "claude",
           folder_key: "claude",
-          status: { status: "failed", error: { code: "TARGET_EXISTS", path: "/p/a", modifiedAt: null, sameContent: false } },
+          status: { status: "failed", error: { code: "TARGET_EXISTS", path: "/p/a", modifiedAt: null, sameContent: false, owner: { kind: "foreign" as const } } },
         },
       ],
     };
@@ -135,7 +141,7 @@ describe("overwriteAsk", () => {
       folder_key: tool,
       status,
     });
-    const collided = { status: "failed" as const, error: { code: "TARGET_EXISTS" as const, path: "/x", modifiedAt: null, sameContent: false } };
+    const collided = { status: "failed" as const, error: { code: "TARGET_EXISTS" as const, path: "/x", modifiedAt: null, sameContent: false, owner: { kind: "foreign" as const } } };
     const skip = { project_id: "gone", reason: { reason: "folder_missing" as const } };
     const report: ProjectSyncReport = {
       skipped_projects: [],
@@ -159,7 +165,7 @@ describe("overwriteAsk", () => {
 
 // A TARGET_EXISTS here is Propagation's first sync of a row that owns nothing.
 describe("Propagation rows (ticket 09 B2)", () => {
-  const exists = (path: string) => ({ code: "TARGET_EXISTS" as const, path, modifiedAt: 1, sameContent: false });
+  const exists = (path: string) => ({ code: "TARGET_EXISTS" as const, path, modifiedAt: 1, sameContent: false, owner: { kind: "foreign" as const } });
   const targets: PropagationOutcome[] = [
     { scope: { scope: "global", tool: "claude" }, folder_key: "claude", status: { status: "failed", error: exists("/g/claude/a"), first_deploy: true } },
     { scope: { scope: "global", tool: "cursor" }, folder_key: "cursor", status: { status: "failed", error: exists("/g/cursor/a"), first_deploy: true } },
@@ -200,6 +206,48 @@ describe("Propagation rows (ticket 09 B2)", () => {
       targets[3],
       targets[4],
     ]);
+  });
+
+  it("an answered Overwrite leaves the report as an overwritten pair, with the path it replaced (#70)", () => {
+    const rows = propagationCollisionRows(skill, targets, {});
+    const merged = mergePropagationRetry(skill, targets, {
+      rows,
+      global: [
+        {
+          skill_id: "a",
+          skill_name: "alpha",
+          tool_key: "claude",
+          folder_key: "claude",
+          status: { status: "overwritten", outcome: { mode_used: "copy", target_path: "/g/claude/a", replaced: true } },
+        },
+      ],
+      projects: {
+        skipped_projects: [],
+        items: [
+          {
+            assignment_id: "x",
+            project_id: "p1",
+            skill_id: "a",
+            skill_name: "alpha",
+            tool: "claude",
+            folder_key: "claude",
+            status: { status: "overwritten", path: "/p1/claude/a" },
+          },
+        ],
+      },
+    });
+    expect(merged.overwritten).toEqual([
+      { skillName: "alpha", tool: "claude", path: "/g/claude/a" },
+      { skillName: "alpha", tool: "claude", path: "/p1/claude/a" },
+    ]);
+    expect(merged.declined).toEqual([]);
+    expect(merged.targets.map((target) => target.scope.tool)).toEqual(["cursor", "codex", "pi"]);
+  });
+
+  it("a recorded collision is asked again at the row and path the report kept (Astra B / Sol N1)", () => {
+    const row = recordedCollisionRow(skill, "claude", exists("/g/claude/a"), { claude: "CLAUDE" });
+    expect(row).toMatchObject({ skillId: "a", toolKey: "claude", toolLabel: "CLAUDE", path: "/g/claude/a", scope: { kind: "global" } });
+    expect(recordedCollisionRow(skill, "claude", { code: "OTHER", message: "x" }, {})).toBeNull();
   });
 
   it("a project row whose project the retry skipped (folder gone) is project_unavailable, never a collision again", () => {
@@ -249,15 +297,16 @@ describe("the redeploy's ask", () => {
     folder_key: "agents_skills",
     path: `/h/.agents/skills/${skill}`,
     cause: "correction",
-    rows: [{ id: `r-${skill}`, tool: "codex", from: `/h/.codex/skills/${skill}` }],
+    rows: [{ id: `r-${skill}`, tool: "codex", from: `/h/.codex/skills/${skill}`, entry_id: skill === "b" ? "e-b" : null }],
     status,
+    overwritten: false,
   });
   const first: RedeployReport = {
     ...EMPTY,
     moves: [
       move("a", {
         status: "failed",
-        error: { code: "TARGET_EXISTS", path: "/h/.agents/skills/a", modifiedAt: 5, sameContent: false },
+        error: { code: "TARGET_EXISTS", path: "/h/.agents/skills/a", modifiedAt: 5, sameContent: false, owner: { kind: "foreign" as const } },
       }),
       move("b", { status: "left_old", edited: true }),
       move("c", { status: "moved" }),
@@ -271,6 +320,8 @@ describe("the redeploy's ask", () => {
         path: "/h/.codex/skills/b",
         modified_at: 9,
         readers: ["codex"],
+        duplicate_readers: [],
+        ahead: false,
       },
     ],
   };
@@ -286,6 +337,8 @@ describe("the redeploy's ask", () => {
         path: "/h/.agents/skills/a",
         modifiedAt: 5,
         sameContent: false,
+        owner: { kind: "foreign" },
+        ownerToolLabel: null,
         scope: { kind: "redeploy" },
         question: "occupied",
         rowIds: ["r-a"],
@@ -298,10 +351,13 @@ describe("the redeploy's ask", () => {
         path: "/h/.codex/skills/b",
         modifiedAt: 9,
         sameContent: false,
+        owner: null,
+        ownerToolLabel: null,
         scope: { kind: "redeploy" },
         question: "editedCopy",
         entryId: "e-b",
         readers: ["Codex"],
+        duplicateReaders: [],
       },
     ]);
     expect(new Set(rows.map(overwriteRowKey)).size).toBe(2);
@@ -348,7 +404,7 @@ describe("the redeploy's ask", () => {
         { entry_id: "e-b", skill_id: "b", skill_name: "b", tool: "codex", path: "/h/.codex/skills/b", status: "left_behind" },
       ],
       left_behind: [
-        { skill_id: "b", skill_name: "b", tool: "codex", path: "/h/.codex/skills/b", reason: "edited", readers: [], error: null },
+        { skill_id: "b", skill_name: "b", tool: "codex", path: "/h/.codex/skills/b", reason: "edited", readers: [], duplicate_readers: [], error: null },
       ],
     };
     const merged = mergeRedeployRetry(first, retry);
@@ -367,6 +423,40 @@ describe("the redeploy's ask", () => {
     expect(redeployAnswers(rows, ["overwrite", "keep"]).map((a) => a.question === "edited_copy" && a.entry_id)).toEqual([
       "e-b",
       "e-later",
+    ]);
+  });
+
+  it("associates the retry's settlement by journal entry, never by skill, tool and path (Astra)", () => {
+    // Two left_old moves of one skill whose old copies share tool and path:
+    // only the one whose entry the retry finished reads moved.
+    const twoAtOnePath: RedeployReport = {
+      ...EMPTY,
+      moves: [
+        { ...move("b", { status: "left_old", edited: true }), folder_key: "one", rows: [{ id: "r1", tool: "codex", from: "/h/.codex/skills/b", entry_id: "e-1" }] },
+        { ...move("b", { status: "left_old", edited: true }), folder_key: "two", rows: [{ id: "r2", tool: "codex", from: "/h/.codex/skills/b", entry_id: "e-2" }] },
+      ],
+    };
+    const merged = mergeRedeployRetry(twoAtOnePath, {
+      ...EMPTY,
+      journal: [
+        { entry_id: "e-2", skill_id: "b", skill_name: "b", tool: "codex", path: "/h/.codex/skills/b", status: "finished" },
+        { entry_id: "e-1", skill_id: "b", skill_name: "b", tool: "codex", path: "/h/.codex/skills/b", status: "awaiting_answer" },
+      ],
+    });
+    expect(merged.moves.map((m) => m.status.status)).toEqual(["left_old", "moved"]);
+  });
+
+  it("an edited copy asked ahead of its move is a row of the same ask, answered by its row (Sol 104)", () => {
+    const ahead: RedeployReport = {
+      ...first,
+      edited_copies: [{ ...first.edited_copies[0], entry_id: "r-a", skill_id: "a", skill_name: "a", path: "/h/.codex/skills/a", ahead: true }],
+    };
+    const rows = redeployAskRows(ahead, {});
+    expect(rows.map((row) => row.question)).toEqual(["occupied", "editedCopy"]);
+    expect(rows[1]).toMatchObject({ ahead: true, entryId: "r-a" });
+    expect(redeployAnswers(rows, ["overwrite", "overwrite"])).toEqual([
+      expect.objectContaining({ question: "occupied", decision: "overwrite" }),
+      { question: "edited_copy", entry_id: "r-a", path: "/h/.codex/skills/a", decision: "delete" },
     ]);
   });
 
@@ -393,5 +483,86 @@ describe("the redeploy's ask", () => {
     };
     const merged = mergeRedeployRetry(first, { ...EMPTY, refused_answers: [refused] });
     expect(merged.refused_answers).toEqual([refused]);
+  });
+});
+
+describe("what the ask says per row (round 20 #70)", () => {
+  const t = (key: string, opts?: Record<string, unknown>) => (opts ? `${key} ${JSON.stringify(opts)}` : key);
+  const base: OverwriteRow = {
+    skillId: "s1",
+    skillName: "alpha",
+    toolKey: "claude",
+    toolLabel: "Claude",
+    path: "/h/.claude/skills/alpha",
+    modifiedAt: null,
+    sameContent: false,
+    owner: { kind: "foreign" },
+    ownerToolLabel: null,
+    scope: { kind: "global" },
+  };
+
+  it("says who put the folder there: Skills Hub's Deployment, by name, or not ours", () => {
+    expect(askRowCopy(base, t).provenance).toBe("overwriteAsk.owner.foreign");
+    const ours: OverwriteRow = {
+      ...base,
+      owner: { kind: "deployment", skillName: "alpha", tool: "kimi_cli", projectId: null },
+      ownerToolLabel: "Kimi Code",
+    };
+    const copy = askRowCopy(ours, t);
+    expect(copy.provenance).toBe(t("overwriteAsk.owner.ours", { owner: "alpha", ownerTool: "Kimi Code" }));
+    expect(copy.overwrite).toBe(
+      t("overwriteAsk.consequence.replaceOurs", { name: "alpha", tool: "Claude", owner: "alpha", ownerTool: "Kimi Code" }),
+    );
+  });
+
+  it("states each answer's consequence for where it goes", () => {
+    const names = { name: "alpha", tool: "Claude" };
+    expect(askRowCopy(base, t)).toMatchObject({
+      keep: t("overwriteAsk.consequence.keep", names),
+      overwrite: t("overwriteAsk.consequence.replace", names),
+    });
+    expect(askRowCopy({ ...base, scope: { kind: "project", projectId: "p1" } }, t).keep).toBe(
+      t("overwriteAsk.consequence.keepProject", names),
+    );
+    expect(askRowCopy({ ...base, scope: { kind: "redeploy" }, question: "occupied" }, t)).toMatchObject({
+      keep: t("overwriteAsk.consequence.keepMove", names),
+      overwrite: t("overwriteAsk.consequence.moveOver", names),
+    });
+  });
+
+  it("an edited copy's Leave says shows twice only for proven duplicates, else still visible (Sol 102)", () => {
+    const edited: OverwriteRow = {
+      ...base,
+      owner: null,
+      scope: { kind: "redeploy" },
+      question: "editedCopy",
+      entryId: "e1",
+      readers: ["Cursor", "Codex"],
+      duplicateReaders: ["Codex"],
+    };
+    const copy = askRowCopy(edited, t);
+    expect(copy.keepLabel).toBe("overwriteAsk.leave");
+    expect(copy.overwriteLabel).toBe("overwriteAsk.delete");
+    expect(copy.keep).toBe(
+      t("overwriteAsk.consequence.leave", {
+        name: "alpha",
+        tool: "Claude",
+        where: [
+          t("overwriteAsk.leaveShowsTwice", { readers: "Codex" }),
+          t("overwriteAsk.leaveStillVisible", { readers: "Cursor" }),
+        ].join("; "),
+      }),
+    );
+    const noDuplicate = askRowCopy({ ...edited, duplicateReaders: [] }, t).keep;
+    expect(noDuplicate).not.toContain("leaveShowsTwice");
+    expect(noDuplicate).toContain("leaveStillVisible");
+  });
+
+  it("gives every row a distinct accessible name, even two edited copies at one path (Sol 112)", () => {
+    const edited: OverwriteRow = { ...base, scope: { kind: "redeploy" }, question: "editedCopy", entryId: "e1" };
+    const labels = askRowLabels([edited, { ...edited, entryId: "e2" }, base], t);
+    expect(new Set(labels).size).toBe(3);
+    expect(labels[1]).toContain('"index":2');
+    expect(labels[2]).toBe(t("overwriteAsk.rowLabel", { name: "alpha", tool: "Claude", path: "/h/.claude/skills/alpha" }));
   });
 });

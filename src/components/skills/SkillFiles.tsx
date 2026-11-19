@@ -8,11 +8,19 @@ import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import type { TFunction } from "i18next";
 import { cn } from "@/lib/utils";
-import { focusRing } from "@/components/ui/styles";
+import { Badge } from "@/components/ui/badge";
+import { focusRing, softGround } from "@/components/ui/styles";
 import { describeCommandError } from "../../commandError";
 import type { SkillDocument } from "../../hooks/useSkillDocument";
 import { parseFrontmatter } from "../../lib/manifestPresentation";
-import { formatSize, getLang, isMarkdown, type FileTreeNode } from "../../lib/skillFiles";
+import {
+  formatSize,
+  getLang,
+  isMarkdown,
+  lineDiff,
+  type FileComparison,
+  type FileTreeNode,
+} from "../../lib/skillFiles";
 
 // An empty theme object for every highlighter: even with
 // useInlineStyles={false} the library builds the <code> tag's inline style
@@ -24,6 +32,15 @@ type TreeProps = {
   nodes: FileTreeNode[];
   depth: number;
   doc: SkillDocument;
+  t: TFunction;
+};
+
+/** A compared file's mark: words carry it, the tone only reinforces. */
+const COMPARED_TONE: Record<FileComparison, "neutral" | "stale" | "accent" | "failed"> = {
+  same: "neutral",
+  changed: "stale",
+  only_here: "accent",
+  only_in_skill: "failed",
 };
 
 /** 12 px per level, plus the chevron's column for files. */
@@ -35,7 +52,7 @@ const TREE_ITEM = cn(
   "focus-visible:-outline-offset-2",
 );
 
-function Tree({ nodes, depth, doc }: TreeProps) {
+function Tree({ nodes, depth, doc, t }: TreeProps) {
   return (
     <ul className="m-0 flex list-none flex-col p-0">
       {nodes.map((node) => {
@@ -54,7 +71,7 @@ function Tree({ nodes, depth, doc }: TreeProps) {
                 {open ? <FolderOpen className="size-3.5 shrink-0 text-faint" aria-hidden="true" /> : <Folder className="size-3.5 shrink-0 text-faint" aria-hidden="true" />}
                 <span className="truncate">{node.name}</span>
               </button>
-              {open ? <Tree nodes={node.children} depth={depth + 1} doc={doc} /> : null}
+              {open ? <Tree nodes={node.children} depth={depth + 1} doc={doc} t={t} /> : null}
             </li>
           );
         }
@@ -70,6 +87,11 @@ function Tree({ nodes, depth, doc }: TreeProps) {
             >
               <File className="size-3.5 shrink-0 text-faint" aria-hidden="true" />
               <span className="min-w-0 flex-1 truncate">{node.name}</span>
+              {node.compared ? (
+                <Badge size="sm" tone={COMPARED_TONE[node.compared]}>
+                  {t(`overwriteAsk.compared.${node.compared}`)}
+                </Badge>
+              ) : null}
               <span className="shrink-0 font-mono text-xs text-faint">{formatSize(node.size)}</span>
             </button>
           </li>
@@ -145,6 +167,38 @@ const FileContent = memo(({ filename, content }: { filename: string; content: st
 });
 FileContent.displayName = "FileContent";
 
+/**
+ * A compared file against the skill's (round 20 #70): one line each, the
+ * skill's lines marked − and this folder's +, in reading order. Words and
+ * signs carry it; the grounds only reinforce.
+ */
+const FileDiff = memo(({ ours, theirs, t }: { ours: string | null; theirs: string; t: TFunction }) => {
+  const lines = lineDiff(ours, theirs);
+  if (lines.every((line) => line.kind === "same"))
+    return <p className="m-0 p-4 text-sm text-muted-foreground">{t("overwriteAsk.noDifference")}</p>;
+  return (
+    <div className="flex flex-col">
+      <p className="m-0 border-b border-border px-3 py-1.5 text-xs text-muted-foreground">{t("overwriteAsk.diffLegend")}</p>
+      <pre className="m-0 overflow-x-auto p-0 font-mono text-xs leading-5">
+        {lines.map((line, index) => (
+          <div
+            key={index}
+            className={cn(
+              "px-3 whitespace-pre",
+              line.kind === "added" && [softGround.ok, "text-ok"],
+              line.kind === "removed" && [softGround.failed, "text-failed"],
+            )}
+          >
+            {line.kind === "added" ? "+ " : line.kind === "removed" ? "\u2212 " : "  "}
+            {line.text}
+          </div>
+        ))}
+      </pre>
+    </div>
+  );
+});
+FileDiff.displayName = "FileDiff";
+
 type SkillFilesProps = {
   doc: SkillDocument;
   /** Names the file list (`nav`) for assistive tech. */
@@ -192,7 +246,7 @@ export default function SkillFiles({ doc, label, layout, t }: SkillFilesProps) {
           layout === "split" ? "w-64 border-r border-border pr-2" : "max-h-48 rounded-md border border-border p-1",
         )}
       >
-        <Tree nodes={doc.tree} depth={0} doc={doc} />
+        <Tree nodes={doc.tree} depth={0} doc={doc} t={t} />
       </nav>
       <div
         className={cn(
@@ -224,6 +278,8 @@ export default function SkillFiles({ doc, label, layout, t }: SkillFilesProps) {
                 </p>
               ) : doc.contentError ? (
                 <p className="m-0 p-4 text-sm text-failed">{describeCommandError(doc.contentError, t)}</p>
+              ) : doc.compared ? (
+                <FileDiff ours={doc.skillContent} theirs={doc.content} t={t} />
               ) : (
                 <FileContent filename={doc.activeFile} content={doc.content} />
               )}

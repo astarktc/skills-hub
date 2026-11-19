@@ -446,7 +446,11 @@ export function importResultRows(
     const lines: string[] = [];
     let attention = false;
     const targets = status.targets;
-    const synced = targets.filter((row) => row.status.status === "synced").map((row) => row.tool_key);
+    // An answered Overwrite deployed the skill there too (its own line below).
+    const synced = targets
+      .filter((row) => row.status.status === "synced" || row.status.status === "overwritten")
+      .map((row) => row.tool_key);
+    const overwritten = targets.filter((row) => row.status.status === "overwritten").map((row) => row.tool_key);
     const declined = targets.filter((row) => row.status.status === "declined").map((row) => row.tool_key);
     const collisions = targets.filter(isCollision).map((row) => row.tool_key);
     const failed = targets.filter(isImportTargetFailure);
@@ -459,6 +463,7 @@ export function importResultRows(
       lines.push(t("importReview.result.libraryOnly"));
     }
     if (declined.length > 0) lines.push(t("importReview.result.declined", { harnesses: list(declined) }));
+    if (overwritten.length > 0) lines.push(t("importReview.result.overwritten", { harnesses: list(overwritten) }));
     if (collisions.length > 0) {
       attention = true;
       lines.push(t("importReview.result.toReview", { harnesses: list(collisions) }));
@@ -470,7 +475,7 @@ export function importResultRows(
     }
     for (const row of failed) {
       attention = true;
-      const error = row.status.status === "synced" || row.status.status === "declined" ? null : row.status.error;
+      const error = row.status.status === "failed" || row.status.status === "skipped" ? row.status.error : null;
       lines.push(t("importReview.result.notDeployed", { harness: labelOf(labels, row.tool_key), reason: describeCommandError(error, t) ?? "" }));
     }
     if (status.status === "imported") {

@@ -193,6 +193,9 @@ export const resources = {
         unknown: "Unknown issue",
       },
       errors: {
+        staleAnswer: "The Deployment changed since you were asked, so your answer wasn't applied. Nothing was changed there.",
+        occupantNotReported:
+          "Skills Hub only shows a folder it reported in this question. Run the action again to see what is there now.",
         notTauri:
           "Current environment is not Tauri. Please run `npm run tauri dev`.",
         skillExistsInHubNamed:
@@ -563,7 +566,7 @@ export const resources = {
         importFailed: "Import incomplete",
       },
       // The composite count line of a run's report (D10), in headline order:
-      // done · failed · targets failed · skipped · declined · cancelled · to review.
+      // done · failed · targets failed · skipped · declined · overwritten · cancelled · to review.
       outcome: {
         done: {
           refreshed_one: "{{count}} updated",
@@ -601,6 +604,8 @@ export const resources = {
         declined_other: "{{count}} kept existing",
         declinedFolders_one: "{{count}} existing folder kept",
         declinedFolders_other: "{{count}} existing folders kept",
+        overwritten_one: "{{count}} folder overwritten",
+        overwritten_other: "{{count}} folders overwritten",
         cancelled_one: "{{count}} cancelled",
         cancelled_other: "{{count}} cancelled",
         review: {
@@ -612,6 +617,7 @@ export const resources = {
         refreshCancelled: "Update all cancelled — nothing was changed",
         updateCancelled: "{{name}}: update cancelled — nothing was changed",
         declinedLine: "{{name}}: kept your existing {{tool}} folder",
+        overwrittenLine: "{{name}}: overwrote the folder at {{path}} ({{tool}})",
         leftInPlaceLine: "Left {{path}} in place: it isn't what Skills Hub put there",
         keptInUseLine: "Kept {{path}}: still used by {{harnesses}}",
         keptDifferentLine_one: "{{name}}: {{count}} different copy kept in {{harnesses}}",
@@ -676,6 +682,53 @@ export const resources = {
         step: "Adding ({{index}}/{{total}}) {{name}}",
       },
       overwriteAsk: {
+        // Round 20 #70: who put the folder there, what each answer does.
+        owner: {
+          ours: "Put here by Skills Hub: {{owner}} for {{ownerTool}}",
+          oursInProject: "Put here by Skills Hub: {{owner}} for {{ownerTool}} in a project",
+          foreign: "Not put here by Skills Hub",
+          edited: "Skills Hub's old copy for {{tool}}, edited since it was deployed",
+          editedAhead:
+            "Skills Hub's old copy for {{tool}}, edited since it was deployed. Asked now so this move needs one answer.",
+        },
+        consequence: {
+          keep: "Keep theirs — {{name}} stays off {{tool}}; Enable it later to replace this folder.",
+          keepProject:
+            "Keep theirs — {{name}} stays off {{tool}} in this project; Enable it later to replace this folder.",
+          keepMove: "Keep theirs — {{name}} is not moved and stays where it is; the move stays pending.",
+          replace: "Overwrite — this folder is deleted and {{name}} is deployed in its place.",
+          replaceOurs:
+            "Overwrite — the copy Skills Hub put here ({{owner}} for {{ownerTool}}) is replaced by {{name}}.",
+          moveOver: "Overwrite — this folder is deleted and {{name}} moves here.",
+          moveOverOurs:
+            "Overwrite — the copy Skills Hub put here ({{owner}} for {{ownerTool}}) is replaced and {{name}} moves here.",
+          delete: "Delete — your edited copy is removed; its changes are lost.",
+          leave: "Leave — {{where}}. Skills Hub no longer manages it.",
+          all: "Keep all — nothing is replaced; each skill stays off the harness whose folder is kept.",
+        },
+        leaveShowsTwice: "it shows twice in {{readers}}",
+        leaveStillVisible: "it stays visible in {{readers}}",
+        leaveNowhere: "no detected harness reads it",
+        rowLabel: "{{name}} → {{tool}} at {{path}}",
+        rowLabelEdited: "{{name}}: old copy for {{tool}} at {{path}}",
+        rowLabelNth: "{{label}} ({{index}} of {{count}})",
+        reveal: "Reveal in Finder",
+        revealLabel: "Reveal {{label}} in Finder",
+        showContents: "Show contents",
+        hideContents: "Hide contents",
+        contentsLabel: "Files in {{label}}",
+        compared: {
+          same: "same",
+          changed: "changed",
+          only_here: "only here",
+          only_in_skill: "missing here",
+        },
+        diffLegend: "Lines marked − are the skill's; lines marked + are in this folder.",
+        noDifference: "This file is the same as the skill's.",
+        afterCancel_one:
+          "You pressed Cancel while this skill was already being added. It is in your library now; choose what happens to the folder in its way.",
+        afterCancel_other:
+          "You pressed Cancel while these skills were already being added. They are in your library now; choose what happens to the folders in their way.",
         modified: "Modified {{when}}",
         differs: "differs from the skill",
         identical: "same content as the skill",
@@ -687,8 +740,6 @@ export const resources = {
         // The redeploy's edited-copy question: a row of the same ask.
         editedHint:
           "Some old copies were edited after Skills Hub deployed them. The skill already works from its new folder; decide whether to delete each edited copy or leave it as an unmanaged folder.",
-        edited: "edited copy — if you leave it, it becomes an unmanaged folder",
-        readers: "still visible in {{readers}} if left",
         leave: "Leave",
         delete: "Delete",
         editedChoiceLabel: "{{name}}: edited copy for {{tool}}",
@@ -1290,6 +1341,7 @@ export const resources = {
           deployed_other: "Deployed to {{count}} harnesses",
           deployedNowhere: "Not deployed",
           kept: "kept the existing folder in {{tools}}",
+          overwritten: "overwrote the folder in the way in {{tools}}",
           toReview_one: "{{count}} folder to review in {{tools}}",
           toReview_other: "{{count}} folders to review in {{tools}}",
           skipped: "skipped {{tools}}",
@@ -1681,6 +1733,7 @@ export const resources = {
           libraryOnly: "Added to your Library only",
           linked: "Linked in {{harnesses}}",
           declined: "Kept your existing folder in {{harnesses}}",
+          overwritten: "Overwrote the folder that was in the way in {{harnesses}}",
           toReview: "Folder left to review in {{harnesses}}",
           notDeployed: "Not deployed to {{harness}}: {{reason}}",
           removed: "Copies removed from {{harnesses}}",
@@ -1938,6 +1991,9 @@ export const resources = {
           refusedMessage:
             "That Deployment changed after you were asked, so your answer wasn't used and nothing was changed there. Move Deployments again to answer for what is there now.",
           readers: "Still visible in {{readers}}.",
+          showsTwice: "Shows twice in {{readers}}.",
+          editedAheadMessage:
+            "A different folder is also in the way of this move. Move Deployments again to answer both.",
           lostDisableTitle: "{{name}} is no longer disabled for {{tool}}",
           lostDisableMessage:
             "{{folder}} now serves {{tool}}, and another harness that folder serves had the skill on, so it stays on. Disable it for the folder to turn it off for all of them.",

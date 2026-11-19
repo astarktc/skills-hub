@@ -6,7 +6,7 @@
  */
 
 import type { Notification, NotificationKind } from "../hooks/useNotificationHistory";
-import type { SkillTargetDto } from "../bindings";
+import type { CommandError, SkillTargetDto } from "../bindings";
 import type { CollisionRoute } from "./reportOutcome";
 
 /** One run as the panel shows it: its group row, and the items it expands to. */
@@ -102,10 +102,12 @@ export type RowAction =
   /** Re-sync the pair from the central copy (`run("retry", …, { tool })`). */
   | { kind: "retry"; skillId: string; tool: string }
   /**
-   * Answer the collision by the route that met it (`via`: a re-sync, or the
-   * pair's Enable): the folder still in the way raises the one overwrite ask (D12).
+   * Answer the collision by the route that met it (`via`: a re-sync, the
+   * pair's Enable, or — Propagation — the recorded row and path, carried as
+   * `recorded`, the collision the report kept): the folder still in the way
+   * raises the one overwrite ask (D12).
    */
-  | { kind: "overwrite"; skillId: string; tool: string; via: CollisionRoute }
+  | { kind: "overwrite"; skillId: string; tool: string; via: CollisionRoute; recorded?: CommandError }
   /** Run the skill's Update again. */
   | { kind: "update"; skillId: string }
   /** Open the Delete dialog again to finish removing it (D16). */
@@ -168,7 +170,13 @@ export function rowActions(row: Notification, exists: (skillId: string) => boole
         actions.push({ kind: "retry", skillId, tool: repair.tool });
         break;
       case "overwrite":
-        actions.push({ kind: "overwrite", skillId, tool: repair.tool, via: repair.via });
+        actions.push({
+          kind: "overwrite",
+          skillId,
+          tool: repair.tool,
+          via: repair.via,
+          ...(repair.via === "row" && row.error ? { recorded: row.error } : {}),
+        });
         break;
       case "update":
       case "delete":

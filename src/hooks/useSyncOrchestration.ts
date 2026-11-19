@@ -9,7 +9,7 @@ import type {
   ToolStatusDto,
 } from "../components/skills/types";
 import type { AssignmentDecision, ProjectSyncReport } from "../components/projects/types";
-import type { PropagationReport, RefreshReport, TargetDecision } from "../bindings";
+import type { CommandError, PropagationReport, RefreshReport, TargetDecision } from "../bindings";
 import { createProgressChannel } from "../lib/platform";
 import { invokeTauri, isTauri } from "../lib/tauri";
 import type { ToolCatalog } from "./useToolCatalog";
@@ -23,9 +23,11 @@ import {
   overwriteRowKey,
   projectCollisionRows,
   propagationCollisionRows,
+  recordedCollisionRow,
   refreshCollisionRows,
   type CollisionRetry,
   type DeclinedPair,
+  type OverwrittenPair,
   type OverwriteChoice,
   type OverwriteRow,
 } from "../lib/overwriteAsk";
@@ -43,8 +45,13 @@ export type { OverwriteChoice, OverwriteRow } from "../lib/overwriteAsk";
 /** The overwrite ask as its modal renders it (`surface.pendingAsk("overwrite")`). */
 export type OverwritePending = {
   rows: OverwriteRow[];
+  /** Cancel was pressed while these skills were already being added. */
+  afterCancel?: boolean;
   answer: (answer: AskAnswer | RowChoices) => void;
 };
+
+/** How an ask is raised: `afterCancel` — the action's Cancel came too late for these rows. */
+export type AskOptions = { afterCancel?: boolean };
 
 /**
  * The operator's answer to the overwrite ask: one choice per row, in row
@@ -111,10 +118,28 @@ export type CollisionPart =
   | { kind: "enable"; report: EnableReport; scope: DisableScope }
   | { kind: "project"; report: ProjectSyncReport }
   | { kind: "refresh"; report: RefreshReport }
-  | { kind: "propagation"; report: PropagationReport; skill: BatchSyncSkillDto };
+  | { kind: "propagation"; report: PropagationReport; skill: BatchSyncSkillDto }
+  /**
+   * A collision a report recorded and the operator answers later (the
+   * Notifications panel's Overwrite… on a Propagation row, Astra B / Sol N1):
+   * the row and the path the report kept, answered there
+   * (`resolveTargetCollisions`). `report` is what it settled as: the retry's
+   * row, or — unanswered — the recorded collision again.
+   */
+  | {
+      kind: "row";
+      skill: { skillId: string; skillName: string };
+      tool: string;
+      error: CommandError;
+      report: BatchTargetOutcome[];
+    };
 
-/** A part with its answered rows settled; `declined` for the shapes that carry no declined row. */
-export type SettledPart<P extends CollisionPart> = P & { declined: DeclinedPair[] };
+/**
+ * A part with its answered rows settled; `declined` / `overwritten` for the
+ * shapes that carry no such row (Propagation) — the others carry them as
+ * their rows' own statuses.
+ */
+export type SettledPart<P extends CollisionPart> = P & { declined: DeclinedPair[]; overwritten: OverwrittenPair[] };
 
 export type SettledParts<P extends readonly CollisionPart[]> = {
   parts: { [K in keyof P]: SettledPart<P[K]> };
@@ -158,17 +183,22 @@ function claimsOf(part: CollisionPart, labels: Readonly<Record<string, string>>)
         part.report.targets,
         labels,
       ).map(atRow);
+    case "row": {
+      const row = recordedCollisionRow(part.skill, part.tool, part.error, labels);
+      return row ? [atRow(row)] : [];
+    }
   }
 }
 
 /** One part with the retry's rows in place of the asked ones. */
 function settlePart(part: CollisionPart, retry: CollisionRetry | null): SettledPart<CollisionPart> {
-  if (!retry) return { ...part, declined: [] };
+  const none = { declined: [], overwritten: [] };
+  if (!retry) return { ...part, ...none };
   const projects = (report: ProjectSyncReport) =>
     retry.projects ? mergeProjectRetry(report, retry.projects) : report;
   switch (part.kind) {
     case "sync":
-      return { ...part, report: mergeGlobalRetry(part.report, retry.rows, retry.global), declined: [] };
+      return { ...part, report: mergeGlobalRetry(part.report, retry.rows, retry.global), ...none };
     case "enable":
       return {
         ...part,
@@ -176,13 +206,13 @@ function settlePart(part: CollisionPart, retry: CollisionRetry | null): SettledP
           global: mergeGlobalRetry(part.report.global, retry.rows, retry.global),
           projects: projects(part.report.projects),
         },
-        declined: [],
+        ...none,
       };
     case "project":
-      return { ...part, report: projects(part.report), declined: [] };
+      return { ...part, report: projects(part.report), ...none };
     case "refresh": {
       const merged = mergeRefreshRetry(part.report, retry);
-      return { ...part, report: merged.report, declined: merged.declined };
+      return { ...part, report: merged.report, declined: merged.declined, overwritten: merged.overwritten };
     }
     case "propagation": {
       const merged = mergePropagationRetry(
@@ -190,7 +220,18 @@ function settlePart(part: CollisionPart, retry: CollisionRetry | null): SettledP
         part.report.targets,
         retry,
       );
-      return { ...part, report: { targets: merged.targets }, declined: merged.declined };
+      return {
+        ...part,
+        report: { targets: merged.targets },
+        declined: merged.declined,
+        overwritten: merged.overwritten,
+      };
+    }
+    case "row": {
+      const answered = retry.global.filter(
+        (row) => row.skill_id === part.skill.skillId && row.tool_key === part.tool,
+      );
+      return { ...part, report: answered.length > 0 ? answered : part.report, ...none };
     }
   }
 }
@@ -340,9 +381,12 @@ export function useSyncOrchestration({
   // once. Every producer's collided rows — global pairs and project
   // assignments alike — are asked in one go and answered per row.
   const requestOverwriteConfirmation = useCallback(
-    async (rows: OverwriteRow[]): Promise<OverwriteAnswer> => {
+    async (rows: OverwriteRow[], opts: AskOptions = {}): Promise<OverwriteAnswer> => {
       setActionMessage(t("overwrite.waiting"));
-      return choicesOf(await ask({ kind: "overwrite", rows }), rows.length);
+      return choicesOf(
+        await ask({ kind: "overwrite", rows, ...(opts.afterCancel ? { afterCancel: true } : {}) }),
+        rows.length,
+      );
     },
     [ask, setActionMessage, t],
   );
@@ -507,7 +551,7 @@ export function useSyncOrchestration({
    * recorded.
    */
   const settleClaims = useCallback(
-    async (claims: readonly CollisionClaim[]): Promise<CollisionRetry | null> => {
+    async (claims: readonly CollisionClaim[], opts: AskOptions = {}): Promise<CollisionRetry | null> => {
       const seen = new Set<string>();
       const unique = claims.filter((claim) => {
         const key = overwriteRowKey(claim.row);
@@ -517,7 +561,7 @@ export function useSyncOrchestration({
       });
       if (unique.length === 0) return null;
       const rows = unique.map((claim) => claim.row);
-      const answer = await requestOverwriteConfirmation(rows);
+      const answer = await requestOverwriteConfirmation(rows, opts);
       if (answer === "dismissed") return null;
 
       const global: BatchTargetOutcome[] = [];
@@ -594,11 +638,11 @@ export function useSyncOrchestration({
    * read before it is stale); `projectIds` are the projects a retry touched.
    */
   const settleCollisionParts = useCallback(
-    async <P extends readonly CollisionPart[]>(parts: P): Promise<SettledParts<P>> => {
+    async <P extends readonly CollisionPart[]>(parts: P, opts: AskOptions = {}): Promise<SettledParts<P>> => {
       const claims = parts.flatMap((part) => claimsOf(part, toolLabelById));
-      const retry = await settleClaims(claims);
+      const retry = await settleClaims(claims, opts);
       // SAFETY: `settlePart` returns each part spread with only `report`
-      // (same kind's shape) and `declined` replaced, in input order, so the
+      // (same kind's shape), `declined` and `overwritten` replaced, in input order, so the
       // array is the mapped tuple `SettledParts<P>["parts"]`; TypeScript
       // cannot map a tuple through a union-typed function.
       const settled = parts.map((part) => settlePart(part, retry)) as unknown as SettledParts<P>["parts"];
@@ -628,8 +672,9 @@ export function useSyncOrchestration({
       report: BatchTargetOutcome[],
       skills: BatchSyncSkillDto[],
       policy?: SyncPolicy,
+      opts: AskOptions = {},
     ): Promise<BatchTargetOutcome[]> => {
-      const { parts: [settled] } = await settleCollisionParts([{ kind: "sync", report, skills, policy }] as const);
+      const { parts: [settled] } = await settleCollisionParts([{ kind: "sync", report, skills, policy }] as const, opts);
       return settled.report;
     },
     [settleCollisionParts],
