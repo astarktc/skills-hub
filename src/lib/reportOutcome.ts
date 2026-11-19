@@ -741,6 +741,7 @@ export function refreshOutcome(
       out.toast = toast(
         headlineTone(counts),
         t("invocationEdit.updateCompletedWithConflict", { name: ctx.single.name }),
+        detailOf(out.notes),
       );
     else if (!failed && !skipped)
       out.toast = toast(
@@ -1657,7 +1658,8 @@ export function installOutcome(
   const clean = headlineTone(counts) === "success";
   const lone = report.length === 1 && report[0].status === "installed" ? report[0].result.name : null;
   if (clean && lone !== null && ctx.source !== "selection")
-    out.toast = toast("success", ctx.t("add.added", { name: lone }));
+    // A folder the operator's Overwrite replaced is still recorded in the run.
+    out.toast = toast("success", ctx.t("add.added", { name: lone }), detailOf(out.notes));
   else if (counts.done > 0 || counts.cancelled > 0)
     out.toast = headlineToast(ctx.t, "installed", counts, { detail: detailOf(out.notes) });
   return out;

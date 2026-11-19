@@ -1875,6 +1875,33 @@ describe("installOutcome", () => {
           : t("add.added", { name: "git" }),
     });
   });
+  it("a lone add whose ask overwrote a folder keeps its sentence and records the line (#70)", () => {
+    const out = installOutcome(
+      [
+        {
+          name: "git",
+          status: "installed",
+          result: installed,
+          deployment: {
+            status: "reported",
+            report: [
+              {
+                skill_id: "git",
+                skill_name: "git",
+                tool_key: "claude",
+                folder_key: "claude",
+                status: { status: "overwritten", outcome: { mode_used: "symlink", target_path: "/t/claude/git", replaced: true } },
+              },
+            ],
+          },
+        },
+      ],
+      { ...ctx, source: "git" },
+    );
+    const note = t("outcome.overwrittenLine", { name: "git", tool: "CLAUDE", path: "/t/claude/git" });
+    expect(out.toast).toEqual({ kind: "success", tone: "success", message: t("add.added", { name: "git" }), detail: note });
+    expect(out.completion.closeModal).toBe(true);
+  });
   it.each([
     { status: "no-targets" },
     { status: "failed", error: new Error("deploy request failed") },
