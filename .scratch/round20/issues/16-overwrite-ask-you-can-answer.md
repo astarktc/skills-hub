@@ -1,6 +1,6 @@
 # 16: An overwrite ask you can answer knowingly
 
-Status: claimed
+Status: done — 0cde50f6
 
 **Blocked by:** 10 (the edited-copy row kind; everything else could start earlier, but this ticket lands after 10).
 
@@ -81,3 +81,9 @@ treatment as a second row kind in the same ask.
   - Follow-ups:
     - Sol 111 (`redeploy_question` copy) stays with ticket 12.
     - The pre-existing unfenced `list_skill_files` / `read_skill_file` → BACKLOG #121.
+- 2026-11-19 (port): done here, merged as `0cde50f6` (PR #26, head `85f2c930`).
+  - The trial clone's seven commits were cherry-picked unchanged onto `main`; `main` was already in the branch, so
+    the merged tree is the tested one.
+  - `npm run version:check && npm run check` passed once on `62b37e58` (1,503 frontend tests; 1,226 Rust tests, 1
+    ignored). CI passed on `85f2c930` (`web`, `rust`, `rust-windows`).
+  - Defects this build still has are ticket 21, with reproduction tests beside it.
