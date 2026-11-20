@@ -154,8 +154,10 @@ secrets, renewal and costs: `docs/macos-code-signing.md`.
   entry point** — composites call the unlocked seam. Readers that must not queue use `try_serialized`:
   the project listing's reconcile pass takes that door and reports `reconciled: false`. `reveal_path` (Reveal in
   Finder) mutates nothing but is fenced like a removal: `core/log_reveal.rs::admit_reveal_path` admits only a recorded
-  target path or a path physically inside the central repo (no NUL, no as-written `.`/`..`), and the command selects
-  the item — or its nearest existing ancestor — in its folder, never opens it.
+  target path, a path physically inside the central repo, or a **reported occupant** — a folder an overwrite ask
+  showed, exactly as reported (`core/occupants.rs`; `list_occupant_files` / `read_occupant_file` admit only those
+  too) — (no NUL, no as-written `.`/`..`), and the command selects the item — or its nearest existing ancestor — in
+  its folder, never opens it.
 - **UI strings**: add keys to `en` in `src/i18n/resources.ts`; EN only (BACKLOG #61). No hardcoded UI text.
   `src/i18n/resources.test.ts` fails on any literal `t("…")` key missing from `en`.
 - **New `core/` module**: declare it in `src-tauri/src/core/mod.rs`.
@@ -377,7 +379,9 @@ secrets, renewal and costs: `docs/macos-code-signing.md`.
   - **The one overwrite ask (D12)**: every `TARGET_EXISTS` producer — the global batch, the install batch,
     import (a divergent sibling in a target's way is reported once, as that row), Enable, project
     assign / resync / Propagation — answers a row carrying pair identity plus `path`, `modifiedAt`, `sameContent`
-    (observed where `sync_engine` raises the collision). The frontend raises **one** ask per operator action
+    and `owner` (a recorded Deployment's artifact by its own evidence, or foreign — all observed where `sync_engine`
+    raises the collision). An answered Overwrite that replaced a folder reports `overwritten`, an outcome kind beside
+    `declined`, recorded in the run. The frontend raises **one** ask per operator action
     (`src/lib/overwriteAsk.ts` shapes the rows; `useSyncOrchestration` owns the ask) answered per row, and retries:
     global pairs through `sync_skills_to_tools` with per-pair overrides (the install batch's skills exist by then),
     Enable's global pairs through `enable_skill_targets(scope, overrides)`, Propagation's global rows through

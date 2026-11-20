@@ -66,7 +66,18 @@ export type SkillVerbOptions = {
    * one `tool`, or those of `tools` (a health row's Tools), else every such
    * row of each skill.
    */
-  retry: { tool?: string; tools?: readonly string[]; answering?: "collision" };
+  retry: {
+    tool?: string;
+    tools?: readonly string[];
+    answering?: "collision";
+    /**
+     * With `answering`: the collision a Propagation report recorded (Astra B
+     * / Sol N1). Answered at the row and the path it kept
+     * (`resolveTargetCollisions`) — never a sync batch to wherever the skill
+     * would be placed now.
+     */
+    recorded?: CommandError;
+  };
   /**
    * Disable at pair grain (`tool`) or skill grain. Over several skills
    * without `confirmed` it opens the count-bearing confirmation; one skill is
@@ -312,7 +323,7 @@ export function useSkillActions({
     if (opts.answering === "collision" && (verb === "retry" || verb === "enable")) {
       const tool = opts.tool as string | undefined;
       if (!single || tool === undefined) return;
-      const stale = staleCollision(single, tool, verb === "enable" ? "enable" : "sync");
+      const stale = staleCollision(single, tool, verb === "enable" ? "enable" : opts.recorded ? "row" : "sync");
       if (stale) {
         notify("info", t(STALE_COLLISION_KEY[stale], { name: single.name, tool: toolLabelById[tool] ?? tool }));
         return;
@@ -402,7 +413,7 @@ export function useSkillActions({
     /** A Refresh / Update report's collisions (Propagation's first sync of a row that owns nothing), asked once. */
     const settleRefresh = async (action: ActionHandle, report: RefreshReport) => {
       const { parts: [part], retried } = await settleParts(action, [{ kind: "refresh", report }] as const);
-      return { report: part.report, declined: part.declined, retried };
+      return { report: part.report, declined: part.declined, overwritten: part.overwritten, retried };
     };
 
     const refreshOne = (skill: ManagedSkill, copy: { message: string; success: string; label: string }, request: (action: ActionHandle) => Promise<SkillMutationResultDto | ActionExit>, cancel: "updateManagedSkill" | "repointSkillSource") =>
@@ -410,12 +421,13 @@ export function useSkillActions({
         const response = await request(action);
         if (response instanceof ActionExit) return response;
         replaceCatalog(response.skills);
-        const { report, declined } = await settleRefresh(action, response.report);
+        const { report, declined, overwritten } = await settleRefresh(action, response.report);
         return applyOutcome(
           refreshOutcome(report, {
             ...foldContext,
             single: { name: skill.name, success: copy.success },
             declined,
+            overwritten,
           }),
         );
       });
@@ -446,7 +458,31 @@ export function useSkillActions({
         return;
       }
       case "retry": {
-        const { tool, tools } = opts as SkillVerbOptions["retry"];
+        const { tool, tools, recorded } = opts as SkillVerbOptions["retry"];
+        if (recorded && single && tool !== undefined) {
+          // A recorded Propagation collision: the ask again, over the row and
+          // path the report kept; unanswered, it stays recorded as it was.
+          await settle({ subject, label: t("lifecycle.verbs.sync"), activity: t("activity.syncing") }, async (action) => {
+            const row: Extract<CollisionPart, { kind: "row" }> = {
+              kind: "row",
+              skill: { skillId: single.id, skillName: single.name },
+              tool,
+              error: recorded,
+              report: [
+                {
+                  skill_id: single.id,
+                  skill_name: single.name,
+                  tool_key: tool,
+                  folder_key: folderOf(tool),
+                  status: { status: "failed", error: recorded },
+                },
+              ],
+            };
+            const { parts: [part] } = await settleParts(action, [row] as const);
+            await applyOutcome(syncOutcome(part.report, { ...foldContext, action: "toggle", collisionRoute: "row" }), { reload });
+          });
+          return;
+        }
         // Exactly the pairs to repair: each skill's own Tools, never the
         // product of every skill with every Tool. A row is keyed by its
         // Deployment folder, so the asked Tools are matched by theirs.
@@ -552,9 +588,9 @@ export function useSkillActions({
             all ? null : skills.map((skill) => skill.id),
             await newRefreshProgressChannel(),
           );
-          const { report, declined, retried } = await settleRefresh(action, settled);
+          const { report, declined, overwritten, retried } = await settleRefresh(action, settled);
           // A retry already re-read the catalog.
-          await applyOutcome(refreshOutcome(report, { ...foldContext, declined }), {
+          await applyOutcome(refreshOutcome(report, { ...foldContext, declined, overwritten }), {
             reload: retried ? undefined : reload,
           });
         });
@@ -713,7 +749,10 @@ export function useSkillActions({
             { kind: "propagation", report: report.propagation, skill: toSyncItem(skillNow) },
           ] as const);
           await applyOutcome(
-            invocationEditOutcome({ ...report, propagation: part.report }, { ...foldContext, declined: part.declined }),
+            invocationEditOutcome(
+              { ...report, propagation: part.report },
+              { ...foldContext, declined: part.declined, overwritten: part.overwritten },
+            ),
             { closeModal: () => dismissDialog("invocationEdit") },
           );
         });

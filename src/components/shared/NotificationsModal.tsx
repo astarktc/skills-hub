@@ -278,12 +278,15 @@ function ReportBody({
         return;
       case "overwrite":
         // Answer the recorded collision by the route that produced it (a sync
-        // re-syncs; an Enable enables the pair): the folder still in the way
+        // re-syncs; an Enable enables the pair; Propagation answers its row): the folder still in the way
         // raises the one ask (D12). The door checks the pair's state now and
         // says so when the report went stale.
+        // A Propagation row is answered at the row and path the report kept
+        // (Astra B / Sol N1), never re-synced to wherever the skill goes now.
         void run(action.via === "enable" ? "enable" : "retry", [action.skillId], {
           tool: action.tool,
           answering: "collision",
+          ...(action.recorded ? { recorded: action.recorded } : {}),
         });
         return;
       case "update":

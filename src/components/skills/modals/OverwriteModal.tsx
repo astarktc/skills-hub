@@ -1,5 +1,6 @@
-import { memo, useRef, useState, type RefObject } from 'react'
+import { memo, useId, useMemo, useRef, useState, type RefObject } from 'react'
 import type { TFunction } from 'i18next'
+import { FolderSearch } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -10,22 +11,45 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Segmented, SegmentedItem } from '@/components/ui/segmented'
-import { overwriteRowKey, type OverwriteChoice, type OverwriteRow } from '../../../lib/overwriteAsk'
+import { cn } from '@/lib/utils'
+import {
+  aheadMoveRows,
+  askRowCopy,
+  askRowLabels,
+  editedCopyHints,
+  overwriteRowKey,
+  type OverwriteChoice,
+  type OverwriteRow,
+} from '../../../lib/overwriteAsk'
 import { formatRelativeTime } from '../../../lib/skillPresentation'
+import { useSkillDocument } from '../../../hooks/useSkillDocument'
 import type { OverwritePending } from '../../../hooks/useSyncOrchestration'
+import SkillFiles from '../SkillFiles'
 
 type OverwriteModalProps = {
   /** The one pending overwrite ask (`surface.pendingAsk('overwrite')`). */
   pending: OverwritePending | null
+  /** Reveal in Finder (the backend admits only a folder an ask reported). */
+  onReveal: (path: string) => void
   t: TFunction
 }
 
 /**
  * The one overwrite ask (D12): every folder in the way of one operator
- * action — an Add batch, a sync, an Enable, a project assign or resync —
- * listed as skill → Tool → path with the folder's modified time and whether
- * it differs from the skill. Several rows are answered per row (Keep /
- * Overwrite, one confirm); "Keep existing" keeps them all.
+ * action — an Add batch, a sync, an Enable, a project assign or resync, a
+ * Propagation, a redeploy — listed as skill → Tool → path with the folder's
+ * modified time and whether it differs from the skill. Several rows are
+ * answered per row (Keep / Overwrite, one confirm); "Keep existing" keeps
+ * them all.
+ *
+ * Round 20 #70 — an ask the operator can answer knowingly. Each row says
+ * **who put the folder there** (a recorded Deployment's artifact, by the
+ * backend's evidence, or not ours), offers **Reveal in Finder** and a
+ * **content view against the skill** (the file browser over the backend's
+ * fenced occupant read: each file marked same / changed / only here /
+ * missing here, a changed file as a line diff), and states **what each
+ * answer does** (`askRowCopy`). An ask raised after Cancel says the skills
+ * were already being added.
  *
  * Raised mid-action by the sync seam, while the action's progress runs: it
  * opens above whatever is open (the most recently opened layer is on top)
@@ -35,7 +59,12 @@ type OverwriteModalProps = {
  * A redeploy's ask also carries **edited copies** (round 20 #108): an old
  * copy edited after Skills Hub wrote it, answered Delete (`overwrite`) or
  * Leave (`keep`), Leave chosen until the operator picks Delete — an edit is
- * never deleted by default. With any such row the choices are per row.
+ * never deleted by default. With any such row the choices are per row. A
+ * copy asked **ahead** of its move (the move held by a folder in this same
+ * ask) says each answer happens only if the move goes ahead; while that
+ * folder's row is answered Keep, the copy's choice stays operable but is
+ * visibly void — its line says nothing happens to the copy now — because
+ * the kept move never reaches the step that settles its old copies.
  *
  * Three kinds of answer: an Overwrite / per-row choice (`confirmed` or
  * `{ choices }`), the explicit "Keep existing" (`declined` — recorded: the
@@ -44,7 +73,7 @@ type OverwriteModalProps = {
  * its cancel callback, so this ask composes the Dialog primitives itself to
  * keep the two apart.
  */
-const OverwriteModal = ({ pending, t }: OverwriteModalProps) => {
+const OverwriteModal = ({ pending, onReveal, t }: OverwriteModalProps) => {
   const confirmRef = useRef<HTMLButtonElement>(null)
   return (
     <Dialog
@@ -58,13 +87,14 @@ const OverwriteModal = ({ pending, t }: OverwriteModalProps) => {
           in the same render) strands a closed ghost layer that keeps the app
           inert. Only the per-ask body is keyed, so every ask's per-row
           choices start fresh (a displacing ask remounts the body alone). */}
-      <DialogContent size="md" showCloseButton={false} initialFocus={confirmRef}>
+      <DialogContent size="xl" showCloseButton={false} initialFocus={confirmRef}>
         <DialogHeader>
           <DialogTitle>{t('overwrite.title')}</DialogTitle>
         </DialogHeader>
         <OverwriteAsk
           key={pending ? pending.rows.map(overwriteRowKey).join('\u0000') : 'none'}
           pending={pending}
+          onReveal={onReveal}
           confirmRef={confirmRef}
           t={t}
         />
@@ -76,19 +106,23 @@ const OverwriteModal = ({ pending, t }: OverwriteModalProps) => {
 /** One ask's rows, its per-row choices and its answers (body + footer). */
 function OverwriteAsk({
   pending,
+  onReveal,
   confirmRef,
   t,
 }: OverwriteModalProps & { confirmRef: RefObject<HTMLButtonElement | null> }) {
-  const rows = pending?.rows ?? []
+  const rows = useMemo(() => pending?.rows ?? [], [pending])
   const edited = (row: OverwriteRow) => row.question === 'editedCopy'
   // Overwrite is the action the operator asked for; each row can be kept. An
   // edited copy starts at Leave: deleting it is the operator's explicit pick.
   const [choices, setChoices] = useState<OverwriteChoice[]>(() =>
     rows.map((row) => (edited(row) ? 'keep' : 'overwrite')),
   )
+  const labels = useMemo(() => askRowLabels(rows, t), [rows, t])
+  const moveRows = useMemo(() => aheadMoveRows(rows), [rows])
   const anyEdited = rows.some(edited)
   const perRow = rows.length > 1 || anyEdited
   const mixed = anyEdited || choices.some((choice) => choice === 'keep')
+  const occupied = rows.filter((row) => !edited(row)).length
 
   const confirm = () => {
     if (!pending) return
@@ -99,48 +133,35 @@ function OverwriteAsk({
     <>
       {pending ? (
         <DialogBody>
-          {rows.some((row) => !edited(row)) ? (
-            <p>{t('overwrite.body', { count: rows.filter((row) => !edited(row)).length })}</p>
+          {pending.afterCancel ? (
+            <p className="mb-1 text-foreground">{t('overwriteAsk.afterCancel', { count: rows.length })}</p>
           ) : null}
-          {anyEdited ? <p className="mt-1">{t('overwriteAsk.editedHint')}</p> : null}
+          {occupied > 0 ? <p>{t('overwrite.body', { count: occupied })}</p> : null}
+          {editedCopyHints(rows, t).map((hint) => (
+            <p key={hint} className="mt-1">
+              {hint}
+            </p>
+          ))}
           {perRow ? <p className="mt-1">{t('overwriteAsk.perRowHint')}</p> : null}
-          <ul className="m-0 flex max-h-[40vh] list-none flex-col divide-y divide-border overflow-y-auto rounded-md border border-border p-0">
+          <ul className="m-0 flex max-h-[55vh] list-none flex-col divide-y divide-border overflow-y-auto rounded-md border border-border p-0">
             {rows.map((row, index) => (
-              <li key={overwriteRowKey(row)} className="px-3 py-2">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 flex-col gap-0.5">
-                    <span className="text-foreground">
-                      {row.skillName} → {row.toolLabel}
-                    </span>
-                    <span className="font-mono text-xs break-all text-faint">{row.path}</span>
-                    <RowFacts row={row} t={t} />
-                  </div>
-                  {perRow ? (
-                    <Segmented
-                      aria-label={t(edited(row) ? 'overwriteAsk.editedChoiceLabel' : 'overwriteAsk.choiceLabel', {
-                        name: row.skillName,
-                        tool: row.toolLabel,
-                      })}
-                      value={choices[index]}
-                      onValueChange={(value) =>
-                        setChoices((prev) =>
-                          prev.map((choice, i) => (i === index ? (value as OverwriteChoice) : choice)),
-                        )
-                      }
-                      className="shrink-0"
-                    >
-                      <SegmentedItem value="keep">
-                        {t(edited(row) ? 'overwriteAsk.leave' : 'overwriteAsk.keep')}
-                      </SegmentedItem>
-                      <SegmentedItem value="overwrite">
-                        {t(edited(row) ? 'overwriteAsk.delete' : 'overwriteAsk.overwrite')}
-                      </SegmentedItem>
-                    </Segmented>
-                  ) : null}
-                </div>
-              </li>
+              <AskRow
+                key={overwriteRowKey(row)}
+                row={row}
+                label={labels[index]}
+                choice={perRow ? choices[index] : null}
+                moveKept={moveRows[index] !== null && choices[moveRows[index]] === 'keep'}
+                onChoice={(value) =>
+                  setChoices((prev) => prev.map((choice, i) => (i === index ? value : choice)))
+                }
+                onReveal={onReveal}
+                t={t}
+              />
             ))}
           </ul>
+          {perRow && occupied > 0 ? (
+            <p className="mt-2 text-xs text-muted-foreground">{t('overwriteAsk.consequence.all')}</p>
+          ) : null}
         </DialogBody>
       ) : null}
       <DialogFooter>
@@ -167,24 +188,117 @@ function OverwriteAsk({
 }
 
 /**
+ * One row: what is there and who put it there, what each answer does, and
+ * the ways to look before answering — Reveal in Finder and its contents
+ * against the skill. `choice` is the row's own answer (null: the footer
+ * answers the one row, so both consequences are stated).
+ */
+function AskRow({
+  row,
+  label,
+  choice,
+  moveKept,
+  onChoice,
+  onReveal,
+  t,
+}: {
+  row: OverwriteRow
+  label: string
+  choice: OverwriteChoice | null
+  /** An edited copy asked ahead of its move, whose folder in the way is answered Keep. */
+  moveKept: boolean
+  onChoice: (choice: OverwriteChoice) => void
+  onReveal: (path: string) => void
+  t: TFunction
+}) {
+  const [showContents, setShowContents] = useState(false)
+  const copy = askRowCopy(row, t, { moveKept })
+  const consequenceId = useId()
+  const heading =
+    row.question === 'editedCopy'
+      ? t('overwriteAsk.editedChoiceLabel', { name: row.skillName, tool: row.toolLabel })
+      : t('overwriteAsk.choiceLabel', { name: row.skillName, tool: row.toolLabel })
+  return (
+    <li className="flex flex-col gap-1.5 px-3 py-2">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-foreground">{heading}</span>
+          <span className="font-mono text-xs break-all text-faint">{row.path}</span>
+          <RowFacts row={row} t={t} />
+          <span className="text-xs text-muted-foreground">{copy.provenance}</span>
+        </div>
+        {choice !== null ? (
+          <Segmented
+            aria-label={label}
+            aria-describedby={consequenceId}
+            value={choice}
+            onValueChange={(value) => onChoice(value as OverwriteChoice)}
+            className="shrink-0"
+          >
+            <SegmentedItem value="keep">{copy.keepLabel}</SegmentedItem>
+            <SegmentedItem value="overwrite">{copy.overwriteLabel}</SegmentedItem>
+          </Segmented>
+        ) : null}
+      </div>
+      {choice !== null ? (
+        <p id={consequenceId} className={cn('m-0 text-xs', copy.voided ? 'text-muted-foreground' : 'text-foreground')}>
+          {copy.voided ?? (choice === 'keep' ? copy.keep : copy.overwrite)}
+        </p>
+      ) : (
+        <div className="flex flex-col gap-0.5 text-xs text-foreground">
+          <p className="m-0">{copy.overwrite}</p>
+          <p className="m-0">{copy.keep}</p>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-1">
+        <Button
+          variant="ghost"
+          tone="neutral"
+          size="sm"
+          aria-label={t('overwriteAsk.revealLabel', { label })}
+          onClick={() => onReveal(row.path)}
+        >
+          <FolderSearch aria-hidden="true" />
+          {t('overwriteAsk.reveal')}
+        </Button>
+        <Button
+          variant="ghost"
+          tone="neutral"
+          size="sm"
+          aria-expanded={showContents}
+          aria-label={`${t(showContents ? 'overwriteAsk.hideContents' : 'overwriteAsk.showContents')}: ${label}`}
+          onClick={() => setShowContents((open) => !open)}
+        >
+          {t(showContents ? 'overwriteAsk.hideContents' : 'overwriteAsk.showContents')}
+        </Button>
+      </div>
+      {showContents ? <OccupantContents row={row} label={label} t={t} /> : null}
+    </li>
+  )
+}
+
+/** The folder's files against the skill's, through the backend's occupant fence. */
+function OccupantContents({ row, label, t }: { row: OverwriteRow; label: string; t: TFunction }) {
+  const doc = useSkillDocument({ root: row.path, version: 0, comparedWith: row.skillId })
+  return (
+    <div className="flex min-h-0 flex-col">
+      <SkillFiles doc={doc} label={t('overwriteAsk.contentsLabel', { label })} layout="stacked" t={t} />
+    </div>
+  )
+}
+
+/**
  * "Modified 2h ago · differs from the skill" — the facts the backend
- * reported; an edited copy says so and names who shows it twice if left.
+ * reported. An edited copy's own words are its provenance and consequences.
  */
 function RowFacts({ row, t }: { row: OverwriteRow; t: TFunction }) {
   const parts = [
     ...(row.modifiedAt !== null
       ? [t('overwriteAsk.modified', { when: formatRelativeTime(row.modifiedAt, t) })]
       : []),
-    ...(row.question === 'editedCopy'
-      ? [
-          t('overwriteAsk.edited'),
-          ...(row.readers?.length
-            ? [t('overwriteAsk.readers', { readers: row.readers.join(t('common.listSeparator')) })]
-            : []),
-        ]
-      : [t(row.sameContent ? 'overwriteAsk.identical' : 'overwriteAsk.differs')]),
+    ...(row.question === 'editedCopy' ? [] : [t(row.sameContent ? 'overwriteAsk.identical' : 'overwriteAsk.differs')]),
   ]
-  return <span className="block text-xs text-muted-foreground">{parts.join(' · ')}</span>
+  return parts.length > 0 ? <span className="block text-xs text-muted-foreground">{parts.join(' · ')}</span> : null
 }
 
 export default memo(OverwriteModal)

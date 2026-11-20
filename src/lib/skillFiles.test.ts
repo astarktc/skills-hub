@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ancestorDirs, buildTree, defaultFile, formatSize, getLang, isMarkdown } from "./skillFiles";
+import { ancestorDirs, buildTree, defaultFile, formatSize, getLang, isMarkdown, lineDiff } from "./skillFiles";
 
 describe("formatSize", () => {
   it("names bytes, kilobytes and megabytes", () => {
@@ -83,5 +83,29 @@ describe("ancestorDirs", () => {
   it("lists every enclosing folder, outermost first", () => {
     expect(ancestorDirs("a/b/c.md")).toEqual(["a", "a/b"]);
     expect(ancestorDirs("SKILL.md")).toEqual([]);
+  });
+});
+
+describe("lineDiff (round 20 #70: a folder in the way against the skill)", () => {
+  it("keeps common lines and marks the skill's removed and the folder's added, in order", () => {
+    expect(lineDiff("a\nb\nc\n", "a\nB\nc\nd")).toEqual([
+      { kind: "same", text: "a" },
+      { kind: "removed", text: "b" },
+      { kind: "added", text: "B" },
+      { kind: "same", text: "c" },
+      { kind: "added", text: "d" },
+    ]);
+  });
+  it("a side without the file is all lines on the other", () => {
+    expect(lineDiff(null, "x\ny")).toEqual([
+      { kind: "added", text: "x" },
+      { kind: "added", text: "y" },
+    ]);
+    expect(lineDiff("x", null)).toEqual([{ kind: "removed", text: "x" }]);
+    expect(lineDiff("same", "same")).toEqual([{ kind: "same", text: "same" }]);
+  });
+  it("a compared file carries its mark into the tree", () => {
+    const [node] = buildTree([{ path: "SKILL.md", size: 3, compared: "changed" }]);
+    expect(node.compared).toBe("changed");
   });
 });

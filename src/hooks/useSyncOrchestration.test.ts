@@ -758,7 +758,7 @@ describe("syncSkillsToTools overwrite ask", () => {
     folder_key: tool_key,
     status: {
       status: "failed",
-      error: { code: "TARGET_EXISTS", path: `/t/${tool_key}/${skill_id}`, modifiedAt: 1_000, sameContent: false },
+      error: { code: "TARGET_EXISTS", path: `/t/${tool_key}/${skill_id}`, modifiedAt: 1_000, sameContent: false, owner: { kind: "foreign" } },
     },
   });
   const syncCalls = () =>
@@ -816,7 +816,7 @@ describe("syncSkillsToTools overwrite ask", () => {
     expect(reporter.setActionMessage).toHaveBeenCalledWith("overwrite.waiting");
     // Each row carries what the ask shows (D12): path, modified time, and
     // whether it differs — the backend's answers, never re-derived.
-    const facts = { modifiedAt: 1_000, sameContent: false, scope: { kind: "global" } };
+    const facts = { modifiedAt: 1_000, sameContent: false, owner: { kind: "foreign" }, ownerToolLabel: null, scope: { kind: "global" } };
     expect(result.current.overwritePending!.rows).toEqual([
       { skillId: "s1", skillName: "s1", toolKey: "cursor", toolLabel: "CURSOR", path: "/t/cursor/s1", ...facts },
       { skillId: "s2", skillName: "s2", toolKey: "claude", toolLabel: "CLAUDE", path: "/t/claude/s2", ...facts },
@@ -1014,7 +1014,7 @@ describe("syncSkillsToTools overwrite ask", () => {
 });
 
 describe("the one overwrite ask across producers (ticket 04)", () => {
-  const facts = { modifiedAt: 5_000, sameContent: false };
+  const facts = { modifiedAt: 5_000, sameContent: false, owner: { kind: "foreign" as const } };
   const globalRow = (skill_id: string, tool_key: string, collided: boolean): BatchTargetOutcome => ({
     skill_id,
     skill_name: skill_id,
@@ -1087,6 +1087,39 @@ describe("the one overwrite ask across producers (ticket 04)", () => {
     expect(report.map((row) => row.status.status)).toEqual(["synced", "declined"]);
   });
 
+  it("an ask raised after Cancel carries it to the modal (#70); an ordinary one does not", async () => {
+    backend({});
+    const { result } = renderSync();
+    await waitFor(() => expect(result.current.toolStatus).not.toBeNull());
+    let done!: Promise<BatchTargetOutcome[]>;
+    act(() => {
+      done = result.current.resolveGlobalCollisions(
+        [globalRow("s1", "claude", true)],
+        [{ skill_id: "s1", name: "s1", source_path: "/c/s1" }],
+        { overwriteIfSameContent: true },
+        { afterCancel: true },
+      );
+    });
+    await waitFor(() => expect(result.current.overwritePending).not.toBeNull());
+    expect(result.current.overwritePending!.afterCancel).toBe(true);
+    await act(async () => {
+      result.current.dismissOverwrite();
+      await done;
+    });
+    act(() => {
+      done = result.current.resolveGlobalCollisions(
+        [globalRow("s1", "claude", true)],
+        [{ skill_id: "s1", name: "s1", source_path: "/c/s1" }],
+      );
+    });
+    await waitFor(() => expect(result.current.overwritePending).not.toBeNull());
+    expect(result.current.overwritePending!.afterCancel).toBeUndefined();
+    await act(async () => {
+      result.current.dismissOverwrite();
+      await done;
+    });
+  });
+
   it("a project report's collisions are asked and resolved by resolveProjectCollisions", async () => {
     backend({ resolveProjectCollisions: [{ skipped_projects: [], items: [projectItem({ status: "declined" })] }] });
     const { result } = renderSync();
@@ -1104,6 +1137,7 @@ describe("the one overwrite ask across producers (ticket 04)", () => {
         toolLabel: "CLAUDE",
         path: "/p1/.claude/skills/s1",
         ...facts,
+        ownerToolLabel: null,
         scope: { kind: "project", projectId: "p1" },
       },
     ]);

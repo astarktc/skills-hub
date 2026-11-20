@@ -396,6 +396,7 @@ pub async fn reveal_path(
             &store,
             &roots,
             &central_repo,
+            &crate::core::occupants::reported(),
             &path,
             |p| p.symlink_metadata().is_ok(),
             |p| std::fs::canonicalize(p).ok(),
@@ -1571,6 +1572,67 @@ pub async fn read_skill_file(
     let base = std::path::PathBuf::from(&central_path);
     tauri::async_runtime::spawn_blocking(move || {
         crate::core::skill_files::read_file(&base, &file_path)
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
+/// The folder an overwrite ask reported in a target's way (round 20 #70),
+/// admitted exactly as reported (`core::occupants`) and nothing else, with
+/// the Library copy of `skill_id` it is compared against (`None` once the
+/// skill record is gone). Any other path is the typed `NOT_FOUND`
+/// `occupant`: refused before the filesystem is touched.
+fn admit_occupant(
+    store: &SkillStore,
+    path: &str,
+    skill_id: &str,
+) -> anyhow::Result<(std::path::PathBuf, Option<std::path::PathBuf>)> {
+    let occupant = std::path::PathBuf::from(path);
+    if path.contains('\0') || !crate::core::occupants::is_reported(&occupant) {
+        return Err(SignalError::NotFound {
+            kind: "occupant".to_string(),
+            id: path.to_string(),
+        }
+        .into());
+    }
+    let skill = store
+        .get_skill_by_id(skill_id)?
+        .map(|skill| std::path::PathBuf::from(skill.central_path));
+    Ok((occupant, skill))
+}
+
+/// The files of a reported occupant, each compared with the skill's.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_occupant_files(
+    store: State<'_, SkillStore>,
+    path: String,
+    skill_id: String,
+) -> Result<crate::core::skill_files::OccupantFileListing, CommandError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (occupant, skill) = admit_occupant(&store, &path, &skill_id)?;
+        crate::core::skill_files::list_occupant_files(&occupant, skill.as_deref())
+    })
+    .await
+    .map_err(CommandError::internal)?
+    .map_err(CommandError::from_anyhow)
+}
+
+/// One file of a reported occupant beside the skill's file at its path.
+#[tauri::command]
+#[specta::specta]
+pub async fn read_occupant_file(
+    store: State<'_, SkillStore>,
+    path: String,
+    skill_id: String,
+    file_path: String,
+) -> Result<crate::core::skill_files::OccupantFile, CommandError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (occupant, skill) = admit_occupant(&store, &path, &skill_id)?;
+        crate::core::skill_files::read_occupant_file(&occupant, skill.as_deref(), &file_path)
     })
     .await
     .map_err(CommandError::internal)?

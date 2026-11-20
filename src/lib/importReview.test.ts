@@ -278,7 +278,7 @@ describe("importResultRows", () => {
             { ...synced("pi"), status: { status: "declined" } },
             {
               ...synced("codex"),
-              status: { status: "failed", error: { code: "TARGET_EXISTS", path: "/x", modifiedAt: null, sameContent: false } },
+              status: { status: "failed", error: { code: "TARGET_EXISTS", path: "/x", modifiedAt: null, sameContent: false, owner: { kind: "foreign" as const } } },
             },
           ],
           forced_tools: [],
@@ -372,7 +372,7 @@ describe("importResultRows by settled targets (audit F3 / F4 / F7)", () => {
   const declined = (tool: string): BatchTargetOutcome => ({ ...synced(tool), status: { status: "declined" } });
   const unanswered = (tool: string): BatchTargetOutcome => ({
     ...synced(tool),
-    status: { status: "failed", error: { code: "TARGET_EXISTS", path: `/t/${tool}`, modifiedAt: null, sameContent: false } },
+    status: { status: "failed", error: { code: "TARGET_EXISTS", path: `/t/${tool}`, modifiedAt: null, sameContent: false, owner: { kind: "foreign" } } },
   });
   const disabledReason = (tool: string) => describeCommandError({ code: "TARGET_DISABLED", tool }, t);
   const rows = (report: ImportReport, keptByChoice?: ReadonlySet<string>) =>

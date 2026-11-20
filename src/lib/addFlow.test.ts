@@ -150,7 +150,7 @@ describe("settlementRows", () => {
         installed([
           target("claude_code", {
             status: "failed",
-            error: { code: "TARGET_EXISTS", path: "/x", modifiedAt: 1, sameContent: false },
+            error: { code: "TARGET_EXISTS", path: "/x", modifiedAt: 1, sameContent: false, owner: { kind: "foreign" as const } },
           }),
           target("amp", { status: "skipped", error: { code: "TOOL_NOT_WRITABLE", tool: "amp", path: "/a" } }),
         ]),
@@ -200,7 +200,7 @@ describe("settlementRows", () => {
     const entries: SettlementEntry[] = [
       named("alpha", [target("codex", synced), amp]),
       named("beta", [amp, target("cursor", { status: "failed", error: { code: "OTHER", message: "io" } })]),
-      named("gamma", [target("claude_code", { status: "failed", error: { code: "TARGET_EXISTS", path: "/x", modifiedAt: 1, sameContent: false } })]),
+      named("gamma", [target("claude_code", { status: "failed", error: { code: "TARGET_EXISTS", path: "/x", modifiedAt: 1, sameContent: false, owner: { kind: "foreign" as const } } })]),
       { id: "f", name: "f", nameOverride: null, phase: "settled", result: { name: "f", status: "failed", error: { code: "RATE_LIMITED", resetMinutes: 12 } } },
     ];
     expect(settlementNotices(entries, ctx)).toEqual([
@@ -220,7 +220,7 @@ describe("settlementRows", () => {
   it("settlementComplete judges every accumulated entry's deployment, not only that it installed (A2)", () => {
     const collision = target("claude_code", {
       status: "failed",
-      error: { code: "TARGET_EXISTS", path: "/x", modifiedAt: 1, sameContent: false },
+      error: { code: "TARGET_EXISTS", path: "/x", modifiedAt: 1, sameContent: false, owner: { kind: "foreign" as const } },
     });
     const unwritable = target("amp", { status: "skipped", error: { code: "TOOL_NOT_WRITABLE", tool: "amp", path: "/a" } });
     const failedTarget = target("cursor", { status: "failed", error: { code: "OTHER", message: "io" } });

@@ -954,7 +954,7 @@ fn a_first_sync_collision_records_no_sharer_and_its_overwrite_retry_matches_prop
     assert!(
         retry
             .iter()
-            .all(|o| matches!(o.status, BatchTargetStatus::Synced { .. })),
+            .all(|o| matches!(o.status, BatchTargetStatus::Overwritten { .. })),
         "{retry:?}"
     );
 

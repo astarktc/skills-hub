@@ -18,7 +18,7 @@ import type {
   RowRef,
 } from "../bindings";
 import { describeCommandError, toCommandError } from "../commandError";
-import type { DeclinedPair } from "./overwriteAsk";
+import type { DeclinedPair, OverwrittenPair } from "./overwriteAsk";
 import type { TranslateFn } from "../hooks/useStatusReporter";
 import { ACQUISITION_SKIP_KEY, INVOCATION_LABEL_KEY, SKIPPED_REASON_KEY, toolLabel } from "./skillPresentation";
 
@@ -57,7 +57,11 @@ export type EntryRepair =
        * Propagation, Edit, install or import (the ordinary re-sync
        * asks again); `enable` — an Enable, whose pair stays a disabled marker
        * until answered, so only the Enable path (its disabled-marker
-       * admission) can reach it — an ordinary sync skips a disabled pair.
+       * admission) can reach it — an ordinary sync skips a disabled pair;
+       * `row` — Propagation (Refresh / Update / Restore / Re-point / Edit),
+       * which wrote at the row's recorded path: answered at that row and the
+       * path the entry kept (`resolveTargetCollisions`), never a batch sync
+       * to wherever the skill would be placed now (Astra B / Sol N1).
        */
       via: CollisionRoute;
     }
@@ -65,7 +69,7 @@ export type EntryRepair =
   | { verb: "delete" };
 
 /** Which operator path met a collision: its answer goes the same way. */
-export type CollisionRoute = "sync" | "enable";
+export type CollisionRoute = "sync" | "enable" | "row";
 
 /**
  * One report entry. Declarative only — no closures — so it survives catalog
@@ -250,6 +254,11 @@ export type HeadlineCounts = {
   targetsFailed: number;
   skipped: number;
   declined: number;
+  /**
+   * Pairs whose folder in the way the operator's Overwrite replaced (round
+   * 20 #70): an outcome kind beside `declined`, recorded, never a failure.
+   */
+  overwritten: number;
   cancelled: number;
   review: number;
   /**
@@ -260,7 +269,7 @@ export type HeadlineCounts = {
   collisions: number;
 };
 const ZERO_COUNTS: HeadlineCounts = {
-  done: 0, failed: 0, targetsFailed: 0, skipped: 0, declined: 0, cancelled: 0, review: 0, collisions: 0,
+  done: 0, failed: 0, targetsFailed: 0, skipped: 0, declined: 0, overwritten: 0, cancelled: 0, review: 0, collisions: 0,
 };
 /** What the "to review" count is of. */
 export type ReviewKind = "edits" | "originals";
@@ -274,7 +283,8 @@ export const HEADLINE_SEPARATOR = " · ";
 /**
  * The composite count line: "12 refreshed · 5 failed · 6 targets failed ·
  * 4 skipped · 1 Edit to review". Fixed order — done · failed · targets failed
- * · skipped · declined · cancelled · to review — and a zero count is omitted;
+ * · skipped · declined · overwritten · cancelled · to review — and a zero
+ * count is omitted;
  * when every count is zero the line is the done part at zero ("0 synced").
  */
 export function compositeHeadline(
@@ -304,6 +314,7 @@ function tallyHeadline(t: TranslateFn, tally: OutcomeTally): string {
   part("outcome.targetsFailed", counts.targetsFailed);
   part("outcome.skipped", counts.skipped);
   part(tally.declined === "folders" ? "outcome.declinedFolders" : "outcome.declined", counts.declined);
+  part("outcome.overwritten", counts.overwritten);
   part("outcome.cancelled", counts.cancelled);
   part(REVIEW_KEY[review], counts.review);
   part("runReport.collisions", counts.collisions);
@@ -340,6 +351,13 @@ function headlineToast(
 /** The quiet line of a pair the operator declined ("Keep existing"). */
 const declinedNote = (ctx: ReportContext, name: string, tool: string) =>
   ctx.t("outcome.declinedLine", { name, tool: label(ctx, tool) });
+
+/**
+ * The recorded line of a pair whose folder the operator's Overwrite replaced
+ * (round 20 #70): where, so the run says what was replaced.
+ */
+const overwrittenNote = (ctx: ReportContext, name: string, tool: string, path: string) =>
+  ctx.t("outcome.overwrittenLine", { name, tool: label(ctx, tool), path });
 
 type TargetExists = Extract<CommandError, { code: "TARGET_EXISTS" }>;
 
@@ -485,6 +503,7 @@ const syncRank = (status: BatchTargetOutcome["status"] | ProjectSyncReport["item
     case "skipped":
       return 3;
     case "declined":
+    case "overwritten":
       return 2;
     case "synced":
       return 1;
@@ -548,9 +567,10 @@ function libraryMoveDeployments(report: LibraryMoveReport): LibraryMoveReport["d
 }
 
 function projectSyncCounts(report: ProjectSyncReport) {
-  const counts = { synced: 0, alreadyAssigned: 0, failed: 0, skipped: 0, declined: 0 };
+  const counts = { synced: 0, alreadyAssigned: 0, failed: 0, skipped: 0, declined: 0, overwritten: 0 };
   for (const { status } of projectDeployments(report).items) {
     if (status.status === "synced") counts.synced++;
+    else if (status.status === "overwritten") counts.overwritten++;
     else if (status.status === "already_assigned") counts.alreadyAssigned++;
     else if (status.status === "skipped") counts.skipped++;
     else if (status.status === "declined") counts.declined++;
@@ -579,7 +599,7 @@ export const isImportTargetFailure = (row: BatchTargetOutcome) =>
 export function importGroupKind(status: ImportGroupStatus): ImportGroupKind {
   if (status.status !== "replaced") return status.status;
   const rows = status.targets;
-  if (rows.some((row) => row.status.status === "synced")) return "replaced";
+  if (rows.some((row) => row.status.status === "synced" || row.status.status === "overwritten")) return "replaced";
   if (rows.some(isImportTargetFailure)) return "failed";
   const declined = rows.some((row) => row.status.status === "declined");
   const unanswered = rows.some(
@@ -622,6 +642,8 @@ export function refreshOutcome(
     single?: { name: string; success: string };
     /** Pairs the operator kept in the overwrite ask the report's collisions raised. */
     declined?: readonly DeclinedPair[];
+    /** Pairs whose folder the operator's Overwrite in that ask replaced. */
+    overwritten?: readonly OverwrittenPair[];
   },
 ): Outcome {
   const out: Outcome = empty();
@@ -672,6 +694,7 @@ export function refreshOutcome(
   }
   out.errors.push(...targetErrors);
   for (const pair of ctx.declined ?? []) out.notes.push(declinedNote(ctx, pair.skillName, pair.tool));
+  for (const pair of ctx.overwritten ?? []) out.notes.push(overwrittenNote(ctx, pair.skillName, pair.tool, pair.path));
   for (const skill of report.skills) {
     if (skill.status.status !== "refreshed" || !skill.status.edit_conflict)
       continue;
@@ -698,6 +721,7 @@ export function refreshOutcome(
     targetsFailed: summary.target_failures,
     skipped: summary.skipped,
     declined: ctx.declined?.length ?? 0,
+    overwritten: ctx.overwritten?.length ?? 0,
     cancelled: summary.cancelled,
     review: summary.conflicts,
     collisions: summary.collisions,
@@ -717,6 +741,7 @@ export function refreshOutcome(
       out.toast = toast(
         headlineTone(counts),
         t("invocationEdit.updateCompletedWithConflict", { name: ctx.single.name }),
+        detailOf(out.notes),
       );
     else if (!failed && !skipped)
       out.toast = toast(
@@ -754,7 +779,8 @@ function propagationEntries(
     };
     const collision = unansweredCollision(target.status.error);
     if (collision) {
-      reviews.push(collisionEntry(ctx, collision, subject));
+      // Propagation wrote at the row's recorded path: answered there (Astra B / Sol N1).
+      reviews.push(collisionEntry(ctx, collision, subject, "row"));
       continue;
     }
     errors.push({
@@ -780,7 +806,7 @@ function propagationEntries(
  * accompanying catalog replaces the whole library. */
 export function invocationEditOutcome(
   report: InvocationEditReport,
-  ctx: ReportContext & { declined?: readonly DeclinedPair[] },
+  ctx: ReportContext & { declined?: readonly DeclinedPair[]; overwritten?: readonly OverwrittenPair[] },
 ): Outcome<PlainEntry> {
   const { errors, reviews } = propagationEntries(
     report.propagation.targets,
@@ -789,7 +815,10 @@ export function invocationEditOutcome(
   );
   const saved = ctx.t("invocationEdit.saved");
   // Pairs kept in the overwrite ask its collisions raised: quiet notes.
-  const notes = (ctx.declined ?? []).map((pair) => declinedNote(ctx, pair.skillName, pair.tool));
+  const notes = [
+    ...(ctx.declined ?? []).map((pair) => declinedNote(ctx, pair.skillName, pair.tool)),
+    ...(ctx.overwritten ?? []).map((pair) => overwrittenNote(ctx, pair.skillName, pair.tool, pair.path)),
+  ];
   const parts = [
     saved,
     ...(errors.length ? [ctx.t("outcome.targetsFailed", { count: errors.length })] : []),
@@ -798,7 +827,7 @@ export function invocationEditOutcome(
   return {
     toast: errors.length || reviews.length
       ? toast(errors.length ? "failure" : "conflict", parts.join(HEADLINE_SEPARATOR), detailOf(notes))
-      : toast(notes.length ? "declined" : "success", saved, detailOf(notes)),
+      : toast(ctx.declined?.length ? "declined" : "success", saved, detailOf(notes)),
     errors,
     warnings: reviews,
     notes,
@@ -968,6 +997,10 @@ export function projectSyncOutcome(
       out.notes.push(declinedNote(ctx, item.skill_name, item.tool));
       continue;
     }
+    if (item.status.status === "overwritten") {
+      out.notes.push(overwrittenNote(ctx, item.skill_name, item.tool, item.status.path));
+      continue;
+    }
     if (item.status.status !== "failed") continue;
     const subject = { skillId: item.skill_id, skillName: item.skill_name, tool: item.tool, projectId: item.project_id };
     const collision = unansweredCollision(item.status.error);
@@ -1018,6 +1051,8 @@ export function projectSyncOutcome(
         return out;
       }
       if (counts.declined > 0) out.toast = toast("declined", out.notes.join("\n"));
+      else if (counts.overwritten > 0)
+        out.toast = toast("success", t(ctx.action === "toggleOn" ? "status.syncEnabled" : "projectsSurface.cellSynced"), detail);
       else if (report.skipped_projects.length > 0) out.toast = toast("skipped", out.warnings[out.warnings.length - 1].title);
       else if (counts.skipped > 0)
         out.toast = toast("skipped", t(ctx.action === "toggleOn" ? "projects.assignedWhileDisabled" : "projectsSurface.syncedWhileDisabled"));
@@ -1025,13 +1060,14 @@ export function projectSyncOutcome(
       break;
     case "bulkAssign":
       out.toast =
-        counts.synced === 0 && !failed && skipped === 0 && collisions === 0 && counts.declined === 0
+        counts.synced === 0 && !failed && skipped === 0 && collisions === 0 && counts.declined === 0 && counts.overwritten === 0
           ? toast("success", t("projects.bulkAssignNothing"))
           : headlineToast(t, "assigned", {
               done: counts.synced,
               failed: counts.failed,
               skipped,
               declined: counts.declined,
+              overwritten: counts.overwritten,
               collisions,
             }, {
               // A disabled skill's assignment is recorded, not synced: say why.
@@ -1045,6 +1081,7 @@ export function projectSyncOutcome(
         failed: counts.failed,
         skipped,
         declined: counts.declined,
+        overwritten: counts.overwritten,
         collisions,
       }, { detail });
       return out;
@@ -1141,7 +1178,7 @@ function isDisabledSkip(result: BatchTargetOutcome): boolean {
 }
 
 /** What a batch report's pairs settled as, beside the entries the fold raised. */
-type SyncTally = { synced: number; failed: number; skipped: number; declined: number; collisions: number };
+type SyncTally = { synced: number; failed: number; skipped: number; declined: number; overwritten: number; collisions: number };
 
 /** Bulk and install surface not-detected skips as per-tool warnings and
  * other bulk skips silently; selected install targets surface unwritable
@@ -1152,11 +1189,21 @@ type SyncTally = { synced: number; failed: number; skipped: number; declined: nu
  * declined note itself; install leaves the toast to `installOutcome`. */
 export function syncOutcome(
   report: BatchTargetOutcome[],
-  ctx: ReportContext & { action: "bulk" | "install" | "toggle" },
+  ctx: ReportContext & {
+    action: "bulk" | "install" | "toggle";
+    /** The route that met a collision still unanswered (default `sync`). */
+    collisionRoute?: CollisionRoute;
+  },
 ): Outcome<PlainEntry> {
   const { out, tally, disabledSkip } = foldSync(report, ctx);
   if (ctx.action === "bulk") {
-    const counts = { failed: tally.failed, skipped: tally.skipped, declined: tally.declined, collisions: tally.collisions };
+    const counts = {
+      failed: tally.failed,
+      skipped: tally.skipped,
+      declined: tally.declined,
+      overwritten: tally.overwritten,
+      collisions: tally.collisions,
+    };
     out.toast = headlineToast(ctx.t, "synced", { done: tally.synced, ...counts }, { detail: detailOf(out.notes) });
     out.tally = { done: [{ verb: "synced", count: tally.synced }], counts };
   }
@@ -1165,7 +1212,7 @@ export function syncOutcome(
     // A dismissed ask: the pair stays as it was, "to review" (D10/D12).
     if (tally.collisions > 0) out.toast = toast("conflict", ctx.t("runReport.collisions", { count: tally.collisions }));
     else if (tally.declined > 0) out.toast = toast("declined", out.notes.join("\n"));
-    else if (!disabledSkip) out.toast = toast("success", ctx.t("status.syncEnabled"));
+    else if (!disabledSkip) out.toast = toast("success", ctx.t("status.syncEnabled"), detailOf(out.notes));
   }
   return out;
 }
@@ -1179,7 +1226,7 @@ function foldSync(
   },
 ): { out: Outcome<PlainEntry>; tally: SyncTally; disabledSkip: boolean } {
   const out = empty();
-  const tally: SyncTally = { synced: 0, failed: 0, skipped: 0, declined: 0, collisions: 0 };
+  const tally: SyncTally = { synced: 0, failed: 0, skipped: 0, declined: 0, overwritten: 0, collisions: 0 };
   const skips = new NotInstalledSkips();
   let disabledSkip = false;
   for (const result of batchDeployments(report)) {
@@ -1191,6 +1238,11 @@ function foldSync(
     if (status.status === "declined") {
       tally.declined++;
       out.notes.push(declinedNote(ctx, result.skill_name, result.tool_key));
+      continue;
+    }
+    if (status.status === "overwritten") {
+      tally.overwritten++;
+      out.notes.push(overwrittenNote(ctx, result.skill_name, result.tool_key, status.outcome.target_path));
       continue;
     }
     // A Disabled pair is skipped by design, never a failure: silent in bulk
@@ -1283,6 +1335,7 @@ export function enableOutcome(
       failed: tally.failed + projectCounts.failed - projectCollisions,
       skipped: tally.skipped + projectCounts.skipped + report.projects.skipped_projects.length,
       declined: tally.declined + projectCounts.declined,
+      overwritten: tally.overwritten + projectCounts.overwritten,
       collisions: tally.collisions + projectCollisions,
     },
   };
@@ -1330,6 +1383,7 @@ export function importOutcome(
   const skips = new NotInstalledSkips();
   let targetsFailed = 0;
   let declined = 0;
+  let overwritten = 0;
   let divergent = 0;
   let collisions = 0;
   for (const group of report.groups) {
@@ -1373,6 +1427,11 @@ export function importOutcome(
       if (target.status.status === "declined") {
         if (wentAhead) declined++;
         out.notes.push(declinedNote(ctx, name, target.tool_key));
+        continue;
+      }
+      if (target.status.status === "overwritten") {
+        overwritten++;
+        out.notes.push(overwrittenNote(ctx, name, target.tool_key, target.status.outcome.target_path));
         continue;
       }
       const subject = { ...skill, tool: target.tool_key };
@@ -1448,6 +1507,7 @@ export function importOutcome(
       targetsFailed,
       skipped: counts.skipped,
       declined,
+      overwritten,
       review: divergent,
       collisions,
     },
@@ -1521,7 +1581,7 @@ export function installSettlementComplete(item: InstallSettlement): boolean {
   if (deployment.status !== "reported") return false;
   return deployment.report.every((row) => {
     const status = row.status;
-    if (status.status === "synced" || status.status === "declined") return true;
+    if (status.status === "synced" || status.status === "declined" || status.status === "overwritten") return true;
     if (unansweredCollision(status.error)) return false;
     if (status.status === "failed") return false;
     return status.error.code !== "TOOL_NOT_WRITABLE";
@@ -1550,7 +1610,7 @@ export function installOutcome(
   ctx: ReportContext & { source: "git" | "local" | "selection" },
 ): Outcome<PlainEntry> {
   const out = empty();
-  const counts = { done: 0, failed: 0, targetsFailed: 0, declined: 0, cancelled: 0, collisions: 0 };
+  const counts = { done: 0, failed: 0, targetsFailed: 0, declined: 0, overwritten: 0, cancelled: 0, collisions: 0 };
   for (const item of report) {
     if (item.status === "cancelled") {
       counts.cancelled++;
@@ -1572,6 +1632,7 @@ export function installOutcome(
       const { out: deployed, tally } = foldSync(deployment.report, { ...ctx, action: "install" });
       counts.targetsFailed += deployed.errors.length;
       counts.declined += tally.declined;
+      counts.overwritten += tally.overwritten;
       counts.collisions += tally.collisions;
       out.errors.push(...deployed.errors);
       out.warnings.push(...deployed.warnings.filter((entry) => entry.review));
@@ -1597,7 +1658,8 @@ export function installOutcome(
   const clean = headlineTone(counts) === "success";
   const lone = report.length === 1 && report[0].status === "installed" ? report[0].result.name : null;
   if (clean && lone !== null && ctx.source !== "selection")
-    out.toast = toast("success", ctx.t("add.added", { name: lone }));
+    // A folder the operator's Overwrite replaced is still recorded in the run.
+    out.toast = toast("success", ctx.t("add.added", { name: lone }), detailOf(out.notes));
   else if (counts.done > 0 || counts.cancelled > 0)
     out.toast = headlineToast(ctx.t, "installed", counts, { detail: detailOf(out.notes) });
   return out;
@@ -1820,7 +1882,7 @@ const strongest = (tones: OutcomeTone[]): OutcomeTone | null =>
 function mergeTallies(tallies: OutcomeTally[]): OutcomeTally {
   const done: OutcomeTally["done"] = [];
   const counts: Record<Exclude<keyof HeadlineCounts, "done">, number> = {
-    failed: 0, targetsFailed: 0, skipped: 0, declined: 0, cancelled: 0, review: 0, collisions: 0,
+    failed: 0, targetsFailed: 0, skipped: 0, declined: 0, overwritten: 0, cancelled: 0, review: 0, collisions: 0,
   };
   let review: ReviewKind | undefined;
   for (const tally of tallies) {
@@ -2152,7 +2214,9 @@ export function redeployCounts(report: RedeployReport) {
   let collisions = 0;
   let kept = 0;
   let skipped = 0;
+  let overwritten = 0;
   for (const move of report.moves) {
+    if (move.overwritten) overwritten += 1;
     switch (move.status.status) {
       case "moved":
       case "adopted":
@@ -2180,6 +2244,8 @@ export function redeployCounts(report: RedeployReport) {
     collisions,
     kept,
     skipped,
+    /** Moves whose folder in the way the operator's Overwrite replaced. */
+    overwritten,
     review: report.edited_copies.length + collisions,
     leftBehind: report.left_behind.length,
     removalFailed: report.left_behind.filter((item) => item.reason === "removal_failed").length,
@@ -2211,8 +2277,18 @@ export function redeployOutcome(
   out.completion = { reload: false, closeModal: false, conflict: false };
   const counts = redeployCounts(report);
   const tool = (key: string) => ctx.toolLabelById?.[key] ?? toolLabel(ctx.t, key);
-  const readers = (keys: readonly string[]) =>
-    keys.length ? ` ${ctx.t("redeploy.report.readers", { readers: keys.map(tool).join(ctx.t("common.listSeparator")) })}` : "";
+  // Sol 102: a copy is "shown twice" only where a duplicate is proven (the
+  // harness reads both folders); elsewhere it is "still visible".
+  const readers = (all: readonly string[], duplicates: readonly string[]) => {
+    const list = (keys: readonly string[]) => keys.map(tool).join(ctx.t("common.listSeparator"));
+    const visible = all.filter((key) => !duplicates.includes(key));
+    return [
+      ...(duplicates.length ? [ctx.t("redeploy.report.showsTwice", { readers: list(duplicates) })] : []),
+      ...(visible.length ? [ctx.t("redeploy.report.readers", { readers: list(visible) })] : []),
+    ]
+      .map((line) => ` ${line}`)
+      .join("");
+  };
 
   for (const move of report.moves) {
     const subject: EntrySubject = { skillId: move.skill_id, skillName: move.skill_name, tool: move.folder_key };
@@ -2237,11 +2313,15 @@ export function redeployOutcome(
     } else if (status.status === "kept") {
       out.notes.push(ctx.t("redeploy.report.keptLine", { name: move.skill_name, path: move.path }));
     }
+    if (move.overwritten)
+      out.notes.push(overwrittenNote(ctx, move.skill_name, move.folder_key, move.path));
   }
   for (const copy of report.edited_copies) {
     out.warnings.push({
       title: ctx.t("redeploy.report.editedTitle", { name: copy.skill_name, path: copy.path }),
-      message: ctx.t("redeploy.report.editedMessage") + readers(copy.readers),
+      message:
+        ctx.t(copy.ahead ? "redeploy.report.editedAheadMessage" : "redeploy.report.editedMessage") +
+        readers(copy.readers, copy.duplicate_readers),
       subject: { skillId: copy.skill_id, skillName: copy.skill_name, tool: copy.tool },
       review: true,
     });
@@ -2260,7 +2340,7 @@ export function redeployOutcome(
       message:
         (item.reason === "removal_failed" && item.error
           ? errorMessage(ctx, item.error)
-          : ctx.t(`redeploy.report.left.${item.reason}`)) + readers(item.readers),
+          : ctx.t(`redeploy.report.left.${item.reason}`)) + readers(item.readers, item.duplicate_readers),
       subject: { skillId: item.skill_id, skillName: item.skill_name, tool: item.tool },
       ...(item.error ? { error: item.error } : {}),
     };
@@ -2296,6 +2376,7 @@ export function redeployOutcome(
   part("redeploy.report.unfinished", counts.unfinished);
   part("redeploy.report.refused", counts.refused);
   part("redeploy.report.kept", counts.kept);
+  part("outcome.overwritten", counts.overwritten);
   part("redeploy.report.review", counts.review);
   part("redeploy.report.leftBehind", counts.leftBehind);
   if (parts.length === 0) parts.push(ctx.t(HEADLINE_DONE_KEY.moved, { count: 0 }));

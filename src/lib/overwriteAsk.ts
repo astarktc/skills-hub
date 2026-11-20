@@ -15,6 +15,7 @@ import type {
   BatchTargetOutcome,
   CommandError,
   InstallBatchReport,
+  OccupantOwner,
   ProjectSyncOutcome,
   ProjectSyncReport,
   PropagationOutcome,
@@ -43,6 +44,14 @@ export type OverwriteRow = {
   modifiedAt: number | null;
   /** The folder is byte-identical to the skill (the backend's answer). */
   sameContent: boolean;
+  /**
+   * Who put the folder there (round 20 #70), as the backend judged it where
+   * it observed the occupant: a recorded Deployment's artifact, or not ours.
+   * Null for an edited copy, which is Skills Hub's old copy by its question.
+   */
+  owner: OccupantOwner | null;
+  /** The owning Deployment's harness, labelled (null when not ours). */
+  ownerToolLabel: string | null;
   scope: OverwriteScope;
   /**
    * What is asked (redeploy only): `occupied` — a folder in a move's way
@@ -57,8 +66,16 @@ export type OverwriteRow = {
    */
   rowIds?: readonly string[];
   entryId?: string;
-  /** The harnesses that show a left edited copy twice (labels). */
+  /**
+   * An edited copy asked **ahead** of its move (Sol 104): the move is held
+   * by a folder in its way, asked in the same ask; `entryId` names the
+   * moved row.
+   */
+  ahead?: boolean;
+  /** The harnesses in which a left edited copy stays visible (labels). */
   readers?: string[];
+  /** Of `readers`, those that also read the new place: shown twice (labels, Sol 102). */
+  duplicateReaders?: string[];
 };
 
 /** The operator's per-row decision. */
@@ -80,11 +97,36 @@ type TargetExists = Extract<CommandError, { code: "TARGET_EXISTS" }>;
 const targetExists = (error: CommandError): TargetExists | null =>
   error.code === "TARGET_EXISTS" ? error : null;
 
-const facts = (error: TargetExists) => ({
+const facts = (error: TargetExists, labels: Labels) => ({
   path: error.path,
   modifiedAt: error.modifiedAt,
   sameContent: error.sameContent,
+  owner: error.owner,
+  ownerToolLabel: error.owner.kind === "deployment" ? (labels[error.owner.tool] ?? error.owner.tool) : null,
 });
+
+/**
+ * The ask row a recorded collision raises again (the Notifications panel's
+ * Overwrite… on a Propagation row, Astra B / Sol N1): the row and the path
+ * the report kept, answered at that row and path (`resolveTargetCollisions`).
+ */
+export function recordedCollisionRow(
+  skill: { skillId: string; skillName: string },
+  tool: string,
+  error: CommandError,
+  toolLabelById: Labels,
+): OverwriteRow | null {
+  const exists = targetExists(error);
+  if (!exists) return null;
+  return {
+    skillId: skill.skillId,
+    skillName: skill.skillName,
+    toolKey: tool,
+    toolLabel: toolLabelById[tool] ?? tool,
+    ...facts(exists, toolLabelById),
+    scope: { kind: "global" },
+  };
+}
 
 /** The askable rows of a global sync report (sync batch, Enable, install). */
 export function globalCollisionRows(
@@ -101,7 +143,7 @@ export function globalCollisionRows(
       skillName: result.skill_name,
       toolKey: result.tool_key,
       toolLabel: toolLabelById[result.tool_key] ?? result.tool_key,
-      ...facts(error),
+      ...facts(error, toolLabelById),
       scope: { kind: "global" },
     });
   }
@@ -123,7 +165,7 @@ export function projectCollisionRows(
       skillName: item.skill_name,
       toolKey: item.tool,
       toolLabel: toolLabelById[item.tool] ?? item.tool,
-      ...facts(error),
+      ...facts(error, toolLabelById),
       scope: { kind: "project", projectId: item.project_id },
     });
   }
@@ -252,6 +294,13 @@ export type CollisionRetry = {
 export type DeclinedPair = { skillName: string; tool: string };
 
 /**
+ * A pair whose folder the operator's Overwrite replaced (round 20 #70): an
+ * outcome kind beside `declined`, recorded in the run with the path it
+ * replaced, for the shapes whose report has no such row (Propagation).
+ */
+export type OverwrittenPair = { skillName: string; tool: string; path: string };
+
+/**
  * The askable rows of one skill's Sync targets as Propagation settled them
  * (a `TARGET_EXISTS` from the first sync of a row that owns nothing): a
  * global row is a (skill, Tool) pair, a project row an assignment.
@@ -272,7 +321,7 @@ export function propagationCollisionRows(
       skillName: skill.skillName,
       toolKey: tool,
       toolLabel: toolLabelById[tool] ?? tool,
-      ...facts(error),
+      ...facts(error, toolLabelById),
       scope:
         target.scope.scope === "project"
           ? { kind: "project", projectId: target.scope.project_id }
@@ -315,12 +364,13 @@ export function mergePropagationRetry(
   skill: { skillId: string; skillName: string },
   targets: readonly PropagationOutcome[],
   retry: CollisionRetry,
-): { targets: PropagationOutcome[]; declined: DeclinedPair[] } {
+): { targets: PropagationOutcome[]; declined: DeclinedPair[]; overwritten: OverwrittenPair[] } {
   const asked = new Set(retry.rows.map(overwriteRowKey));
   const global = new Map(retry.global.map((row) => [pairKey(row.skill_id, row.tool_key), row.status]));
   const projects = new Map((retry.projects?.items ?? []).map((item) => [assignmentKey(item), item.status]));
   const projectsSkipped = new Set((retry.projects?.skipped_projects ?? []).map((skip) => skip.project_id));
   const declined: DeclinedPair[] = [];
+  const overwritten: OverwrittenPair[] = [];
   const out: PropagationOutcome[] = [];
   for (const target of targets) {
     if (!asked.has(rowKeyOf(skill.skillId, target.scope))) {
@@ -344,21 +394,28 @@ export function mergePropagationRetry(
     }
     if (settled.status === "declined") {
       declined.push({ skillName: skill.skillName, tool: target.scope.tool });
+    } else if (settled.status === "overwritten") {
+      overwritten.push({
+        skillName: skill.skillName,
+        tool: target.scope.tool,
+        path: "outcome" in settled ? settled.outcome.target_path : settled.path,
+      });
     } else if (settled.status === "failed") {
       // The retry wrote the same row: still a first deploy if the asked one was.
       const firstDeploy = target.status.status === "failed" && target.status.first_deploy;
       out.push({ ...target, status: { status: "failed", error: settled.error, first_deploy: firstDeploy } });
     }
   }
-  return { targets: out, declined };
+  return { targets: out, declined, overwritten };
 }
 
 /** A Refresh / Update report with every refreshed skill's answered rows settled. */
 export function mergeRefreshRetry(
   report: RefreshReport,
   retry: CollisionRetry,
-): { report: RefreshReport; declined: DeclinedPair[] } {
+): { report: RefreshReport; declined: DeclinedPair[]; overwritten: OverwrittenPair[] } {
   const declined: DeclinedPair[] = [];
+  const overwritten: OverwrittenPair[] = [];
   const skills = report.skills.map((skill) => {
     if (skill.status.status !== "refreshed") return skill;
     const merged = mergePropagationRetry(
@@ -367,9 +424,10 @@ export function mergeRefreshRetry(
       retry,
     );
     declined.push(...merged.declined);
+    overwritten.push(...merged.overwritten);
     return { ...skill, status: { ...skill.status, targets: merged.targets } };
   });
-  return { report: { skills }, declined };
+  return { report: { skills }, declined, overwritten };
 }
 
 // ---------------------------------------------------------------------------
@@ -395,7 +453,7 @@ export function redeployAskRows(report: RedeployReport, toolLabelById: Labels): 
       skillName: move.skill_name,
       toolKey: move.folder_key,
       toolLabel: label(move.folder_key),
-      ...facts(error),
+      ...facts(error, toolLabelById),
       scope: { kind: "redeploy" },
       question: "occupied",
       rowIds: move.rows.map((row) => row.id),
@@ -410,10 +468,14 @@ export function redeployAskRows(report: RedeployReport, toolLabelById: Labels): 
       path: copy.path,
       modifiedAt: copy.modified_at,
       sameContent: false,
+      owner: null,
+      ownerToolLabel: null,
       scope: { kind: "redeploy" },
       question: "editedCopy",
       entryId: copy.entry_id,
+      ...(copy.ahead ? { ahead: true } : {}),
       readers: copy.readers.map(label),
+      duplicateReaders: copy.duplicate_readers.map(label),
     });
   }
   return rows;
@@ -466,15 +528,15 @@ const moveKey = (move: Pick<RedeployMove, "skill_id" | "folder_key">) => `${move
  */
 export function mergeRedeployRetry(first: RedeployReport, retry: RedeployReport): RedeployReport {
   const retried = new Map(retry.moves.map((move) => [moveKey(move), move]));
-  const settled = new Map(
-    retry.journal.map((entry) => [`${entry.skill_id}\n${entry.tool}\n${entry.path}`, entry.status]),
-  );
+  // Settlement is associated by the journal entry each row left (Astra,
+  // round 2), never by (skill, tool, path): two entries may share those.
+  const settled = new Map(retry.journal.map((entry) => [entry.entry_id, entry.status]));
   const moves = first.moves.map((move) => {
     const again = retried.get(moveKey(move));
     if (again) return again;
     if (move.status.status !== "left_old") return move;
     const outcomes = move.rows
-      .map((row) => settled.get(`${move.skill_id}\n${row.tool}\n${row.from}`))
+      .map((row) => (row.entry_id === null ? undefined : settled.get(row.entry_id)))
       .filter((status) => status !== undefined);
     if (outcomes.length > 0 && outcomes.every((status) => status === "finished" || status === "retained"))
       return { ...move, status: { status: "moved" as const } };
@@ -496,4 +558,150 @@ export function mergeRedeployRetry(first: RedeployReport, retry: RedeployReport)
     lost_disables: [...first.lost_disables, ...retry.lost_disables],
     refused_answers: [...first.refused_answers, ...retry.refused_answers],
   };
+}
+
+// ---------------------------------------------------------------------------
+// What the ask says per row (round 20 #70): who put the folder there, what
+// each answer does, and a label that tells two rows apart
+// ---------------------------------------------------------------------------
+
+type Translate = (key: string, options?: Record<string, unknown>) => string;
+
+/** The words of one ask row. */
+export type AskRowCopy = {
+  /** Who put the folder there: Skills Hub (naming the Deployment) or not ours. */
+  provenance: string;
+  /** The two answers, short (the per-row control's items and the buttons). */
+  keepLabel: string;
+  overwriteLabel: string;
+  /**
+   * What each answer does, as one sentence each (D12: the operator predicts
+   * the result). An edited copy asked ahead of its move says each happens
+   * only if the move goes ahead.
+   */
+  keep: string;
+  overwrite: string;
+  /**
+   * Why neither answer does anything now (null: the row's answer applies):
+   * an edited copy asked ahead of a move whose folder in the way is answered
+   * Keep — the move does not run, so its old copy is neither deleted nor
+   * left (`redeploy::execute` returns at the Keep answer, before the step
+   * that settles old copies).
+   */
+  voided: string | null;
+};
+
+const readerList = (readers: readonly string[], t: Translate) => readers.join(t("common.listSeparator"));
+
+/**
+ * The words one ask row shows, from the backend's facts alone: the owner it
+ * judged, the scope the answer goes to, and — an edited copy — the readers it
+ * reported, a proven duplicate ("shows twice in …") kept apart from a copy
+ * that is merely still visible (Sol 102).
+ */
+export function askRowCopy(row: OverwriteRow, t: Translate, opts: { moveKept?: boolean } = {}): AskRowCopy {
+  const names = { name: row.skillName, tool: row.toolLabel };
+  if (row.question === "editedCopy") {
+    const duplicates = row.duplicateReaders ?? [];
+    const visible = (row.readers ?? []).filter((reader) => !duplicates.includes(reader));
+    const leaveParts = [
+      ...(duplicates.length > 0 ? [t("overwriteAsk.leaveShowsTwice", { readers: readerList(duplicates, t) })] : []),
+      ...(visible.length > 0 ? [t("overwriteAsk.leaveStillVisible", { readers: readerList(visible, t) })] : []),
+    ];
+    return {
+      provenance: t(row.ahead ? "overwriteAsk.owner.editedAhead" : "overwriteAsk.owner.edited", names),
+      keepLabel: t("overwriteAsk.leave"),
+      overwriteLabel: t("overwriteAsk.delete"),
+      keep: t(row.ahead ? "overwriteAsk.consequence.leaveAhead" : "overwriteAsk.consequence.leave", {
+        ...names,
+        where: leaveParts.length > 0 ? leaveParts.join("; ") : t("overwriteAsk.leaveNowhere"),
+      }),
+      overwrite: t(row.ahead ? "overwriteAsk.consequence.deleteAhead" : "overwriteAsk.consequence.delete", names),
+      voided: row.ahead && opts.moveKept ? t("overwriteAsk.consequence.aheadKept", names) : null,
+    };
+  }
+  const owner = row.owner;
+  const provenance =
+    owner?.kind === "deployment"
+      ? t(owner.projectId === null ? "overwriteAsk.owner.ours" : "overwriteAsk.owner.oursInProject", {
+          owner: owner.skillName,
+          ownerTool: row.ownerToolLabel ?? owner.tool,
+        })
+      : t("overwriteAsk.owner.foreign");
+  const overwrite =
+    owner?.kind === "deployment"
+      ? t(
+          row.scope.kind === "redeploy" ? "overwriteAsk.consequence.moveOverOurs" : "overwriteAsk.consequence.replaceOurs",
+          { ...names, owner: owner.skillName, ownerTool: row.ownerToolLabel ?? owner.tool },
+        )
+      : t(row.scope.kind === "redeploy" ? "overwriteAsk.consequence.moveOver" : "overwriteAsk.consequence.replace", names);
+  const keep = t(
+    row.scope.kind === "redeploy"
+      ? "overwriteAsk.consequence.keepMove"
+      : row.scope.kind === "project"
+        ? "overwriteAsk.consequence.keepProject"
+        : "overwriteAsk.consequence.keep",
+    names,
+  );
+  return {
+    provenance,
+    keepLabel: t("overwriteAsk.keep"),
+    overwriteLabel: t("overwriteAsk.overwrite"),
+    keep,
+    overwrite,
+    voided: null,
+  };
+}
+
+/**
+ * For each row, the row asking about the folder in its move's way when it
+ * is an edited copy asked **ahead** of that move (Sol 104): the occupied
+ * redeploy row whose move holds the moved row the copy names (`entryId` ∈
+ * `rowIds`) — its answer decides whether this one applies. Null otherwise.
+ */
+export function aheadMoveRows(rows: readonly OverwriteRow[]): (number | null)[] {
+  return rows.map((row) => {
+    if (row.question !== "editedCopy" || !row.ahead) return null;
+    const index = rows.findIndex(
+      (other) =>
+        other.scope.kind === "redeploy" &&
+        other.question !== "editedCopy" &&
+        (other.rowIds ?? []).includes(row.entryId ?? ""),
+    );
+    return index === -1 ? null : index;
+  });
+}
+
+/**
+ * The ask's lines about its edited copies: one for copies whose skill has
+ * moved already (it works from its new folder), one for copies asked ahead
+ * of a move a folder holds (their answer applies only if it goes ahead).
+ */
+export function editedCopyHints(rows: readonly OverwriteRow[], t: Translate): string[] {
+  const edited = rows.filter((row) => row.question === "editedCopy");
+  return [
+    ...(edited.some((row) => !row.ahead) ? [t("overwriteAsk.editedHint")] : []),
+    ...(edited.some((row) => row.ahead) ? [t("overwriteAsk.editedAheadHint")] : []),
+  ];
+}
+
+/**
+ * Each row's accessible name, distinct across the ask (Sol 112): skill,
+ * harness and path — an edited copy says it is the old copy — and, should two
+ * rows still read alike, their order ("2 of 2").
+ */
+export function askRowLabels(rows: readonly OverwriteRow[], t: Translate): string[] {
+  const base = rows.map((row) =>
+    t(row.question === "editedCopy" ? "overwriteAsk.rowLabelEdited" : "overwriteAsk.rowLabel", {
+      name: row.skillName,
+      tool: row.toolLabel,
+      path: row.path,
+    }),
+  );
+  return base.map((label, index) => {
+    const same = base.filter((other) => other === label).length;
+    if (same === 1) return label;
+    const nth = base.slice(0, index + 1).filter((other) => other === label).length;
+    return t("overwriteAsk.rowLabelNth", { label, index: nth, count: same });
+  });
 }

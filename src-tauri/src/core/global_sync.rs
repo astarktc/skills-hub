@@ -47,7 +47,7 @@ pub enum GlobalSyncError {
     TargetExists {
         target_path: PathBuf,
         /// The folder in the way, as the overwrite ask shows it (D12).
-        occupant: sync_engine::Occupant,
+        occupant: Box<sync_engine::Occupant>,
     },
     ToolNotWritable {
         tool_display_name: String,
@@ -260,7 +260,7 @@ fn classify_sync_error(
     {
         return GlobalSyncError::TargetExists {
             target_path: target.to_path_buf(),
-            occupant: exists.occupant,
+            occupant: Box::new(exists.occupant.clone()),
         };
     }
 
@@ -391,6 +391,14 @@ pub enum BatchTargetStatus {
     /// the pair is recorded `disabled`. Only this batch's override produces
     /// it; a later pass reports the same pair as a Disabled skip.
     Declined,
+    /// The operator answered the `TARGET_EXISTS` ask with Overwrite
+    /// (`OverrideDecision::Overwrite`) and the folder in the way was replaced
+    /// by the skill (round 20 #70): its own outcome kind beside `Declined`,
+    /// so the run records what was replaced. Only an answer produces it; an
+    /// answer that found nothing left to replace is plain `Synced`.
+    Overwritten {
+        outcome: SyncOutcome,
+    },
 }
 
 /// One row's result. `tool_key` is the raw row the outcome settled (a
@@ -880,6 +888,9 @@ fn sync_row(
         row.identity(),
         now,
     ) {
+        Ok(outcome) if answer == Some(OverrideDecision::Overwrite) && outcome.replaced => {
+            BatchTargetStatus::Overwritten { outcome }
+        }
         Ok(outcome) => BatchTargetStatus::Synced { outcome },
         Err(error) => {
             // Every failure but an unanswered collision settles the row

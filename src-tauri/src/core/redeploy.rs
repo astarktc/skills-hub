@@ -211,6 +211,9 @@ pub struct RedeployMove {
     /// The rows as recorded before the move.
     pub rows: Vec<MovedRow>,
     pub status: RedeployStatus,
+    /// The operator's Overwrite replaced the folder that stood at the new
+    /// place (round 20 #70): recorded in the run beside `kept`.
+    pub overwritten: bool,
 }
 
 /// One row of a move, as it was recorded.
@@ -220,6 +223,10 @@ pub struct MovedRow {
     pub tool: String,
     /// Where it recorded its artifact.
     pub from: String,
+    /// The journal entry this run left for the row's old artifact, when it
+    /// is still owed (an edited copy asked, or one left): what a later run's
+    /// settlement of it is associated by.
+    pub entry_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -299,9 +306,12 @@ pub struct LeftBehindCopy {
     pub tool: String,
     pub path: String,
     pub reason: RedeployLeftReason,
-    /// The detected harnesses that read its folder and will show the skill
-    /// twice.
+    /// The detected harnesses that read its folder: the copy is still
+    /// visible in each.
     pub readers: Vec<String>,
+    /// Those of `readers` that also read the folder the skill is deployed in
+    /// now: a proven duplicate, shown twice (Sol 102).
+    pub duplicate_readers: Vec<String>,
     /// Why its removal failed (`removal_failed`).
     pub error: Option<CommandError>,
 }
@@ -329,17 +339,26 @@ pub enum RedeployLeftReason {
 /// An edited copy: a row of the one overwrite ask (delete / leave).
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct EditedCopy {
-    /// The journal entry that asks — what an answer names.
+    /// The question's identity — what an answer names: the journal entry
+    /// that asks, or (`ahead`) the moved row whose old artifact it is.
     pub entry_id: String,
+    /// Asked **ahead** of its move (Sol 104): the move could not deploy yet
+    /// (a folder in its way, asked in the same ask), so the copy is not
+    /// journaled; the answer applies when the answered move removes its old
+    /// artifact, in the same retry. Otherwise asked by its journal entry.
+    pub ahead: bool,
     pub skill_id: String,
     pub skill_name: String,
     /// The key of the row that owned it.
     pub tool: String,
     pub path: String,
     pub modified_at: Option<i64>,
-    /// The detected harnesses that read its folder: who shows it twice if it
-    /// is left.
+    /// The detected harnesses that read its folder: if it is left, it stays
+    /// visible in each.
     pub readers: Vec<String>,
+    /// Those of `readers` that also read the folder the skill is deployed in:
+    /// a proven duplicate, shown twice if it is left (Sol 102).
+    pub duplicate_readers: Vec<String>,
 }
 
 /// A per-harness Disable that no longer holds once its row collapsed into a
@@ -371,7 +390,9 @@ pub enum RedeployAnswer {
         decision: OverrideDecision,
     },
     /// An edited old copy: delete it, or leave it (disowned). `entry_id` is
-    /// the journal entry that asked (`EditedCopy.entry_id`).
+    /// the question that asked (`EditedCopy.entry_id`): its journal entry,
+    /// or — asked ahead of its move — the moved row whose old artifact it
+    /// is.
     EditedCopy {
         entry_id: String,
         path: String,
@@ -703,9 +724,11 @@ fn execute(
                 id: row.id.clone(),
                 tool: row.tool.clone(),
                 from: row.target_path.clone(),
+                entry_id: None,
             })
             .collect(),
         status: RedeployStatus::Unchanged,
+        overwritten: false,
     };
     if let Some(refused) = &planned.refused {
         moved.status = RedeployStatus::Failed {
@@ -898,12 +921,35 @@ fn execute(
                     path: dest.clone(),
                     modified_at: exists.occupant.modified_at,
                     same_content: exists.occupant.same_content,
+                    owner: exists.occupant.owner.clone(),
                 },
                 None => CommandError::from_anyhow(err),
             };
             // Truthful status (audit 3 F14): a row whose old artifact is gone
             // and that could not be deployed at its new place is not
             // `synced` anywhere — whether the ask is still to come or not.
+            // A folder in the way is asked now; so is every edited old copy
+            // the answered move would meet, in the same ask (Sol 104).
+            if matches!(error, CommandError::TargetExists { .. }) {
+                for row in &live {
+                    if edited_ahead(ctx, skill, row, &planned.dest) {
+                        let old = Path::new(&row.target_path);
+                        crate::core::occupants::report(old);
+                        let (readers, duplicate_readers) = readers_of(ctx, old, &planned.dest);
+                        report.edited_copies.push(EditedCopy {
+                            entry_id: row.id.clone(),
+                            ahead: true,
+                            skill_id: skill.id.clone(),
+                            skill_name: skill.name.clone(),
+                            tool: row.tool.clone(),
+                            path: row.target_path.clone(),
+                            modified_at: modified_at(old),
+                            readers,
+                            duplicate_readers,
+                        });
+                    }
+                }
+            }
             settle_missing_old(
                 ctx,
                 &live,
@@ -923,25 +969,32 @@ fn execute(
         ),
     };
     let mut journal: Vec<RedeployJournalRecord> = deployment.set_aside.into_iter().collect();
+    // Which moved row each journal entry is for: what an answer asked ahead
+    // names, and what the report associates a later settlement by.
+    let mut entry_rows: Vec<(String, String)> = Vec::new();
     for row in &live {
         let old = Path::new(&row.target_path);
         if old == planned.dest {
             continue;
         }
+        let entry_id = Uuid::new_v4().to_string();
         match JournaledEntry::of(old)? {
-            Some(id) if id.id != new_entry.id => journal.push(RedeployJournalRecord {
-                id: Uuid::new_v4().to_string(),
-                row_id: survivor.id.clone(),
-                skill_id: skill.id.clone(),
-                tool: row.tool.clone(),
-                old_path: row.target_path.clone(),
-                old_entry: serde_json::to_string(&id)?,
-                old_content_hash: row.content_hash.clone(),
-                new_path: dest.clone(),
-                new_entry: serde_json::to_string(&new_entry)?,
-                state: STATE_PENDING.to_string(),
-                created_at: ctx.now,
-            }),
+            Some(id) if id.id != new_entry.id => {
+                entry_rows.push((entry_id.clone(), row.id.clone()));
+                journal.push(RedeployJournalRecord {
+                    id: entry_id,
+                    row_id: survivor.id.clone(),
+                    skill_id: skill.id.clone(),
+                    tool: row.tool.clone(),
+                    old_path: row.target_path.clone(),
+                    old_entry: serde_json::to_string(&id)?,
+                    old_content_hash: row.content_hash.clone(),
+                    new_path: dest.clone(),
+                    new_entry: serde_json::to_string(&new_entry)?,
+                    state: STATE_PENDING.to_string(),
+                    created_at: ctx.now,
+                });
+            }
             // Gone already, or physically the new place itself.
             _ => {}
         }
@@ -973,7 +1026,12 @@ fn execute(
     // answer) or anything not provably ours.
     let mut left_old: Option<bool> = None;
     for entry in &journal {
-        let settled = settle_entry(ctx, entry, None)?;
+        let row_id = entry_rows
+            .iter()
+            .find(|(entry_id, _)| *entry_id == entry.id)
+            .map(|(_, row_id)| row_id.as_str());
+        let answer = row_id.and_then(|row_id| ahead_answer(answers, row_id, &entry.old_path));
+        let settled = settle_entry(ctx, entry, answer)?;
         let stays = match &settled {
             Settled::Awaiting => Some(true),
             Settled::Left { reason, .. } => Some(*reason == RedeployLeftReason::Edited),
@@ -983,8 +1041,15 @@ fn execute(
         if let Some(edited) = stays {
             left_old = Some(left_old.unwrap_or(false) || edited);
         }
+        let still_owed = matches!(settled, Settled::Awaiting | Settled::Unfinished);
+        if let (true, Some(row_id)) = (still_owed, row_id) {
+            if let Some(row) = moved.rows.iter_mut().find(|row| row.id == row_id) {
+                row.entry_id = Some(entry.id.clone());
+            }
+        }
         record_settled(ctx, entry, settled, report)?;
     }
+    moved.overwritten = deployment.overwritten;
     moved.status = match left_old {
         Some(edited) => RedeployStatus::LeftOld { edited },
         None if deployment.adopted => RedeployStatus::Adopted,
@@ -1010,6 +1075,8 @@ struct Deployment {
     /// The occupant a staged replacement set aside: an old artifact the
     /// switch journals for removal.
     set_aside: Option<RedeployJournalRecord>,
+    /// The operator's Overwrite replaced a folder that was not ours.
+    overwritten: bool,
 }
 
 /// What occupies the new place, judged for the deploy (ADR-0007).
@@ -1071,6 +1138,7 @@ fn deploy(
             adopted: false,
             replacing: None,
             set_aside: None,
+            overwritten: false,
         });
     };
     let at_dest: Vec<&SkillTargetRecord> = planned
@@ -1090,6 +1158,7 @@ fn deploy(
                 adopted: true,
                 replacing: None,
                 set_aside: None,
+                overwritten: false,
             })
         }
         Judged::Ours => (
@@ -1099,7 +1168,7 @@ fn deploy(
         Judged::Foreign if answer == Some(OverrideDecision::Overwrite) => (true, None),
         Judged::Foreign => anyhow::bail!(TargetExistsError {
             target: planned.dest.clone(),
-            occupant: Occupant::observe(identity(), &planned.dest),
+            occupant: Occupant::observe(identity(), &planned.dest, Some(store)),
         }),
     };
     let staged = staged_replace(
@@ -1121,6 +1190,7 @@ fn deploy(
         adopted: false,
         replacing: Some(staged.replacing),
         set_aside: Some(staged.set_aside),
+        overwritten: answered,
     })
 }
 
@@ -1393,6 +1463,7 @@ fn staged_replace(
                     skill_id: &skill.id,
                 },
                 dest,
+                Some(store),
             ),
         }));
     }
@@ -1900,13 +1971,15 @@ fn record_settled(
     report: &mut RedeployReport,
 ) -> Result<JournalStatus> {
     let store = ctx.store;
-    let readers = |path: &Path| -> Vec<String> {
-        path.parent()
-            .map(|dir| readers_of_global_dir(ctx.roots, ctx.installed, dir))
-            .unwrap_or_default()
-            .into_iter()
-            .map(str::to_string)
-            .collect()
+    // Where the skill is served now: the new place (for a staged
+    // replacement's entry, the place it replaced into).
+    let serving = if matches!(
+        entry.state.as_str(),
+        STATE_REPLACING | STATE_REPLACING_ANSWERED
+    ) {
+        PathBuf::from(&entry.old_path)
+    } else {
+        PathBuf::from(&entry.new_path)
     };
     let old = Path::new(&entry.old_path);
     let skill_name = skill_name_of(store, &entry.skill_id)?;
@@ -1923,13 +1996,15 @@ fn record_settled(
             store.delete_redeploy_journal_entry(&entry.id)?;
             let path = at.unwrap_or_else(|| old.to_path_buf());
             log::info!("[redeploy] left {:?} on disk ({reason:?})", path);
+            let (readers, duplicate_readers) = readers_of(ctx, &path, &serving);
             report.left_behind.push(LeftBehindCopy {
                 skill_id: entry.skill_id.clone(),
                 skill_name,
                 tool: entry.tool.clone(),
                 path: path.to_string_lossy().into_owned(),
                 reason,
-                readers: readers(&path),
+                readers,
+                duplicate_readers,
                 error,
             });
             JournalStatus::LeftBehind
@@ -1938,14 +2013,19 @@ fn record_settled(
             if entry.state != STATE_EDITED {
                 store.set_redeploy_journal_state(&entry.id, STATE_EDITED)?;
             }
+            // The ask shows it: it may be revealed and read (round 20 #70).
+            crate::core::occupants::report(old);
+            let (readers, duplicate_readers) = readers_of(ctx, old, &serving);
             report.edited_copies.push(EditedCopy {
                 entry_id: entry.id.clone(),
+                ahead: false,
                 skill_id: entry.skill_id.clone(),
                 skill_name,
                 tool: entry.tool.clone(),
                 path: entry.old_path.clone(),
                 modified_at: modified_at(old),
-                readers: readers(old),
+                readers,
+                duplicate_readers,
             });
             JournalStatus::AwaitingAnswer
         }
@@ -1977,6 +2057,72 @@ fn edited_answer(
     None
 }
 
+/// The answer to an edited-copy question asked **ahead** of its move (Sol
+/// 104): one naming the moved row (`row_id`) and the old artifact's path the
+/// ask showed. It applies only to the journal entry this run wrote for that
+/// row at that path.
+fn ahead_answer(
+    answers: &[RedeployAnswer],
+    row_id: &str,
+    old_path: &str,
+) -> Option<EditedCopyDecision> {
+    answers.iter().find_map(|answer| match answer {
+        RedeployAnswer::EditedCopy {
+            entry_id,
+            path,
+            decision,
+        } if entry_id == row_id && path == old_path => Some(*decision),
+        _ => None,
+    })
+}
+
+/// Whether the old artifact of `row` would be an edited copy once its move
+/// deploys at `dest` — asked ahead, in the ask that asks about the folder in
+/// the move's way (Sol 104): a real folder (a link or file is never asked
+/// about), not the new place, that neither the row's recorded identity nor
+/// the Library's proves ours (`remove_old`'s evidence). Read-only; the
+/// answer applies only if the answered move's removal still asks it.
+fn edited_ahead(ctx: &Ctx<'_>, skill: &SkillRecord, row: &SkillTargetRecord, dest: &Path) -> bool {
+    let old = Path::new(&row.target_path);
+    if old == dest || same_entry(old, dest) || !real_dir(old) {
+        return false;
+    }
+    let central = Path::new(&skill.central_path);
+    let library_hash = content_identity::read(Source::Managed {
+        store: ctx.store,
+        skill_id: &skill.id,
+    });
+    let evidence = [
+        Deployed::recorded(true, Some(central), row.content_hash.as_deref()),
+        Deployed::recorded(true, Some(central), library_hash.as_deref()),
+    ];
+    !evidence
+        .iter()
+        .any(|deployed| matches!(ownership::check(old, deployed), Ok(Occupancy::Ours)))
+}
+
+/// Who still shows a copy left at `left` (the detected harnesses reading
+/// its folder) and, of those, who also reads the folder the skill is served
+/// from (`serving`): a proven duplicate, shown twice (Sol 102).
+fn readers_of(ctx: &Ctx<'_>, left: &Path, serving: &Path) -> (Vec<String>, Vec<String>) {
+    let of = |path: &Path| -> Vec<String> {
+        path.parent()
+            .map(|dir| readers_of_global_dir(ctx.roots, ctx.installed, dir))
+            .unwrap_or_default()
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    };
+    let readers = of(left);
+    let serving = of(serving);
+    let duplicates = readers
+        .iter()
+        .filter(|reader| serving.contains(reader))
+        .cloned()
+        .collect();
+    (readers, duplicates)
+}
+
 /// Refuse every answer that names no question this run asks: an edited-copy
 /// answer whose journal entry is gone (settled, or never this one), and an
 /// Overwrite/Keep answer for a move no longer planned. Nothing is touched for
@@ -1990,7 +2136,16 @@ fn refuse_unasked_answers(
     for answer in answers {
         match answer {
             RedeployAnswer::EditedCopy { entry_id, path, .. } => {
-                if !journal.iter().any(|entry| entry.id == *entry_id) {
+                // Its journal entry, or — asked ahead — a moved row of a
+                // planned move still recording the path the ask showed.
+                let journaled = journal.iter().any(|entry| entry.id == *entry_id);
+                let ahead = planned.iter().any(|move_| {
+                    move_
+                        .rows
+                        .iter()
+                        .any(|row| row.id == *entry_id && row.target_path == *path)
+                });
+                if !journaled && !ahead {
                     report.refused_answers.push(refused(path, entry_id));
                 }
             }

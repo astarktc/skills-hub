@@ -145,11 +145,14 @@ fn a_batch_of_three_with_one_collision_answers_one_report_and_writes_nothing_thr
                     path,
                     modified_at,
                     same_content,
+                    owner,
                 },
         } => {
             assert_eq!(Path::new(path), occupied);
             assert!(modified_at.is_some());
             assert!(!same_content);
+            // Nothing the app records put it there.
+            assert_eq!(*owner, crate::core::errors::OccupantOwner::Foreign);
         }
         other => panic!("{other:?}"),
     }
@@ -211,7 +214,7 @@ fn retrying_the_collision_with_overwrite_replaces_the_folder() {
 
     assert!(matches!(
         retry(&f, &beta, "beta", OverrideDecision::Overwrite),
-        BatchTargetStatus::Synced { .. }
+        BatchTargetStatus::Overwritten { .. }
     ));
     assert!(fs::read_to_string(occupied.join("SKILL.md"))
         .unwrap()
@@ -260,7 +263,7 @@ fn a_request_override_settles_the_collision_in_the_first_pass() {
     let report = run(&f, &req, None);
     assert!(matches!(
         target_status(&report, "beta"),
-        BatchTargetStatus::Synced { .. }
+        BatchTargetStatus::Overwritten { .. }
     ));
     assert!(fs::read_to_string(occupied.join("SKILL.md"))
         .unwrap()
@@ -666,12 +669,17 @@ fn an_occupant_whose_mtime_cannot_be_read_is_reported_unknown() {
 
     let f = fixture();
     let vanished = skills_dir_in(&f.paths.roots, claude()).join("vanished");
-    let occupant = Occupant::observe(Source::Directory(&f.source.join("alpha")), &vanished);
+    let occupant = Occupant::observe(
+        Source::Directory(&f.source.join("alpha")),
+        &vanished,
+        Some(&f.store),
+    );
     assert_eq!(
         occupant,
         Occupant {
             modified_at: None,
             same_content: false,
+            owner: crate::core::errors::OccupantOwner::Foreign,
         }
     );
 
@@ -679,12 +687,14 @@ fn an_occupant_whose_mtime_cannot_be_read_is_reported_unknown() {
         path: vanished.to_string_lossy().into_owned(),
         modified_at: occupant.modified_at,
         same_content: occupant.same_content,
+        owner: occupant.owner.clone(),
     };
     let json = serde_json::to_value(&row).unwrap();
     assert_eq!(json["code"], "TARGET_EXISTS");
     assert_eq!(json["modifiedAt"], serde_json::Value::Null);
     assert!(json.as_object().unwrap().contains_key("modifiedAt"));
     assert_eq!(json["sameContent"], false);
+    assert_eq!(json["owner"]["kind"], "foreign");
 }
 
 #[test]

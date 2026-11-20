@@ -158,7 +158,7 @@ function stubBackend(overrides?: {
                       tool_key: tool,
                       folder_key: tool,
                       status: overrides?.occupied?.includes(tool)
-                        ? { status: "failed" as const, error: { code: "TARGET_EXISTS" as const, path: `/${tool}/${name}`, modifiedAt: 1, sameContent: false } }
+                        ? { status: "failed" as const, error: { code: "TARGET_EXISTS" as const, path: `/${tool}/${name}`, modifiedAt: 1, sameContent: false, owner: { kind: "foreign" as const } } }
                         : overrides?.unwritable?.has(tool)
                           ? { status: "skipped" as const, error: { code: "TOOL_NOT_WRITABLE" as const, tool, path: `/${tool}` } }
                           : { status: "synced" as const, outcome: { mode_used: "symlink" as const, target_path: `/${tool}/${name}`, replaced: false } },
@@ -958,6 +958,8 @@ describe("Add: one overwrite ask per batch (D12)", () => {
 
     expect(installCalls()).toHaveLength(1);
     expect(setup.sync.resolveGlobalCollisions).toHaveBeenCalledTimes(1);
+    // No Cancel was pressed: an ordinary ask.
+    expect(setup.sync.resolveGlobalCollisions.mock.calls[0][3]).toEqual({});
     const [asked, skills, policy] = setup.sync.resolveGlobalCollisions.mock.calls[0];
     expect(asked.filter((row) => row.status.status === "failed").map((row) => [row.skill_name, row.tool_key])).toEqual([
       ["alpha", "claude"],
@@ -1103,6 +1105,8 @@ describe("Add: Cancel (D20) over the real reporter", () => {
     });
     // The ask's retry is a plain sync: Cancel is withdrawn while it runs.
     expect(setup.sync.resolveGlobalCollisions).toHaveBeenCalledTimes(1);
+    // The ask arrives after Cancel: it says the skill was already being added (#70).
+    expect(setup.sync.resolveGlobalCollisions.mock.calls[0][3]).toEqual({ afterCancel: true });
     expect(result.current.reporter.pending?.cancellable).toBe(false);
 
     await act(async () => {
@@ -1394,7 +1398,7 @@ describe("useAddSkillFlow import flow", () => {
           skill_name: "alpha",
           tool_key: "cursor",
           folder_key: "cursor",
-          status: { status: "failed", error: { code: "TARGET_EXISTS", path: "/home/.cursor/skills/alpha", modifiedAt: null, sameContent: false } },
+          status: { status: "failed", error: { code: "TARGET_EXISTS", path: "/home/.cursor/skills/alpha", modifiedAt: null, sameContent: false, owner: { kind: "foreign" as const } } },
         },
       ],
     });

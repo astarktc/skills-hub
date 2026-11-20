@@ -927,7 +927,7 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
       ui_zoom_level: { min: 0.5, max: 3 },
     },
   };
-  const exists = (path: string) => ({ code: "TARGET_EXISTS" as const, path, modifiedAt: 7, sameContent: false });
+  const exists = (path: string) => ({ code: "TARGET_EXISTS" as const, path, modifiedAt: 7, sameContent: false, owner: { kind: "foreign" as const } });
   const occupiedTarget = (tool: string, project?: string): PropagationOutcome => ({
     scope: project ? { scope: "project", project_id: project, tool } : { scope: "global", tool },
     folder_key: tool,
@@ -1087,7 +1087,8 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     const rows = rendered.result.current.reporter.notifications;
     expect(rows.filter((row) => row.kind === "error")).toEqual([]);
     expect(rows.filter((row) => row.review)).toMatchObject([
-      { role: "entry", kind: "warning", subject: { skillId: "s1", tool: "cursor" }, repair: { verb: "overwrite", tool: "cursor", via: "sync" } },
+      // Propagation wrote at the row's recorded path: answered there later (Astra B / Sol N1).
+      { role: "entry", kind: "warning", subject: { skillId: "s1", tool: "cursor" }, repair: { verb: "overwrite", tool: "cursor", via: "row" } },
     ]);
     expect(rows.find((row) => row.role === "headline")).toMatchObject({ kind: "warning" });
   });
@@ -1113,6 +1114,83 @@ describe("one operator action, one overwrite ask (the real sync world)", () => {
     expect(report.skills[0]!.status).toMatchObject({ targets: [] });
     expect(ctx.declined).toEqual([{ skillName: "alpha", tool: "cursor" }]);
     expect(rendered.result.current.reporter.notifications.filter((row) => row.kind === "error")).toEqual([]);
+  });
+
+  it("Refresh (all): an answered Overwrite is settled as an overwritten pair, recorded in the run (#70)", async () => {
+    const skills = [skill("s1", "alpha", ["claude"])];
+    backend(skills, {
+      refreshManagedSkills: [refreshedWith([occupiedTarget("cursor")])],
+      resolveTargetCollisions: [[
+        pair("s1", "cursor", {
+          status: "overwritten",
+          outcome: { mode_used: "symlink", target_path: "/tools/cursor/alpha", replaced: true },
+        }),
+      ]],
+    });
+    const rendered = renderReal();
+    await ready(rendered, skills);
+    const spy = vi.spyOn(folds, "refreshOutcome");
+    await drive(rendered, () => rendered.result.current.actions.run("update", "all", { confirmed: true }), "confirmed");
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [report, ctx] = spy.mock.calls[0]!;
+    // The replaced pair leaves the target rows and is its own outcome kind.
+    expect(report.skills[0]!.status).toMatchObject({ targets: [] });
+    expect(ctx.overwritten).toEqual([{ skillName: "alpha", tool: "cursor", path: "/tools/cursor/alpha" }]);
+    expect(ctx.declined).toEqual([]);
+    const headline = rendered.result.current.reporter.notifications.find((row) => row.role === "headline");
+    expect(headline?.title ?? "").toContain("outcome.overwritten");
+  });
+
+  it("Overwrite… on a recorded Propagation collision asks again at the row and path it kept (Astra B / Sol N1)", async () => {
+    const skills = [skill("s1", "alpha", ["claude"])];
+    backend(skills, {
+      resolveTargetCollisions: [[
+        pair("s1", "cursor", {
+          status: "overwritten",
+          outcome: { mode_used: "symlink", target_path: "/tools/cursor/alpha", replaced: true },
+        }),
+      ]],
+    });
+    const rendered = renderReal();
+    await ready(rendered, skills);
+    const asked = await drive(
+      rendered,
+      () =>
+        rendered.result.current.actions.run("retry", [skills[0]!], {
+          tool: "cursor",
+          answering: "collision",
+          recorded: exists("/tools/cursor/alpha"),
+        }),
+      "confirmed",
+    );
+    expect(asked).toEqual([["global:s1:cursor"]]);
+    // Never a batch to wherever the skill would go now.
+    expect(calls("syncSkillsToTools")).toEqual([]);
+    expect(calls("resolveTargetCollisions")[0]![1]).toEqual([
+      { skill_id: "s1", tool: "cursor", path: "/tools/cursor/alpha", decision: "overwrite" },
+    ]);
+    const rows = rendered.result.current.reporter.notifications;
+    expect(rows.filter((row) => row.kind === "error")).toEqual([]);
+  });
+
+  it("a recorded Propagation collision dismissed again stays to review, still answered at its row", async () => {
+    const skills = [skill("s1", "alpha", ["claude"])];
+    backend(skills, {});
+    const rendered = renderReal();
+    await ready(rendered, skills);
+    await drive(
+      rendered,
+      () =>
+        rendered.result.current.actions.run("retry", [skills[0]!], {
+          tool: "cursor",
+          answering: "collision",
+          recorded: exists("/tools/cursor/alpha"),
+        }),
+      "dismiss",
+    );
+    expect(calls("resolveTargetCollisions")).toEqual([]);
+    const review = rendered.result.current.reporter.notifications.filter((row) => row.review);
+    expect(review).toMatchObject([{ repair: { verb: "overwrite", tool: "cursor", via: "row" }, message: expect.stringContaining("/tools/cursor/alpha") }]);
   });
 
   it("Edit: its Propagation's collisions reach the ask and the retry", async () => {

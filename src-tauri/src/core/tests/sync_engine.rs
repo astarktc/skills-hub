@@ -1072,7 +1072,7 @@ mod junction_leg {
             content_identity::compare(Source::Directory(&other), &target),
             Comparison::Different
         );
-        assert!(Occupant::observe(Source::Directory(&central), &target).same_content);
+        assert!(Occupant::observe(Source::Directory(&central), &target, None).same_content);
         assert_eq!(
             content_identity::read(Source::Directory(&target)),
             content_identity::read(Source::Directory(&central))

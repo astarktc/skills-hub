@@ -27,6 +27,8 @@ const row = (skillId: string): OverwriteRow => ({
   path: `/t/${skillId}`,
   modifiedAt: null,
   sameContent: false,
+  owner: { kind: "foreign" },
+  ownerToolLabel: null,
   scope: { kind: "global" },
 });
 

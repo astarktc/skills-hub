@@ -223,7 +223,7 @@ describe("rich", () => {
     const progress = sink<{ index: number; total: number }>();
 
     const first = await handlers.syncSkillsToTools(batch, ["cursor"], { overwrite_if_same_content: true }, progress.channel );
-    expect(first[0].status).toEqual({ status: "failed", error: { code: "TARGET_EXISTS", path: "/Users/alex/.cursor/skills/zod-schema-first", modifiedAt: expect.any(Number), sameContent: false } });
+    expect(first[0].status).toEqual({ status: "failed", error: { code: "TARGET_EXISTS", path: "/Users/alex/.cursor/skills/zod-schema-first", modifiedAt: expect.any(Number), sameContent: false, owner: { kind: "foreign" as const } } });
     expect(progress.ticks).toEqual([{ index: 1, total: 1, skill_name: "zod-schema-first", tool: "cursor" }]);
 
     const retry = await handlers.syncSkillsToTools(
@@ -232,7 +232,25 @@ describe("rich", () => {
       { overrides: [{ skill_id: zod.id, tool: "cursor", path: "/Users/alex/.cursor/skills/zod-schema-first", decision: "overwrite" }] },
       sink().channel
     );
-    expect(retry[0].status).toMatchObject({ status: "synced", outcome: { replaced: true } });
+    // An answered Overwrite that replaced a folder is its own outcome kind (#70).
+    expect(retry[0].status).toMatchObject({ status: "overwritten", outcome: { replaced: true } });
+  });
+
+  it("reads only a folder an ask reported, against the skill (Rust core::occupants, #70)", async () => {
+    const { handlers } = backendFor("rich");
+    const zod = (await handlers.getManagedSkills()).find((s) => s.name === "zod-schema-first")!;
+    const path = "/Users/alex/.cursor/skills/zod-schema-first";
+    await expect(handlers.listOccupantFiles(path, zod.id)).rejects.toMatchObject({ code: "NOT_FOUND", kind: "occupant" });
+    const batch = [{ skill_id: zod.id, name: zod.name, source_path: zod.central_path }];
+    await handlers.syncSkillsToTools(batch, ["cursor"], { overwrite_if_same_content: true }, sink().channel);
+    const { entries: files, truncated } = await handlers.listOccupantFiles(path, zod.id);
+    expect(truncated).toBe(false);
+    expect(files.find((f) => f.path === "SKILL.md")?.compared).toBe("changed");
+    expect(files.find((f) => f.path === "NOTES.md")?.compared).toBe("only_here");
+    const both = await handlers.readOccupantFile(path, zod.id, "SKILL.md");
+    expect(both.occupant).toContain("Edited by hand");
+    expect(both.skill).not.toContain("Edited by hand");
+    await expect(handlers.listOccupantFiles(`${path}/SKILL.md`, zod.id)).rejects.toMatchObject({ kind: "occupant" });
   });
 
   it("writes a shared skills dir once and records one row, keyed by its folder", async () => {
@@ -594,7 +612,13 @@ describe("first-run and empty", () => {
     expect(byTool(divergent.targets).map((o) => o.status)).toEqual(
       ["claude_code", "codex", "pi"].map((tool) => ({
         status: "failed",
-        error: { code: "TARGET_EXISTS", path: `${globalRoot(tool)}/tdd`, modifiedAt: expect.any(Number), sameContent: false },
+        error: {
+          code: "TARGET_EXISTS",
+          path: `${globalRoot(tool)}/tdd`,
+          modifiedAt: expect.any(Number),
+          sameContent: false,
+          owner: { kind: "foreign" },
+        },
       })),
     );
     expect(divergent.targets.every((o) => o.skill_id === divergent.skill_id)).toBe(true);
@@ -1275,7 +1299,7 @@ describe("ticket-01 review: ownership, partial Disable, artifact presence", () =
     // Typed like the global batch's collision (ticket 02).
     const collision = {
       status: "failed",
-      error: { code: "TARGET_EXISTS", path: "/Users/alex/Projects/fresh/.claude/skills/prisma-review", modifiedAt: expect.any(Number), sameContent: false },
+      error: { code: "TARGET_EXISTS", path: "/Users/alex/Projects/fresh/.claude/skills/prisma-review", modifiedAt: expect.any(Number), sameContent: false, owner: { kind: "foreign" as const } },
     };
     type Act = (
       handlers: FixtureHandlers,
@@ -1648,6 +1672,7 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
             path: `${globalRoot("claude_code")}/${name}`,
             modifiedAt: expect.any(Number),
             sameContent: false,
+            owner: { kind: "foreign" },
           },
         },
       ]),
@@ -1677,7 +1702,7 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
       sink().channel,
     );
     expect(retry.map((o) => [o.skill_name, o.status.status])).toEqual([
-      ["lint-staged-rules", "synced"],
+      ["lint-staged-rules", "overwritten"],
       ["changelog-writer", "declined"],
     ]);
     expect(state.foreign.some((f) => f.name === "lint-staged-rules")).toBe(false);
@@ -1694,7 +1719,7 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
     const lint = report.candidates[0].status;
     if (lint.status !== "installed") throw new Error(lint.status);
     expect(lint.targets.map((o) => [o.tool_key, o.status.status])).toEqual([
-      ["claude_code", "synced"],
+      ["claude_code", "overwritten"],
       ["codex", "synced"],
     ]);
   });
@@ -1733,13 +1758,13 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
     const scope = { kind: "skill_tool" as const, skill_id: zod.id, tool: "cursor" };
     await handlers.disableSkillTargets(scope);
     const first = await handlers.enableSkillTargets(scope, []);
-    expect(first.global[0].status).toMatchObject({ status: "failed", error: { code: "TARGET_EXISTS", sameContent: false } });
+    expect(first.global[0].status).toMatchObject({ status: "failed", error: { code: "TARGET_EXISTS", sameContent: false, owner: { kind: "foreign" as const } } });
     expect(statusOf(await byName(handlers, "zod-schema-first"), "cursor")).toBe("disabled");
 
     const retried = await handlers.enableSkillTargets(scope, [
       { skill_id: zod.id, tool: "cursor", path: `${globalRoot("cursor")}/${zod.name}`, decision: "overwrite" },
     ]);
-    expect(retried.global.map((o) => o.status.status)).toEqual(["synced"]);
+    expect(retried.global.map((o) => o.status.status)).toEqual(["overwritten"]);
     expect(state.foreign.some((f) => f.tool === "cursor" && f.name === "zod-schema-first")).toBe(false);
   });
 
@@ -1802,7 +1827,7 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
       if (toggled.kind !== "assigned") throw new Error(toggled.kind);
       expect(toggled.report.items[0].status).toEqual({
         status: "failed",
-        error: { code: "TARGET_EXISTS", path, modifiedAt: expect.any(Number), sameContent: false },
+        error: { code: "TARGET_EXISTS", path, modifiedAt: expect.any(Number), sameContent: false, owner: { kind: "foreign" as const } },
       });
 
       const resolved = await handlers.resolveProjectCollisions([
@@ -1810,7 +1835,7 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
       ]);
       const row = project.assignments.find((a) => a.skill_id === prisma.id && a.tool === "claude_code")!;
       if (decision === "overwrite") {
-        expect(resolved.items[0].status).toEqual({ status: "synced" });
+        expect(resolved.items[0].status).toEqual({ status: "overwritten", path });
         expect(row.status).toBe("synced");
         expect(state.projectOccupants).not.toContain(path);
       } else {
@@ -1846,7 +1871,7 @@ describe("ticket 04: one install batch, one overwrite ask (D12, D20)", () => {
         { project_id: project.id, skill_id: zod.id, tool: "claude_code", path, decision },
       ]);
       if (decision === "overwrite") {
-        expect(resolved.items[0].status).toEqual({ status: "synced" });
+        expect(resolved.items[0].status).toEqual({ status: "overwritten", path });
         expect(row().synced_at).not.toBeNull();
         expect(state.projectOccupants).not.toContain(path);
       } else {
@@ -1968,14 +1993,14 @@ describe("ticket 18: ownership means the current occupant (ADR-0007)", () => {
     const first = (await handlers.updateManagedSkill(zod.id, sink().channel)).report;
     expect(globalOutcome(first, "deep_agents_code")).toMatchObject({
       status: "failed",
-      error: { code: "TARGET_EXISTS", path, sameContent: false },
+      error: { code: "TARGET_EXISTS", path, sameContent: false, owner: { kind: "foreign" as const } },
     });
     expect(state.copyIdentities[path]).toBe("the operator's edits");
 
     const answer = await handlers.resolveTargetCollisions([
       { skill_id: zod.id, tool: "deep_agents_code", path, decision: "overwrite" },
     ]);
-    expect(answer[0].status).toMatchObject({ status: "synced", outcome: { mode_used: "copy", target_path: path } });
+    expect(answer[0].status).toMatchObject({ status: "overwritten", outcome: { mode_used: "copy", target_path: path } });
     const skill = state.skills.find((s) => s.dto.id === zod.id)!;
     expect(storedRow(state, zod.id, "deep_agents_code")).toMatchObject({ mode: "copy", deployed_hash: skill.contentHash });
     expect(state.copyIdentities[path]).toBeUndefined();
@@ -2023,7 +2048,7 @@ describe("ticket 18: ownership means the current occupant (ADR-0007)", () => {
     const answered = await handlers.resolveTargetCollisions([
       { skill_id: zod.id, tool: "claude_code", path: recorded, decision: "overwrite" },
     ]);
-    expect(answered[0].status).toMatchObject({ status: "synced", outcome: { target_path: recorded } });
+    expect(answered[0].status).toMatchObject({ status: "overwritten", outcome: { target_path: recorded } });
     const left = state.foreign.map((f) => `${globalRoot(f.tool)}/${f.name}`);
     expect(left).toContain(destination);
     expect(left).not.toContain(recorded);
@@ -2396,6 +2421,33 @@ describe("fixture redeploy", () => {
     expect(second.report.journal.map((j) => j.status)).toEqual(["finished"]);
     expect(second.report.refused_answers).toEqual([]);
     expect(second.preview).toEqual({ global: { correction: 0, migration: 0 }, journal: 0, harnesses: [] });
+  });
+
+  it("a move with a folder in its way and an edited old copy asks both in one ask (Sol 104)", async () => {
+    const { handlers, state } = backendFor("redeploy");
+    const zodMove = state.redeploy.moves.find((m) => m.occupied)!;
+    zodMove.edited = true;
+    const first = await handlers.redeployDeployments([], sink<RedeployProgress>().channel);
+    const occupied = first.report.moves.find((m) => m.status.status === "failed")!;
+    const ahead = first.report.edited_copies.find((c) => c.ahead)!;
+    expect(ahead).toMatchObject({ skill_id: zodMove.skillId, entry_id: `${zodMove.skillId}:kilo_code`, path: zodMove.from });
+    const second = await handlers.redeployDeployments(
+      [
+        {
+          question: "occupied",
+          skill_id: occupied.skill_id,
+          folder_key: occupied.folder_key,
+          row_ids: occupied.rows.map((row) => row.id),
+          path: occupied.path,
+          decision: "overwrite",
+        },
+        { question: "edited_copy", entry_id: ahead.entry_id, path: ahead.path, decision: "delete" },
+      ],
+      sink<RedeployProgress>().channel,
+    );
+    const zod = second.report.moves.find((m) => m.skill_id === zodMove.skillId)!;
+    expect(zod).toMatchObject({ status: { status: "moved" }, overwritten: true });
+    expect(second.report.refused_answers).toEqual([]);
   });
 
   it("answers naming another question are refused and touch nothing (Rust answer identity)", async () => {

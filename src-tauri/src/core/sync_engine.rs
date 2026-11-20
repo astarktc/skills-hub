@@ -4,9 +4,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use super::content_identity::{self, Source};
-use super::errors::{DestinationRefusal, SignalError};
+use super::errors::{DestinationRefusal, OccupantOwner, SignalError};
+use super::occupants;
 use super::ownership::{self, Deployed, Occupancy};
 use super::removal_fence::{self, Claim, Entry, Fence, Place, ProtectedLibrary};
+use super::skill_store::SkillStore;
 use super::tool_adapters::ToolAdapter;
 
 /// Typed condition: the sync target already exists and overwrite was not
@@ -23,7 +25,7 @@ pub struct TargetExistsError {
 }
 
 /// The folder in a sync target's way, as the overwrite ask displays it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Occupant {
     /// The existing folder's modification time (ms since the epoch); `None`
     /// when the filesystem cannot say.
@@ -31,6 +33,10 @@ pub struct Occupant {
     /// Whether its content is byte-identical to the skill's (the content
     /// identity rule). The frontend never re-derives it.
     pub same_content: bool,
+    /// Who put it there (round 20 #70): a recorded Deployment's artifact by
+    /// its own evidence, or not ours (`ownership::recorded_owner`). Without
+    /// a store to read (an engine test) it is `Foreign`.
+    pub owner: OccupantOwner,
 }
 
 impl Occupant {
@@ -38,25 +44,36 @@ impl Occupant {
     /// Managed skill's identity is its stored one (`Source::Managed`, the
     /// same read the overwrite policy decided with), never a re-hash of the
     /// central copy; `Source::Directory` is for genuinely unmanaged bytes.
-    pub fn observe(identity: Source<'_>, target: &Path) -> Self {
+    /// The occupant is **reported** (`core::occupants`): the ask that shows
+    /// it may reveal and read it, and nothing else.
+    pub fn observe(identity: Source<'_>, target: &Path, store: Option<&SkillStore>) -> Self {
         let modified_at = std::fs::metadata(target)
             .or_else(|_| std::fs::symlink_metadata(target))
             .and_then(|meta| meta.modified())
             .ok()
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|since| since.as_millis() as i64);
+        let owner = match store {
+            Some(store) => ownership::recorded_owner(store, target).unwrap_or_else(|err| {
+                log::warn!("who put {:?} there is unknown: {err:#}", target);
+                OccupantOwner::Foreign
+            }),
+            None => OccupantOwner::Foreign,
+        };
+        occupants::report(target);
         Self {
             modified_at,
             same_content: content_identity::same_content(identity, target),
+            owner,
         }
     }
 }
 
 impl TargetExistsError {
-    fn at(identity: Source<'_>, target: &Path) -> Self {
+    fn at(identity: Source<'_>, target: &Path, library: &ProtectedLibrary<'_>) -> Self {
         Self {
             target: target.to_path_buf(),
-            occupant: Occupant::observe(identity, target),
+            occupant: Occupant::observe(identity, target, library.store()),
         }
     }
 }
@@ -198,7 +215,13 @@ impl TargetParents<'_> {
 /// when a folder is in the way, for the ask's `same_content` fact.
 #[cfg(test)]
 pub fn sync_dir_hybrid(source: &Path, identity: Source<'_>, target: &Path) -> Result<SyncOutcome> {
-    hybrid(source, identity, target, TargetParents::CreateMissing)
+    hybrid(
+        source,
+        identity,
+        target,
+        TargetParents::CreateMissing,
+        &ProtectedLibrary::unrecorded(),
+    )
 }
 
 fn hybrid(
@@ -206,6 +229,7 @@ fn hybrid(
     identity: Source<'_>,
     target: &Path,
     parents: TargetParents<'_>,
+    library: &ProtectedLibrary<'_>,
 ) -> Result<SyncOutcome> {
     if target.exists() {
         if is_same_link(target, source) {
@@ -215,7 +239,7 @@ fn hybrid(
                 replaced: false,
             });
         }
-        anyhow::bail!(TargetExistsError::at(identity, target));
+        anyhow::bail!(TargetExistsError::at(identity, target, library));
     }
 
     ensure_parent_dir(target, parents)?;
@@ -296,12 +320,12 @@ fn hybrid_with_overwrite(
             replace_occupant(source, target, &replace, library)?;
             did_replace = true;
         } else {
-            anyhow::bail!(TargetExistsError::at(identity, target));
+            anyhow::bail!(TargetExistsError::at(identity, target, library));
         }
     }
 
     // reuse normal flow
-    hybrid(source, identity, target, parents).map(|mut out| {
+    hybrid(source, identity, target, parents, library).map(|mut out| {
         out.replaced = did_replace;
         out
     })
@@ -343,7 +367,7 @@ fn copy_with_overwrite(
             replace_occupant(source, target, &replace, library)?;
             did_replace = true;
         } else {
-            anyhow::bail!(TargetExistsError::at(identity, target));
+            anyhow::bail!(TargetExistsError::at(identity, target, library));
         }
     }
 

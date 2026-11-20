@@ -3598,7 +3598,7 @@ fn an_overwrite_answer_reaches_only_the_asked_row_and_path() {
     );
     assert!(matches!(
         answered.items[0].status,
-        ProjectSyncOutcomeStatus::Synced
+        ProjectSyncOutcomeStatus::Overwritten { .. }
     ));
     assert!(
         previous

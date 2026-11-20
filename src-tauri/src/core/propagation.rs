@@ -527,7 +527,13 @@ fn resolve_target_collision(
                     content_hash: content_hash.as_deref(),
                 },
             )?;
-            Ok(outcome(BatchTargetStatus::Synced { outcome: synced }))
+            // The operator's Overwrite replaced a folder that was not ours:
+            // its own outcome kind, recorded in the run (round 20 #70).
+            Ok(outcome(if !ours && synced.replaced {
+                BatchTargetStatus::Overwritten { outcome: synced }
+            } else {
+                BatchTargetStatus::Synced { outcome: synced }
+            }))
         }
         Err(error) => {
             let detail = format!("{:#}", error);

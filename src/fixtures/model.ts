@@ -189,6 +189,12 @@ export type FixtureState = {
   /** Paths "Reveal in Finder" was asked to show (`reveal_path`), in order. */
   revealed: string[];
   /**
+   * Folders an overwrite ask reported in a target's way (Rust
+   * `core::occupants`), with what is in them: the only folders the occupant
+   * read admits (round 20 #70).
+   */
+  reportedOccupants: Record<string, FixtureFile[]>;
+  /**
    * Project artifact paths holding bytes the app never wrote: a folder in the
    * way of a project first sync (the project counterpart of `foreign`).
    */

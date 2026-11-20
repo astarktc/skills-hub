@@ -78,6 +78,23 @@ describe("rowActions (D11: rows carry actions)", () => {
       { kind: "show", skillId: "s1" },
       { kind: "overwrite", skillId: "s1", tool: "cursor", via: "enable" },
     ]);
+    // A Propagation collision keeps its row and path: answered there (Astra B / Sol N1).
+    const recorded = {
+      code: "TARGET_EXISTS",
+      path: "/h/.cursor/skills/alpha",
+      modifiedAt: 1,
+      sameContent: false,
+      owner: { kind: "foreign" },
+    } as const;
+    expect(
+      rowActions(
+        row({ subject: { ...subject, tool: "cursor" }, error: recorded, repair: { verb: "overwrite", tool: "cursor", via: "row" }, review: true }),
+        exists,
+      ),
+    ).toEqual([
+      { kind: "show", skillId: "s1" },
+      { kind: "overwrite", skillId: "s1", tool: "cursor", via: "row", recorded },
+    ]);
   });
 
   it("gone upstream (404) offers Change source… instead of a retry", () => {

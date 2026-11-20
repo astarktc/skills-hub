@@ -54,6 +54,8 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::search_skills_online,
             commands::list_skill_files,
             commands::read_skill_file,
+            commands::list_occupant_files,
+            commands::read_occupant_file,
             commands::clone_explore_skill,
             commands::hide_explore_skill,
             commands::unhide_explore_skill,

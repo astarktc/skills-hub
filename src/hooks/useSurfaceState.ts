@@ -121,7 +121,12 @@ export type DialogState =
 /** A question an action awaits. */
 export type AskRequest =
   | { kind: "sharedDir"; toolKey: string; toolLabel: string; labels: string[] }
-  | { kind: "overwrite"; rows: OverwriteRow[] }
+  /**
+   * The one overwrite ask (D12). `afterCancel`: the operator pressed Cancel
+   * while the skills it asks about were already being added — the ask says
+   * so (round 20 #70).
+   */
+  | { kind: "overwrite"; rows: OverwriteRow[]; afterCancel?: boolean }
   /**
    * D48: a harness just turned on with auto-deploy on — deploy the library's
    * `count` skills to it now? `duplicates`: the cross-read pairs turning it on

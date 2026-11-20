@@ -19,6 +19,8 @@ import type {
   CandidateMatch,
   CloudSync,
   CommandError,
+  FileComparison,
+  OccupantOwner,
   DisableScope,
   EnableReport,
   GitSkillCandidate,
@@ -140,6 +142,9 @@ type ProgressSink<T> = Pick<Channel<T>, "onmessage">;
 const permissionDeniedText = (path: string) => `Permission denied (os error 13): ${path}`;
 /** A removal the OS refuses for lack of permission — typed like Rust's
  * `sync_engine::remove_path_any` (`REMOVAL_PERMISSION_DENIED`, BACKLOG #76). */
+/** Rust `skill_files::OCCUPANT_FILES_MAX`: a folder in the way lists this many files at most. */
+const OCCUPANT_FILES_MAX = 500;
+
 const PERMISSION_DENIED = (path: string): CommandError => ({
   code: "REMOVAL_PERMISSION_DENIED",
   path,
@@ -301,12 +306,51 @@ export function createFixtureBackend(
    * (Rust `sync_engine::Occupant`, D12): every seeded occupant was last
    * modified three days before the fixture's clock.
    */
-  const targetExists = (path: string, sameContent = false): CommandError => ({
-    code: "TARGET_EXISTS",
-    path,
-    modifiedAt: now() - 3 * 24 * 60 * 60 * 1000,
-    sameContent,
-  });
+  const targetExists = (path: string, sameContent = false, skill?: FixtureSkill): CommandError => {
+    reportOccupant(path, sameContent, skill);
+    return {
+      code: "TARGET_EXISTS",
+      path,
+      modifiedAt: now() - 3 * 24 * 60 * 60 * 1000,
+      sameContent,
+      owner: ownerAt(path, skill),
+    };
+  };
+
+  /**
+   * Who put the folder at `path` there (Rust `ownership::recorded_owner`): a
+   * live global row of another skill recording that path, or not ours.
+   */
+  const ownerAt = (path: string, asking?: FixtureSkill): OccupantOwner => {
+    for (const skill of state.skills) {
+      if (skill === asking) continue;
+      const row = skill.dto.targets.find(
+        (t) => t.target_path === path && t.status === "synced" && t.synced_at !== null,
+      );
+      if (row) return { kind: "deployment", skillName: skill.dto.name, tool: row.tool, projectId: null };
+    }
+    return { kind: "foreign" };
+  };
+
+  /**
+   * Rust `core::occupants`: a folder an ask reported, with what is in it (the
+   * fixture's stand-in for the disk) — the skill's files with an edit and a
+   * file of its own, unless it is byte-identical. Only these are read.
+   */
+  const reportOccupant = (path: string, sameContent: boolean, skill?: FixtureSkill) => {
+    if (state.reportedOccupants[path]) return;
+    const base = skill?.files ?? skillFiles(basename(path), "A folder Skills Hub did not write", "user-and-model");
+    state.reportedOccupants[path] = sameContent
+      ? clone(base)
+      : [
+          ...base.map((file) =>
+            file.path.toLowerCase() === "skill.md"
+              ? { ...file, content: file.content.replace("## When to use", "Edited by hand, outside Skills Hub.\n\n## When to use") }
+              : file,
+          ),
+          { path: "NOTES.md", content: "Local notes, written by hand.\n" },
+        ];
+  };
 
   // -------------------------------------------------------------------------
   // Global sync
@@ -478,6 +522,7 @@ export function createFixtureBackend(
     row: BatchRow,
     overwrite: boolean,
     overwriteIfSameContent: boolean,
+    answered = false,
   ): BatchTargetStatus => {
     const root = row.path.slice(0, row.path.lastIndexOf("/"));
     if (state.unwritableTools.includes(folder) || state.unwritableTools.includes(row.key)) {
@@ -498,13 +543,15 @@ export function createFixtureBackend(
       const identity = occupantIndex >= 0 ? state.foreign[occupantIndex].fingerprint : state.copyIdentities[row.path];
       const same = identity === skill.contentHash;
       if (!(overwrite || (same && overwriteIfSameContent))) {
-        return { status: "failed", error: targetExists(row.path, same) };
+        return { status: "failed", error: targetExists(row.path, same, skill) };
       }
       if (occupantIndex >= 0) state.foreign.splice(occupantIndex, 1);
       replaced = true;
     }
     const mode = recordTargets(skill, row);
-    return { status: "synced", outcome: { mode_used: mode, target_path: row.path, replaced } };
+    const outcome = { mode_used: mode, target_path: row.path, replaced };
+    // Rust `sync_row`: an answered Overwrite that replaced a folder is its own outcome kind.
+    return answered && replaced ? { status: "overwritten", outcome } : { status: "synced", outcome };
   };
 
   /**
@@ -609,7 +656,11 @@ export function createFixtureBackend(
             continue;
           }
           const overwrite = (policy.overwrite ?? false) || answer === "overwrite";
-          outcomes.push(outcome(syncPair(skill, key, row, overwrite, policy.overwrite_if_same_content ?? false)));
+          outcomes.push(
+            outcome(
+              syncPair(skill, key, row, overwrite, policy.overwrite_if_same_content ?? false, answer === "overwrite"),
+            ),
+          );
         }
       }
     }
@@ -1040,7 +1091,7 @@ export function createFixtureBackend(
         // recovers `sync_engine::TargetExistsError`); `last_error` keeps the chain.
         a.status = "error";
         a.last_error = `target already exists: "${path}"`;
-        return { status: "failed", error: targetExists(path) };
+        return { status: "failed", error: targetExists(path, false, skill ?? undefined) };
       }
       state.projectOccupants = state.projectOccupants.filter((p) => p !== path);
     }
@@ -1431,7 +1482,7 @@ export function createFixtureBackend(
         : state.unwritableTools.includes(row.tool)
           ? PERMISSION_DENIED(row.target_path)
           : occupied
-            ? targetExists(row.target_path, occupiedIdentity(row) === skill.contentHash)
+            ? targetExists(row.target_path, occupiedIdentity(row) === skill.contentHash, skill)
             : null;
       const scope = { scope: "global" as const, tool: row.tool };
       if (error) {
@@ -1531,7 +1582,9 @@ export function createFixtureBackend(
     const index = foreignAt(row.target_path);
     if (index >= 0) state.foreign.splice(index, 1);
     const mode = deployGlobal(skill, row, row.target_path);
-    return outcome({ status: "synced", outcome: { mode_used: mode, target_path: row.target_path, replaced: true } });
+    const synced = { mode_used: mode, target_path: row.target_path, replaced: true };
+    // The operator's Overwrite replaced a folder that was not ours (round 20 #70).
+    return outcome(ours ? { status: "synced", outcome: synced } : { status: "overwritten", outcome: synced });
   };
 
   /** Rebuild the central copy from the (fake) source; a new revision when upstream moved. */
@@ -2176,15 +2229,24 @@ export function createFixtureBackend(
       refused_answers: [],
     };
     const nameOf = (skillId: string) => state.skills.find((s) => s.dto.id === skillId)?.dto.name ?? skillId;
-    const editedCopy = (move: FixtureRedeployMove) => ({
-      entry_id: move.entryId ?? "",
-      skill_id: move.skillId,
-      skill_name: nameOf(move.skillId),
-      tool: move.tool,
-      path: move.from,
-      modified_at: now() - 3 * 60 * 60 * 1000,
-      readers: oldCopyReaders(move),
-    });
+    const editedCopy = (move: FixtureRedeployMove, ahead = false) => {
+      // Rust `core::occupants`: the ask shows it, so it may be read and revealed.
+      const skill = state.skills.find((s) => s.dto.id === move.skillId);
+      reportOccupant(move.from, false, skill);
+      return {
+        // Asked ahead of its move (Sol 104), the question is the moved row.
+        entry_id: ahead ? `${move.skillId}:${move.tool}` : (move.entryId ?? ""),
+        ahead,
+        skill_id: move.skillId,
+        skill_name: nameOf(move.skillId),
+        tool: move.tool,
+        path: move.from,
+        modified_at: now() - 3 * 60 * 60 * 1000,
+        readers: oldCopyReaders(move),
+        // No fixture reader is proven to read both folders (Sol 102).
+        duplicate_readers: [],
+      };
+    };
     const total = state.redeploy.awaiting.length + state.redeploy.moves.length;
     let done = 0;
     const awaiting: FixtureRedeployMove[] = [];
@@ -2211,7 +2273,13 @@ export function createFixtureBackend(
         report.journal.push({ ...entry, status: "finished" });
       } else {
         report.journal.push({ ...entry, status: "left_behind" });
-        report.left_behind.push({ ...entry, reason: "edited", readers: oldCopyReaders(move), error: null });
+        report.left_behind.push({
+          ...entry,
+          reason: "edited",
+          readers: oldCopyReaders(move),
+          duplicate_readers: [],
+          error: null,
+        });
       }
     }
     const remaining: FixtureRedeployMove[] = [];
@@ -2230,7 +2298,8 @@ export function createFixtureBackend(
         folder_key: move.folderKey,
         path: move.to,
         cause: "correction" as const,
-        rows: [{ id: rowId, tool: move.tool, from: move.from }],
+        rows: [{ id: rowId, tool: move.tool, from: move.from, entry_id: null as string | null }],
+        overwritten: false,
       };
       // An answer names the move's rows and the place it showed (Rust
       // `execute`): another is stale, the move fails and nothing is touched.
@@ -2249,11 +2318,10 @@ export function createFixtureBackend(
         remaining.push(move);
         report.moves.push({
           ...base,
-          status: {
-            status: "failed",
-            error: { code: "TARGET_EXISTS", path: move.to, modifiedAt: now() - 2 * 86_400_000, sameContent: false },
-          },
+          status: { status: "failed", error: targetExists(move.to, false, skill) },
         });
+        // The edited old copy is asked in the same ask (Sol 104).
+        if (move.edited) report.edited_copies.push(editedCopy(move, true));
         continue;
       }
       if (answer?.decision === "keep") {
@@ -2267,19 +2335,49 @@ export function createFixtureBackend(
         target.target_path = move.to;
         target.synced_at = now();
       }
-      if (move.edited) {
+      const overwritten = answer?.decision === "overwrite" && move.occupied === true;
+      if (overwritten) move.occupied = false;
+      // An answer asked ahead of this move: its row and the old copy's path.
+      const ahead = answers.find(
+        (a) => a.question === "edited_copy" && a.entry_id === rowId && a.path === move.from,
+      );
+      const aheadDecision = ahead?.question === "edited_copy" ? ahead.decision : undefined;
+      if (move.edited && aheadDecision === "delete") {
+        report.moves.push({ ...base, overwritten, status: { status: "moved" } });
+      } else if (move.edited && aheadDecision === "leave") {
+        report.left_behind.push({
+          skill_id: move.skillId,
+          skill_name: nameOf(move.skillId),
+          tool: move.tool,
+          path: move.from,
+          reason: "edited",
+          readers: oldCopyReaders(move),
+          duplicate_readers: [],
+          error: null,
+        });
+        report.moves.push({ ...base, overwritten, status: { status: "left_old", edited: true } });
+      } else if (move.edited) {
         move.entryId = `journal-${(nextJournalEntry += 1)}`;
         awaiting.push(move);
         report.edited_copies.push(editedCopy(move));
-        report.moves.push({ ...base, status: { status: "left_old", edited: true } });
+        report.moves.push({
+          ...base,
+          rows: [{ ...base.rows[0], entry_id: move.entryId }],
+          overwritten,
+          status: { status: "left_old", edited: true },
+        });
       } else {
-        report.moves.push({ ...base, status: { status: "moved" } });
+        report.moves.push({ ...base, overwritten, status: { status: "moved" } });
       }
     }
     // Answers naming no question this run asked (Rust
     // `refuse_unasked_answers`).
     for (const a of answers) {
-      if (a.question === "edited_copy" && !state.redeploy.awaiting.some((m) => m.entryId === a.entry_id)) {
+      if (
+        a.question === "edited_copy" &&
+        !state.redeploy.awaiting.some((m) => m.entryId === a.entry_id) &&
+        !state.redeploy.moves.some((m) => `${m.skillId}:${m.tool}` === a.entry_id && m.from === a.path)
+      ) {
         report.refused_answers.push(refusedAnswer(a.path, a.entry_id));
       }
       if (
@@ -2502,7 +2600,14 @@ export function createFixtureBackend(
       a.content_hash = null;
       return outcomeOf(project, a, { status: "declined" });
     }
-    return outcomeOf(project, a, syncAssignment(project, a, true));
+    const occupied = state.projectOccupants.includes(assignmentPath(project, a));
+    const settled = syncAssignment(project, a, true);
+    // Rust `resolve_collisions_unlocked`: an Overwrite that replaced a folder is its own kind.
+    return outcomeOf(
+      project,
+      a,
+      occupied && settled.status === "synced" ? { status: "overwritten", path: assignmentPath(project, a) } : settled,
+    );
   };
 
   const handlers = {
@@ -2827,6 +2932,43 @@ export function createFixtureBackend(
         state.skills.find((s) => s.dto.central_path === centralPath)?.files ?? previews.get(centralPath) ?? [];
       if (files.length === 0) fail({ code: "CENTRAL_PATH_MISSING", path: centralPath });
       return files.map((f) => ({ path: f.path, size: new TextEncoder().encode(f.content).length }));
+    },
+    listOccupantFiles: async (path, skillId) => {
+      await pause(80);
+      // Rust `admit_occupant`: only a folder an ask reported, exactly.
+      const theirs = state.reportedOccupants[path] ?? fail({ code: "NOT_FOUND", kind: "occupant", id: path });
+      const ours = state.skills.find((s) => s.dto.id === skillId)?.files ?? [];
+      const size = (content: string) => new TextEncoder().encode(content).length;
+      // Rust `OCCUPANT_FILES_MAX`: the folder's listing is bounded; the
+      // skill's files are probed in full, so one past the bound is compared.
+      const listed = theirs.slice(0, OCCUPANT_FILES_MAX);
+      const compare = (file: { path: string; content: string }): FileComparison => {
+        const mine = ours.find((f) => f.path === file.path);
+        return !mine ? "only_here" : mine.content === file.content ? "same" : "changed";
+      };
+      return {
+        entries: [
+          ...listed.map((file) => ({ path: file.path, size: size(file.content), compared: compare(file) })),
+          ...ours
+            .filter((mine) => !listed.some((file) => file.path === mine.path))
+            .map((mine) => {
+              const file = theirs.find((f) => f.path === mine.path);
+              return file
+                ? { path: file.path, size: size(file.content), compared: compare(file) }
+                : { path: mine.path, size: size(mine.content), compared: "only_in_skill" as const };
+            }),
+        ],
+        truncated: theirs.length > OCCUPANT_FILES_MAX,
+      };
+    },
+    readOccupantFile: async (path, skillId, filePath) => {
+      await pause(50);
+      const theirs = state.reportedOccupants[path] ?? fail({ code: "NOT_FOUND", kind: "occupant", id: path });
+      const ours = state.skills.find((s) => s.dto.id === skillId)?.files ?? [];
+      return {
+        occupant: theirs.find((f) => f.path === filePath)?.content ?? null,
+        skill: ours.find((f) => f.path === filePath)?.content ?? null,
+      };
     },
     readSkillFile: async (centralPath, filePath) => {
       await pause(50);

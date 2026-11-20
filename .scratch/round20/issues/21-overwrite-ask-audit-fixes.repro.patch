@@ -1,0 +1,1107 @@
+diff --git a/src-tauri/src/core/tests/global_sync.rs b/src-tauri/src/core/tests/global_sync.rs
+index 5713eb7..873357a 100644
+--- a/src-tauri/src/core/tests/global_sync.rs
++++ b/src-tauri/src/core/tests/global_sync.rs
+@@ -1423,3 +1423,67 @@ fn a_legacy_row_of_an_uninstalled_harness_is_left_as_it_was() {
+         (SyncStatus::Error, legacy.target_path.as_str(), None)
+     );
+ }
++
++// ---------------------------------------------------------------------------
++// QM-365 reproduction (check 11c)
++// ---------------------------------------------------------------------------
++
++/// Check 11 (c), global route: an Overwrite answer arrives after the folder
++/// in the way was moved aside; the deploy lands in an empty place and must
++/// not be recorded as overwritten.
++#[test]
++fn qm365_c11c_global_overwrite_into_an_emptied_place_is_not_overwritten() {
++    let dir = tempfile::tempdir().expect("tempdir");
++    let store = make_store(dir.path());
++    seed_skill(&store, "skill-1");
++    let source = make_skill_dir(dir.path(), "central-a", "# New A");
++    let root = dir.path().join("root");
++    let occupant = make_skill_dir(&root, "skill-a", "# Old A");
++    let skills = vec![batch_skill("skill-1", "skill-a", &source)];
++
++    let first = sync_skills_to_planned_tools(
++        &store,
++        &central_repo_of(&store),
++        &skills,
++        &[planned(claude(), &root, true)],
++        &BatchPolicy {
++            overwrite: false,
++            overwrite_if_same_content: true,
++            overrides: vec![],
++        },
++        1000,
++        |_| {},
++    );
++    assert!(matches!(
++        first[0].status,
++        BatchTargetStatus::Failed {
++            error: crate::core::errors::CommandError::TargetExists { .. }
++        }
++    ));
++    fs::rename(&occupant, root.join("moved-aside")).unwrap();
++
++    let retry = sync_skills_to_planned_tools(
++        &store,
++        &central_repo_of(&store),
++        &skills,
++        &[planned(claude(), &root, true)],
++        &BatchPolicy {
++            overwrite: false,
++            overwrite_if_same_content: true,
++            overrides: vec![BatchOverride {
++                skill_id: "skill-1".to_string(),
++                tool_key: "claude_code".to_string(),
++                decision: OverrideDecision::Overwrite,
++                path: Some(root.join("skill-a")),
++            }],
++        },
++        1100,
++        |_| {},
++    );
++
++    assert!(
++        matches!(retry[0].status, BatchTargetStatus::Synced { .. }),
++        "{:?}",
++        retry[0].status
++    );
++}
+diff --git a/src-tauri/src/core/tests/occupants.rs b/src-tauri/src/core/tests/occupants.rs
+index 14ee41d..4f5d071 100644
+--- a/src-tauri/src/core/tests/occupants.rs
++++ b/src-tauri/src/core/tests/occupants.rs
+@@ -27,3 +27,32 @@ fn only_the_most_recent_occupants_are_remembered() {
+     assert!(!is_reported(&first));
+     assert!(is_reported(&base.join(format!("later-{}", CAPACITY - 1))));
+ }
++
++// ---------------------------------------------------------------------------
++// QM-365 reproduction (check 9): the reported-occupant record's cap
++// ---------------------------------------------------------------------------
++
++/// Check 9: one action that reports more occupants than the record holds
++/// must still admit every row of that same ask. Correct behaviour: the first
++/// path of the action is still admitted after the action reported
++/// `CAPACITY + 1` paths.
++#[test]
++fn qm365_c09_one_action_reporting_past_the_cap_keeps_its_earliest_rows() {
++    let base = PathBuf::from(format!("/qm365-c09/{}", uuid::Uuid::new_v4()));
++    // One ask's rows, reported in row order (as one redeploy / batch does).
++    let rows: Vec<PathBuf> = (0..=CAPACITY)
++        .map(|i| base.join(format!("row-{i:04}")))
++        .collect();
++    for row in &rows {
++        report(row);
++    }
++    assert!(
++        is_reported(rows.last().unwrap()),
++        "the newest row is admitted"
++    );
++    assert!(
++        is_reported(&rows[0]),
++        "the first row of the same ask ({} rows, cap {CAPACITY}) is refused for the content view and Reveal",
++        rows.len()
++    );
++}
+diff --git a/src-tauri/src/core/tests/project_sync.rs b/src-tauri/src/core/tests/project_sync.rs
+index fbd44a4..a46a8ab 100644
+--- a/src-tauri/src/core/tests/project_sync.rs
++++ b/src-tauri/src/core/tests/project_sync.rs
+@@ -3808,3 +3808,135 @@ fn a_disabled_sibling_hides_no_failure_and_no_live_link_from_listing_or_total()
+         ProjectSyncStatus::Error
+     );
+ }
++
++// ---------------------------------------------------------------------------
++// QM-365 reproduction (checks 10, 11a, 12)
++// ---------------------------------------------------------------------------
++
++/// Check 10: one skill, one harness, two projects, each with a foreign folder
++/// in the way; both answered Overwrite. The recorded lines must say which
++/// project or path was overwritten: the two overwritten items carry distinct
++/// paths, each inside its own project.
++#[test]
++fn qm365_c10_two_projects_overwritten_name_their_own_paths() {
++    use crate::core::global_sync::OverrideDecision;
++    let (_db_dir, store) = make_store();
++    let tmpdir = tempfile::tempdir().unwrap();
++    let (project_a, skill, dir_a) = missing_folder_fixture(tmpdir.path(), &store, "c10");
++    let dir_b = tmpdir.path().join("c10-project-b");
++    fs::create_dir_all(&dir_b).unwrap();
++    let project_b = ProjectRecord {
++        id: uuid::Uuid::new_v4().to_string(),
++        path: dir_b.to_string_lossy().into_owned(),
++        created_at: 1000,
++        updated_at: 1000,
++    };
++    store.register_project(&project_b).unwrap();
++    add_tools(&store, &project_b, &["claude_code"]);
++    colliding_row(&store, &project_a, &skill, &dir_a);
++    colliding_row(&store, &project_b, &skill, &dir_b);
++
++    let decisions: Vec<project_sync::AssignmentDecision> = [&project_a, &project_b]
++        .iter()
++        .map(|project| project_sync::AssignmentDecision {
++            project_id: project.id.clone(),
++            skill_id: skill.id.clone(),
++            tool: "claude_code".into(),
++            path: asked_path(&store, &project.id, &skill.id, "claude_code"),
++            decision: OverrideDecision::Overwrite,
++        })
++        .collect();
++    let report =
++        project_sync::resolve_collisions(&store, &central_repo_of(&store), &decisions, 3000)
++            .unwrap();
++
++    let paths: Vec<String> = report
++        .items
++        .iter()
++        .map(|item| match &item.status {
++            ProjectSyncOutcomeStatus::Overwritten { path } => path.clone(),
++            other => panic!("not overwritten: {other:?}"),
++        })
++        .collect();
++    assert_eq!(paths.len(), 2);
++    assert_ne!(paths[0], paths[1], "the two lines are indistinguishable");
++    assert!(Path::new(&paths[0]).starts_with(&dir_a));
++    assert!(Path::new(&paths[1]).starts_with(&dir_b));
++}
++
++/// Check 11 (a), project route: the folder in the way is moved aside while
++/// the ask is open; Overwrite then lands in an empty place and must not be
++/// recorded as overwritten.
++#[test]
++fn qm365_c11a_project_overwrite_into_an_emptied_place_is_not_overwritten() {
++    use crate::core::global_sync::OverrideDecision;
++    let (_db_dir, store) = make_store();
++    let tmpdir = tempfile::tempdir().unwrap();
++    let (project, skill, dir) = missing_folder_fixture(tmpdir.path(), &store, "c11a");
++    colliding_row(&store, &project, &skill, &dir);
++    let occupant = dir.join(".claude/skills").join(&skill.name);
++    let asked = asked_path(&store, &project.id, &skill.id, "claude_code");
++    fs::rename(&occupant, dir.join(".claude/skills/moved-aside")).unwrap();
++
++    let report = project_sync::resolve_collisions(
++        &store,
++        &central_repo_of(&store),
++        &[project_sync::AssignmentDecision {
++            project_id: project.id.clone(),
++            skill_id: skill.id.clone(),
++            tool: "claude_code".into(),
++            path: asked,
++            decision: OverrideDecision::Overwrite,
++        }],
++        3000,
++    )
++    .unwrap();
++
++    assert!(
++        matches!(report.items[0].status, ProjectSyncOutcomeStatus::Synced),
++        "{:?}",
++        report.items[0].status
++    );
++}
++
++/// Check 12 (backend half): a legacy project row (`tool: trae_cn`, folder key
++/// `trae`) overwritten after an Overwrite answer is reported `overwritten`
++/// with its path and the folder key the fold groups by.
++#[test]
++fn qm365_c12_a_legacy_trae_cn_row_overwritten_is_reported_overwritten() {
++    use crate::core::global_sync::OverrideDecision;
++    let (_db, _tmp, store, project, skill) = trae_project();
++    add_tools(&store, &project, &["trae_cn"]);
++    seed_trae_row(&store, &project, &skill, "trae_cn", "trae-skill", false);
++    let foreign = trae_dir(&project).join("trae-skill");
++    foreign_folder_at(&foreign);
++    let asked = asked_path(&store, &project.id, &skill.id, "trae_cn");
++    assert_eq!(Path::new(&asked), foreign);
++
++    let report = project_sync::resolve_collisions(
++        &store,
++        &central_repo_of(&store),
++        &[project_sync::AssignmentDecision {
++            project_id: project.id.clone(),
++            skill_id: skill.id.clone(),
++            tool: "trae_cn".into(),
++            path: asked.clone(),
++            decision: OverrideDecision::Overwrite,
++        }],
++        3000,
++    )
++    .unwrap();
++
++    let item = &report.items[0];
++    eprintln!(
++        "c12 item: tool {} folder_key {} status {:?}",
++        item.tool, item.folder_key, item.status
++    );
++    assert_eq!(item.tool, "trae_cn");
++    assert_eq!(item.folder_key, "trae");
++    assert!(
++        matches!(&item.status, ProjectSyncOutcomeStatus::Overwritten { path } if *path == asked),
++        "{:?}",
++        item.status
++    );
++}
+diff --git a/src-tauri/src/core/tests/redeploy.rs b/src-tauri/src/core/tests/redeploy.rs
+index 141503f..4e722dd 100644
+--- a/src-tauri/src/core/tests/redeploy.rs
++++ b/src-tauri/src/core/tests/redeploy.rs
+@@ -2516,3 +2516,276 @@ fn the_operators_machine_has_nothing_to_move() {
+     assert_eq!(f.preview(), RedeployPreview::default());
+     assert!(f.run(&[]).moves.is_empty());
+ }
++
++// ---------------------------------------------------------------------------
++// QM-365 reproduction (checks 1c, 7, 8, 11b, 13)
++// ---------------------------------------------------------------------------
++
++/// Check 1 (c), report half: Keep for the folder in the way and Delete for
++/// the edited copy asked ahead of that move. The copy answer is not applied
++/// (the kept move never reaches the copy). Correct behaviour asserted here:
++/// the report says so — the answer is refused, or the copy is still asked.
++#[cfg(unix)]
++#[test]
++fn qm365_c01c_keep_destination_delete_copy_report_says_the_copy_answer_was_not_applied() {
++    let f = agents_fixture(&["codex"]);
++    let old = edited_copy(&f);
++    foreign_at(&f, ".agents/skills/alpha");
++    let first = f.run(&[]);
++    let ahead = first.edited_copies[0].clone();
++    assert!(ahead.ahead);
++
++    let retry = f.run(&[
++        occupied(&f, OverrideDecision::Keep),
++        RedeployAnswer::EditedCopy {
++            entry_id: ahead.entry_id.clone(),
++            path: ahead.path.clone(),
++            decision: EditedCopyDecision::Delete,
++        },
++    ]);
++
++    assert!(
++        old.join("local.txt").is_file(),
++        "the Delete was not applied"
++    );
++    assert!(
++        !retry.refused_answers.is_empty() || !retry.edited_copies.is_empty(),
++        "the report says nothing about the unapplied Delete: {retry:#?}"
++    );
++}
++
++/// Check 7: the combined ask of check 1 is raised; before answering, the old
++/// copy is renamed aside and a different directory is created at the old
++/// path. Overwrite + Delete must not delete the new directory (the answer was
++/// about the folder the operator was shown).
++#[cfg(unix)]
++#[test]
++fn qm365_c07_a_delete_answered_after_the_folder_was_swapped_spares_the_new_folder() {
++    let f = agents_fixture(&["codex"]);
++    let old = edited_copy(&f);
++    foreign_at(&f, ".agents/skills/alpha");
++    let first = f.run(&[]);
++    let ahead = first.edited_copies[0].clone();
++    assert!(ahead.ahead);
++    assert_eq!(Path::new(&ahead.path), old);
++
++    // The swap, while the ask is open.
++    let aside = f.at(".codex/skills/alpha-aside");
++    fs::rename(&old, &aside).unwrap();
++    fs::create_dir_all(&old).unwrap();
++    fs::write(old.join("SKILL.md"), "a different folder").unwrap();
++    fs::write(old.join("other.txt"), "other content").unwrap();
++
++    let retry = f.run(&[
++        occupied(&f, OverrideDecision::Overwrite),
++        RedeployAnswer::EditedCopy {
++            entry_id: ahead.entry_id.clone(),
++            path: ahead.path.clone(),
++            decision: EditedCopyDecision::Delete,
++        },
++    ]);
++
++    assert!(
++        aside.join("local.txt").is_file(),
++        "the shown copy, set aside"
++    );
++    assert!(
++        old.join("other.txt").is_file(),
++        "the new directory at the old path was deleted: {retry:#?}"
++    );
++}
++
++/// Check 8 (Xum): production registry. An edited old copy at
++/// `~/.mux/skills/alpha` moving to Xum's current folder. The registry gives
++/// Xum `DuplicateBehaviour::Shadows`, so a duplicate is not proven: Xum must
++/// not be reported as a duplicate reader ("shows twice").
++#[test]
++fn qm365_c08a_xum_shadows_is_not_reported_as_showing_twice() {
++    use crate::core::tool_adapters::reads::DuplicateBehaviour;
++    assert_eq!(
++        adapter_by_key("mux").unwrap().reads.duplicates,
++        DuplicateBehaviour::Shadows,
++        "premise"
++    );
++    let f = fixture(&["mux"]);
++    let old = f.copy_row("mux", ".mux/skills/alpha");
++    fs::write(old.join("local.txt"), "only here").unwrap();
++
++    let report = f.run(&[]);
++
++    assert_eq!(report.edited_copies.len(), 1, "{report:#?}");
++    let copy = &report.edited_copies[0];
++    eprintln!(
++        "xum: move {:?} -> {}; readers {:?}; duplicate_readers {:?}",
++        only_move(&report).status,
++        only_move(&report).path,
++        copy.readers,
++        copy.duplicate_readers
++    );
++    assert!(
++        copy.duplicate_readers.is_empty(),
++        "reported as a proven duplicate reader: {:?}",
++        copy.duplicate_readers
++    );
++}
++
++/// Check 8 (Devin): production registry. An edited old copy at
++/// `~/.codeium/windsurf/skills/alpha` moving to Devin's current folder;
++/// duplicate behaviour `Unknown`: not a proven duplicate.
++#[test]
++fn qm365_c08b_devin_unknown_is_not_reported_as_showing_twice() {
++    use crate::core::tool_adapters::reads::DuplicateBehaviour;
++    assert_eq!(
++        adapter_by_key("windsurf").unwrap().reads.duplicates,
++        DuplicateBehaviour::Unknown,
++        "premise"
++    );
++    let f = fixture(&["windsurf"]);
++    let old = f.copy_row("windsurf", ".codeium/windsurf/skills/alpha");
++    fs::write(old.join("local.txt"), "only here").unwrap();
++
++    let report = f.run(&[]);
++
++    assert_eq!(report.edited_copies.len(), 1, "{report:#?}");
++    let copy = &report.edited_copies[0];
++    eprintln!(
++        "devin: move {:?} -> {}; readers {:?}; duplicate_readers {:?}",
++        only_move(&report).status,
++        only_move(&report).path,
++        copy.readers,
++        copy.duplicate_readers
++    );
++    assert!(
++        copy.duplicate_readers.is_empty(),
++        "reported as a proven duplicate reader: {:?}",
++        copy.duplicate_readers
++    );
++}
++
++/// Check 11 (b), redeploy route: the folder in the way is moved aside while
++/// the ask is open, then Overwrite is answered; the deploy lands in an empty
++/// place and must not be recorded as overwritten.
++#[cfg(unix)]
++#[test]
++fn qm365_c11b_redeploy_overwrite_into_an_emptied_place_is_not_overwritten() {
++    let f = agents_fixture(&["codex"]);
++    f.link_row("codex", ".codex/skills/alpha");
++    let foreign = foreign_at(&f, ".agents/skills/alpha");
++    let first = f.run(&[]);
++    assert!(matches!(
++        only_move(&first).status,
++        RedeployStatus::Failed {
++            error: CommandError::TargetExists { .. }
++        }
++    ));
++    fs::rename(&foreign, f.at(".agents/skills/alpha-aside")).unwrap();
++
++    let retry = f.run(&[occupied(&f, OverrideDecision::Overwrite)]);
++
++    assert!(
++        matches!(only_move(&retry).status, RedeployStatus::Moved),
++        "{retry:#?}"
++    );
++    assert!(
++        !only_move(&retry).overwritten,
++        "recorded as overwritten with nothing replaced"
++    );
++}
++
++/// Check 13: Kimi Code's and Amp's legacy rows share one copy at
++/// `~/.config/agents/skills/alpha` (as in `amps_artifact_survives_kimis_move`).
++/// The copy has local edits and a different folder stands at Kimi's corrected
++/// destination. (a) The ask must not offer Delete / Leave for a folder Amp
++/// still uses. (b) With Overwrite + Delete answered, the folder is kept for
++/// Amp and the report must say so.
++#[test]
++fn qm365_c13a_a_shared_edited_copy_is_not_offered_for_delete() {
++    let f = fixture(&["amp", "kimi_cli"]);
++    let shared = f.copy_row("amp", ".config/agents/skills/alpha");
++    f.seed(
++        "kimi_cli",
++        &shared,
++        SyncMode::Copy,
++        SyncStatus::Synced,
++        true,
++    );
++    fs::write(shared.join("local.txt"), "edited").unwrap();
++    foreign_at(&f, ".kimi-code/skills/alpha");
++
++    let first = f.run(&[]);
++
++    assert!(matches!(
++        only_move(&first).status,
++        RedeployStatus::Failed {
++            error: CommandError::TargetExists { .. }
++        }
++    ));
++    assert!(
++        first.edited_copies.is_empty(),
++        "Delete / Leave offered for Amp's live folder: {:#?}",
++        first.edited_copies
++    );
++}
++
++#[test]
++fn qm365_c13b_a_shared_copy_kept_for_amp_is_explained_in_the_report() {
++    let f = fixture(&["amp", "kimi_cli"]);
++    let shared = f.copy_row("amp", ".config/agents/skills/alpha");
++    f.seed(
++        "kimi_cli",
++        &shared,
++        SyncMode::Copy,
++        SyncStatus::Synced,
++        true,
++    );
++    fs::write(shared.join("local.txt"), "edited").unwrap();
++    foreign_at(&f, ".kimi-code/skills/alpha");
++    let first = f.run(&[]);
++    let asked = first.edited_copies.first().cloned();
++
++    let mut answers = vec![RedeployAnswer::Occupied {
++        skill_id: "alpha".into(),
++        folder_key: "kimi_cli".into(),
++        row_ids: vec!["row-kimi_cli".into()],
++        path: f
++            .at(".kimi-code/skills/alpha")
++            .to_string_lossy()
++            .into_owned(),
++        decision: OverrideDecision::Overwrite,
++    }];
++    if let Some(asked) = &asked {
++        answers.push(RedeployAnswer::EditedCopy {
++            entry_id: asked.entry_id.clone(),
++            path: asked.path.clone(),
++            decision: EditedCopyDecision::Delete,
++        });
++    }
++    let retry = f.run(&answers);
++
++    assert!(shared.join("local.txt").is_file(), "kept for Amp");
++    eprintln!(
++        "c13b: journal {:?}; left_behind {:?}; refused {:?}",
++        retry
++            .journal
++            .iter()
++            .map(|j| (&j.path, j.status))
++            .collect::<Vec<_>>(),
++        retry
++            .left_behind
++            .iter()
++            .map(|l| (&l.path, l.reason))
++            .collect::<Vec<_>>(),
++        retry.refused_answers
++    );
++    // What reaches the operator's report: left-behind lines and refused
++    // answers carry text; a `retained` journal entry carries none
++    // (`redeployOutcome` reads only `finished` / `unfinished`).
++    assert!(
++        retry
++            .left_behind
++            .iter()
++            .any(|l| Path::new(&l.path) == shared)
++            || !retry.refused_answers.is_empty(),
++        "the Delete answered for the shared copy is silently not applied: {retry:#?}"
++    );
++}
+diff --git a/src-tauri/src/core/tests/skill_files.rs b/src-tauri/src/core/tests/skill_files.rs
+index 36dc5c8..95c221b 100644
+--- a/src-tauri/src/core/tests/skill_files.rs
++++ b/src-tauri/src/core/tests/skill_files.rs
+@@ -158,3 +158,129 @@ fn same_bytes_compares_by_length_then_streamed_bytes() {
+         fs::set_permissions(&b, fs::Permissions::from_mode(0o644)).unwrap();
+     }
+ }
++
++// ---------------------------------------------------------------------------
++// QM-365 reproduction (checks 2, 14, 16)
++// ---------------------------------------------------------------------------
++
++/// Check 2: with more files than the listing cap, identical on both sides,
++/// no file that exists in the occupant is labelled missing, and the cut is
++/// flagged (`truncated`, which the content view discloses).
++#[test]
++fn qm365_c02_past_the_cap_no_existing_file_is_missing_and_the_cut_is_flagged() {
++    let tmp = tempfile::tempdir().unwrap();
++    let occupant = tmp.path().join("occupant");
++    let skill = tmp.path().join("skill");
++    let names: Vec<String> = (0..OCCUPANT_FILES_MAX + 100)
++        .map(|i| format!("d{}/f{i:04}.md", i % 7))
++        .collect();
++    let files: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "same")).collect();
++    write(&occupant, &files);
++    write(&skill, &files);
++
++    let listing = list_occupant_files(&occupant, Some(&skill)).unwrap();
++    assert!(listing.truncated, "the cut is flagged");
++    let missing: Vec<&str> = listing
++        .entries
++        .iter()
++        .filter(|e| e.compared == FileComparison::OnlyInSkill)
++        .map(|e| e.path.as_str())
++        .collect();
++    assert!(missing.is_empty(), "labelled missing: {missing:?}");
++    assert_eq!(listing.entries.len(), names.len());
++}
++
++/// Check 14 (a): the skill's version is over the viewer's size limit while
++/// the occupant's file is readable: the read must not hand back the skill
++/// side as absent (which the view would diff against an empty file).
++#[test]
++fn qm365_c14a_an_oversized_skill_file_is_not_read_as_absent() {
++    let tmp = tempfile::tempdir().unwrap();
++    let occupant = tmp.path().join("occupant");
++    let skill = tmp.path().join("skill");
++    write(&occupant, &[("SKILL.md", "theirs")]);
++    fs::create_dir_all(&skill).unwrap();
++    fs::write(skill.join("SKILL.md"), vec![b'a'; 2 * 1024 * 1024]).unwrap();
++
++    match read_occupant_file(&occupant, Some(&skill), "SKILL.md") {
++        Err(_) => {}
++        Ok(file) => assert!(
++            file.skill.is_some(),
++            "skill side read as absent: {:?}",
++            file.occupant
++        ),
++    }
++    let listing = list_occupant_files(&occupant, Some(&skill)).unwrap();
++    assert_ne!(listing.entries[0].compared, FileComparison::Same);
++    assert_ne!(listing.entries[0].compared, FileComparison::OnlyHere);
++}
++
++/// Check 14 (b): the skill's version is not UTF-8.
++#[test]
++fn qm365_c14b_a_non_utf8_skill_file_is_not_read_as_absent() {
++    let tmp = tempfile::tempdir().unwrap();
++    let occupant = tmp.path().join("occupant");
++    let skill = tmp.path().join("skill");
++    write(&occupant, &[("SKILL.md", "theirs")]);
++    fs::create_dir_all(&skill).unwrap();
++    fs::write(skill.join("SKILL.md"), [0xff, 0xfe, 0x00, 0x80]).unwrap();
++
++    match read_occupant_file(&occupant, Some(&skill), "SKILL.md") {
++        Err(_) => {}
++        Ok(file) => assert!(file.skill.is_some(), "skill side read as absent"),
++    }
++}
++
++/// Check 14 (c): the skill's file listing fails (an unreadable folder in the
++/// Library copy): the listing must not report the occupant's files as
++/// "only in this folder".
++#[cfg(unix)]
++#[test]
++fn qm365_c14c_a_failed_skill_listing_is_not_only_here() {
++    use std::os::unix::fs::PermissionsExt;
++    let tmp = tempfile::tempdir().unwrap();
++    let occupant = tmp.path().join("occupant");
++    let skill = tmp.path().join("skill");
++    write(&occupant, &[("SKILL.md", "theirs"), ("sub/x.md", "x")]);
++    write(&skill, &[("SKILL.md", "ours"), ("sub/x.md", "x")]);
++    fs::set_permissions(skill.join("sub"), fs::Permissions::from_mode(0o000)).unwrap();
++    let readable = fs::read_dir(skill.join("sub")).is_ok();
++    let result = list_occupant_files(&occupant, Some(&skill));
++    fs::set_permissions(skill.join("sub"), fs::Permissions::from_mode(0o755)).unwrap();
++    if readable {
++        return; // running as root: the premise cannot be set up
++    }
++    match result {
++        Err(_) => {}
++        Ok(listing) => {
++            let only_here: Vec<&str> = listing
++                .entries
++                .iter()
++                .filter(|e| e.compared == FileComparison::OnlyHere)
++                .map(|e| e.path.as_str())
++                .collect();
++            assert!(only_here.is_empty(), "labelled only here: {only_here:?}");
++        }
++    }
++}
++
++/// Check 16 (backend half): a file present on one side and empty is never
++/// "same" as a missing one, and a final newline makes two files differ.
++#[test]
++fn qm365_c16_backend_labels_empty_vs_missing_and_final_newline_as_different() {
++    let tmp = tempfile::tempdir().unwrap();
++    let occupant = tmp.path().join("occupant");
++    let skill = tmp.path().join("skill");
++    write(&occupant, &[("SKILL.md", "a\n"), ("empty.md", "")]);
++    write(&skill, &[("SKILL.md", "a")]);
++
++    let entries = list_occupant_files(&occupant, Some(&skill))
++        .unwrap()
++        .entries;
++    let of = |p: &str| entries.iter().find(|e| e.path == p).unwrap().compared;
++    assert_eq!(of("SKILL.md"), FileComparison::Changed);
++    assert_eq!(of("empty.md"), FileComparison::OnlyHere);
++    let read = read_occupant_file(&occupant, Some(&skill), "empty.md").unwrap();
++    assert_eq!(read.occupant.as_deref(), Some(""));
++    assert_eq!(read.skill, None, "missing on the skill side is None");
++}
+diff --git a/src/hooks/qm365.repro.test.ts b/src/hooks/qm365.repro.test.ts
+new file mode 100644
+index 0000000..efc87e0
+--- /dev/null
++++ b/src/hooks/qm365.repro.test.ts
+@@ -0,0 +1,164 @@
++// QM-365 reproduction tests (control lane), hook layer: what the recorded run
++// stores (`applyOutcome` → `recordRun` → `notifications`, the Notifications
++// panel's rows) and what the content view's document hands the view. Each
++// asserts the CORRECT behaviour, so it fails while the defect is present.
++import i18next from "i18next";
++import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
++import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
++
++vi.mock("sonner", () => ({
++  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn(), dismiss: vi.fn() },
++}));
++vi.mock("../lib/tauri", () => ({ isTauri: true, invokeTauri: vi.fn() }));
++
++import type { BatchTargetOutcome, EnableReport, PropagationOutcome, RefreshReport } from "../bindings";
++import { resources } from "../i18n/resources";
++import { invokeTauri, type CommandName } from "../lib/tauri";
++import { globalCollisionRows, mergeGlobalRetry, mergeRefreshRetry, propagationCollisionRows } from "../lib/overwriteAsk";
++import { enableOutcome, refreshOutcome } from "../lib/reportOutcome";
++import { lineDiff } from "../lib/skillFiles";
++import { useSkillDocument } from "./useSkillDocument";
++import { useStatusReporter } from "./useStatusReporter";
++
++type T = (key: string, options?: Record<string, unknown>) => string;
++let t: T;
++beforeAll(async () => {
++  const i18n = i18next.createInstance();
++  await i18n.init({ resources, lng: "en", interpolation: { escapeValue: false } });
++  t = i18n.t.bind(i18n) as unknown as T;
++});
++afterEach(cleanup);
++
++const labels = { cursor: "Cursor", claude_code: "Claude Code" };
++const exists = (path: string) => ({
++  code: "TARGET_EXISTS" as const,
++  path,
++  modifiedAt: 1,
++  sameContent: false,
++  owner: { kind: "foreign" as const },
++});
++
++/** Every text the recorded run holds (titles and messages of its rows). */
++async function recorded(outcome: Parameters<ReturnType<typeof useStatusReporter>["applyOutcome"]>[0]) {
++  const { result } = renderHook(() => useStatusReporter(t as never));
++  await act(async () => {
++    await result.current.applyOutcome(outcome);
++  });
++  return result.current.notifications.map((row) => `${row.title}\n${row.message ?? ""}`).join("\n");
++}
++
++describe("check 4: the overwritten folder's line reaches the recorded run", () => {
++  it("(a) one skill's Update overwrites a deployment after Overwrite and hits an invocation Edit conflict", async () => {
++    const skill = { skillId: "s1", skillName: "alpha" };
++    const targets: PropagationOutcome[] = [
++      {
++        scope: { scope: "global", tool: "cursor" },
++        folder_key: "cursor",
++        status: { status: "failed", error: exists("/home/.cursor/skills/alpha"), first_deploy: true },
++      },
++    ];
++    const report: RefreshReport = {
++      skills: [
++        {
++          skill_id: "s1",
++          skill_name: "alpha",
++          status: {
++            status: "refreshed",
++            content_hash: null,
++            source_revision: null,
++            targets,
++            edit_conflict: { base_mode: "user-and-model", upstream_mode: "model-only", override_mode: "user-only" },
++          },
++        },
++      ],
++    };
++    // The ask's answer: Overwrite; `resolveTargetCollisions` settles the row overwritten.
++    const merged = mergeRefreshRetry(report, {
++      rows: propagationCollisionRows(skill, targets, labels),
++      global: [
++        {
++          skill_id: "s1",
++          skill_name: "alpha",
++          tool_key: "cursor",
++          folder_key: "cursor",
++          status: { status: "overwritten", outcome: { mode_used: "symlink", target_path: "/home/.cursor/skills/alpha", replaced: true } },
++        },
++      ],
++      projects: null,
++    });
++    expect(merged.overwritten).toHaveLength(1);
++    // As useSkillActions' refreshOne folds it.
++    const outcome = refreshOutcome(merged.report, {
++      t,
++      toolLabelById: labels,
++      single: { name: "alpha", success: "Updated alpha" },
++      declined: merged.declined,
++      overwritten: merged.overwritten,
++    });
++    expect(outcome.completion.conflict).toBe(true);
++    expect(await recorded(outcome)).toContain("/home/.cursor/skills/alpha");
++  });
++
++  it("(b) one Enable overwrites one target and leaves another collision unanswered", async () => {
++    const first: BatchTargetOutcome[] = ["cursor", "claude_code"].map((tool) => ({
++      skill_id: "s1",
++      skill_name: "alpha",
++      tool_key: tool,
++      folder_key: tool,
++      status: { status: "failed" as const, error: exists(`/home/.${tool}/skills/alpha`) },
++    }));
++    // Only Cursor's row is asked and answered Overwrite; Claude Code's stays a collision.
++    const asked = globalCollisionRows(first, labels).filter((row) => row.toolKey === "cursor");
++    const global = mergeGlobalRetry(first, asked, [
++      {
++        skill_id: "s1",
++        skill_name: "alpha",
++        tool_key: "cursor",
++        folder_key: "cursor",
++        status: { status: "overwritten", outcome: { mode_used: "symlink", target_path: "/home/.cursor/skills/alpha", replaced: true } },
++      },
++    ]);
++    const report: EnableReport = { global, projects: { items: [], skipped_projects: [] } };
++    const outcome = enableOutcome(report, { t, toolLabelById: labels });
++    expect(outcome.notes.join("\n")).toContain("/home/.cursor/skills/alpha");
++    expect(await recorded(outcome)).toContain("/home/.cursor/skills/alpha");
++  });
++});
++
++const mockInvoke = vi.mocked(
++  invokeTauri as unknown as (command: CommandName, ...args: unknown[]) => Promise<unknown>,
++);
++
++describe("check 2: the occupant listing's cap is disclosed", () => {
++  it("a truncated listing reaches the document the view renders", async () => {
++    mockInvoke.mockImplementation(async (command) => {
++      if (command === "listOccupantFiles")
++        return { entries: [{ path: "SKILL.md", size: 1, compared: "same" }], truncated: true };
++      if (command === "readOccupantFile") return { occupant: "x", skill: "x" };
++      throw new Error(`unexpected ${command}`);
++    });
++    const { result } = renderHook(() => useSkillDocument({ root: "/home/.cursor/skills/alpha", version: 0, comparedWith: "s1" }));
++    await waitFor(() => expect(result.current.loadingFiles).toBe(false));
++    // SkillFiles.tsx: `{doc.truncated ? <p …>{t("overwriteAsk.truncated")}</p> : null}`
++    expect(result.current.truncated).toBe(true);
++    expect(t("overwriteAsk.truncated")).toMatch(/first 500 files/);
++  });
++});
++
++describe("check 16: the document the content view diffs", () => {
++  it("a file missing in the folder and empty in the skill is not shown as the same", async () => {
++    mockInvoke.mockImplementation(async (command) => {
++      if (command === "listOccupantFiles")
++        return { entries: [{ path: "empty.md", size: 0, compared: "only_in_skill" }], truncated: false };
++      // Rust read_occupant_file: the side without the file is None.
++      if (command === "readOccupantFile") return { occupant: null, skill: "" };
++      throw new Error(`unexpected ${command}`);
++    });
++    const { result } = renderHook(() => useSkillDocument({ root: "/home/.cursor/skills/alpha", version: 0, comparedWith: "s1" }));
++    await waitFor(() => expect(result.current.loadingContent).toBe(false));
++    expect(result.current.activeFile).toBe("empty.md");
++    // SkillFiles.tsx: <FileDiff ours={doc.skillContent} theirs={doc.content} />, "same" when every line is.
++    const lines = lineDiff(result.current.skillContent, result.current.content);
++    expect(lines.every((line) => line.kind === "same")).toBe(false);
++  });
++});
+diff --git a/src/lib/qm365.repro.test.ts b/src/lib/qm365.repro.test.ts
+new file mode 100644
+index 0000000..3a0259f
+--- /dev/null
++++ b/src/lib/qm365.repro.test.ts
+@@ -0,0 +1,267 @@
++// QM-365 reproduction tests (control lane): each asserts the CORRECT
++// behaviour for one check of `repro-brief.md`, so it fails while the defect
++// is present. Real `en` copy, real folds, real fixture backend.
++import i18next from "i18next";
++import type { Channel } from "@tauri-apps/api/core";
++import { beforeAll, describe, expect, it } from "vitest";
++import type { ProjectSyncReport, RedeployProgress, RedeployReport } from "../bindings";
++import { resources } from "../i18n/resources";
++import {
++  aheadMoveRows,
++  askRowCopy,
++  askRowLabels,
++  editedCopyHints,
++  globalCollisionRows,
++  redeployAskRows,
++  type OverwriteRow,
++} from "./overwriteAsk";
++import { lineDiff } from "./skillFiles";
++import { projectSyncOutcome } from "./reportOutcome";
++import { createFixtureBackend } from "../fixtures/backend";
++import { buildScenario } from "../fixtures/scenarios";
++
++type T = (key: string, options?: Record<string, unknown>) => string;
++let t: T;
++beforeAll(async () => {
++  const i18n = i18next.createInstance();
++  await i18n.init({ resources, lng: "en", interpolation: { escapeValue: false } });
++  t = i18n.t.bind(i18n) as unknown as T;
++});
++
++const HOME = "/Users/op";
++const labels = { codex: "Codex", agents_skills: "Shared folder", mux: "Xum", windsurf: "Devin (Windsurf)", cursor: "Cursor", claude_code: "Claude Code", trae: "Trae", trae_cn: "Trae CN" };
++
++/**
++ * The first run of the Rust test `qm365_c01c…` / `a_folder_in_the_way_and_an_edited_old_copy_are_asked_in_one_ask`:
++ * Codex's move to the shared folder is held by a folder in its way, and its
++ * edited old copy is asked ahead of the move (`ahead: true`, `entry_id` the
++ * moved row's id).
++ */
++const combined = (): RedeployReport => ({
++  moves: [
++    {
++      skill_id: "alpha",
++      skill_name: "alpha",
++      folder_key: "agents_skills",
++      path: `${HOME}/.agents/skills/alpha`,
++      cause: "correction",
++      rows: [{ id: "row-codex", tool: "codex", from: `${HOME}/.codex/skills/alpha`, entry_id: null }],
++      status: {
++        status: "failed",
++        error: {
++          code: "TARGET_EXISTS",
++          path: `${HOME}/.agents/skills/alpha`,
++          modifiedAt: 1,
++          sameContent: false,
++          owner: { kind: "foreign" },
++        },
++      },
++      overwritten: false,
++    },
++  ],
++  journal: [],
++  left_behind: [],
++  edited_copies: [
++    {
++      entry_id: "row-codex",
++      ahead: true,
++      skill_id: "alpha",
++      skill_name: "alpha",
++      tool: "codex",
++      path: `${HOME}/.codex/skills/alpha`,
++      modified_at: 1,
++      readers: ["codex"],
++      duplicate_readers: ["codex"],
++    },
++  ],
++  lost_disables: [],
++  refused_answers: [],
++});
++
++describe("check 1: an edited copy asked ahead of a blocked move", () => {
++  it("(a) nothing in the ask says or implies the skill already works from its new folder", () => {
++    const rows = redeployAskRows(combined(), labels);
++    const edited = rows.find((row) => row.question === "editedCopy")!;
++    expect(edited.ahead).toBe(true);
++    const copy = askRowCopy(edited, t);
++    const text = [...editedCopyHints(rows, t), copy.provenance, copy.keep, copy.overwrite].join("\n");
++    expect(text).not.toMatch(/already works from its new folder/i);
++    expect(text).not.toMatch(/works from its new folder/i);
++  });
++
++  it("(b) the row's Delete and Leave consequences say they apply only if the move goes ahead", () => {
++    const edited = redeployAskRows(combined(), labels).find((row) => row.question === "editedCopy")!;
++    const copy = askRowCopy(edited, t);
++    expect(copy.overwrite).toMatch(/^If the move goes ahead/);
++    expect(copy.keep).toMatch(/^If the move goes ahead/);
++  });
++
++  it("(c) Keep for the destination + Delete for the copy: the ask says the copy answer does nothing now", () => {
++    const rows = redeployAskRows(combined(), labels);
++    const moveOf = aheadMoveRows(rows);
++    const index = rows.findIndex((row) => row.question === "editedCopy");
++    expect(moveOf[index]).not.toBeNull();
++    // OverwriteModal: `moveKept={moveRows[index] !== null && choices[moveRows[index]] === 'keep'}`;
++    // the row then shows `copy.voided ?? …` in place of the chosen consequence.
++    const copy = askRowCopy(rows[index], t, { moveKept: true });
++    expect(copy.voided).toMatch(/Nothing happens to this copy now/);
++  });
++});
++
++describe("check 5: accessible names of Reveal and the content-view button", () => {
++  const global = (tool: string, path: string): OverwriteRow => ({
++    skillId: "s1",
++    skillName: "alpha",
++    toolKey: tool,
++    toolLabel: labels[tool as keyof typeof labels] ?? tool,
++    path,
++    modifiedAt: null,
++    sameContent: false,
++    owner: { kind: "foreign" },
++    ownerToolLabel: null,
++    scope: { kind: "global" },
++  });
++  // The two buttons' names, exactly as OverwriteModal.tsx composes them (AskRow).
++  const names = (rows: OverwriteRow[]) => {
++    const rowLabels = askRowLabels(rows, t);
++    return {
++      reveal: rowLabels.map((label) => t("overwriteAsk.revealLabel", { label })),
++      contents: rowLabels.map((label) => `${t("overwriteAsk.showContents")}: ${label}`),
++    };
++  };
++
++  it("are distinct across rows of a redeploy ask (folder in the way + edited copy)", () => {
++    const { reveal, contents } = names(redeployAskRows(combined(), labels));
++    expect(new Set(reveal).size).toBe(reveal.length);
++    expect(new Set(contents).size).toBe(contents.length);
++  });
++
++  it("are distinct even when two rows read alike", () => {
++    const rows = [global("cursor", "/x/alpha"), global("cursor", "/x/alpha"), global("claude_code", "/y/alpha")];
++    const { reveal, contents } = names(rows);
++    expect(new Set(reveal).size).toBe(3);
++    expect(new Set(contents).size).toBe(3);
++  });
++
++  it("are distinct for a real sync report's two collision rows", () => {
++    const rows = globalCollisionRows(
++      ["cursor", "claude_code"].map((tool) => ({
++        skill_id: "s1",
++        skill_name: "alpha",
++        tool_key: tool,
++        folder_key: tool,
++        status: {
++          status: "failed" as const,
++          error: { code: "TARGET_EXISTS" as const, path: `/${tool}/alpha`, modifiedAt: 1, sameContent: false, owner: { kind: "foreign" as const } },
++        },
++      })),
++      labels,
++    );
++    const { reveal, contents } = names(rows);
++    expect(new Set(reveal).size).toBe(2);
++    expect(new Set(contents).size).toBe(2);
++  });
++});
++
++describe("check 8: 'shows twice' follows the backend's duplicate_readers", () => {
++  it("an edited copy whose backend row names Xum a duplicate reader is not asked as 'shows twice' (not a proven duplicate)", () => {
++    // What the Rust test qm365_c08a printed for the production registry:
++    // readers ["mux"], duplicate_readers ["mux"] (Xum's duplicates: Shadows).
++    const report: RedeployReport = {
++      ...combined(),
++      moves: [],
++      edited_copies: [
++        { ...combined().edited_copies[0], ahead: false, tool: "mux", path: `${HOME}/.mux/skills/alpha`, readers: ["mux"], duplicate_readers: ["mux"] },
++      ],
++    };
++    const [row] = redeployAskRows(report, labels);
++    const leave = askRowCopy(row, t).keep;
++    // Correct behaviour: no "shows twice" for an unproven duplicate.
++    expect(leave).not.toMatch(/shows twice/);
++  });
++});
++
++describe("check 10: project overwritten lines name their project path", () => {
++  it("two projects' overwritten lines (same skill, same harness) are distinct", () => {
++    const item = (project: string) => ({
++      assignment_id: `a-${project}`,
++      project_id: project,
++      skill_id: "s1",
++      skill_name: "alpha",
++      tool: "claude_code",
++      folder_key: "claude_code",
++      status: { status: "overwritten" as const, path: `/work/${project}/.claude/skills/alpha` },
++    });
++    const report: ProjectSyncReport = { items: [item("app-a"), item("app-b")], skipped_projects: [] };
++    for (const action of ["resync", "resyncAll", "bulkAssign"] as const) {
++      const out = projectSyncOutcome(report, { t, toolLabelById: labels, action });
++      expect(out.notes).toHaveLength(2);
++      expect(new Set(out.notes).size).toBe(2);
++      expect(out.toast?.detail).toContain("/work/app-a/");
++      expect(out.toast?.detail).toContain("/work/app-b/");
++    }
++  });
++});
++
++describe("check 12: a legacy project key (trae_cn on folder trae) overwritten", () => {
++  it("keeps its overwritten line and count through the fold", () => {
++    const report: ProjectSyncReport = {
++      items: [
++        {
++          assignment_id: "pa-trae_cn",
++          project_id: "p1",
++          skill_id: "s1",
++          skill_name: "trae-skill",
++          tool: "trae_cn",
++          folder_key: "trae",
++          status: { status: "overwritten", path: "/work/p1/.trae/skills/trae-skill" },
++        },
++      ],
++      skipped_projects: [],
++    };
++    for (const action of ["resync", "syncCell", "toggleOn", "bulkAssign", "resyncAll"] as const) {
++      const out = projectSyncOutcome(report, { t, toolLabelById: labels, action });
++      expect(out.notes).toEqual([t("outcome.overwrittenLine", { name: "trae-skill", tool: "Trae", path: "/work/p1/.trae/skills/trae-skill" })]);
++      expect(out.toast?.detail).toContain("/work/p1/.trae/skills/trae-skill");
++      if (action === "resync" || action === "resyncAll" || action === "bulkAssign")
++        expect(out.toast?.message).toContain(t("outcome.overwritten", { count: 1 }));
++    }
++  });
++});
++
++describe("check 15: the 'Keep all' line in a redeploy ask", () => {
++  it("does not say the skills stay off their harnesses (a kept move leaves the old Deployment in place)", () => {
++    // OverwriteModal.tsx renders `t('overwriteAsk.consequence.all')` under
++    // every per-row ask with an occupied row, redeploy asks included.
++    expect(t("overwriteAsk.consequence.all")).not.toMatch(/stays off/);
++  });
++});
++
++describe("check 16: the content view's 'same' for unequal files", () => {
++  // SkillFiles.tsx FileDiff: `if (lines.every((line) => line.kind === "same"))`
++  // shows "This file is the same as the skill's."; useSkillDocument passes
++  // `content: both.occupant ?? ""` and `skillContent: both.skill`.
++  const saysSame = (ours: string | null, theirs: string) => lineDiff(ours, theirs).every((line) => line.kind === "same");
++
++  it("one side missing, the other an empty file, is not 'same'", () => {
++    // Only in the skill (empty there), missing in the occupant: occupant null → "".
++    expect(saysSame("", "")).toBe(false);
++    // Only in the occupant (empty), missing in the skill: skill null.
++    expect(saysSame(null, "")).toBe(false);
++  });
++
++  it("files differing only by a final newline are not 'same'", () => {
++    expect(saysSame("line\n", "line")).toBe(false);
++    expect(saysSame("line", "line\n")).toBe(false);
++  });
++});
++
++describe("check 17: the fixture's registry scenario", () => {
++  it("raises an edited-copy ask row", async () => {
++    const now = 1_700_000_000_000;
++    const backend = createFixtureBackend(buildScenario("registry", now), { latencyScale: 0, now: () => now });
++    const channel = { onmessage: () => {} } as unknown as Channel<RedeployProgress>;
++    const run = await backend.handlers.redeployDeployments([], channel);
++    expect(run.report.edited_copies.length).toBeGreaterThan(0);
++  });
++});

@@ -1894,6 +1894,7 @@ fn ask_facts(error: &CommandError, expected: &Path) {
             path,
             modified_at,
             same_content,
+            ..
         } => {
             assert_eq!(Path::new(path), expected);
             assert!(modified_at.is_some(), "modified time observed");
@@ -1965,7 +1966,7 @@ fn an_enable_collision_is_askable_and_its_overwrite_retry_replaces_the_folder() 
     )
     .unwrap();
     assert!(
-        matches!(retried.global.as_slice(), [o] if matches!(o.status, BatchTargetStatus::Synced { .. })),
+        matches!(retried.global.as_slice(), [o] if matches!(o.status, BatchTargetStatus::Overwritten { .. })),
         "{:?}",
         retried.global
     );
@@ -2144,7 +2145,10 @@ fn a_project_collision_resolves_with_overwrite_or_keep() {
             match decision {
                 OverrideDecision::Overwrite => {
                     assert!(
-                        matches!(resolved.items[0].status, ProjectSyncOutcomeStatus::Synced),
+                        matches!(
+                            resolved.items[0].status,
+                            ProjectSyncOutcomeStatus::Overwritten { .. }
+                        ),
                         "{label}: {resolved}"
                     );
                     assert!(!foreign_bytes_survive(&path), "{label}");

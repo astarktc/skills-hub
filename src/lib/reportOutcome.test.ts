@@ -1365,7 +1365,7 @@ describe("syncOutcome", () => {
   // review" (conflict tone), never a failure: no error entry, no retry, no
   // implicit Keep; the pair stays as it was.
   describe("a dismissed overwrite ask folds as \"to review\", never failed", () => {
-    const exists = { code: "TARGET_EXISTS", path: "/conflict", modifiedAt: 7, sameContent: false } as const;
+    const exists = { code: "TARGET_EXISTS", path: "/conflict", modifiedAt: 7, sameContent: false, owner: { kind: "foreign" as const } } as const;
     const unanswered = (status: "failed" | "skipped"): BatchTargetOutcome => ({
       ...syncReport[0],
       status: { status, error: exists },
@@ -1466,8 +1466,76 @@ describe("syncOutcome", () => {
       notes,
       completion: { reload: true, closeModal: true, conflict: false },
       // The structured counts behind the line, for combineOutcomes.
-      tally: { done: [{ verb: "synced", count: 0 }], counts: { failed: 0, skipped: 0, declined: 2, collisions: 0 } },
+      tally: {
+        done: [{ verb: "synced", count: 0 }],
+        counts: { failed: 0, skipped: 0, declined: 2, overwritten: 0, collisions: 0 },
+      },
     });
+  });
+  // Round 20 #70: an answered Overwrite is an outcome kind beside `declined`,
+  // recorded with the path it replaced — never folded as a plain deploy.
+  const overwrittenRow = (skill: string, tool: string): BatchTargetOutcome => ({
+    skill_id: skill,
+    skill_name: skill,
+    tool_key: tool,
+    folder_key: tool,
+    status: { status: "overwritten", outcome: { mode_used: "symlink", target_path: `/t/${tool}/${skill}`, replaced: true } },
+  });
+  it("an overwritten pair is its own count and a recorded line, never a plain deploy", () => {
+    const out = syncOutcome([syncReport[0], overwrittenRow("zod", "claude")], { ...ctx, action: "bulk" });
+    const note = t("outcome.overwrittenLine", { name: "zod", tool: "CLAUDE", path: "/t/claude/zod" });
+    expect(out.toast).toMatchObject({
+      tone: "success",
+      message: line(["outcome.done.synced", 1], ["outcome.overwritten", 1]),
+      detail: note,
+    });
+    expect(out.notes).toEqual([note]);
+    expect(out.errors).toEqual([]);
+    expect(out.tally?.counts.overwritten).toBe(1);
+  });
+  it("compositeHeadline places overwritten beside declined, before cancelled", () => {
+    expect(compositeHeadline(t, "synced", { done: 2, declined: 1, overwritten: 1, cancelled: 1 })).toBe(
+      line(["outcome.done.synced", 2], ["outcome.declined", 1], ["outcome.overwritten", 1], ["outcome.cancelled", 1]),
+    );
+    expect(headlineTone({ overwritten: 1 })).toBe("success");
+  });
+  it("Refresh and Edit record the overwritten pairs their ask's retry settled", () => {
+    const pair = { skillName: "alpha", tool: "claude", path: "/t/claude/alpha" };
+    const note = t("outcome.overwrittenLine", { name: "alpha", tool: "CLAUDE", path: "/t/claude/alpha" });
+    const refreshed = refreshOutcome({ skills: [] }, { ...ctx, overwritten: [pair] });
+    expect(refreshed.notes).toEqual([note]);
+    expect(refreshed.toast?.message).toBe(line(["outcome.overwritten", 1]));
+    const edited = invocationEditOutcome(
+      {
+        skill_id: "s1",
+        skill_name: "alpha",
+        propagation: { targets: [] },
+      },
+      { ...ctx, overwritten: [pair] },
+    );
+    expect(edited.notes).toEqual([note]);
+    expect(edited.toast?.tone).toBe("success");
+  });
+  it("a project answer that replaced a folder is recorded with its path", () => {
+    const report: ProjectSyncReport = {
+      skipped_projects: [],
+      items: [
+        {
+          assignment_id: "a1",
+          project_id: "p1",
+          skill_id: "s1",
+          skill_name: "alpha",
+          tool: "claude",
+          folder_key: "claude",
+          status: { status: "overwritten", path: "/p1/.claude/skills/alpha" },
+        },
+      ],
+    };
+    const out = projectSyncOutcome(report, { ...ctx, action: "resync" });
+    expect(out.notes).toEqual([
+      t("outcome.overwrittenLine", { name: "alpha", tool: "CLAUDE", path: "/p1/.claude/skills/alpha" }),
+    ]);
+    expect(out.toast?.message).toBe(line(["outcome.overwritten", 1]));
   });
   it("a declined pair beside synced ones keeps the declined tone; beside a failure, failure wins", () => {
     const withSynced = syncOutcome([syncReport[0], declinedRow("git", "cursor")], { ...ctx, action: "bulk" });
@@ -1649,7 +1717,7 @@ describe("importOutcome", () => {
         targets: [
           {
             ...syncReport[0],
-            status: { status: "failed", error: { code: "TARGET_EXISTS", path: "/copy", modifiedAt: null, sameContent: false } },
+            status: { status: "failed", error: { code: "TARGET_EXISTS", path: "/copy", modifiedAt: null, sameContent: false, owner: { kind: "foreign" as const } } },
           },
         ],
       } as ImportGroupStatus,
@@ -1723,7 +1791,7 @@ describe("importOutcome", () => {
               ...syncReport[0],
               status: {
                 status: "failed",
-                error: { code: "TARGET_EXISTS", path: "/conflict", modifiedAt: null, sameContent: false },
+                error: { code: "TARGET_EXISTS", path: "/conflict", modifiedAt: null, sameContent: false, owner: { kind: "foreign" as const } },
               },
             },
           ],
@@ -1806,6 +1874,33 @@ describe("installOutcome", () => {
           ? line(["outcome.done.installed", 1])
           : t("add.added", { name: "git" }),
     });
+  });
+  it("a lone add whose ask overwrote a folder keeps its sentence and records the line (#70)", () => {
+    const out = installOutcome(
+      [
+        {
+          name: "git",
+          status: "installed",
+          result: installed,
+          deployment: {
+            status: "reported",
+            report: [
+              {
+                skill_id: "git",
+                skill_name: "git",
+                tool_key: "claude",
+                folder_key: "claude",
+                status: { status: "overwritten", outcome: { mode_used: "symlink", target_path: "/t/claude/git", replaced: true } },
+              },
+            ],
+          },
+        },
+      ],
+      { ...ctx, source: "git" },
+    );
+    const note = t("outcome.overwrittenLine", { name: "git", tool: "CLAUDE", path: "/t/claude/git" });
+    expect(out.toast).toEqual({ kind: "success", tone: "success", message: t("add.added", { name: "git" }), detail: note });
+    expect(out.completion.closeModal).toBe(true);
   });
   it.each([
     { status: "no-targets" },
@@ -2490,7 +2585,7 @@ describe("importGroupKind / import headline by settled targets", () => {
     target(tool, { status: "synced", outcome: { mode_used: "symlink", target_path: `/t/${tool}`, replaced: true } });
   const declined = (tool: string) => target(tool, { status: "declined" });
   const unanswered = (tool: string) =>
-    target(tool, { status: "failed", error: { code: "TARGET_EXISTS", path: `/t/${tool}`, modifiedAt: null, sameContent: false } });
+    target(tool, { status: "failed", error: { code: "TARGET_EXISTS", path: `/t/${tool}`, modifiedAt: null, sameContent: false, owner: { kind: "foreign" } } });
   const disabled = (tool: string) => target(tool, { status: "skipped", error: { code: "TARGET_DISABLED", tool } });
   const notInstalled = (tool: string) => target(tool, { status: "skipped", error: { code: "TOOL_NOT_INSTALLED", tool } });
   const replaced = (targets: BatchTargetOutcome[]): ImportGroupStatus => ({
@@ -3206,8 +3301,9 @@ describe("redeployOutcome", () => {
     folder_key: "agents_skills",
     path: `/h/.agents/skills/${skill}`,
     cause: "correction",
-    rows: [{ id: `r-${skill}`, tool: "codex", from: `/h/.codex/skills/${skill}` }],
+    rows: [{ id: `r-${skill}`, tool: "codex", from: `/h/.codex/skills/${skill}`, entry_id: null }],
     status,
+    overwritten: false,
   });
   const en = () => {
     const i18n = i18next.createInstance();
@@ -3229,7 +3325,7 @@ describe("redeployOutcome", () => {
         move("g", { status: "failed", error: { code: "OTHER", message: "boom" } }),
         move("h", {
           status: "failed",
-          error: { code: "TARGET_EXISTS", path: "/h/.agents/skills/h", modifiedAt: null, sameContent: false },
+          error: { code: "TARGET_EXISTS", path: "/h/.agents/skills/h", modifiedAt: null, sameContent: false, owner: { kind: "foreign" as const } },
         }),
       ],
     };
@@ -3258,7 +3354,7 @@ describe("redeployOutcome", () => {
         moves: [
           move("a", {
             status: "failed",
-            error: { code: "TARGET_EXISTS", path: "/h/.agents/skills/a", modifiedAt: null, sameContent: false },
+            error: { code: "TARGET_EXISTS", path: "/h/.agents/skills/a", modifiedAt: null, sameContent: false, owner: { kind: "foreign" as const } },
           }),
           move("b", { status: "left_old", edited: true }),
         ],
@@ -3271,6 +3367,8 @@ describe("redeployOutcome", () => {
             path: "/h/.codex/skills/b",
             modified_at: null,
             readers: ["codex", "cursor"],
+            duplicate_readers: [],
+            ahead: false,
           },
         ],
       },
@@ -3284,13 +3382,46 @@ describe("redeployOutcome", () => {
     expect(outcome.errors).toEqual([]);
   });
 
+  it("Sol 102: a copy shows twice only where a duplicate is proven, else it is still visible", () => {
+    const outcome = redeployOutcome(
+      {
+        ...EMPTY,
+        moves: [move("b", { status: "left_old", edited: true })],
+        edited_copies: [
+          {
+            entry_id: "e-b",
+            skill_id: "b",
+            skill_name: "b",
+            tool: "codex",
+            path: "/h/.codex/skills/b",
+            modified_at: null,
+            readers: ["cursor", "codex"],
+            duplicate_readers: ["codex"],
+            ahead: false,
+          },
+        ],
+      },
+      { ...en(), toolLabelById: { codex: "Codex", cursor: "Cursor" } },
+    );
+    expect(outcome.warnings[0].message).toContain("Shows twice in Codex. Still visible in Cursor.");
+  });
+
+  it("#70: a move whose folder in the way the operator overwrote is recorded in the run", () => {
+    const outcome = redeployOutcome(
+      { ...EMPTY, moves: [{ ...move("a", { status: "moved" }), overwritten: true }] },
+      { ...en(), toolLabelById: { agents_skills: ".agents/skills" } },
+    );
+    expect(outcome.toast).toMatchObject({ tone: "success", message: "1 moved · 1 folder overwritten" });
+    expect(outcome.notes).toEqual(["a: overwrote the folder at /h/.agents/skills/a (.agents/skills)"]);
+  });
+
   it("an old copy left behind names its readers; a failed removal is an error", () => {
     const outcome = redeployOutcome(
       {
         ...EMPTY,
         moves: [move("a", { status: "left_old", edited: false })],
         left_behind: [
-          { skill_id: "a", skill_name: "a", tool: "codex", path: "/h/.codex/skills/a", reason: "not_ours", readers: ["cursor"], error: null },
+          { skill_id: "a", skill_name: "a", tool: "codex", path: "/h/.codex/skills/a", reason: "not_ours", readers: ["cursor"], duplicate_readers: [], error: null },
           {
             skill_id: "b",
             skill_name: "b",
@@ -3298,6 +3429,7 @@ describe("redeployOutcome", () => {
             path: "/h/.codex/skills/b",
             reason: "removal_failed",
             readers: [],
+            duplicate_readers: [],
             error: { code: "REMOVAL_PERMISSION_DENIED", path: "/h/.codex/skills/b", detail: "EACCES" },
           },
         ],
@@ -3397,6 +3529,7 @@ describe("redeployOutcome", () => {
             path: "/h/.kilocode/skills/a",
             reason: "holds_deployment",
             readers: [],
+            duplicate_readers: [],
             error: null,
           },
         ],
